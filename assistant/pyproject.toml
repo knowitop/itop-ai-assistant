@@ -1,0 +1,16 @@
+[project]
+name = "itop-ai-assistant"
+version = "0.1.0"
+description = "iTop AI Assistant"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "pre-commit>=4.5.1",
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.15.1",
+]
