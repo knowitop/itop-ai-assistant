@@ -1,0 +1,12 @@
+name: itop-ai-assistant
+services:
+  itop:
+    image: vbkunin/itop
+    ports:
+      - "8000:80"
+    volumes:
+      - itop-db:/var/lib/mysql
+    environment:
+      MYSQL_PASS: 123456
+volumes:
+  itop-db:
