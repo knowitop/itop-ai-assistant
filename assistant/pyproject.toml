@@ -5,8 +5,10 @@ description = "iTop AI Assistant"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "fastapi>=0.129.0",
     "httpx>=0.28.1",
     "python-dotenv>=1.2.1",
+    "uvicorn>=0.40.0",
 ]
 
 [dependency-groups]
