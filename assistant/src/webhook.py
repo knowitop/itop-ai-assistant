@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent import ITopInfoChecker
 from itop.client import ITopClient
 
 # Load environment variables
@@ -17,17 +18,20 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="iTop Webhook Handler")
 
-# Initialize iTop Client from environment variables
+# Initialize iTop Client and Agent
 ITOP_URL = os.getenv("ITOP_URL", "http://localhost/webservices/rest.php")
 ITOP_USER = os.getenv("ITOP_USER")
 ITOP_PWD = os.getenv("ITOP_PWD")
 ITOP_TOKEN = os.getenv("ITOP_TOKEN")
 
+itop_client = ITopClient(url=ITOP_URL, auth_user=ITOP_USER, auth_pwd=ITOP_PWD, auth_token=ITOP_TOKEN)
+
+LLM_MODEL_NAME = os.getenv("LLM_MODEL", "gpt-3.5-turbo")
+checker = ITopInfoChecker(LLM_MODEL_NAME)
+
 # App configuration
 APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
 APP_PORT = int(os.getenv("APP_PORT", "8000"))
-
-itop_client = ITopClient(url=ITOP_URL, auth_user=ITOP_USER, auth_pwd=ITOP_PWD, auth_token=ITOP_TOKEN)
 
 
 class WebhookPayload(BaseModel):
@@ -73,6 +77,9 @@ async def handle_webhook(payload: WebhookPayload):
 
         # If it's a UserRequest or Incident, try to fetch Service and ServiceSubcategory details
         if payload.class_name in ["UserRequest", "Incident"]:
+            service_desc = ""
+            subcategory_desc = ""
+
             service_id = obj_data.get("service_id")
             if service_id:
                 service_data = get_itop_object(
@@ -80,6 +87,7 @@ async def handle_webhook(payload: WebhookPayload):
                 )
                 if service_data:
                     obj_data["service_details"] = service_data
+                    service_desc = service_data.get("description", "")
 
             subcategory_id = obj_data.get("servicesubcategory_id")
             if subcategory_id:
@@ -90,6 +98,29 @@ async def handle_webhook(payload: WebhookPayload):
                 )
                 if subcategory_data:
                     obj_data["servicesubcategory_details"] = subcategory_data
+                    subcategory_desc = subcategory_data.get("description", "")
+
+            # AI Completeness check
+            missing_info = await checker.check_completeness(
+                title=obj_data.get("title", ""),
+                description=obj_data.get("description", ""),
+                service_desc=service_desc,
+                subcategory_desc=subcategory_desc,
+            )
+
+            if missing_info:
+                logger.info(f"AI found missing info for {payload.class_name}::{payload.id}: {missing_info}")
+                # Update iTop object with a log entry
+                itop_client.update_object(
+                    class_name=payload.class_name,
+                    key=payload.id,
+                    fields={"public_log": missing_info},
+                    comment="AI assistant check: missing information",
+                )
+                obj_data["ai_check_result"] = missing_info
+            else:
+                logger.info(f"AI check passed for {payload.class_name}::{payload.id}")
+                obj_data["ai_check_result"] = "OK"
 
         logger.info(f"Successfully processed webhook for {payload.class_name}::{payload.id}")
         return {"status": "success", "data": obj_data}
