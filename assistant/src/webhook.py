@@ -101,26 +101,32 @@ async def handle_webhook(payload: WebhookPayload):
                     subcategory_desc = subcategory_data.get("description", "")
 
             # AI Completeness check
-            missing_info = await checker.check_completeness(
-                title=obj_data.get("title", ""),
-                description=obj_data.get("description", ""),
-                service_desc=service_desc,
-                subcategory_desc=subcategory_desc,
-            )
-
-            if missing_info:
-                logger.info(f"AI found missing info for {payload.class_name}::{payload.id}: {missing_info}")
-                # Update iTop object with a log entry
-                itop_client.update_object(
-                    class_name=payload.class_name,
-                    key=payload.id,
-                    fields={"public_log": missing_info},
-                    comment="AI assistant check: missing information",
+            try:
+                missing_info = await checker.check_completeness(
+                    title=obj_data.get("title", ""),
+                    description=obj_data.get("description", ""),
+                    service_desc=service_desc,
+                    subcategory_desc=subcategory_desc,
                 )
-                obj_data["ai_check_result"] = missing_info
-            else:
-                logger.info(f"AI check passed for {payload.class_name}::{payload.id}")
-                obj_data["ai_check_result"] = "OK"
+
+                if missing_info:
+                    logger.info(f"AI found missing info for {payload.class_name}::{payload.id}: {missing_info}")
+                    # Update iTop object with a log entry
+                    itop_client.update_object(
+                        class_name=payload.class_name,
+                        key=payload.id,
+                        fields={"public_log": missing_info},
+                        comment="AI assistant check: missing information",
+                    )
+                    obj_data["ai_check_result"] = missing_info
+                else:
+                    logger.info(f"AI check passed for {payload.class_name}::{payload.id}")
+                    obj_data["ai_check_result"] = "OK"
+            except Exception as ai_err:
+                logger.error(f"AI completeness check failed for {payload.class_name}::{payload.id}: {ai_err}")
+                obj_data["ai_check_result"] = "Error"
+                # We don't want to fail the whole webhook if AI check fails,
+                # but we've logged it and marked the result.
 
         logger.info(f"Successfully processed webhook for {payload.class_name}::{payload.id}")
         return {"status": "success", "data": obj_data}

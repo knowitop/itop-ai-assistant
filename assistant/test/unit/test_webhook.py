@@ -173,6 +173,26 @@ class TestWebhook(unittest.TestCase):
         # Assert
         self.assertEqual(response.status_code, 422)
 
+    @patch("webhook.checker.check_completeness")
+    @patch("webhook.itop_client.get_objects")
+    def test_webhook_ai_error(self, mock_get_objects, mock_check_completeness):
+        # Arrange
+        mock_get_objects.return_value = {
+            "code": 0,
+            "objects": {"UserRequest::123": {"fields": {"title": "T", "description": "D"}}},
+        }
+        mock_check_completeness.side_effect = Exception("AI failure")
+
+        payload = {"id": 123, "class": "UserRequest"}
+
+        # Act
+        response = self.client.post("/webhook", json=payload)
+
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["data"]["ai_check_result"], "Error")
+
 
 if __name__ == "__main__":
     unittest.main()
