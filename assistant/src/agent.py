@@ -5,6 +5,8 @@ from langchain.chat_models import init_chat_model
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
+from prompts import SYSTEM_PROMPT, USER_PROMPT
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,41 +33,7 @@ class ITopInfoChecker:
             raise
 
     def _setup_chain(self):
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    """You are an AI assistant for iTop ITSM system. 
-Your task is to check if the ticket description contains all necessary information required by the service and subcategory descriptions.
-
-Compare:
-1. Ticket Title and Description.
-2. Service Description (contains requirements).
-3. Service Subcategory Description (contains requirements).
-
-If the ticket description is missing any specific details mentioned as required in the service/subcategory descriptions, identify them.
-
-Respond in the same language as the ticket description (usually Russian).
-If something is missing, provide a polite and concise list of what is missing.
-If everything is present, respond with "OK".
-
-Format:
-- If missing data: "Missing information: [list of missing items]"
-- If complete: "OK"
-""",
-                ),
-                (
-                    "user",
-                    """
-Ticket Title: {title}
-Ticket Description: {description}
-
-Service Description: {service_description}
-Service Subcategory Description: {subcategory_description}
-""",
-                ),
-            ]
-        )
+        prompt = ChatPromptTemplate.from_messages([("system", SYSTEM_PROMPT), ("user", USER_PROMPT)])
 
         self.chain = prompt | self.llm | StrOutputParser()
 

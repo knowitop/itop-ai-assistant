@@ -22,11 +22,12 @@ class TestAgent(unittest.IsolatedAsyncioTestCase):
     @patch("langchain_core.runnables.base.RunnableSequence.ainvoke")
     async def test_check_completeness_missing(self, mock_invoke):
         # Arrange
-        mock_invoke.return_value = "Missing information: Phone number"
+        missing_msg = "Please provide your phone number for further assistance."
+        mock_invoke.return_value = missing_msg
         # Act
         result = await self.checker.check_completeness("Title", "Description", "Service", "Subcategory")
         # Assert
-        self.assertEqual(result, "Missing information: Phone number")
+        self.assertEqual(result, missing_msg)
 
     @patch("agent.init_chat_model")
     def test_provider_initialization(self, mock_init):

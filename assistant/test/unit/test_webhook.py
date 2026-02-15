@@ -79,7 +79,8 @@ class TestWebhook(unittest.TestCase):
             {"code": 0, "objects": {"Service::1": {"fields": {"name": "S", "description": "SD"}}}},
             {"code": 0, "objects": {}},  # No subcategory
         ]
-        mock_check_completeness.return_value = "Missing: Phone"
+        missing_msg = "Please provide your phone number."
+        mock_check_completeness.return_value = missing_msg
 
         payload = {"id": 123, "class": "UserRequest"}
 
@@ -89,11 +90,11 @@ class TestWebhook(unittest.TestCase):
         # Assert
         self.assertEqual(response.status_code, 200)
         data = response.json()
-        self.assertEqual(data["data"]["ai_check_result"], "Missing: Phone")
+        self.assertEqual(data["data"]["ai_check_result"], missing_msg)
         mock_update_object.assert_called_once_with(
             class_name="UserRequest",
             key=123,
-            fields={"public_log": "Missing: Phone"},
+            fields={"public_log": missing_msg},
             comment="AI assistant check: missing information",
         )
 
