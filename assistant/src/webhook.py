@@ -37,6 +37,23 @@ class WebhookPayload(BaseModel):
     class_name: str = Field(..., alias="class", description="Class name of the object in iTop")
 
 
+def get_itop_object(class_name: str, object_id: int, output_fields: list[str]) -> dict:
+    """
+    Fetch a single object from iTop and return its fields.
+    """
+    logger.debug(f"Fetching object details for {class_name}::{object_id}")
+    result = itop_client.get_objects(class_name=class_name, key=object_id, output_fields=output_fields)
+    logger.debug(f"iTop API response for {class_name}::{object_id}: {result}")
+
+    objects = result.get("objects")
+    if not objects:
+        logger.warning(f"Object {class_name}::{object_id} not found in iTop")
+        return {}
+
+    obj_key = list(objects.keys())[0]
+    return objects[obj_key]["fields"]
+
+
 @app.post("/webhook")
 async def handle_webhook(payload: WebhookPayload):
     """
@@ -44,22 +61,35 @@ async def handle_webhook(payload: WebhookPayload):
     """
     logger.debug(f"Received webhook: {payload}")
     try:
-        # Fetch detailed information about the object
-        logger.debug(f"Fetching object details for {payload.class_name}::{payload.id}")
-        result = itop_client.get_objects(
-            class_name=payload.class_name, key=payload.id, output_fields=["ref", "title", "description"]
+        # Fetch detailed information about the main object
+        obj_data = get_itop_object(
+            class_name=payload.class_name,
+            object_id=payload.id,
+            output_fields=["ref", "title", "description", "service_id", "servicesubcategory_id"],
         )
-        logger.debug(f"iTop API response: {result}")
 
-        # Extract object data
-        objects = result.get("objects")
-        if not objects:
-            logger.warning(f"Object {payload.class_name}::{payload.id} not found in iTop")
+        if not obj_data:
             raise HTTPException(status_code=404, detail=f"Object {payload.class_name}::{payload.id} not found in iTop")
 
-        # iTop returns objects in a dict with keys like "ClassName::ID"
-        obj_key = list(objects.keys())[0]
-        obj_data = objects[obj_key]["fields"]
+        # If it's a UserRequest, try to fetch Service and ServiceSubcategory details
+        if payload.class_name == "UserRequest":
+            service_id = obj_data.get("service_id")
+            if service_id:
+                service_data = get_itop_object(
+                    class_name="Service", object_id=int(service_id), output_fields=["name", "description"]
+                )
+                if service_data:
+                    obj_data["service_details"] = service_data
+
+            subcategory_id = obj_data.get("servicesubcategory_id")
+            if subcategory_id:
+                subcategory_data = get_itop_object(
+                    class_name="ServiceSubcategory",
+                    object_id=int(subcategory_id),
+                    output_fields=["name", "description"],
+                )
+                if subcategory_data:
+                    obj_data["servicesubcategory_details"] = subcategory_data
 
         logger.info(f"Successfully processed webhook for {payload.class_name}::{payload.id}")
         return {"status": "success", "data": obj_data}
