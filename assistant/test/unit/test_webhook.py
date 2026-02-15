@@ -1,25 +1,24 @@
-import os
-import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from app import app
 from fastapi.testclient import TestClient
-
-# Add src to sys.path to import webhook and itop
-sys.path.append(os.path.join(os.getcwd(), "src"))
-
-from webhook import app
 
 
 class TestWebhook(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
 
-    @patch("webhook.checker.check_completeness")
-    @patch("webhook.itop_client.update_object")
-    @patch("webhook.itop_client.get_objects")
-    def test_webhook_success(self, mock_get_objects, mock_update_object, mock_check_completeness):
+    @patch("webhook._create_ai_checker")
+    @patch("webhook._create_itop_client")
+    def test_webhook_success(self, mock_create_itop, mock_create_checker):
         # Arrange
+        mock_itop = MagicMock()
+        mock_checker = MagicMock()
+        mock_create_itop.return_value = mock_itop
+        mock_create_checker.return_value = mock_checker
+        mock_checker.check_completeness = AsyncMock()
+
         def side_effect(class_name, key, output_fields):
             if class_name == "UserRequest":
                 return {
@@ -51,8 +50,8 @@ class TestWebhook(unittest.TestCase):
                 }
             return {"code": 0, "objects": {}}
 
-        mock_get_objects.side_effect = side_effect
-        mock_check_completeness.return_value = None  # No missing info
+        mock_itop.get_objects.side_effect = side_effect
+        mock_checker.check_completeness.return_value = None  # No missing info
 
         payload = {"id": 123, "class": "UserRequest", "async": False}
 
@@ -64,14 +63,19 @@ class TestWebhook(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["status"], "success")
         self.assertEqual(data["data"]["ai_check_result"], "OK")
-        mock_update_object.assert_not_called()
+        mock_itop.update_object.assert_not_called()
 
-    @patch("webhook.checker.check_completeness")
-    @patch("webhook.itop_client.update_object")
-    @patch("webhook.itop_client.get_objects")
-    def test_webhook_missing_info(self, mock_get_objects, mock_update_object, mock_check_completeness):
+    @patch("webhook._create_ai_checker")
+    @patch("webhook._create_itop_client")
+    def test_webhook_missing_info(self, mock_create_itop, mock_create_checker):
         # Arrange
-        mock_get_objects.side_effect = [
+        mock_itop = MagicMock()
+        mock_checker = MagicMock()
+        mock_create_itop.return_value = mock_itop
+        mock_create_checker.return_value = mock_checker
+        mock_checker.check_completeness = AsyncMock()
+
+        mock_itop.get_objects.side_effect = [
             {
                 "code": 0,
                 "objects": {"UserRequest::123": {"fields": {"title": "T", "description": "D", "service_id": 1}}},
@@ -80,7 +84,7 @@ class TestWebhook(unittest.TestCase):
             {"code": 0, "objects": {}},  # No subcategory
         ]
         missing_msg = "Please provide your phone number."
-        mock_check_completeness.return_value = missing_msg
+        mock_checker.check_completeness.return_value = missing_msg
 
         payload = {"id": 123, "class": "UserRequest", "async": False}
 
@@ -91,18 +95,23 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["data"]["ai_check_result"], missing_msg)
-        mock_update_object.assert_called_once_with(
+        mock_itop.update_object.assert_called_once_with(
             class_name="UserRequest",
             key=123,
             fields={"public_log": missing_msg},
             comment="AI assistant check: missing information",
         )
 
-    @patch("webhook.checker.check_completeness")
-    @patch("webhook.itop_client.update_object")
-    @patch("webhook.itop_client.get_objects")
-    def test_webhook_incident_success(self, mock_get_objects, mock_update_object, mock_check_completeness):
+    @patch("webhook._create_ai_checker")
+    @patch("webhook._create_itop_client")
+    def test_webhook_incident_success(self, mock_create_itop, mock_create_checker):
         # Arrange
+        mock_itop = MagicMock()
+        mock_checker = MagicMock()
+        mock_create_itop.return_value = mock_itop
+        mock_create_checker.return_value = mock_checker
+        mock_checker.check_completeness = AsyncMock()
+
         def side_effect(class_name, key, output_fields):
             if class_name == "Incident":
                 return {
@@ -138,8 +147,8 @@ class TestWebhook(unittest.TestCase):
                 }
             return {"code": 0, "objects": {}}
 
-        mock_get_objects.side_effect = side_effect
-        mock_check_completeness.return_value = None
+        mock_itop.get_objects.side_effect = side_effect
+        mock_checker.check_completeness.return_value = None
 
         payload = {"id": 456, "class": "Incident", "async": False}
 
@@ -153,10 +162,12 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(data["data"]["ref"], "I-000456")
         self.assertEqual(data["data"]["ai_check_result"], "OK")
 
-    @patch("webhook.itop_client.get_objects")
-    def test_webhook_not_found(self, mock_get_objects):
+    @patch("webhook._create_itop_client")
+    def test_webhook_not_found(self, mock_create_itop):
         # Arrange
-        mock_get_objects.return_value = {"code": 0, "message": "Success", "objects": None}
+        mock_itop = MagicMock()
+        mock_create_itop.return_value = mock_itop
+        mock_itop.get_objects.return_value = {"code": 0, "message": "Success", "objects": None}
 
         payload = {"id": 999, "class": "UserRequest", "async": False}
 
@@ -174,15 +185,21 @@ class TestWebhook(unittest.TestCase):
         # Assert
         self.assertEqual(response.status_code, 422)
 
-    @patch("webhook.checker.check_completeness")
-    @patch("webhook.itop_client.get_objects")
-    def test_webhook_ai_error(self, mock_get_objects, mock_check_completeness):
+    @patch("webhook._create_ai_checker")
+    @patch("webhook._create_itop_client")
+    def test_webhook_ai_error(self, mock_create_itop, mock_create_checker):
         # Arrange
-        mock_get_objects.return_value = {
+        mock_itop = MagicMock()
+        mock_checker = MagicMock()
+        mock_create_itop.return_value = mock_itop
+        mock_create_checker.return_value = mock_checker
+        mock_checker.check_completeness = AsyncMock()
+
+        mock_itop.get_objects.return_value = {
             "code": 0,
             "objects": {"UserRequest::123": {"fields": {"title": "T", "description": "D"}}},
         }
-        mock_check_completeness.side_effect = Exception("AI failure")
+        mock_checker.check_completeness.side_effect = Exception("AI failure")
 
         payload = {"id": 123, "class": "UserRequest", "async": False}
 
@@ -210,15 +227,21 @@ class TestWebhook(unittest.TestCase):
         # In TestClient, background tasks are usually executed immediately
         mock_process_logic.assert_called_once()
 
-    @patch("webhook.checker.check_completeness")
-    @patch("webhook.itop_client.get_objects")
-    def test_webhook_async_false(self, mock_get_objects, mock_check_completeness):
+    @patch("webhook._create_ai_checker")
+    @patch("webhook._create_itop_client")
+    def test_webhook_async_false(self, mock_create_itop, mock_create_checker):
         # Arrange
-        mock_get_objects.return_value = {
+        mock_itop = MagicMock()
+        mock_checker = MagicMock()
+        mock_create_itop.return_value = mock_itop
+        mock_create_checker.return_value = mock_checker
+        mock_checker.check_completeness = AsyncMock()
+
+        mock_itop.get_objects.return_value = {
             "code": 0,
             "objects": {"UserRequest::123": {"fields": {"title": "T", "description": "D"}}},
         }
-        mock_check_completeness.return_value = None
+        mock_checker.check_completeness.return_value = None
         payload = {"id": 123, "class": "UserRequest", "async": False}
 
         # Act

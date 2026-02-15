@@ -1,37 +1,12 @@
 import logging
 import os
 
-from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from agent import ITopInfoChecker
-from itop.client import ITopClient
-
-# Load environment variables
-load_dotenv()
-
-# Logging configuration
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(level=LOG_LEVEL, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="iTop Webhook Handler")
-
-# Initialize iTop Client and Agent
-ITOP_URL = os.getenv("ITOP_URL", "http://localhost/webservices/rest.php")
-ITOP_USER = os.getenv("ITOP_USER")
-ITOP_PWD = os.getenv("ITOP_PWD")
-ITOP_TOKEN = os.getenv("ITOP_TOKEN")
-
-itop_client = ITopClient(url=ITOP_URL, auth_user=ITOP_USER, auth_pwd=ITOP_PWD, auth_token=ITOP_TOKEN)
-
-LLM_MODEL_NAME = os.getenv("LLM_MODEL", "gpt-3.5-turbo")
-checker = ITopInfoChecker(LLM_MODEL_NAME)
-
-# App configuration
-APP_HOST = os.getenv("APP_HOST", "0.0.0.0")
-APP_PORT = int(os.getenv("APP_PORT", "8000"))
+router = APIRouter()
 
 
 class WebhookPayload(BaseModel):
@@ -42,10 +17,31 @@ class WebhookPayload(BaseModel):
     is_async: bool = Field(True, alias="async", description="Whether to process the request asynchronously")
 
 
+def _create_itop_client():
+    # iTop Client initialization
+    itop_url = os.getenv("ITOP_URL", "http://localhost/webservices/rest.php")
+    itop_user = os.getenv("ITOP_USER")
+    itop_pwd = os.getenv("ITOP_PWD")
+    itop_token = os.getenv("ITOP_TOKEN")
+
+    from itop.client import ITopClient
+
+    return ITopClient(url=itop_url, auth_user=itop_user, auth_pwd=itop_pwd, auth_token=itop_token)
+
+
+def _create_ai_checker():
+    from agent import ITopInfoChecker
+
+    llm_model_name = os.getenv("LLM_MODEL", "google_genai:gemini-2.5-flash-lite")
+    return ITopInfoChecker(llm_model_name)
+
+
 def get_itop_object(class_name: str, object_id: int, output_fields: list[str]) -> dict:
     """
     Fetch a single object from iTop and return its fields.
     """
+    itop_client = _create_itop_client()
+
     logger.debug(f"Fetching object details for {class_name}::{object_id}")
     result = itop_client.get_objects(class_name=class_name, key=object_id, output_fields=output_fields)
     logger.debug(f"iTop API response for {class_name}::{object_id}: {result}")
@@ -63,6 +59,9 @@ async def process_webhook_logic(payload: WebhookPayload) -> dict:
     """
     Core logic for processing a webhook.
     """
+    itop_client = _create_itop_client()
+    checker = _create_ai_checker()
+
     # Fetch detailed information about the main object
     obj_data = get_itop_object(
         class_name=payload.class_name,
@@ -128,7 +127,7 @@ async def process_webhook_logic(payload: WebhookPayload) -> dict:
     return obj_data
 
 
-@app.post("/webhook")
+@router.post("/webhook")
 async def handle_webhook(payload: WebhookPayload, background_tasks: BackgroundTasks):
     """
     Handle webhook from iTop when an object is created.
@@ -149,9 +148,3 @@ async def handle_webhook(payload: WebhookPayload, background_tasks: BackgroundTa
         if isinstance(e, HTTPException):
             raise e
         raise HTTPException(status_code=500, detail=str(e))
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host=APP_HOST, port=APP_PORT)
