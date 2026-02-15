@@ -54,7 +54,7 @@ class TestWebhook(unittest.TestCase):
         mock_get_objects.side_effect = side_effect
         mock_check_completeness.return_value = None  # No missing info
 
-        payload = {"id": 123, "class": "UserRequest"}
+        payload = {"id": 123, "class": "UserRequest", "async": False}
 
         # Act
         response = self.client.post("/webhook", json=payload)
@@ -82,7 +82,7 @@ class TestWebhook(unittest.TestCase):
         missing_msg = "Please provide your phone number."
         mock_check_completeness.return_value = missing_msg
 
-        payload = {"id": 123, "class": "UserRequest"}
+        payload = {"id": 123, "class": "UserRequest", "async": False}
 
         # Act
         response = self.client.post("/webhook", json=payload)
@@ -141,7 +141,7 @@ class TestWebhook(unittest.TestCase):
         mock_get_objects.side_effect = side_effect
         mock_check_completeness.return_value = None
 
-        payload = {"id": 456, "class": "Incident"}
+        payload = {"id": 456, "class": "Incident", "async": False}
 
         # Act
         response = self.client.post("/webhook", json=payload)
@@ -158,7 +158,7 @@ class TestWebhook(unittest.TestCase):
         # Arrange
         mock_get_objects.return_value = {"code": 0, "message": "Success", "objects": None}
 
-        payload = {"id": 999, "class": "UserRequest"}
+        payload = {"id": 999, "class": "UserRequest", "async": False}
 
         # Act
         response = self.client.post("/webhook", json=payload)
@@ -184,7 +184,7 @@ class TestWebhook(unittest.TestCase):
         }
         mock_check_completeness.side_effect = Exception("AI failure")
 
-        payload = {"id": 123, "class": "UserRequest"}
+        payload = {"id": 123, "class": "UserRequest", "async": False}
 
         # Act
         response = self.client.post("/webhook", json=payload)
@@ -193,6 +193,57 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["data"]["ai_check_result"], "Error")
+
+    @patch("webhook.process_webhook_logic")
+    def test_webhook_async_true(self, mock_process_logic):
+        # Arrange
+        payload = {"id": 123, "class": "UserRequest", "async": True}
+
+        # Act
+        response = self.client.post("/webhook", json=payload)
+
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["status"], "accepted")
+        self.assertEqual(data["message"], "Webhook processing started in background")
+        # In TestClient, background tasks are usually executed immediately
+        mock_process_logic.assert_called_once()
+
+    @patch("webhook.checker.check_completeness")
+    @patch("webhook.itop_client.get_objects")
+    def test_webhook_async_false(self, mock_get_objects, mock_check_completeness):
+        # Arrange
+        mock_get_objects.return_value = {
+            "code": 0,
+            "objects": {"UserRequest::123": {"fields": {"title": "T", "description": "D"}}},
+        }
+        mock_check_completeness.return_value = None
+        payload = {"id": 123, "class": "UserRequest", "async": False}
+
+        # Act
+        response = self.client.post("/webhook", json=payload)
+
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["status"], "success")
+        self.assertEqual(data["data"]["ai_check_result"], "OK")
+
+    @patch("webhook.process_webhook_logic")
+    def test_webhook_async_default(self, mock_process_logic):
+        # Arrange
+        # By default async should be True
+        payload = {"id": 123, "class": "UserRequest"}
+
+        # Act
+        response = self.client.post("/webhook", json=payload)
+
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["status"], "accepted")
+        mock_process_logic.assert_called_once()
 
 
 if __name__ == "__main__":
