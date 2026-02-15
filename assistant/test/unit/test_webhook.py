@@ -67,6 +67,61 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(mock_get_objects.call_count, 3)
 
     @patch("webhook.itop_client.get_objects")
+    def test_webhook_incident_success(self, mock_get_objects):
+        # Arrange
+        def side_effect(class_name, key, output_fields):
+            if class_name == "Incident":
+                return {
+                    "code": 0,
+                    "message": "Success",
+                    "objects": {
+                        "Incident::456": {
+                            "fields": {
+                                "ref": "I-000456",
+                                "title": "Server down",
+                                "description": "Production server is unreachable",
+                                "service_id": 10,
+                                "servicesubcategory_id": 20,
+                            }
+                        }
+                    },
+                }
+            elif class_name == "Service":
+                return {
+                    "code": 0,
+                    "message": "Success",
+                    "objects": {
+                        "Service::10": {"fields": {"name": "Infrastructure Support", "description": "Server support"}}
+                    },
+                }
+            elif class_name == "ServiceSubcategory":
+                return {
+                    "code": 0,
+                    "message": "Success",
+                    "objects": {
+                        "ServiceSubcategory::20": {"fields": {"name": "Server fix", "description": "Hardware fix"}}
+                    },
+                }
+            return {"code": 0, "objects": {}}
+
+        mock_get_objects.side_effect = side_effect
+
+        payload = {"id": 456, "class": "Incident"}
+
+        # Act
+        response = self.client.post("/webhook", json=payload)
+
+        # Assert
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["status"], "success")
+        self.assertEqual(data["data"]["ref"], "I-000456")
+        self.assertEqual(data["data"]["service_details"]["name"], "Infrastructure Support")
+        self.assertEqual(data["data"]["servicesubcategory_details"]["name"], "Server fix")
+
+        self.assertEqual(mock_get_objects.call_count, 3)
+
+    @patch("webhook.itop_client.get_objects")
     def test_webhook_not_found(self, mock_get_objects):
         # Arrange
         mock_get_objects.return_value = {"code": 0, "message": "Success", "objects": None}

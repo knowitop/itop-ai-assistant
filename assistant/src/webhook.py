@@ -71,8 +71,8 @@ async def handle_webhook(payload: WebhookPayload):
         if not obj_data:
             raise HTTPException(status_code=404, detail=f"Object {payload.class_name}::{payload.id} not found in iTop")
 
-        # If it's a UserRequest, try to fetch Service and ServiceSubcategory details
-        if payload.class_name == "UserRequest":
+        # If it's a UserRequest or Incident, try to fetch Service and ServiceSubcategory details
+        if payload.class_name in ["UserRequest", "Incident"]:
             service_id = obj_data.get("service_id")
             if service_id:
                 service_data = get_itop_object(
