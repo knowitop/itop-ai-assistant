@@ -1,16 +1,17 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app import app
 from fastapi.testclient import TestClient
+
+from main import app
 
 
 class TestWebhook(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
 
-    @patch("webhook._create_ai_checker")
-    @patch("webhook._create_itop_client")
+    @patch("router._create_ai_checker")
+    @patch("router._create_itop_client")
     def test_webhook_success(self, mock_create_itop, mock_create_checker):
         # Arrange
         mock_itop = MagicMock()
@@ -65,8 +66,8 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(data["data"]["ai_check_result"], "OK")
         mock_itop.update_object.assert_not_called()
 
-    @patch("webhook._create_ai_checker")
-    @patch("webhook._create_itop_client")
+    @patch("router._create_ai_checker")
+    @patch("router._create_itop_client")
     def test_webhook_missing_info(self, mock_create_itop, mock_create_checker):
         # Arrange
         mock_itop = MagicMock()
@@ -102,8 +103,8 @@ class TestWebhook(unittest.TestCase):
             comment="AI assistant check: missing information",
         )
 
-    @patch("webhook._create_ai_checker")
-    @patch("webhook._create_itop_client")
+    @patch("router._create_ai_checker")
+    @patch("router._create_itop_client")
     def test_webhook_incident_success(self, mock_create_itop, mock_create_checker):
         # Arrange
         mock_itop = MagicMock()
@@ -162,7 +163,7 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(data["data"]["ref"], "I-000456")
         self.assertEqual(data["data"]["ai_check_result"], "OK")
 
-    @patch("webhook._create_itop_client")
+    @patch("router._create_itop_client")
     def test_webhook_not_found(self, mock_create_itop):
         # Arrange
         mock_itop = MagicMock()
@@ -185,8 +186,8 @@ class TestWebhook(unittest.TestCase):
         # Assert
         self.assertEqual(response.status_code, 422)
 
-    @patch("webhook._create_ai_checker")
-    @patch("webhook._create_itop_client")
+    @patch("router._create_ai_checker")
+    @patch("router._create_itop_client")
     def test_webhook_ai_error(self, mock_create_itop, mock_create_checker):
         # Arrange
         mock_itop = MagicMock()
@@ -211,7 +212,7 @@ class TestWebhook(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["data"]["ai_check_result"], "Error")
 
-    @patch("webhook.process_webhook_logic")
+    @patch("router.process_webhook_logic")
     def test_webhook_async_true(self, mock_process_logic):
         # Arrange
         payload = {"id": 123, "class": "UserRequest", "async": True}
@@ -227,8 +228,8 @@ class TestWebhook(unittest.TestCase):
         # In TestClient, background tasks are usually executed immediately
         mock_process_logic.assert_called_once()
 
-    @patch("webhook._create_ai_checker")
-    @patch("webhook._create_itop_client")
+    @patch("router._create_ai_checker")
+    @patch("router._create_itop_client")
     def test_webhook_async_false(self, mock_create_itop, mock_create_checker):
         # Arrange
         mock_itop = MagicMock()
@@ -253,7 +254,7 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(data["status"], "success")
         self.assertEqual(data["data"]["ai_check_result"], "OK")
 
-    @patch("webhook.process_webhook_logic")
+    @patch("router.process_webhook_logic")
     def test_webhook_async_default(self, mock_process_logic):
         # Arrange
         # By default async should be True

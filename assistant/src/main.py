@@ -4,7 +4,7 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI
 
-from webhook import router
+from router import router
 
 # Load environment variables
 load_dotenv()
