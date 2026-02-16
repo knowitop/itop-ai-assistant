@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 from fastapi.testclient import TestClient
 
@@ -63,6 +64,11 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["status"], "success")
+        self.assertIn("processing_id", data)
+        try:
+            UUID(data["processing_id"])
+        except ValueError:
+            self.fail("processing_id is not a valid UUID")
         self.assertEqual(data["data"]["ai_check_result"], "OK")
         mock_itop.update_object.assert_not_called()
 
@@ -95,6 +101,11 @@ class TestWebhook(unittest.TestCase):
         # Assert
         self.assertEqual(response.status_code, 200)
         data = response.json()
+        self.assertIn("processing_id", data)
+        try:
+            UUID(data["processing_id"])
+        except ValueError:
+            self.fail("processing_id is not a valid UUID")
         self.assertEqual(data["data"]["ai_check_result"], missing_msg)
         mock_itop.update_object.assert_called_once_with(
             class_name="UserRequest",
@@ -159,6 +170,11 @@ class TestWebhook(unittest.TestCase):
         # Assert
         self.assertEqual(response.status_code, 200)
         data = response.json()
+        self.assertIn("processing_id", data)
+        try:
+            UUID(data["processing_id"])
+        except ValueError:
+            self.fail("processing_id is not a valid UUID")
         self.assertEqual(data["status"], "success")
         self.assertEqual(data["data"]["ref"], "I-000456")
         self.assertEqual(data["data"]["ai_check_result"], "OK")
@@ -210,6 +226,11 @@ class TestWebhook(unittest.TestCase):
         # Assert
         self.assertEqual(response.status_code, 200)
         data = response.json()
+        self.assertIn("processing_id", data)
+        try:
+            UUID(data["processing_id"])
+        except ValueError:
+            self.fail("processing_id is not a valid UUID")
         self.assertEqual(data["data"]["ai_check_result"], "Error")
 
     @patch("router.process_webhook_logic")
@@ -224,6 +245,11 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["status"], "accepted")
+        self.assertIn("processing_id", data)
+        try:
+            UUID(data["processing_id"])
+        except ValueError:
+            self.fail("processing_id is not a valid UUID")
         self.assertEqual(data["message"], "Webhook processing started in background")
         # In TestClient, background tasks are usually executed immediately
         mock_process_logic.assert_called_once()
@@ -252,6 +278,11 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["status"], "success")
+        self.assertIn("processing_id", data)
+        try:
+            UUID(data["processing_id"])
+        except ValueError:
+            self.fail("processing_id is not a valid UUID")
         self.assertEqual(data["data"]["ai_check_result"], "OK")
 
     @patch("router.process_webhook_logic")
@@ -266,6 +297,11 @@ class TestWebhook(unittest.TestCase):
         # Assert
         self.assertEqual(response.status_code, 200)
         data = response.json()
+        self.assertIn("processing_id", data)
+        try:
+            UUID(data["processing_id"])
+        except ValueError:
+            self.fail("processing_id is not a valid UUID")
         self.assertEqual(data["status"], "accepted")
         mock_process_logic.assert_called_once()
 

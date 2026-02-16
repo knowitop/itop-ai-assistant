@@ -1,5 +1,6 @@
 import logging
 import os
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -55,10 +56,12 @@ def get_itop_object(class_name: str, object_id: int, output_fields: list[str]) -
     return objects[obj_key]["fields"]
 
 
-async def process_webhook_logic(payload: WebhookPayload) -> dict:
+async def process_webhook_logic(payload: WebhookPayload, processing_id: UUID) -> dict:
     """
     Core logic for processing a webhook.
     """
+    prefix = f"[{str(processing_id)}] "
+    object_label = f"{payload.class_name}::{payload.id}"
     itop_client = _create_itop_client()
     checker = _create_ai_checker()
 
@@ -70,13 +73,14 @@ async def process_webhook_logic(payload: WebhookPayload) -> dict:
     )
 
     if not obj_data:
-        raise HTTPException(status_code=404, detail=f"Object {payload.class_name}::{payload.id} not found in iTop")
+        raise HTTPException(status_code=404, detail=f"Object {object_label} not found in iTop")
 
     # If it's a UserRequest or Incident, try to fetch Service and ServiceSubcategory details
     if payload.class_name in ["UserRequest", "Incident"]:
         service_desc = ""
         subcategory_desc = ""
 
+        logger.debug(f"{prefix}Fetching related service data if needed for {object_label}")
         service_id = obj_data.get("service_id")
         if service_id:
             service_data = get_itop_object(
@@ -107,7 +111,7 @@ async def process_webhook_logic(payload: WebhookPayload) -> dict:
             )
 
             if missing_info:
-                logger.info(f"AI found missing info for {payload.class_name}::{payload.id}: {missing_info}")
+                logger.info(f"{prefix}AI found missing info for {object_label}: {missing_info}")
                 # Update iTop object with a log entry
                 itop_client.update_object(
                     class_name=payload.class_name,
@@ -117,13 +121,12 @@ async def process_webhook_logic(payload: WebhookPayload) -> dict:
                 )
                 obj_data["ai_check_result"] = missing_info
             else:
-                logger.info(f"AI check passed for {payload.class_name}::{payload.id}")
+                logger.info(f"{prefix}AI check passed for {object_label}")
                 obj_data["ai_check_result"] = "OK"
         except Exception as ai_err:
-            logger.error(f"AI completeness check failed for {payload.class_name}::{payload.id}: {ai_err}")
+            logger.error(f"{prefix}AI completeness check failed for {object_label}: {ai_err}")
             obj_data["ai_check_result"] = "Error"
 
-    logger.info(f"Successfully processed webhook for {payload.class_name}::{payload.id}")
     return obj_data
 
 
@@ -132,19 +135,27 @@ async def handle_webhook(payload: WebhookPayload, background_tasks: BackgroundTa
     """
     Handle webhook from iTop when an object is created.
     """
-    logger.debug(f"Received webhook: {payload}")
+    processing_id = uuid4()
+    prefix = f"[{str(processing_id)}] "
+    object_label = f"{payload.class_name}::{payload.id}"
+    logger.debug(f"{prefix}Received webhook: {payload}")
     try:
         if payload.is_async:
-            logger.info(f"Processing webhook asynchronously for {payload.class_name}::{payload.id}")
-            background_tasks.add_task(process_webhook_logic, payload)
-            return {"status": "accepted", "message": "Webhook processing started in background"}
+            logger.info(f"{prefix}Processing webhook asynchronously for {object_label}")
+            background_tasks.add_task(process_webhook_logic, payload, processing_id)
+            return {
+                "status": "accepted",
+                "processing_id": str(processing_id),
+                "message": "Webhook processing started in background",
+            }
 
         # Synchronous processing
-        obj_data = await process_webhook_logic(payload)
-        return {"status": "success", "data": obj_data}
+        logger.info(f"{prefix}Processing webhook synchronously for {object_label}")
+        obj_data = await process_webhook_logic(payload, processing_id)
+        return {"status": "success", "processing_id": str(processing_id), "data": obj_data}
 
     except Exception as e:
-        logger.error(f"Error processing webhook: {str(e)}", exc_info=True)
+        logger.error(f"{prefix}Error processing webhook: {str(e)}", exc_info=True)
         if isinstance(e, HTTPException):
             raise e
         raise HTTPException(status_code=500, detail=str(e))
