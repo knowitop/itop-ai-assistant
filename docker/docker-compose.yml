@@ -8,5 +8,15 @@ services:
       - itop-db:/var/lib/mysql
     environment:
       MYSQL_PASS: 123456
+
+  assistant:
+    build:
+      context: ../assistant
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8000"
+#    env_file:
+#      - .env
+
 volumes:
   itop-db:
