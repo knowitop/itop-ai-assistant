@@ -9,14 +9,25 @@ services:
     environment:
       MYSQL_PASS: 123456
 
+  redis:
+    image: redis:8-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+
   assistant:
     build:
       context: ../assistant
       dockerfile: Dockerfile
     ports:
       - "8001:8000"
+    depends_on:
+      - redis
 #    env_file:
 #      - .env
 
 volumes:
   itop-db:
+  redis-data:

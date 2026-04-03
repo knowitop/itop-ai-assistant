@@ -6,6 +6,8 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from state.ticket_state import StateUnavailableError, TicketStateManager
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -29,6 +31,14 @@ def _create_itop_client():
         auth_pwd=os.getenv("ITOP_PWD"),
         auth_token=os.getenv("ITOP_TOKEN"),
     )
+
+
+def _create_state_manager() -> TicketStateManager:
+    import redis.asyncio as aioredis
+
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    client = aioredis.from_url(redis_url, decode_responses=True)
+    return TicketStateManager(client)
 
 
 def _create_ai_checker():
@@ -93,6 +103,12 @@ async def process_webhook_logic(payload: WebhookPayload, processing_id: UUID) ->
                     {"id": payload.id},
                     {"public_log": {"add_item": {"message": missing_info, "user_login": bot_user}}},
                 )
+                ticket_ref = obj_data.get("ref") or str(payload.id)
+                try:
+                    state_manager = _create_state_manager()
+                    await state_manager.increment_rounds(ticket_ref)
+                except StateUnavailableError as e:
+                    logger.warning(f"{prefix}Could not increment rounds for {ticket_ref}: {e}")
                 obj_data["ai_check_result"] = missing_info
             else:
                 logger.info(f"{prefix}AI check passed for {object_label}")

@@ -12,11 +12,13 @@ dependencies = [
     "lxml>=5.0.0",
     "pydantic>=2.12.5",
     "python-dotenv>=1.2.1",
-    "uvicorn>=0.40.0",
+    "redis>=7.4.0",
+    "uvicorn>=0.43.0",
 ]
 
 [dependency-groups]
 dev = [
+    "fakeredis>=2.0.0",
     "lxml-stubs>=0.5.1",
     "mypy>=1.19.1",
     "pre-commit>=4.5.1",

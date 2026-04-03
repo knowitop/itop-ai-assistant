@@ -63,13 +63,15 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(data["data"]["ai_check_result"], "OK")
         schemas["UserRequest"].update.assert_not_called()
 
+    @patch("router._create_state_manager")
     @patch("router._create_ai_checker")
     @patch("router._create_itop_client")
-    def test_webhook_missing_info(self, mock_create_itop, mock_create_checker):
+    def test_webhook_missing_info(self, mock_create_itop, mock_create_checker, mock_create_state_manager):
         schemas = {
             "UserRequest": _make_schema_mock(
                 find_return={
                     "id": "123",
+                    "ref": "R-000123",
                     "title": "T",
                     "description": "D",
                     "service_id": 1,
@@ -85,6 +87,10 @@ class TestWebhook(unittest.TestCase):
         mock_checker.check_completeness = AsyncMock(return_value=missing_msg)
         mock_create_checker.return_value = mock_checker
 
+        mock_state = MagicMock()
+        mock_state.increment_rounds = AsyncMock()
+        mock_create_state_manager.return_value = mock_state
+
         response = self.client.post("/webhook", json={"id": 123, "class": "UserRequest", "async": False})
 
         self.assertEqual(response.status_code, 200)
@@ -95,6 +101,7 @@ class TestWebhook(unittest.TestCase):
         call_args = schemas["UserRequest"].update.call_args
         self.assertEqual(call_args[0][0], {"id": 123})
         self.assertEqual(call_args[0][1]["public_log"]["add_item"]["message"], missing_msg)
+        mock_state.increment_rounds.assert_called_once_with("R-000123")
 
     @patch("router._create_ai_checker")
     @patch("router._create_itop_client")
