@@ -57,18 +57,18 @@ uvicorn src.main:app --host 0.0.0.0 --port 8001 --reload
 
 **Run tests:**
 ```bash
-pytest                          # all tests
-pytest test/unit/test_router.py # single file
-pytest -k "test_name"           # single test by name
-pytest --cov=src                # with coverage
+uv run pytest                          # all tests
+uv run pytest test/unit/test_router.py # single file
+uv run pytest -k "test_name"           # single test by name
+uv run pytest --cov=src                # with coverage
 ```
 
 **Lint and format:**
 ```bash
-ruff check .    # lint
-ruff format .   # format
-mypy src/       # type check
-pre-commit run --all-files
+uv run ruff check .    # lint
+uv run ruff format .   # format
+uv run mypy src/       # type check
+uv run pre-commit run --all-files
 ```
 
 **Docker (full stack — iTop + assistant):**
@@ -105,10 +105,10 @@ in background via `asyncio.create_task`.
 
 ### LLM Stack
 
-**Current:** LangChain `init_chat_model` + Google Gemini (`gemini-2.5-flash-lite`)
-via `LLM_MODEL` env var.
+**Current:** LangChain `ChatOpenAI` pointed at any OpenAI-compatible endpoint
+via `LLM_BASE_URL` env var (e.g. LM Studio locally, LiteLLM Proxy in prod).
 
-**Direction:** migrating to **LiteLLM** (provider-agnostic proxy) +
+**Direction:** add **LiteLLM Proxy** as a provider-agnostic routing layer +
 **LangGraph** (stateful agent graphs) as complexity grows. Keep this in mind
 when adding new agent logic — prefer LangGraph patterns over plain LangChain
 chains for anything with branching or multi-step logic.
@@ -120,11 +120,12 @@ chains for anything with branching or multi-step logic.
 | `ITOP_URL` | iTop REST API base URL |
 | `ITOP_USER` / `ITOP_PWD` | iTop credentials (alternative: `ITOP_TOKEN`) |
 | `ITOP_AI_USER` | iTop username the AI posts comments as |
-| `LLM_MODEL` | LangChain model string, e.g. `google_genai:gemini-2.5-flash-lite` |
-| `GOOGLE_API_KEY` | Google Gemini API key |
+| `LLM_BASE_URL` | OpenAI-compatible endpoint (LM Studio, LiteLLM Proxy, OpenAI, etc.) |
+| `LLM_MODEL` | Model name as exposed by the endpoint |
+| `LLM_API_KEY` | API key for the endpoint (`lm-studio` for LM Studio, real key for cloud) |
 | `LANGSMITH_TRACING` / `LANGSMITH_API_KEY` | Optional LangSmith observability |
 
-See `docker/.env.dist` for a full template.
+See `docker/.env.dist` for a full template with examples for each provider.
 
 ## Testing Notes
 

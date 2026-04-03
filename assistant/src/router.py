@@ -33,8 +33,10 @@ def _create_itop_client():
 def _create_ai_checker():
     from agent import ITopInfoChecker
 
-    llm_model_name = os.getenv("LLM_MODEL", "google_genai:gemini-2.5-flash-lite")
-    return ITopInfoChecker(llm_model_name)
+    llm_model_name = os.getenv("LLM_MODEL")
+    llm_base_url = os.getenv("LLM_BASE_URL")
+    llm_api_key = os.getenv("LLM_API_KEY")
+    return ITopInfoChecker(model_name=llm_model_name, base_url=llm_base_url, api_key=llm_api_key)
 
 
 def get_itop_object(class_name: str, object_id: int, output_fields: list[str]) -> dict:

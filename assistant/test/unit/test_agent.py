@@ -1,14 +1,18 @@
 import unittest
 from unittest.mock import patch
 
+from pydantic import SecretStr
+
 from agent import ITopInfoChecker
+
+BASE_URL = "http://localhost:1234/v1"
+MODEL = "qwen2.5-7b-instruct"
 
 
 class TestAgent(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.model_name = "google_genai:gemini-1.5-flash"
-        with patch.dict("os.environ", {"GOOGLE_API_KEY": "fake-key"}):
-            self.checker = ITopInfoChecker(model_name=self.model_name)
+        with patch("agent.ChatOpenAI"):
+            self.checker = ITopInfoChecker(model_name=MODEL, base_url=BASE_URL)
 
     @patch("langchain_core.runnables.base.RunnableSequence.ainvoke")
     async def test_check_completeness_ok(self, mock_invoke):
@@ -29,27 +33,18 @@ class TestAgent(unittest.IsolatedAsyncioTestCase):
         # Assert
         self.assertEqual(result, missing_msg)
 
-    @patch("agent.init_chat_model")
-    def test_provider_initialization(self, mock_init):
-        # Test Google
-        model_google = "google_genai:gemini-1.5-flash"
-        with patch.dict("os.environ", {"GOOGLE_API_KEY": "google-key"}):
-            checker = ITopInfoChecker(model_name=model_google)
-            self.assertEqual(checker.model_name, model_google)
-            mock_init.assert_called_with(model=model_google)
+    @patch("agent.ChatOpenAI")
+    def test_provider_initialization(self, mock_chat_openai):
+        checker = ITopInfoChecker(model_name=MODEL, base_url=BASE_URL, api_key=SecretStr("test-key"))
+        self.assertEqual(checker.model_name, MODEL)
+        self.assertEqual(checker.base_url, BASE_URL)
+        mock_chat_openai.assert_called_with(model=MODEL, base_url=BASE_URL, api_key=SecretStr("test-key"))
 
-        # Test OpenAI
-        model_openai = "openai:gpt-4o-mini"
-        with patch.dict("os.environ", {"OPENAI_API_KEY": "openai-key"}):
-            checker = ITopInfoChecker(model_name=model_openai)
-            self.assertEqual(checker.model_name, model_openai)
-            mock_init.assert_called_with(model=model_openai)
-
-    @patch("agent.init_chat_model")
-    def test_invalid_model(self, mock_init):
-        mock_init.side_effect = Exception("Unsupported model")
+    @patch("agent.ChatOpenAI")
+    def test_invalid_model(self, mock_chat_openai):
+        mock_chat_openai.side_effect = Exception("Connection refused")
         with self.assertRaises(Exception):
-            ITopInfoChecker(model_name="unknown:model")
+            ITopInfoChecker(model_name="nonexistent-model", base_url=BASE_URL)
 
     @patch("langchain_core.runnables.base.RunnableSequence.ainvoke")
     async def test_check_completeness_error(self, mock_invoke):

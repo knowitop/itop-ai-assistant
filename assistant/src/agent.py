@@ -1,9 +1,10 @@
 import logging
 from typing import Optional
 
-from langchain.chat_models import init_chat_model
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from pydantic import SecretStr
 
 from prompts import SYSTEM_PROMPT, USER_PROMPT
 
@@ -11,23 +12,28 @@ logger = logging.getLogger(__name__)
 
 
 class ITopInfoChecker:
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, base_url: str, api_key: SecretStr | None = None):
         """
-        Initialize the AI checker with a specified LLM.
+        Initialize the AI checker with an LM Studio (OpenAI-compatible) model.
 
-        :param model_name: Full model name (e.g., 'google_genai:gemini-1.5-flash').
+        :param model_name: Model name as shown in LM Studio (e.g., 'qwen2.5-7b-instruct').
+        :param base_url: LM Studio API base URL (e.g., 'http://localhost:1234/v1').
+        :param api_key: API key — LM Studio does not validate it, any string works.
         """
         self.model_name = model_name
+        self.base_url = base_url
+        self.api_key = api_key
 
         self.llm = self._init_llm()
         self._setup_chain()
 
     def _init_llm(self):
-        """
-        Initialize LLM using langchain's init_chat_model for vendor-agnostic support.
-        """
         try:
-            return init_chat_model(model=self.model_name)
+            return ChatOpenAI(
+                model=self.model_name,
+                base_url=self.base_url,
+                api_key=self.api_key,
+            )
         except Exception as e:
             logger.error(f"Failed to initialize LLM for model {self.model_name}: {e}")
             raise
