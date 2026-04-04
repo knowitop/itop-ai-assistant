@@ -22,7 +22,7 @@ class WebhookPayload(BaseModel):
 
 
 def _create_itop_client():
-    from itoptop import Itop
+    from itop_client import Itop
 
     return Itop(
         url=os.getenv("ITOP_URL", "http://localhost/webservices/rest.php"),

@@ -1,6 +1,6 @@
 """
 Async Python library for iTop REST API.
-Forked from itoptop (github.com/jonatasrenan/itoptop), rewritten with httpx.
+Forked from itoptop (github.com/jonatasrenan/itoptop) and rewritten with httpx.
 """
 
 from .exceptions import ItopError as ItopError
