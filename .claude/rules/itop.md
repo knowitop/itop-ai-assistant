@@ -13,8 +13,14 @@ via that API — no direct database access, no PHP code.
 **Base URL pattern:** `{ITOP_URL}/webservices/rest.php?version=1.3`
 
 All requests are POST with `multipart/form-data`:
-- `auth_user` / `auth_pwd` — credentials
+- `auth_user` / `auth_pwd` — credentials (basic auth)
+- `auth_token` — application or personal token (alternative to user/pwd)
 - `json_data` — JSON string with the operation
+
+**Access control:** the iTop user must have the `REST Services User` profile.
+Administrators do NOT get REST access by default — it must be explicitly granted.
+- `core/get` and `core/get_related` require **bulk read** privilege
+- Modifying operations require **write access** AND **bulk write** privilege
 
 **Core operations:**
 ```json
@@ -29,7 +35,7 @@ All requests are POST with `multipart/form-data`:
 // Update object (append to public log)
 {
   "operation": "core/update",
-  "class": "UserRequest", 
+  "class": "UserRequest",
   "key": 123,
   "fields": {
     "public_log": {
@@ -56,6 +62,67 @@ All requests are POST with `multipart/form-data`:
 }
 ```
 `code: 0` means success. Any other code is an error.
+When no objects match, `objects` is `null` (not `{}`).
+
+**Error codes:**
+
+| Code | Meaning |
+|------|---------|
+| 0 | OK |
+| 1 | UNAUTHORIZED — insufficient credentials or rights |
+| 100 | INTERNAL_ERROR — server-side failure |
+
+## Key Specification Formats
+
+Objects can be identified in three ways:
+```json
+// 1. Numeric ID
+"key": 123
+
+// 2. OQL query string
+"key": "SELECT UserRequest WHERE status = 'new'"
+
+// 3. Criteria object (AND of all fields)
+"key": {"name": "Smith", "first_name": "John"}
+```
+
+## output_fields
+
+- `"field1,field2"` — specific fields
+- `"*"` — all attributes of the class
+- `"*+"` — all attributes including subclass-specific ones
+
+Avoid returning `*_list` fields (link sets) unless needed — can cause memory
+exhaustion on large datasets.
+
+## Case Log Formats (public_log / private_log)
+
+Three formats for writing to case logs:
+
+```json
+// Shorthand (message only, posted as current auth user)
+{"public_log": "Comment text"}
+
+// Rich (explicit user and optional date)
+{
+  "public_log": {
+    "add_item": {
+      "message": "Text of the comment",
+      "user_login": "ai-assistant",
+      "date": "2024-01-15 10:30:00"
+    }
+  }
+}
+
+// Full (replace entire log — use with extreme caution)
+{
+  "public_log": {
+    "items": [
+      {"date": "...", "user_login": "...", "message": "..."}
+    ]
+  }
+}
+```
 
 ## Key Object Classes
 
@@ -142,7 +209,8 @@ fields.
 
 ## Pagination
 
-By default iTop returns all matching objects. For large result sets use:
+By default iTop returns all matching objects. For large result sets use `limit`
+and `page` (page number starting from **1**, not 0):
 ```json
 {
   "operation": "core/get",
@@ -150,15 +218,20 @@ By default iTop returns all matching objects. For large result sets use:
   "key": "SELECT UserRequest WHERE status = 'new'",
   "output_fields": "id,title,status",
   "limit": 50,
-  "offset": 0
+  "page": 1
 }
 ```
+
+Fetch next page with `"page": 2`, etc. Stop when the returned batch is smaller
+than `limit`.
 
 ## Common Pitfalls
 
 - Always check `code == 0` in the response before accessing `objects`
-- `objects` can be empty (`{}`) even with `code: 0` — means no records found
+- `objects` is `null` (not `{}`) when no records match — check for null/None
 - Field values for linked objects come as dicts: `{"id": 5, "name": "Foo"}`,
   not plain strings
 - Public log entries are appended, never replaced — never try to overwrite log
 - Ticket `id` in webhook is an integer; iTop API accepts both int and string
+- `core/update` does NOT support bulk updates — one object per call
+- Admins need `REST Services User` profile explicitly — it's not granted by default
