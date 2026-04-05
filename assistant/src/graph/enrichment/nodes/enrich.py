@@ -57,7 +57,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
 
     await runtime.context.itop_client.schema(ticket["finalclass"]).update(
         {"id": ticket["id"]},
-        {"private_log": formatted},
+        {"private_log": {"add_item": {"message": formatted, "format": "text"}}},
     )
     await runtime.context.state_manager.mark_done(ticket["ref"])
 

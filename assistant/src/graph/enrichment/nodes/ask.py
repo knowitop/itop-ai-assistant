@@ -13,7 +13,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     question = state["question"]
 
     await runtime.context.itop_client.schema(ticket["finalclass"]).update(
-        {"id": ticket["id"]}, {"public_log": question}
+        {"id": ticket["id"]}, {"public_log": {"add_item": {"message": question, "format": "text"}}}
     )
     await runtime.context.state_manager.increment_rounds(ticket["ref"])
 
