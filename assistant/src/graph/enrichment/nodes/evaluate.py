@@ -1,12 +1,14 @@
 import logging
 import os
+from pathlib import Path
 from typing import Optional
 
+import yaml
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langgraph.runtime import Runtime
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from ..context import GraphContext
 from ..state import Action, EnrichmentState
@@ -17,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 MAX_ROUNDS = 2
 
+_PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+
 _llm = ChatOpenAI(
     model_name=os.getenv("LLM_MODEL"),
     api_key=SecretStr(os.getenv("LLM_API_KEY")),
@@ -24,47 +28,27 @@ _llm = ChatOpenAI(
 )
 
 
-def _system_prompt(service: dict, subcategory: dict) -> str:
-    return f"""
-You are an IT support assistant. Your task is to evaluate whether a support
-ticket contains enough information for an engineer to start working on it.
-
-Service: {service["name"]}
-Service description: {service["description"]}
-Service subcategory: {subcategory["name"]}
-Subcategory description: {subcategory["description"]}
-
-Rules:
-- If the ticket is sufficient, set sufficient=true.
-- If critical information is missing, set sufficient=false and ask exactly one question — the most important missing piece.
-- Write the question in the same language as the ticket.
-- Be concise and friendly.
-- Do not ask for information that is already in the description.
-""".strip()
-
-
-def _user_prompt(ticket: dict) -> str:
-    # TODO: идентификатор автора комментария и тикета должен совпадать, чтобы LLM поняла, где его ответ
-    log_text = (
-        "\n".join(f"[{e['user_login']} at {e['date']}]: {e['message']}" for e in ticket["public_log"]["entries"])
-        or "No comments yet"
-    )
-
-    return f"""
-User: {ticket["caller_id_friendlyname"]}
-
-Title: {ticket["title"]}
-Description: {ticket["description"]}
-
-Conversation so far:
-{log_text}
-""".strip()
-
-
 class EvaluationResult(BaseModel):
     sufficient: bool = Field(description="True if the ticket has enough information for the engineer to start working.")
     question: Optional[str] = Field(
-        default=None, description="Single clarifying question to ask the user. Required if sufficient=False."
+        default=None, description="Single message covering all missing items. Required if sufficient=False."
+    )
+
+    @model_validator(mode="after")
+    def question_required_if_not_sufficient(self):
+        if not self.sufficient and not self.question:
+            raise ValueError("question must be provided when sufficient=False")
+        return self
+
+
+def _load_prompt(name: str) -> ChatPromptTemplate:
+    with open(_PROMPTS_DIR / name) as f:
+        data = yaml.safe_load(f)
+    return ChatPromptTemplate.from_messages(
+        [
+            ("system", data["system"]),
+            ("human", data["human"]),
+        ]
     )
 
 
@@ -75,6 +59,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     if ticket_state.rounds >= MAX_ROUNDS:
         logger.info(f"Ticket #{ticket['id']}: rounds exhausted, moving to enrich")
         return {"action": Action.ENRICH}
+
     itop_client = runtime.context.itop_client
     service = await itop_client.schema("Service").find({"id": ticket["service_id"]})
     service_subcategory = await itop_client.schema("ServiceSubcategory").find({"id": ticket["servicesubcategory_id"]})
@@ -89,14 +74,24 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
 
 
 async def _evaluate(ticket: dict, service: dict, subcategory: dict) -> EvaluationResult:
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", _system_prompt(service, subcategory)),
-            ("human", "{user_prompt}"),
-        ]
+    # TODO: идентификатор автора комментария и тикета должен совпадать, чтобы LLM поняла, где его ответ
+    log_text = (
+        "\n".join(f"[{e['user_login']} at {e['date']}]: {e['message']}" for e in ticket["public_log"]["entries"])
+        or "No comments yet"
     )
+
+    prompt = _load_prompt("evaluate.yaml")
     chain = prompt | _llm.with_structured_output(EvaluationResult)
 
-    result: EvaluationResult = await chain.ainvoke({"user_prompt": _user_prompt(ticket)})
-
-    return result
+    return await chain.ainvoke(
+        {
+            "service_name": service["name"],
+            "service_description": service["description"],
+            "subcategory_name": subcategory["name"],
+            "subcategory_description": subcategory["description"],
+            "caller_name": ticket["caller_id_friendlyname"],
+            "title": ticket["title"],
+            "description": ticket["description"],
+            "log_text": log_text,
+        }
+    )

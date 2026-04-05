@@ -13,6 +13,7 @@ dependencies = [
     "lxml>=5.0.0",
     "pydantic>=2.12.5",
     "python-dotenv>=1.2.1",
+    "pyyaml>=6.0.3",
     "redis>=7.4.0",
     "uvicorn>=0.43.0",
 ]
@@ -26,4 +27,5 @@ dev = [
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
     "ruff>=0.15.1",
+    "types-pyyaml>=6.0.12.20250915",
 ]

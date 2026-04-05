@@ -1,6 +1,8 @@
 import logging
 import os
+from pathlib import Path
 
+import yaml
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
@@ -13,6 +15,8 @@ from ..state import EnrichmentState
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+_PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 
 class EngineerNote(BaseModel):
@@ -27,6 +31,17 @@ _llm = ChatOpenAI(
     base_url=os.getenv("LLM_BASE_URL"),
     model_name=os.getenv("LLM_MODEL"),
 ).with_structured_output(EngineerNote)
+
+
+def _load_prompt(name: str) -> ChatPromptTemplate:
+    with open(_PROMPTS_DIR / name) as f:
+        data = yaml.safe_load(f)
+    return ChatPromptTemplate.from_messages(
+        [
+            ("system", data["system"]),
+            ("human", data["human"]),
+        ]
+    )
 
 
 async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
@@ -52,55 +67,26 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
 
 
 async def _generate_note(ticket: dict, service: dict, subcategory: dict) -> EngineerNote:
-    chain = (
-        ChatPromptTemplate.from_messages(
-            [
-                ("system", _system_prompt(service, subcategory)),
-                ("human", "{user_prompt}"),
-            ]
-        )
-        | _llm
-    )
-
-    return await chain.ainvoke({"user_prompt": _user_prompt(ticket)})
-
-
-def _system_prompt(service: dict, subcategory: dict) -> str:
-    return f"""
-You are an IT support assistant preparing a handoff note for an engineer.
-Summarize the ticket concisely based on the user's description and conversation.
-
-Service: {service["name"]}
-Service description: {service["description"]}
-Service subcategory: {subcategory["name"]}
-Subcategory description: {subcategory["description"]}
-
-Return a structured note with four fields:
-- problem: one sentence describing the issue
-- details: key technical details (device, OS, version, when it started)
-- already_tried: what the user has already attempted, or "Nothing mentioned"
-- attachments: description of attachments if any, or "None"
-
-Be concise. Write in the same language as the ticket.
-""".strip()
-
-
-def _user_prompt(ticket: dict) -> str:
-    # TODO: идентификатор комментария и тикета должен совпадать, чтобы LLM поняла, где его ответ
     log_text = (
         "\n".join(f"[{e['user_login']} at {e['date']}]: {e['message']}" for e in ticket["public_log"]["entries"])
         or "No comments yet"
     )
 
-    return f"""
-User: {ticket["caller_id_friendlyname"]}
+    prompt = _load_prompt("enrich.yaml")
+    chain = prompt | _llm
 
-Title: {ticket["title"]}
-Description: {ticket["description"]}
-
-Conversation so far:
-{log_text}
-""".strip()
+    return await chain.ainvoke(
+        {
+            "service_name": service["name"],
+            "service_description": service["description"],
+            "subcategory_name": subcategory["name"],
+            "subcategory_description": subcategory["description"],
+            "caller_name": ticket["caller_id_friendlyname"],
+            "title": ticket["title"],
+            "description": ticket["description"],
+            "log_text": log_text,
+        }
+    )
 
 
 def _format_note(note: EngineerNote) -> str:
