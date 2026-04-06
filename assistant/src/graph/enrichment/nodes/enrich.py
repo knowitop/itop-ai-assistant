@@ -47,12 +47,12 @@ def _load_prompt(name: str) -> ChatPromptTemplate:
 async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     ticket = state["ticket"]
 
-    itop_client = runtime.context.itop_client
+    # itop_client = runtime.context.itop_client
     # TODO: переделать в репозиторий с кешированием на короткое время
-    service = await itop_client.schema("Service").find({"id": ticket["service_id"]})
-    service_subcategory = await itop_client.schema("ServiceSubcategory").find({"id": ticket["servicesubcategory_id"]})
+    # service = await itop_client.schema("Service").find({"id": ticket["service_id"]})
+    # service_subcategory = await itop_client.schema("ServiceSubcategory").find({"id": ticket["servicesubcategory_id"]})
 
-    note = await _generate_note(ticket, service, service_subcategory)
+    note = await _generate_note(ticket)
     formatted = _format_note(note)
 
     await runtime.context.itop_client.schema(ticket["finalclass"]).update(
@@ -66,7 +66,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     return {}
 
 
-async def _generate_note(ticket: dict, service: dict, subcategory: dict) -> EngineerNote:
+async def _generate_note(ticket: dict) -> EngineerNote:
     log_text = (
         "\n".join(f"[{e['user_login']} at {e['date']}]: {e['message']}" for e in ticket["public_log"]["entries"])
         or "No comments yet"
@@ -77,10 +77,6 @@ async def _generate_note(ticket: dict, service: dict, subcategory: dict) -> Engi
 
     return await chain.ainvoke(
         {
-            "service_name": service["name"],
-            "service_description": service["description"],
-            "subcategory_name": subcategory["name"],
-            "subcategory_description": subcategory["description"],
             "caller_name": ticket["caller_id_friendlyname"],
             "title": ticket["title"],
             "description": ticket["description"],
@@ -90,8 +86,8 @@ async def _generate_note(ticket: dict, service: dict, subcategory: dict) -> Engi
 
 
 def _format_note(note: EngineerNote) -> str:
-    return f"""[AI Summary]<br>
-Problem:       {note.problem}<br>
-Details:       {note.details}<br>
-Already tried: {note.already_tried}<br>
-Attachments:   {note.attachments}<br>"""
+    return f"""[AI Summary]
+Problem:       {note.problem}
+Details:       {note.details}
+Already tried: {note.already_tried}
+Attachments:   {note.attachments}"""

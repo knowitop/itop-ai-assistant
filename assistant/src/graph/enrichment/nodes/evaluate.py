@@ -11,6 +11,8 @@ from langchain_openai import ChatOpenAI
 from langgraph.runtime import Runtime
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
+from itop_client import Itop
+
 from ..context import GraphContext
 from ..state import Action, EnrichmentState
 
@@ -42,17 +44,6 @@ class EvaluationResult(BaseModel):
         return self
 
 
-def _load_prompt(name: str) -> ChatPromptTemplate:
-    with open(_PROMPTS_DIR / name) as f:
-        data = yaml.safe_load(f)
-    return ChatPromptTemplate.from_messages(
-        [
-            ("system", data["system"]),
-            ("human", data["human"]),
-        ]
-    )
-
-
 def _load_evaluate_prompt() -> ChatPromptTemplate:
     with open(_PROMPTS_DIR / "evaluate.yaml") as f:
         data = yaml.safe_load(f)
@@ -67,17 +58,35 @@ def _load_evaluate_prompt() -> ChatPromptTemplate:
 
 async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     ticket = state["ticket"]
-    ticket_state = await runtime.context.state_manager.get(ticket["ref"])
 
+    if not _has_service_context(ticket):
+        logger.info(f"Ticket #{ticket['id']}: no service context, moving to enrich")
+        return {"action": Action.ENRICH}
+
+    ticket_state = await runtime.context.state_manager.get(ticket["ref"])
     if ticket_state.rounds >= MAX_ROUNDS:
         logger.info(f"Ticket #{ticket['id']}: rounds exhausted, moving to enrich")
         return {"action": Action.ENRICH}
 
-    itop_client = runtime.context.itop_client
-    service = await itop_client.schema("Service").find({"id": ticket["service_id"]})
-    service_subcategory = await itop_client.schema("ServiceSubcategory").find({"id": ticket["servicesubcategory_id"]})
-    ai_person = await itop_client.schema("Person").find({"id": ("=", ":current_contact_id")})
-    result = await _evaluate(ticket, service, service_subcategory, ai_person)
+    service_context = await _build_service_context(ticket, runtime.context.itop_client)
+
+    ai_person = await runtime.context.itop_client.schema("Person").find({"id": ("=", ":current_contact_id")})
+    caller_name = ticket["caller_id_friendlyname"]
+    conversation = _build_conversation(
+        ticket["public_log"].get("entries") or [], ai_person["friendlyname"], caller_name
+    )
+
+    prompt = _load_evaluate_prompt()
+    chain = prompt | _llm.with_structured_output(EvaluationResult)
+    result: EvaluationResult = await chain.ainvoke(
+        {
+            "service_context": service_context,
+            "caller_name": caller_name,
+            "title": ticket["title"],
+            "description": ticket["description"],
+            "conversation": conversation,
+        }
+    )
 
     if result.sufficient:
         logger.info(f"Ticket #{ticket['id']}: description sufficient, moving to enrich")
@@ -85,6 +94,31 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
 
     logger.info(f"Ticket #{ticket['id']}: incomplete, will ask question")
     return {"action": Action.ASK, "question": result.question}
+
+
+def _has_service_context(ticket: dict) -> bool:
+    return bool(int(ticket["service_id"]))
+
+
+async def _build_service_context(ticket: dict, itop_client: Itop) -> str:
+    service = await itop_client.schema("Service").find({"id": ticket["service_id"]})
+    service_subcategory = await itop_client.schema("ServiceSubcategory").find({"id": ticket["servicesubcategory_id"]})
+
+    parts = []
+
+    if service:
+        parts.append(f"Service: {service['name']}")
+        if service["description"]:
+            parts.append(f"Service description:\n{service['description']}")
+    if service_subcategory:
+        parts.append(f"Subcategory: {service_subcategory['name']}")
+        if service_subcategory["description"]:
+            parts.append(f"Subcategory description:\n{service_subcategory['description']}")
+
+    if not parts:
+        return "No service context provided."
+
+    return "\n".join(parts)
 
 
 def _build_conversation(entries: list, ai_name: str, caller_name: str) -> list:
@@ -98,25 +132,3 @@ def _build_conversation(entries: list, ai_name: str, caller_name: str) -> list:
                 user_prefix += " [Requester]"
             messages.append(HumanMessage(content=f"{user_prefix}: {e['message']}", name=e["user_login"]))
     return messages
-
-
-async def _evaluate(ticket: dict, service: dict, subcategory: dict, ai_person: dict) -> EvaluationResult:
-    conversation = _build_conversation(
-        ticket["public_log"].get("entries") or [], ai_person["friendlyname"], ticket["caller_id_friendlyname"]
-    )
-
-    prompt = _load_evaluate_prompt()
-    chain = prompt | _llm.with_structured_output(EvaluationResult)
-
-    return await chain.ainvoke(
-        {
-            "service_name": service["name"],
-            "service_description": service["description"],
-            "subcategory_name": subcategory["name"],
-            "subcategory_description": subcategory["description"],
-            "caller_name": ticket["caller_id_friendlyname"],
-            "title": ticket["title"],
-            "description": ticket["description"],
-            "conversation": conversation,
-        }
-    )
