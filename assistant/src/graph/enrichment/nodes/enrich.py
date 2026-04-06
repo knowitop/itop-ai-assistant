@@ -68,7 +68,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
 
 async def _generate_note(ticket: dict) -> EngineerNote:
     log_text = (
-        "\n".join(f"[{e['user_login']} at {e['date']}]: {e['message']}" for e in ticket["public_log"]["entries"])
+        "\n".join(f"[{e['user_login']} at {e['date']}]: {e['message']}\n" for e in ticket["public_log"]["entries"])
         or "No comments yet"
     )
 
