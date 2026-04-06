@@ -10,12 +10,27 @@ class Schema:
         self.name = name
 
     def to_oql(self, query: Dict[str, Any]) -> str:
-        if "id" in query:
-            return str(query["id"])
         oql = f"SELECT {self.name}"
         if query:
-            oql += " WHERE " + " AND ".join([f'{k} LIKE "{v}"' for k, v in query.items()])
+
+            def _clause(k: str, v: Any) -> str:
+                if isinstance(v, tuple):
+                    op, val = v
+                else:
+                    op, val = "LIKE", v
+                val = str(val)
+                if val.startswith(":"):
+                    return f"{k} {op} {val}"
+                escaped = val.replace("\\", "\\\\").replace('"', '\\"')
+                return f'{k} {op} "{escaped}"'
+
+            oql += " WHERE " + " AND ".join([_clause(k, v) for k, v in query.items()])
         return oql
+
+    def __make_key(self, query: Dict[str, Any]) -> str:
+        if len(query) == 1 and "id" in query and str(query["id"]).isdigit():
+            return str(query["id"])
+        return self.to_oql(query)
 
     async def find(
         self,
@@ -35,7 +50,7 @@ class Schema:
             "operation": "core/get",
             "comment": f"Get {self.name}",
             "class": self.name,
-            "key": self.to_oql(query),
+            "key": self.__make_key(query),
             "output_fields": "*+",
             "limit": limit,
             "page": page,
@@ -68,7 +83,7 @@ class Schema:
         data = {
             "operation": "core/get_related",
             "class": self.name,
-            "key": self.to_oql(query),
+            "key": self.__make_key(query),
             "relation": relation,
             "depth": depth,
             "direction": direction,
@@ -125,7 +140,7 @@ class Schema:
             "class": self.name,
             "output_fields": "*",
             "fields": update,
-            "key": self.to_oql(query),
+            "key": self.__make_key(query),
         }
 
         try:
@@ -160,7 +175,7 @@ class Schema:
                 "operation": "core/delete",
                 "comment": f"Delete {self.name}",
                 "class": self.name,
-                "key": self.to_oql(query),
+                "key": self.__make_key(query),
             }
         )
 
@@ -219,7 +234,7 @@ class Schema:
                 "output_fields": "*",
                 "fields": stimulus_data,
                 "stimulus": stimulus,
-                "key": self.to_oql(query),
+                "key": self.__make_key(query),
             }
         )
 
