@@ -121,7 +121,6 @@ cd docker && docker-compose up -d
 | `src/graph/nodes/enrich.py`   | Ticket enrichment node                              |
 | `src/state/ticket_state.py`   | Redis-backed `TicketState` and `TicketStateManager` |
 | `src/itop_client/itop.py`     | `Itop` — iTop REST API wrapper                      |
-| `src/prompts.py`              | System + user prompt templates                      |
 
 ### LLM Stack
 

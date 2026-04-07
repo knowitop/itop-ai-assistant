@@ -1,5 +1,4 @@
 import logging
-import os
 from dataclasses import dataclass
 
 from redis import RedisError
@@ -75,8 +74,9 @@ class TicketStateManager:
 def create_state_manager() -> TicketStateManager:
     import redis.asyncio as aioredis
 
-    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
-    client = aioredis.from_url(redis_url, decode_responses=True)
+    from config import get_settings
+
+    client = aioredis.from_url(get_settings().redis_url, decode_responses=True)
     return TicketStateManager(client)
 
 

@@ -1,22 +1,18 @@
 import logging
-import os
 from pathlib import Path
 
 import yaml
-from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from langgraph.runtime import Runtime
-from pydantic import SecretStr
 
+from config import get_settings
 from itop_client import Itop
 
 from ..context import GraphContext
 from ..state import Action, EnrichmentState
 from .utils import strip_thinking
-
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +20,11 @@ MAX_ROUNDS = 2
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
+_s = get_settings()
 _llm = ChatOpenAI(
-    model_name=os.getenv("LLM_MODEL"),
-    api_key=SecretStr(os.getenv("LLM_API_KEY")),
-    base_url=os.getenv("LLM_BASE_URL"),
+    model_name=_s.llm_model,
+    api_key=_s.llm_api_key,
+    base_url=_s.llm_base_url,
 )
 
 

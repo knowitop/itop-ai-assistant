@@ -1,28 +1,26 @@
 import logging
-import os
 from pathlib import Path
 
 import yaml
-from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langgraph.runtime import Runtime
-from pydantic import SecretStr
+
+from config import get_settings
 
 from ..context import GraphContext
 from ..state import EnrichmentState
 from .utils import strip_thinking
 
-load_dotenv()
-
 logger = logging.getLogger(__name__)
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
+_s = get_settings()
 _llm = ChatOpenAI(
-    api_key=SecretStr(os.getenv("LLM_API_KEY")),
-    base_url=os.getenv("LLM_BASE_URL"),
-    model_name=os.getenv("LLM_MODEL"),
+    api_key=_s.llm_api_key,
+    base_url=_s.llm_base_url,
+    model_name=_s.llm_model,
 )
 
 
