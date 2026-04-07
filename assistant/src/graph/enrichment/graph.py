@@ -24,12 +24,11 @@ def build_graph():
         lambda s: s["action"],
         {
             Action.STOP: END,
-            Action.ASK: "evaluate",  # guard не остановил — идём дальше
+            Action.ASK: "evaluate",
             None: "evaluate",
         },
     )
 
-    # g.add_node("evaluate", evaluate.run)
     g.add_conditional_edges(
         "evaluate",
         lambda s: s["action"],
