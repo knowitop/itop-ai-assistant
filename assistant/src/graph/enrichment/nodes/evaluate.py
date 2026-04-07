@@ -1,7 +1,6 @@
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 import yaml
 from dotenv import load_dotenv
@@ -9,12 +8,13 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from langgraph.runtime import Runtime
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import SecretStr
 
 from itop_client import Itop
 
 from ..context import GraphContext
 from ..state import Action, EnrichmentState
+from .utils import strip_thinking
 
 load_dotenv()
 
@@ -29,19 +29,6 @@ _llm = ChatOpenAI(
     api_key=SecretStr(os.getenv("LLM_API_KEY")),
     base_url=os.getenv("LLM_BASE_URL"),
 )
-
-
-class EvaluationResult(BaseModel):
-    sufficient: bool = Field(description="True if the ticket has enough information for the engineer to start working.")
-    question: Optional[str] = Field(
-        default=None, description="Single message covering all missing items. Required if sufficient=False."
-    )
-
-    @model_validator(mode="after")
-    def question_required_if_not_sufficient(self):
-        if not self.sufficient and not self.question:
-            raise ValueError("question must be provided when sufficient=False")
-        return self
 
 
 def _load_evaluate_prompt() -> ChatPromptTemplate:
@@ -77,8 +64,8 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     )
 
     prompt = _load_evaluate_prompt()
-    chain = prompt | _llm.with_structured_output(EvaluationResult)
-    result: EvaluationResult = await chain.ainvoke(
+    chain = prompt | _llm
+    response = await chain.ainvoke(
         {
             "service_context": service_context,
             "caller_name": caller_name,
@@ -87,13 +74,15 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
             "conversation": conversation,
         }
     )
+    answer = strip_thinking(response.content)
+    question = None if answer.upper() == "SUFFICIENT" else answer
 
-    if result.sufficient:
+    if question is None:
         logger.info(f"Ticket #{ticket['id']}: description sufficient, moving to enrich")
         return {"action": Action.ENRICH}
 
     logger.info(f"Ticket #{ticket['id']}: incomplete, will ask question")
-    return {"action": Action.ASK, "question": result.question}
+    return {"action": Action.ASK, "question": question}
 
 
 def _has_service_context(ticket: dict) -> bool:
