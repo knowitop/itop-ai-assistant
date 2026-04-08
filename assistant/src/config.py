@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import SecretStr, model_validator
+from pydantic import BaseModel, SecretStr, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -9,7 +9,16 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
+from graph.enrichment.prompts import ENRICH_HUMAN, ENRICH_SYSTEM, EVALUATE_HUMAN, EVALUATE_SYSTEM
+
 _ROOT = Path(__file__).parent.parent  # assistant/
+
+
+class EnrichmentConfig(BaseModel):
+    evaluate_system_prompt: str = EVALUATE_SYSTEM
+    evaluate_human_prompt: str = EVALUATE_HUMAN
+    enrich_system_prompt: str = ENRICH_SYSTEM
+    enrich_human_prompt: str = ENRICH_HUMAN
 
 
 class Settings(BaseSettings):
@@ -38,6 +47,9 @@ class Settings(BaseSettings):
 
     # Redis
     redis_url: str = "redis://localhost:6379"
+
+    # Business modules
+    enrichment: EnrichmentConfig = EnrichmentConfig()
 
     @model_validator(mode="after")
     def check_itop_auth(self) -> "Settings":

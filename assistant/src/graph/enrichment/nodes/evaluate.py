@@ -1,7 +1,5 @@
 import logging
-from pathlib import Path
 
-import yaml
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
@@ -18,8 +16,6 @@ logger = logging.getLogger(__name__)
 
 MAX_ROUNDS = 2
 
-_PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
-
 _s = get_settings()
 _llm = ChatOpenAI(
     model_name=_s.llm_model,
@@ -28,13 +24,12 @@ _llm = ChatOpenAI(
 )
 
 
-def _load_evaluate_prompt() -> ChatPromptTemplate:
-    with open(_PROMPTS_DIR / "evaluate.yaml") as f:
-        data = yaml.safe_load(f)
+def _build_evaluate_prompt() -> ChatPromptTemplate:
+    cfg = get_settings().enrichment
     return ChatPromptTemplate.from_messages(
         [
-            ("system", data["system"]),
-            ("human", data["human"]),
+            ("system", cfg.evaluate_system_prompt),
+            ("human", cfg.evaluate_human_prompt),
             MessagesPlaceholder("conversation"),
         ]
     )
@@ -60,7 +55,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
         ticket["public_log"].get("entries") or [], ai_person["friendlyname"], caller_name
     )
 
-    prompt = _load_evaluate_prompt()
+    prompt = _build_evaluate_prompt()
     chain = prompt | _llm
     response = await chain.ainvoke(
         {

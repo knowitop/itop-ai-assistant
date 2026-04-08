@@ -1,7 +1,5 @@
 import logging
-from pathlib import Path
 
-import yaml
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langgraph.runtime import Runtime
@@ -14,8 +12,6 @@ from .utils import strip_thinking
 
 logger = logging.getLogger(__name__)
 
-_PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
-
 _s = get_settings()
 _llm = ChatOpenAI(
     api_key=_s.llm_api_key,
@@ -24,13 +20,12 @@ _llm = ChatOpenAI(
 )
 
 
-def _load_prompt(name: str) -> ChatPromptTemplate:
-    with open(_PROMPTS_DIR / name) as f:
-        data = yaml.safe_load(f)
+def _build_enrich_prompt() -> ChatPromptTemplate:
+    cfg = get_settings().enrichment
     return ChatPromptTemplate.from_messages(
         [
-            ("system", data["system"]),
-            ("human", data["human"]),
+            ("system", cfg.enrich_system_prompt),
+            ("human", cfg.enrich_human_prompt),
         ]
     )
 
@@ -57,7 +52,7 @@ async def _generate_note(ticket: dict) -> str:
         or "No comments yet"
     )
 
-    prompt = _load_prompt("enrich.yaml")
+    prompt = _build_enrich_prompt()
     chain = prompt | _llm
 
     response = await chain.ainvoke(
