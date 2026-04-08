@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.runtime import Runtime
 
 from config import get_settings
+from itop.utils import ticket_label
 from itop_client import Itop
 
 from ..context import GraphContext
@@ -39,12 +40,12 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     ticket = state["ticket"]
 
     if not _has_service_context(ticket):
-        logger.info(f"Ticket #{ticket['id']}: no service context, moving to enrich")
+        logger.info(f"{ticket_label(ticket)}: no service context, moving to enrich")
         return {"action": Action.ENRICH}
 
-    ticket_state = await runtime.context.state_manager.get(ticket["ref"])
+    ticket_state = await runtime.context.state_manager.get(ticket_label(ticket))
     if ticket_state.rounds >= MAX_ROUNDS:
-        logger.info(f"Ticket #{ticket['id']}: rounds exhausted, moving to enrich")
+        logger.info(f"{ticket_label(ticket)}: rounds exhausted, moving to enrich")
         return {"action": Action.ENRICH}
 
     service_context = await _build_service_context(ticket, runtime.context.itop_client)
@@ -68,15 +69,15 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     )
     answer = strip_thinking(response.content)
     if not answer:
-        logger.warning(f"Ticket #{ticket['id']}: LLM returned empty response in evaluate, moving to enrich")
+        logger.warning(f"{ticket_label(ticket)}: LLM returned empty response in evaluate, moving to enrich")
         return {"action": Action.ENRICH}
     question = None if answer.upper() == "SUFFICIENT" else answer
 
     if question is None:
-        logger.info(f"Ticket #{ticket['id']}: description sufficient, moving to enrich")
+        logger.info(f"{ticket_label(ticket)}: description sufficient, moving to enrich")
         return {"action": Action.ENRICH}
 
-    logger.info(f"Ticket #{ticket['id']}: incomplete, will ask question")
+    logger.info(f"{ticket_label(ticket)}: incomplete, will ask question")
     return {"action": Action.ASK, "question": question}
 
 

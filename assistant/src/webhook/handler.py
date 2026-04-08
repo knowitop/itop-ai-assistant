@@ -4,6 +4,7 @@ from uuid import UUID
 from graph.enrichment.context import GraphContext
 from graph.enrichment.graph import graph
 from itop.client import itop_client
+from itop.utils import ticket_label
 from state.ticket_state import state_manager
 
 from .models import TicketEvent, WebhookPayload
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _run_enrichment_graph(ticket, processing_id: UUID):
-    logger.info(f"{processing_id} Running enrichment graph for #{ticket['id']}")
+    logger.info(f"{processing_id} Running enrichment graph for {ticket_label(ticket)}")
 
     await graph.ainvoke(
         {
@@ -31,5 +32,6 @@ async def process_webhook_logic(payload: WebhookPayload, processing_id: UUID):
             await _run_enrichment_graph(ticket, processing_id)
 
         case TicketEvent.ASSIGNED:
-            await state_manager.mark_done(payload.id)
-            logger.info(f"[{processing_id}] Ticket #{payload.id} assigned, marked done")
+            label = f"{payload.obj_class}::{payload.id}"
+            await state_manager.mark_done(label)
+            logger.info(f"[{processing_id}] {label} assigned, marked done")

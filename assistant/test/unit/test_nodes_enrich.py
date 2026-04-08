@@ -38,7 +38,7 @@ class TestEnrichEmptyLLMResponse(unittest.IsolatedAsyncioTestCase):
             await enrich_module.run(state, runtime)
 
         runtime.context.itop_client.schema.assert_not_called()
-        runtime.context.state_manager.mark_done.assert_called_once_with("R-000001")
+        runtime.context.state_manager.mark_done.assert_called_once_with("UserRequest::1")
 
     async def test_empty_string_content_skips_update_but_marks_done(self):
         state: EnrichmentState = {"ticket": _make_ticket(), "action": None, "question": None}
@@ -48,7 +48,7 @@ class TestEnrichEmptyLLMResponse(unittest.IsolatedAsyncioTestCase):
             await enrich_module.run(state, runtime)
 
         runtime.context.itop_client.schema.assert_not_called()
-        runtime.context.state_manager.mark_done.assert_called_once_with("R-000001")
+        runtime.context.state_manager.mark_done.assert_called_once_with("UserRequest::1")
 
     async def test_normal_content_updates_itop_and_marks_done(self):
         state: EnrichmentState = {"ticket": _make_ticket(), "action": None, "question": None}
@@ -66,7 +66,7 @@ class TestEnrichEmptyLLMResponse(unittest.IsolatedAsyncioTestCase):
             {"id": 1},
             {"private_log": {"add_item": {"message": "Summary: laptop issue.", "format": "text"}}},
         )
-        runtime.context.state_manager.mark_done.assert_called_once_with("R-000001")
+        runtime.context.state_manager.mark_done.assert_called_once_with("UserRequest::1")
 
 
 if __name__ == "__main__":

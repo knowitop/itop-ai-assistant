@@ -5,6 +5,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.runtime import Runtime
 
 from config import get_settings
+from itop.utils import ticket_label
 
 from ..context import GraphContext
 from ..state import EnrichmentState
@@ -41,10 +42,10 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
             {"private_log": {"add_item": {"message": note, "format": "text"}}},
         )
     else:
-        logger.warning(f"Ticket #{ticket['id']}: LLM returned empty note, skipping private log entry")
-    await runtime.context.state_manager.mark_done(ticket["ref"])
+        logger.warning(f"{ticket_label(ticket)}: LLM returned empty note, skipping private log entry")
+    await runtime.context.state_manager.mark_done(ticket_label(ticket))
 
-    logger.info(f"Ticket #{ticket['id']}: enriched and marked done")
+    logger.info(f"{ticket_label(ticket)}: enriched and marked done")
 
     return {}
 
