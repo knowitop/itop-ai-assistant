@@ -67,6 +67,9 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
         }
     )
     answer = strip_thinking(response.content)
+    if not answer:
+        logger.warning(f"Ticket #{ticket['id']}: LLM returned empty response in evaluate, moving to enrich")
+        return {"action": Action.ENRICH}
     question = None if answer.upper() == "SUFFICIENT" else answer
 
     if question is None:

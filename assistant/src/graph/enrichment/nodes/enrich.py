@@ -35,10 +35,13 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
 
     note = await _generate_note(ticket)
 
-    await runtime.context.itop_client.schema(ticket["finalclass"]).update(
-        {"id": ticket["id"]},
-        {"private_log": {"add_item": {"message": note, "format": "text"}}},
-    )
+    if note:
+        await runtime.context.itop_client.schema(ticket["finalclass"]).update(
+            {"id": ticket["id"]},
+            {"private_log": {"add_item": {"message": note, "format": "text"}}},
+        )
+    else:
+        logger.warning(f"Ticket #{ticket['id']}: LLM returned empty note, skipping private log entry")
     await runtime.context.state_manager.mark_done(ticket["ref"])
 
     logger.info(f"Ticket #{ticket['id']}: enriched and marked done")
