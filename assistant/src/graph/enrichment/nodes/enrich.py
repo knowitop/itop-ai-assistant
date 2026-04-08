@@ -9,7 +9,7 @@ from itop.utils import ticket_label
 
 from ..context import GraphContext
 from ..state import EnrichmentState
-from .utils import strip_thinking
+from .utils import html_to_markdown, strip_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ async def _generate_note(ticket: dict) -> str:
         {
             "caller_name": ticket["caller_id_friendlyname"],
             "title": ticket["title"],
-            "description": ticket["description"],
+            "description": html_to_markdown(ticket["description"]),
             "log_text": log_text,
         }
     )

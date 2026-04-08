@@ -11,7 +11,7 @@ from itop_client import Itop
 
 from ..context import GraphContext
 from ..state import Action, EnrichmentState
-from .utils import strip_thinking
+from .utils import html_to_markdown, strip_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
             "service_context": service_context,
             "caller_name": caller_name,
             "title": ticket["title"],
-            "description": ticket["description"],
+            "description": html_to_markdown(ticket["description"]),
             "conversation": conversation,
         }
     )
