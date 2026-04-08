@@ -111,45 +111,55 @@ cd docker && docker-compose up -d
 
 ### Key Source Files
 
-| File                          | Role                                                |
-|-------------------------------|-----------------------------------------------------|
-| `src/main.py`                 | FastAPI app init, env loading, logging setup        |
-| `src/webhook/router.py`       | Webhook endpoint, async dispatch                    |
-| `src/graph/graph.py`          | LangGraph graph definition and compilation          |
-| `src/graph/nodes/evaluate.py` | LLM completeness evaluation node                    |
-| `src/graph/nodes/ask.py`      | Post clarifying question node                       |
-| `src/graph/nodes/enrich.py`   | Ticket enrichment node                              |
-| `src/state/ticket_state.py`   | Redis-backed `TicketState` and `TicketStateManager` |
-| `src/itop_client/itop.py`     | `Itop` — iTop REST API wrapper                      |
+| File                                            | Role                                                |
+|-------------------------------------------------|-----------------------------------------------------|
+| `src/main.py`                                   | FastAPI app init, logging setup                     |
+| `src/config.py`                                 | `Settings` — centralized config (pydantic-settings) |
+| `src/webhook/router.py`                         | Webhook endpoint, async dispatch                    |
+| `src/webhook/handler.py`                        | Webhook event processing logic                      |
+| `src/graph/enrichment/graph.py`                 | LangGraph graph definition and compilation          |
+| `src/graph/enrichment/nodes/guard.py`           | Pre-check node (ai_done, ticket status)             |
+| `src/graph/enrichment/nodes/evaluate.py`        | LLM completeness evaluation node                   |
+| `src/graph/enrichment/nodes/ask.py`             | Post clarifying question node                       |
+| `src/graph/enrichment/nodes/enrich.py`          | Ticket enrichment node                              |
+| `src/graph/enrichment/nodes/utils.py`           | `strip_thinking` — removes `<think>` blocks         |
+| `src/graph/enrichment/prompts/evaluate.yaml`    | Evaluate prompt template                            |
+| `src/graph/enrichment/prompts/enrich.yaml`      | Enrich prompt template                              |
+| `src/state/ticket_state.py`                     | Redis-backed `TicketState` and `TicketStateManager` |
+| `src/itop_client/itop.py`                       | `Itop` — iTop REST API wrapper                      |
+| `src/itop/client.py`                            | `itop_client` singleton factory                     |
 
 ### LLM Stack
 
-**LiteLLM** as provider-agnostic LLM client — routes to any OpenAI-compatible
-endpoint via `LLM_BASE_URL` (LM Studio locally, LiteLLM Proxy or direct cloud
-API in production).
+**langchain-openai** (`ChatOpenAI`) as the LLM client — routes to any
+OpenAI-compatible endpoint via `LLM_BASE_URL` (LM Studio locally, LiteLLM
+Proxy or direct cloud API in production). Plain text responses, no structured
+output. `strip_thinking` removes `<think>…</think>` blocks emitted by
+reasoning models (DeepSeek-R1, Qwen3, etc.).
 
 **LangGraph** for all agent logic with branching or multi-step flow. Avoid
 plain LangChain chains for anything beyond a single LLM call.
 
-**Langfuse** for observability. All LLM calls are wrapped in Langfuse traces.
-Each webhook invocation produces one trace with `ticket_id` as the trace name;
-all nodes within that invocation share the same `trace_id`.
+### Configuration
 
-### Required Environment Variables
+Config is centralized in `src/config.py` using **pydantic-settings**.
+Priority (high → low): env vars → `.env` file → `config.yaml` → field defaults.
 
-| Variable | Purpose |
-|----------|---------|
-| `ITOP_URL` | iTop REST API base URL |
-| `ITOP_USER` / `ITOP_PWD` | iTop credentials (alternative: `ITOP_TOKEN`) |
-| `ITOP_AI_USER` | iTop username the AI posts comments as |
-| `LLM_BASE_URL` | OpenAI-compatible endpoint |
-| `LLM_MODEL` | Model name as exposed by the endpoint |
-| `LLM_API_KEY` | API key (`lm-studio` for LM Studio, real key for cloud) |
-| `REDIS_URL` | Redis connection URL (e.g. `redis://localhost:6379/0`) |
-| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Langfuse observability |
-| `LANGFUSE_HOST` | Langfuse server URL |
+`config.yaml` (committed to repo) holds non-secret defaults. Secrets and
+environment-specific values go in `.env` (not committed).
 
-See `docker/.env.dist` for a full template with examples for each provider.
+| Field | Required | Purpose |
+|-------|----------|---------|
+| `itop_url` | default | iTop REST API base URL |
+| `itop_user` + `itop_pwd` | one of | iTop basic auth |
+| `itop_token` | one of | iTop token auth (alternative to user+pwd) |
+| `llm_base_url` | default | OpenAI-compatible endpoint |
+| `llm_model` | **required** | Model name as exposed by the endpoint |
+| `llm_api_key` | optional | API key (omit for local LM Studio) |
+| `redis_url` | default | Redis connection URL |
+| `log_level` | default `INFO` | Logging level |
+
+See `docker/.env.dist` for a full template.
 
 ## Testing Notes
 
@@ -157,6 +167,6 @@ See `docker/.env.dist` for a full template with examples for each provider.
 - `pytest.toml` sets `pythonpath = ["src"]` and `importmode = importlib`
 - LLM calls and HTTP requests are mocked — no real iTop or LLM needed
 - Redis is mocked with `fakeredis`
-- Each test file covers one module: `test_evaluate.py`, `test_ask.py`,
-  `test_enrich.py`, `test_router.py`, `test_itop_client.py`,
-  `test_ticket_state.py`
+- `get_settings()` is cached via `lru_cache`; call `get_settings.cache_clear()`
+  in `setUp`/`tearDown` when tests need to control env vars
+- Current test files: `test_config.py`, `test_router.py`, `test_ticket_state.py`
