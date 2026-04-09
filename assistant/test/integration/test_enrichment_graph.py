@@ -8,8 +8,6 @@ Integration tests for the enrichment LangGraph.
 Run: uv run pytest test/integration/ -v
 """
 
-import pytest
-
 from graph.enrichment.graph import build_graph
 from graph.enrichment.state import Action
 

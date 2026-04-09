@@ -1,6 +1,5 @@
 import logging
 
-from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from langgraph.runtime import Runtime
@@ -11,7 +10,7 @@ from itop_client import Itop
 
 from ..context import GraphContext
 from ..state import Action, EnrichmentState
-from .utils import html_to_markdown, strip_thinking
+from .utils import build_conversation, html_to_markdown, strip_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +49,10 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
 
     service_context = await _build_service_context(ticket, runtime.context.itop_client)
 
+    # DRY: see nodes.enrich._generate_note
     ai_person = await runtime.context.itop_client.schema("Person").find({"id": ("=", ":current_contact_id")})
     caller_name = ticket["caller_id_friendlyname"]
-    conversation = _build_conversation(
-        ticket["public_log"].get("entries") or [], ai_person["friendlyname"], caller_name
-    )
+    conversation = build_conversation(ticket["public_log"].get("entries") or [], ai_person["friendlyname"], caller_name)
 
     prompt = _build_evaluate_prompt()
     chain = prompt | _llm
@@ -104,16 +102,3 @@ async def _build_service_context(ticket: dict, itop_client: Itop) -> str:
         return "No service context provided."
 
     return "\n".join(parts)
-
-
-def _build_conversation(entries: list, ai_name: str, caller_name: str) -> list:
-    messages = []
-    for e in entries:
-        if e["user_login"] == ai_name:
-            messages.append(AIMessage(content=e["message"]))
-        else:
-            user_prefix = e["user_login"]
-            if e["user_login"] == caller_name:
-                user_prefix += " [Requester]"
-            messages.append(HumanMessage(content=f"{user_prefix}: {e['message']}", name=e["user_login"]))
-    return messages

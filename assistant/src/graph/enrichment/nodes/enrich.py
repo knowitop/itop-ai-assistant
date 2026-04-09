@@ -1,15 +1,16 @@
 import logging
 
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from langgraph.runtime import Runtime
 
 from config import get_settings
 from itop.utils import ticket_label
+from itop_client import Itop
 
 from ..context import GraphContext
 from ..state import EnrichmentState
-from .utils import html_to_markdown, strip_thinking
+from .utils import build_conversation, html_to_markdown, strip_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ def _build_enrich_prompt() -> ChatPromptTemplate:
         [
             ("system", cfg.enrich_system_prompt),
             ("human", cfg.enrich_human_prompt),
+            MessagesPlaceholder("conversation"),
         ]
     )
 
@@ -34,7 +36,7 @@ def _build_enrich_prompt() -> ChatPromptTemplate:
 async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     ticket = state["ticket"]
 
-    note = await _generate_note(ticket)
+    note = await _generate_note(ticket, runtime.context.itop_client)
 
     if note:
         await runtime.context.itop_client.schema(ticket["finalclass"]).update(
@@ -50,21 +52,20 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     return {}
 
 
-async def _generate_note(ticket: dict) -> str:
-    log_text = (
-        "\n".join(f"[{e['user_login']} at {e['date']}]: {e['message']}\n" for e in ticket["public_log"]["entries"])
-        or "No comments yet"
-    )
+async def _generate_note(ticket: dict, itop_client: Itop) -> str:
+    ai_person = await itop_client.schema("Person").find({"id": ("=", ":current_contact_id")})
+    caller_name = ticket["caller_id_friendlyname"]
+    conversation = build_conversation(ticket["public_log"].get("entries") or [], ai_person["friendlyname"], caller_name)
 
     prompt = _build_enrich_prompt()
     chain = prompt | _llm
 
     response = await chain.ainvoke(
         {
-            "caller_name": ticket["caller_id_friendlyname"],
+            "caller_name": caller_name,
             "title": ticket["title"],
             "description": html_to_markdown(ticket["description"]),
-            "log_text": log_text,
+            "conversation": conversation,
         }
     )
     return strip_thinking(response.content)

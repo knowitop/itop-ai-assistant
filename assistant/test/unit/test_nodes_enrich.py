@@ -20,11 +20,19 @@ def _make_ticket() -> dict:
 
 
 def _make_runtime() -> MagicMock:
-    schema_mock = MagicMock()
-    schema_mock.update = AsyncMock()
+    person_schema = MagicMock()
+    person_schema.find = AsyncMock(return_value={"friendlyname": "AI Assistant"})
+
+    ticket_schema = MagicMock()
+    ticket_schema.update = AsyncMock()
+
+    def _schema(cls):
+        if cls == "Person":
+            return person_schema
+        return ticket_schema
 
     runtime = MagicMock()
-    runtime.context.itop_client.schema = MagicMock(return_value=schema_mock)
+    runtime.context.itop_client.schema = MagicMock(side_effect=_schema)
     runtime.context.state_manager.mark_done = AsyncMock()
     return runtime
 
@@ -37,7 +45,7 @@ class TestEnrichEmptyLLMResponse(unittest.IsolatedAsyncioTestCase):
         with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(return_value=MagicMock(content=None))):
             await enrich_module.run(state, runtime)
 
-        runtime.context.itop_client.schema.assert_not_called()
+        runtime.context.itop_client.schema("Person").update.assert_not_called()
         runtime.context.state_manager.mark_done.assert_called_once_with("UserRequest::1")
 
     async def test_empty_string_content_skips_update_but_marks_done(self):
@@ -47,7 +55,7 @@ class TestEnrichEmptyLLMResponse(unittest.IsolatedAsyncioTestCase):
         with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(return_value=MagicMock(content=""))):
             await enrich_module.run(state, runtime)
 
-        runtime.context.itop_client.schema.assert_not_called()
+        runtime.context.itop_client.schema("Person").update.assert_not_called()
         runtime.context.state_manager.mark_done.assert_called_once_with("UserRequest::1")
 
     async def test_normal_content_updates_itop_and_marks_done(self):
@@ -61,8 +69,7 @@ class TestEnrichEmptyLLMResponse(unittest.IsolatedAsyncioTestCase):
         ):
             await enrich_module.run(state, runtime)
 
-        runtime.context.itop_client.schema.assert_called_once_with("UserRequest")
-        runtime.context.itop_client.schema.return_value.update.assert_called_once_with(
+        runtime.context.itop_client.schema("UserRequest").update.assert_called_once_with(
             {"id": 1},
             {"private_log": {"add_item": {"message": "Summary: laptop issue.", "format": "text"}}},
         )

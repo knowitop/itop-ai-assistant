@@ -29,8 +29,8 @@ _SUBCATEGORY_WITH_REQUIREMENTS = {
     "name": "Hardware",
     "description": (
         "Hardware equipment failures and malfunctions. "
-        "Required information: device manufacturer and exact model, "
-        "operating system and version, exact error message or failure symptom."
+        "Required information: device manufacturer and model, "
+        "operating system, exact error message or failure symptom."
     ),
 }
 _AI_PERSON_FIELDS = {"friendlyname": "ai-assistant", "email": "ai@example.com"}
