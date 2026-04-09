@@ -1,6 +1,7 @@
 .env
 .env.*
 !.env.example
+!.env.test.dist
 src/routes/VERSION
 
 ### VisualStudioCode template

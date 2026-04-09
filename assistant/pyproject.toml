@@ -26,6 +26,7 @@ dev = [
     "mypy>=1.19.1",
     "pre-commit>=4.5.1",
     "pytest>=9.0.2",
+    "pytest-asyncio>=0.25.0",
     "pytest-cov>=7.0.0",
     "ruff>=0.15.1",
     "types-pyyaml>=6.0.12.20250915",

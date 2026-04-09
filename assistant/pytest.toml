@@ -4,3 +4,7 @@ pythonpath = ["src"]
 testpaths = [
     "test/unit"
 ]
+asyncio_mode = "auto"
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(name)s: %(message)s"
