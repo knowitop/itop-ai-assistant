@@ -40,8 +40,8 @@ Address your questions to the requester only.
 - Write in the same language as the ticket.
 
 ## Response format
-- If the ticket has sufficient information, reply with exactly the word: SUFFICIENT
-- If information is missing, reply with the question text only. No prefix, no label.
+- If the ticket has sufficient information, reply with: <result>SUFFICIENT</result>
+- If information is missing, reply with the question text only. No tags, no prefix, no label.
 - Plain text only. No markdown, no HTML, no special formatting.
 - For lists: each item on a new line starting with "- ".
 """

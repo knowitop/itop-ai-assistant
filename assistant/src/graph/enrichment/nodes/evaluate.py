@@ -69,7 +69,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     if not answer:
         logger.warning(f"{ticket_label(ticket)}: LLM returned empty response in evaluate, moving to enrich")
         return {"action": Action.ENRICH}
-    question = None if answer.upper() == "SUFFICIENT" else answer
+    question = None if "<result>SUFFICIENT</result>".upper() in answer.upper() else answer
 
     if question is None:
         logger.info(f"{ticket_label(ticket)}: description sufficient, moving to enrich")
