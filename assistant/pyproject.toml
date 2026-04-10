@@ -2,6 +2,8 @@
 name = "itop-ai-assistant"
 version = "0.1.0"
 description = "iTop AI Assistant"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
