@@ -1,6 +1,8 @@
 import unittest
 
-from graph.enrichment.nodes.utils import html_to_markdown, strip_thinking
+from langchain_core.messages import AIMessage, HumanMessage
+
+from graph.enrichment.nodes.utils import build_conversation, html_to_markdown, strip_thinking
 
 
 class TestStripThinking(unittest.TestCase):
@@ -77,6 +79,53 @@ class TestHtmlToMarkdown(unittest.TestCase):
         result = html_to_markdown("<p>Hello <strong>world</strong></p>")
         self.assertIn("Hello", result)
         self.assertIn("**world**", result)
+
+
+class TestBuildConversation(unittest.TestCase):
+    def test_empty_entries_returns_empty_list(self):
+        result = build_conversation([], "ai-assistant", "John Doe")
+        self.assertEqual(result, [])
+
+    def test_ai_entry_becomes_ai_message(self):
+        entries = [{"user_login": "ai-assistant", "message": "What is your laptop model?"}]
+        result = build_conversation(entries, "ai-assistant", "John Doe")
+        self.assertEqual(len(result), 1)
+        self.assertIsInstance(result[0], AIMessage)
+        self.assertEqual(result[0].content, "What is your laptop model?")
+
+    def test_caller_entry_becomes_human_message_with_requester_label(self):
+        entries = [{"user_login": "John Doe", "message": "It does not turn on."}]
+        result = build_conversation(entries, "ai-assistant", "John Doe")
+        self.assertEqual(len(result), 1)
+        self.assertIsInstance(result[0], HumanMessage)
+        self.assertIn("[Requester]", result[0].content)
+        self.assertIn("It does not turn on.", result[0].content)
+
+    def test_third_party_entry_has_no_requester_label(self):
+        entries = [{"user_login": "engineer", "message": "Checked the device."}]
+        result = build_conversation(entries, "ai-assistant", "John Doe")
+        self.assertEqual(len(result), 1)
+        self.assertIsInstance(result[0], HumanMessage)
+        self.assertNotIn("[Requester]", result[0].content)
+        self.assertIn("engineer", result[0].content)
+        self.assertIn("Checked the device.", result[0].content)
+
+    def test_mixed_entries_preserve_order(self):
+        entries = [
+            {"user_login": "John Doe", "message": "Help!"},
+            {"user_login": "ai-assistant", "message": "What model?"},
+            {"user_login": "John Doe", "message": "Dell XPS 13."},
+        ]
+        result = build_conversation(entries, "ai-assistant", "John Doe")
+        self.assertEqual(len(result), 3)
+        self.assertIsInstance(result[0], HumanMessage)
+        self.assertIsInstance(result[1], AIMessage)
+        self.assertIsInstance(result[2], HumanMessage)
+
+    def test_human_message_name_set_to_user_login(self):
+        entries = [{"user_login": "John Doe", "message": "Hello."}]
+        result = build_conversation(entries, "ai-assistant", "John Doe")
+        self.assertEqual(result[0].name, "John Doe")
 
 
 if __name__ == "__main__":
