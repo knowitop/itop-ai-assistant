@@ -18,15 +18,13 @@ services:
     command: redis-server --appendonly yes
 
   assistant:
-    build:
-      context: ../assistant
-      dockerfile: Dockerfile
+    image: ghcr.io/knowitop/itop-ai-assistant:latest
     ports:
       - "8001:8000"
     depends_on:
       - redis
-#    env_file:
-#      - .env
+    env_file:
+      - .env
 
 volumes:
   itop-db:

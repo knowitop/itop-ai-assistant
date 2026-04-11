@@ -93,21 +93,20 @@ cd docker && docker-compose up -d
 
 ### Request Flow
 
-1. iTop sends `POST /webhook` with `{id, class, async}` payload
+1. iTop sends `POST /webhook` with `{id, class, event}` payload
 2. Webhook handler returns HTTP 202 immediately; processing runs in background
    via `asyncio.create_task`
 3. Fetch `TicketState` from Redis — if `ai_done: true`, stop immediately
 4. Fetch full ticket from iTop API; for `UserRequest`/`Incident` also fetch
-   related `Service` and `ServiceSubcategory`; fetch `UserProfile` of caller
+   related `Service` and `ServiceSubcategory`; fetch `Person` of caller
 5. If ticket status is not "New" (engineer already working), stop silently
 6. If `rounds >= 2`, skip LLM evaluation — enrich with available data and mark
    done
 7. LLM evaluates whether ticket description is sufficient for the engineer
 8. **If incomplete:** post one clarifying question as a public log entry via
-   `ITopClient.add_public_comment()`, increment `rounds` in Redis
-9. **If complete (or rounds exhausted):** update ticket fields (subcategory,
-   priority), post structured internal note for the engineer, set `ai_done:
-   true` in Redis
+   iTop API, increment `rounds` in Redis
+9. **If complete (or rounds exhausted):** post structured internal note for 
+   the engineer, set `ai_done: true` in Redis
 
 ### Key Source Files
 
