@@ -25,6 +25,10 @@ _llm = ChatOpenAI(
 
 _FALLBACK_NOTE = "Не удалось определить категорию обращения. Требуется ручная классификация."
 
+_SERVICE_ID_FILTER = "SELECT Service AS s JOIN lnkCustomerContractToService AS l1 ON l1.service_id=s.id JOIN CustomerContract AS cc ON l1.customercontract_id=cc.id WHERE cc.org_id = :this->org_id AND s.status != 'obsolete'"
+
+_SERVICESUBCATEGORY_ID_FILTER = "SELECT ServiceSubcategory WHERE service_id = :this->service_id AND (ISNULL(:this->request_type) OR request_type = :this->request_type) AND status != 'obsolete'"
+
 
 def _build_service_prompt() -> ChatPromptTemplate:
     cfg = get_settings().enrichment
@@ -96,7 +100,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     service_id: str = ticket["service_id"]
     subcategory_id: str = ticket["servicesubcategory_id"]
 
-    if service_id and subcategory_id:
+    if int(service_id) and int(subcategory_id):
         return {}
 
     itop_client = runtime.context.itop_client
@@ -110,9 +114,10 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     new_subcategory_id: str | None = None
 
     # Stage 1: classify service
-    if not service_id:
+    if not int(service_id):
+        services_filter = _SERVICE_ID_FILTER.replace(":this->org_id", ticket["org_id"])
         raw_services = await itop_client.schema("Service").find(
-            {"status": "production"}, projection=["id", "name", "description"]
+            services_filter, projection=["id", "name", "description"]
         )
         services_list = raw_services if isinstance(raw_services, list) else [raw_services] if raw_services else []
         services_text = _format_services(services_list)
@@ -135,9 +140,12 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
             return await _ask_or_fallback(ticket, state_manager, itop_client, title, description)
 
     # Stage 2: classify subcategory
-    if not subcategory_id:
+    if not int(subcategory_id):
+        subcategories_filter = _SERVICESUBCATEGORY_ID_FILTER.replace(":this->service_id", service_id).replace(
+            ":this->request_type", f"'{ticket['request_type']}'"
+        )
         raw_subcategories = await itop_client.schema("ServiceSubcategory").find(
-            {"service_id": service_id, "status": "production"},
+            subcategories_filter,
             projection=["id", "name", "description"],
         )
         subcategories_list = (

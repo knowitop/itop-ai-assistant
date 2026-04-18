@@ -8,11 +8,13 @@ from graph.enrichment.state import Action, EnrichmentState
 from state.ticket_state import TicketState
 
 
-def _make_ticket(service_id: str = "", subcategory_id: str = "") -> dict:
+def _make_ticket(service_id: str = "0", subcategory_id: str = "0") -> dict:
     return {
         "id": 1,
         "ref": "R-000001",
         "finalclass": "UserRequest",
+        "org_id": "42",
+        "request_type": "incident",
         "title": "My printer is broken",
         "description": "Cannot print anything.",
         "service_id": service_id,
@@ -68,6 +70,40 @@ class TestClassifySkip(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {})
         runtime.context.itop_client.schema.assert_not_called()
+
+    async def test_zero_id_string_not_treated_as_set(self):
+        state: EnrichmentState = {
+            "ticket": _make_ticket(service_id="0", subcategory_id="0"),
+            "action": None,
+            "question": None,
+        }
+        runtime = _make_runtime()
+
+        service_response = _llm_response(
+            "<result><service_id>10</service_id><confidence>high</confidence><reasoning>ok</reasoning></result>"
+        )
+        subcategory_response = _llm_response(
+            "<result><subcategory_id>101</subcategory_id><confidence>high</confidence><reasoning>ok</reasoning></result>"
+        )
+
+        def _schema(class_name):
+            m = MagicMock()
+            if class_name == "Service":
+                m.find = AsyncMock(return_value=_make_services())
+            elif class_name == "ServiceSubcategory":
+                m.find = AsyncMock(return_value=_make_subcategories())
+            else:
+                m.find = AsyncMock(return_value=[])
+            m.update = AsyncMock()
+            return m
+
+        runtime.context.itop_client.schema = MagicMock(side_effect=_schema)
+
+        with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(side_effect=[service_response, subcategory_response])):
+            result = await classify_module.run(state, runtime)
+
+        # Both stages should run even though IDs were "0"
+        self.assertIn("ticket", result)
 
     async def test_both_fields_set_skips(self):
         state: EnrichmentState = {

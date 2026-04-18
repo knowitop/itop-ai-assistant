@@ -34,14 +34,14 @@ class Schema:
 
     async def find(
         self,
-        query: Optional[Dict[str, Any]] = None,
+        query: Optional[Dict[str, Any] | str] = None,
         projection: Optional[List[str]] = None,
         limit: str = "0",
         page: str = "1",
     ) -> Any:
         query = query or {}
-        if not isinstance(query, dict):
-            raise TypeError("Query must be a dict")
+        if not isinstance(query, dict) and (not isinstance(query, str) or not query.startswith("SELECT")):
+            raise TypeError("Query must be a dict or a string in OQL format")
         projection = projection or []
         if not isinstance(projection, list):
             raise TypeError("Projection must be a list")
@@ -50,7 +50,7 @@ class Schema:
             "operation": "core/get",
             "comment": f"Get {self.name}",
             "class": self.name,
-            "key": self.__make_key(query),
+            "key": query if isinstance(query, str) else self.__make_key(query),
             "output_fields": "*+",
             "limit": limit,
             "page": page,
@@ -71,19 +71,19 @@ class Schema:
 
     async def find_related(
         self,
-        query: Optional[Dict[str, Any]] = None,
+        query: Optional[Dict[str, Any] | str] = None,
         relation: str = "impacts",
         depth: int = 20,
         direction: str = "down",
     ) -> List[Dict]:
         query = query or {}
-        if not isinstance(query, dict):
-            raise TypeError("Query must be a dict")
+        if not isinstance(query, dict) and (not isinstance(query, str) or not query.startswith("SELECT")):
+            raise TypeError("Query must be a dict or a string in OQL format")
 
         data = {
             "operation": "core/get_related",
             "class": self.name,
-            "key": self.__make_key(query),
+            "key": query if isinstance(query, str) else self.__make_key(query),
             "relation": relation,
             "depth": depth,
             "direction": direction,
@@ -119,14 +119,14 @@ class Schema:
 
     async def update(
         self,
-        query: Dict[str, Any],
+        query: Dict[str, Any] | str,
         update: Dict[str, Any],
         upsert: bool = False,
         multi: bool = False,
     ) -> Any:
         query = query or {}
-        if not isinstance(query, dict):
-            raise TypeError("Query must be a dict")
+        if not isinstance(query, dict) and (not isinstance(query, str) or not query.startswith("SELECT")):
+            raise TypeError("Query must be a dict or a string in OQL format")
         update = update or {}
         if not isinstance(update, dict):
             raise TypeError("Update must be a dict")
@@ -140,7 +140,7 @@ class Schema:
             "class": self.name,
             "output_fields": "*",
             "fields": update,
-            "key": self.__make_key(query),
+            "key": query if isinstance(query, str) else self.__make_key(query),
         }
 
         try:
@@ -160,22 +160,22 @@ class Schema:
                     return output
                 raise
             if "No item found for query" in str(e):
-                if upsert:
+                if upsert and isinstance(query, dict):
                     return await self.insert({**query, **update})
                 return {}
             raise
 
-    async def remove(self, query: Dict[str, Any]) -> Any:
+    async def remove(self, query: Dict[str, Any] | str) -> Any:
         query = query or {}
-        if not isinstance(query, dict):
-            raise TypeError("Query must be a dict")
+        if not isinstance(query, dict) and (not isinstance(query, str) or not query.startswith("SELECT")):
+            raise TypeError("Query must be a dict or a string in OQL format")
 
         output = await self.itop.request(
             {
                 "operation": "core/delete",
                 "comment": f"Delete {self.name}",
                 "class": self.name,
-                "key": self.__make_key(query),
+                "key": query if isinstance(query, str) else self.__make_key(query),
             }
         )
 
@@ -212,13 +212,13 @@ class Schema:
 
     async def apply_stimulus(
         self,
-        query: Dict[str, Any],
+        query: Dict[str, Any] | str,
         stimulus_data: Dict[str, Any],
         stimulus: str = "env_assign",
     ) -> Any:
         query = query or {}
-        if not isinstance(query, dict):
-            raise TypeError("Query must be a dict")
+        if not isinstance(query, dict) and (not isinstance(query, str) or not query.startswith("SELECT")):
+            raise TypeError("Query must be a dict or a string in OQL format")
         stimulus_data = stimulus_data or {}
         if not isinstance(stimulus_data, dict):
             raise TypeError("Stimulus data must be a dict")
@@ -234,7 +234,7 @@ class Schema:
                 "output_fields": "*",
                 "fields": stimulus_data,
                 "stimulus": stimulus,
-                "key": self.__make_key(query),
+                "key": query if isinstance(query, str) else self.__make_key(query),
             }
         )
 
