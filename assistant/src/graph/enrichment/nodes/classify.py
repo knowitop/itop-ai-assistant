@@ -1,7 +1,7 @@
 import logging
 import re
 
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_openai import ChatOpenAI
 from langgraph.runtime import Runtime
 
@@ -10,7 +10,7 @@ from itop.utils import ticket_label
 
 from ..context import GraphContext
 from ..state import Action, EnrichmentState
-from .utils import html_to_markdown, strip_thinking
+from .utils import build_conversation, html_to_markdown, strip_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,7 @@ def _build_service_prompt() -> ChatPromptTemplate:
         [
             ("system", cfg.classify_service_system_prompt),
             ("human", cfg.classify_service_human_prompt),
+            MessagesPlaceholder("conversation"),
         ]
     )
 
@@ -46,6 +47,7 @@ def _build_subcategory_prompt() -> ChatPromptTemplate:
         [
             ("system", cfg.classify_subcategory_system_prompt),
             ("human", cfg.classify_subcategory_human_prompt),
+            MessagesPlaceholder("conversation"),
         ]
     )
 
@@ -56,6 +58,7 @@ def _build_ask_prompt() -> ChatPromptTemplate:
         [
             ("system", cfg.classify_ask_system_prompt),
             ("human", cfg.classify_ask_human_prompt),
+            MessagesPlaceholder("conversation"),
         ]
     )
 
@@ -110,6 +113,14 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     title = ticket["title"]
     description = html_to_markdown(ticket["description"])
 
+    ai_person = await itop_client.schema("Person").find({"id": ("=", ":current_contact_id")})
+    caller_name = ticket["caller_id_friendlyname"]
+    conversation = build_conversation(
+        ticket["public_log"].get("entries") or [],
+        ai_person["friendlyname"],
+        caller_name,
+    )
+
     new_service_id: str | None = None
     new_subcategory_id: str | None = None
 
@@ -125,7 +136,15 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
 
         prompt = _build_service_prompt()
         chain = prompt | _llm
-        response = await chain.ainvoke({"title": title, "description": description, "services": services_text})
+        response = await chain.ainvoke(
+            {
+                "caller_name": caller_name,
+                "title": title,
+                "description": description,
+                "services": services_text,
+                "conversation": conversation,
+            }
+        )
         answer = strip_thinking(response.content)
 
         extracted_id = _extract_xml_field(answer, "service_id")
@@ -137,7 +156,9 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
             service_id = extracted_id
         else:
             logger.info(f"{label}: service classification confidence={confidence}, asking user")
-            return await _ask_or_fallback(ticket, state_manager, itop_client, title, description)
+            return await _ask_or_fallback(
+                ticket, state_manager, itop_client, caller_name, title, description, conversation
+            )
 
     # Stage 2: classify subcategory
     if not int(subcategory_id):
@@ -161,7 +182,13 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
         prompt = _build_subcategory_prompt()
         chain = prompt | _llm
         response = await chain.ainvoke(
-            {"title": title, "description": description, "subcategories": subcategories_text}
+            {
+                "caller_name": caller_name,
+                "title": title,
+                "description": description,
+                "subcategories": subcategories_text,
+                "conversation": conversation,
+            }
         )
         answer = strip_thinking(response.content)
 
@@ -173,7 +200,9 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
             new_subcategory_id = extracted_id
         else:
             logger.info(f"{label}: subcategory classification confidence={confidence}, asking user")
-            return await _ask_or_fallback(ticket, state_manager, itop_client, title, description)
+            return await _ask_or_fallback(
+                ticket, state_manager, itop_client, caller_name, title, description, conversation
+            )
 
     # Update iTop once with all newly determined fields
     if new_service_id or new_subcategory_id:
@@ -199,8 +228,10 @@ async def _ask_or_fallback(
     ticket: dict,
     state_manager,
     itop_client,
+    caller_name: str,
     title: str,
     description: str,
+    conversation: list,
 ) -> dict:
     label = ticket_label(ticket)
     ticket_state = await state_manager.get(label)
@@ -216,7 +247,9 @@ async def _ask_or_fallback(
 
     prompt = _build_ask_prompt()
     chain = prompt | _llm
-    response = await chain.ainvoke({"title": title, "description": description})
+    response = await chain.ainvoke(
+        {"caller_name": caller_name, "title": title, "description": description, "conversation": conversation}
+    )
     question = strip_thinking(response.content)
 
     await state_manager.increment_classify_rounds(label)

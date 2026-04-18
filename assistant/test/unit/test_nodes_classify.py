@@ -17,6 +17,7 @@ def _make_ticket(service_id: str = "0", subcategory_id: str = "0") -> dict:
         "request_type": "incident",
         "title": "My printer is broken",
         "description": "Cannot print anything.",
+        "caller_id_friendlyname": "John Doe",
         "service_id": service_id,
         "servicesubcategory_id": subcategory_id,
         "public_log": {"entries": []},
@@ -38,12 +39,17 @@ def _make_subcategories() -> list[dict]:
 
 
 def _make_runtime(classify_rounds: int = 0) -> MagicMock:
-    schema_mock = MagicMock()
-    schema_mock.find = AsyncMock(return_value=[])
-    schema_mock.update = AsyncMock()
+    def _schema(class_name):
+        m = MagicMock()
+        m.update = AsyncMock()
+        if class_name == "Person":
+            m.find = AsyncMock(return_value={"friendlyname": "ai-assistant"})
+        else:
+            m.find = AsyncMock(return_value=[])
+        return m
 
     runtime = MagicMock()
-    runtime.context.itop_client.schema = MagicMock(return_value=schema_mock)
+    runtime.context.itop_client.schema = MagicMock(side_effect=_schema)
     runtime.context.state_manager.get = AsyncMock(
         return_value=TicketState(rounds=0, classify_rounds=classify_rounds, ai_done=False)
     )
@@ -54,6 +60,27 @@ def _make_runtime(classify_rounds: int = 0) -> MagicMock:
 
 def _llm_response(content: str) -> MagicMock:
     return MagicMock(content=content)
+
+
+def _schema_with(service=None, subcategory=None, ticket_schema=None):
+    """Factory: returns a _schema(class_name) that handles Person + optionally Service/Subcategory."""
+
+    def _schema(class_name):
+        m = MagicMock()
+        m.update = AsyncMock()
+        if class_name == "Person":
+            m.find = AsyncMock(return_value={"friendlyname": "ai-assistant"})
+        elif class_name == "Service" and service is not None:
+            m.find = AsyncMock(return_value=service)
+        elif class_name == "ServiceSubcategory" and subcategory is not None:
+            m.find = AsyncMock(return_value=subcategory)
+        elif ticket_schema is not None:
+            return ticket_schema
+        else:
+            m.find = AsyncMock(return_value=[])
+        return m
+
+    return _schema
 
 
 class TestClassifySkip(unittest.IsolatedAsyncioTestCase):
@@ -86,18 +113,9 @@ class TestClassifySkip(unittest.IsolatedAsyncioTestCase):
             "<result><subcategory_id>101</subcategory_id><confidence>high</confidence><reasoning>ok</reasoning></result>"
         )
 
-        def _schema(class_name):
-            m = MagicMock()
-            if class_name == "Service":
-                m.find = AsyncMock(return_value=_make_services())
-            elif class_name == "ServiceSubcategory":
-                m.find = AsyncMock(return_value=_make_subcategories())
-            else:
-                m.find = AsyncMock(return_value=[])
-            m.update = AsyncMock()
-            return m
-
-        runtime.context.itop_client.schema = MagicMock(side_effect=_schema)
+        runtime.context.itop_client.schema = MagicMock(
+            side_effect=_schema_with(service=_make_services(), subcategory=_make_subcategories())
+        )
 
         with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(side_effect=[service_response, subcategory_response])):
             result = await classify_module.run(state, runtime)
@@ -133,20 +151,14 @@ class TestClassifyHighConfidence(unittest.IsolatedAsyncioTestCase):
         )
 
         ticket_schema = MagicMock()
+        ticket_schema.find = AsyncMock(return_value={"friendlyname": "ai-assistant"})
         ticket_schema.update = AsyncMock()
 
-        def _schema(class_name):
-            if class_name == "Service":
-                m = MagicMock()
-                m.find = AsyncMock(return_value=_make_services())
-                return m
-            if class_name == "ServiceSubcategory":
-                m = MagicMock()
-                m.find = AsyncMock(return_value=_make_subcategories())
-                return m
-            return ticket_schema
-
-        runtime.context.itop_client.schema = MagicMock(side_effect=_schema)
+        runtime.context.itop_client.schema = MagicMock(
+            side_effect=_schema_with(
+                service=_make_services(), subcategory=_make_subcategories(), ticket_schema=ticket_schema
+            )
+        )
 
         responses = [service_response, subcategory_response]
         with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(side_effect=responses)):
@@ -175,16 +187,7 @@ class TestClassifyHighConfidence(unittest.IsolatedAsyncioTestCase):
             "<result><subcategory_id>101</subcategory_id><confidence>high</confidence><reasoning>ok</reasoning></result>"
         )
 
-        def _schema(class_name):
-            m = MagicMock()
-            if class_name == "ServiceSubcategory":
-                m.find = AsyncMock(return_value=_make_subcategories())
-            else:
-                m.find = AsyncMock(return_value=[])
-            m.update = AsyncMock()
-            return m
-
-        runtime.context.itop_client.schema = MagicMock(side_effect=_schema)
+        runtime.context.itop_client.schema = MagicMock(side_effect=_schema_with(subcategory=_make_subcategories()))
 
         with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(return_value=subcategory_response)) as mock_llm:
             result = await classify_module.run(state, runtime)
@@ -205,13 +208,7 @@ class TestClassifyLowConfidence(unittest.IsolatedAsyncioTestCase):
         )
         ask_response = _llm_response("Could you describe what exactly stopped working?")
 
-        def _schema(class_name):
-            m = MagicMock()
-            m.find = AsyncMock(return_value=_make_services() if class_name == "Service" else [])
-            m.update = AsyncMock()
-            return m
-
-        runtime.context.itop_client.schema = MagicMock(side_effect=_schema)
+        runtime.context.itop_client.schema = MagicMock(side_effect=_schema_with(service=_make_services()))
 
         responses = [service_response, ask_response]
         with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(side_effect=responses)):
@@ -234,13 +231,7 @@ class TestClassifyLowConfidence(unittest.IsolatedAsyncioTestCase):
         )
         ask_response = _llm_response("What exactly is happening with the printer?")
 
-        def _schema(class_name):
-            m = MagicMock()
-            m.find = AsyncMock(return_value=_make_subcategories() if class_name == "ServiceSubcategory" else [])
-            m.update = AsyncMock()
-            return m
-
-        runtime.context.itop_client.schema = MagicMock(side_effect=_schema)
+        runtime.context.itop_client.schema = MagicMock(side_effect=_schema_with(subcategory=_make_subcategories()))
 
         responses = [subcategory_response, ask_response]
         with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(side_effect=responses)):
@@ -259,13 +250,7 @@ class TestClassifyLowConfidence(unittest.IsolatedAsyncioTestCase):
         )
         ask_response = _llm_response("What is the issue?")
 
-        def _schema(class_name):
-            m = MagicMock()
-            m.find = AsyncMock(return_value=_make_services() if class_name == "Service" else [])
-            m.update = AsyncMock()
-            return m
-
-        runtime.context.itop_client.schema = MagicMock(side_effect=_schema)
+        runtime.context.itop_client.schema = MagicMock(side_effect=_schema_with(service=_make_services()))
 
         responses = [service_response, ask_response]
         with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(side_effect=responses)):
@@ -284,16 +269,12 @@ class TestClassifyFallback(unittest.IsolatedAsyncioTestCase):
         )
 
         ticket_schema = MagicMock()
+        ticket_schema.find = AsyncMock(return_value={"friendlyname": "ai-assistant"})
         ticket_schema.update = AsyncMock()
 
-        def _schema(class_name):
-            if class_name == "Service":
-                m = MagicMock()
-                m.find = AsyncMock(return_value=_make_services())
-                return m
-            return ticket_schema
-
-        runtime.context.itop_client.schema = MagicMock(side_effect=_schema)
+        runtime.context.itop_client.schema = MagicMock(
+            side_effect=_schema_with(service=_make_services(), ticket_schema=ticket_schema)
+        )
 
         with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(return_value=service_response)):
             result = await classify_module.run(state, runtime)

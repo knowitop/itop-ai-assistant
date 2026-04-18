@@ -85,6 +85,12 @@ best matches the user's request based on their description.
 ## Available services
 {services}
 
+## Conversation context
+The conversation below may include follow-up messages from the requester.
+Use this context to improve classification accuracy — the requester may have
+clarified their problem in subsequent messages.
+The requester is marked [Requester] in the conversation.
+
 ## Instructions
 - Choose the service that best matches the request.
 - If the match is clear and unambiguous, set confidence to "high".
@@ -102,6 +108,7 @@ Reply strictly in this XML format with no extra text:
 """
 
 CLASSIFY_SERVICE_HUMAN: str = """\
+Requester: {caller_name}
 Title: {title}
 Description: {description}
 """
@@ -113,6 +120,12 @@ subcategory best matches the user's request.
 
 ## Available subcategories
 {subcategories}
+
+## Conversation context
+The conversation below may include follow-up messages from the requester.
+Use this context to improve classification accuracy — the requester may have
+clarified their problem in subsequent messages.
+The requester is marked [Requester] in the conversation.
 
 ## Instructions
 - Choose the subcategory that best matches the request.
@@ -131,6 +144,7 @@ Reply strictly in this XML format with no extra text:
 """
 
 CLASSIFY_SUBCATEGORY_HUMAN: str = """\
+Requester: {caller_name}
 Title: {title}
 Description: {description}
 """
@@ -140,15 +154,21 @@ CLASSIFY_ASK_SYSTEM: str = """\
 You are an IT support assistant. A user has submitted a ticket but the
 description is too vague to understand what the problem is.
 
+## Conversation context
+The conversation below may include prior exchanges with the requester.
+The requester is marked [Requester] in the conversation.
+
 ## Instructions
 - Ask one focused question to clarify what exactly happened or stopped working.
 - Ask about the nature of the problem — not about categories or services.
+- Do not repeat a question already asked in the conversation.
 - Keep it short and conversational. Write as a helpful colleague, not a form.
 - Write in the same language as the ticket.
 - Plain text only. No markdown, no HTML.
 """
 
 CLASSIFY_ASK_HUMAN: str = """\
+Requester: {caller_name}
 Title: {title}
 Description: {description}
 """
