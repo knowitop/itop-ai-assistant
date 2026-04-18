@@ -3,7 +3,7 @@ import logging
 from langgraph.graph import END, StateGraph
 
 from .context import GraphContext
-from .nodes import ask, enrich, evaluate, guard
+from .nodes import ask, classify, enrich, evaluate, guard
 from .state import Action, EnrichmentState
 
 logger = logging.getLogger(__name__)
@@ -13,6 +13,7 @@ def build_graph():
     g = StateGraph(EnrichmentState, context_schema=GraphContext)
 
     g.add_node("guard", guard.run)
+    g.add_node("classify", classify.run)
     g.add_node("evaluate", evaluate.run)
     g.add_node("ask", ask.run)
     g.add_node("enrich", enrich.run)
@@ -24,7 +25,17 @@ def build_graph():
         lambda s: s["action"],
         {
             Action.STOP: END,
-            Action.ASK: "evaluate",
+            Action.ASK: "classify",
+            None: "classify",
+        },
+    )
+
+    g.add_conditional_edges(
+        "classify",
+        lambda s: s.get("action"),
+        {
+            Action.STOP: END,
+            Action.ASK: "ask",
             None: "evaluate",
         },
     )

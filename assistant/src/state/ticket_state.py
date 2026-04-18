@@ -17,6 +17,7 @@ class StateUnavailableError(Exception):
 @dataclass
 class TicketState:
     rounds: int = 0
+    classify_rounds: int = 0
     ai_done: bool = False
 
 
@@ -43,6 +44,7 @@ class TicketStateManager:
 
         return TicketState(
             rounds=int(data.get("rounds", 0)),
+            classify_rounds=int(data.get("classify_rounds", 0)),
             ai_done=data.get("ai_done", "0") == "1",
         )
 
@@ -56,6 +58,18 @@ class TicketStateManager:
                 await pipe.execute()
         except RedisError as e:
             logger.error(f"Redis error incrementing rounds for ticket {ticket_ref}: {e}")
+            raise StateUnavailableError(f"Redis unavailable: {e}") from e
+
+    async def increment_classify_rounds(self, ticket_ref: str) -> None:
+        """Atomically increment classify_rounds counter and reset TTL to 30 days."""
+        key = self._key(ticket_ref)
+        try:
+            async with self._redis.pipeline(transaction=True) as pipe:
+                pipe.hincrby(key, "classify_rounds", 1)
+                pipe.expire(key, TTL_SECONDS)
+                await pipe.execute()
+        except RedisError as e:
+            logger.error(f"Redis error incrementing classify_rounds for ticket {ticket_ref}: {e}")
             raise StateUnavailableError(f"Redis unavailable: {e}") from e
 
     async def mark_done(self, ticket_ref: str) -> None:

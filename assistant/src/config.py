@@ -9,12 +9,30 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-from graph.enrichment.prompts import ENRICH_HUMAN, ENRICH_SYSTEM, EVALUATE_HUMAN, EVALUATE_SYSTEM
+from graph.enrichment.prompts import (
+    CLASSIFY_ASK_HUMAN,
+    CLASSIFY_ASK_SYSTEM,
+    CLASSIFY_SERVICE_HUMAN,
+    CLASSIFY_SERVICE_SYSTEM,
+    CLASSIFY_SUBCATEGORY_HUMAN,
+    CLASSIFY_SUBCATEGORY_SYSTEM,
+    ENRICH_HUMAN,
+    ENRICH_SYSTEM,
+    EVALUATE_HUMAN,
+    EVALUATE_SYSTEM,
+)
 
 _ROOT = Path(__file__).parent.parent  # assistant/
 
 
 class EnrichmentConfig(BaseModel):
+    classification_enabled: bool = True
+    classify_service_system_prompt: str = CLASSIFY_SERVICE_SYSTEM
+    classify_service_human_prompt: str = CLASSIFY_SERVICE_HUMAN
+    classify_subcategory_system_prompt: str = CLASSIFY_SUBCATEGORY_SYSTEM
+    classify_subcategory_human_prompt: str = CLASSIFY_SUBCATEGORY_HUMAN
+    classify_ask_system_prompt: str = CLASSIFY_ASK_SYSTEM
+    classify_ask_human_prompt: str = CLASSIFY_ASK_HUMAN
     evaluate_system_prompt: str = EVALUATE_SYSTEM
     evaluate_human_prompt: str = EVALUATE_HUMAN
     enrich_system_prompt: str = ENRICH_SYSTEM
