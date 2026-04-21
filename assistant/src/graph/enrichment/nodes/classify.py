@@ -23,8 +23,6 @@ _llm = ChatOpenAI(
     base_url=_s.llm_base_url,
 )
 
-_FALLBACK_NOTE = "Не удалось определить категорию обращения. Требуется ручная классификация."
-
 
 def _build_prompt(system: str, human: str) -> ChatPromptTemplate:
     return ChatPromptTemplate.from_messages(
@@ -196,7 +194,11 @@ async def _ask_or_fallback(ticket: dict, state_manager, itop_client, conversatio
         logger.info(f"{label}: classify rounds exhausted, fallback")
         await itop_client.schema(ticket["finalclass"]).update(
             {"id": ticket["id"]},
-            {"private_log": {"add_item": {"message": _FALLBACK_NOTE, "format": "text"}}},
+            {
+                "private_log": {
+                    "add_item": {"message": get_settings().enrichment.classify_fallback_note, "format": "text"}
+                }
+            },
         )
         await state_manager.mark_done(label)
         return {"action": Action.STOP}

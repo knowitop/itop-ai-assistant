@@ -42,6 +42,7 @@ _CLASSIFY_SUBCATEGORY_OQL = (
 
 class EnrichmentConfig(BaseModel):
     classification_enabled: bool = True
+    classify_fallback_note: str = "Could not determine the request category. Manual classification required."
     classify_service_oql: str = _CLASSIFY_SERVICE_OQL
     classify_subcategory_oql: str = _CLASSIFY_SUBCATEGORY_OQL
     classify_service_system_prompt: str = CLASSIFY_SERVICE_SYSTEM
