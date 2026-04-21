@@ -58,16 +58,19 @@ class Schema:
 
         response = await self.itop.request(data)
 
-        output: Any = (
+        output: list = (
             [{k: v for k, v in obj.items() if k in projection} for obj in response] if projection else response
         )
 
-        if isinstance(output, list) and len(output) == 1:
-            output = output[0]
-        if isinstance(output, dict) and len(output) == 1:
-            _, output = list(output.items())[0]
+        return output if isinstance(output, list) else []
 
-        return output
+    async def find_one(
+        self,
+        query: Optional[Dict[str, Any] | str] = None,
+        projection: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        results = await self.find(query, projection, limit="1")
+        return results[0] if results else None
 
     async def find_related(
         self,
@@ -149,8 +152,6 @@ class Schema:
             if "Several items" in str(e):
                 if multi:
                     objs = await self.find(query)
-                    if not isinstance(objs, list):
-                        objs = [objs]
                     results = await tmap(lambda obj: self.update(obj, update, upsert, multi), objs, workers=10)
                     output: Any = [item for result in results for item in result]
                     if isinstance(output, list) and len(output) == 1:
@@ -247,16 +248,16 @@ class Schema:
             old_value = obj[field]
             external_key, lookup_class, lookup_field = schema_lookups[field]
             if old_value:
-                value = await self.itop.schema(lookup_class).find({lookup_field: old_value}, ["id"])
-                if value in ([], ""):
+                row = await self.itop.schema(lookup_class).find_one({lookup_field: old_value}, ["id"])
+                if row is None:
                     raise ValueError(
                         f'Lookup field error: field "{field}", value "{old_value}", '
                         f'key "{external_key}", schema "{self.name}" → '
                         f'field "{lookup_field}" on schema "{lookup_class}"'
                     )
+                obj[external_key] = row["id"]
             else:
-                value = None
-            obj[external_key] = value
+                obj[external_key] = None
             del obj[field]
 
         schema_external_keys = {v[0] for v in schema_lookups.values()}
@@ -273,16 +274,16 @@ class Schema:
                     old_value = child_obj[child_field]
                     external_key, lookup_class, lookup_field = linked_sets_lookups[child_field]
                     if old_value:
-                        value = await self.itop.schema(lookup_class).find({lookup_field: old_value}, ["id"])
-                        if value in ([], ""):
+                        row = await self.itop.schema(lookup_class).find_one({lookup_field: old_value}, ["id"])
+                        if row is None:
                             raise ValueError(
                                 f'Lookup field error: field "{child_field}", value "{old_value}", '
                                 f'key "{external_key}", schema "{self.name}" → '
                                 f'field "{lookup_field}" on schema "{lookup_class}"'
                             )
+                        obj[field][i][external_key] = row["id"]
                     else:
-                        value = None
-                    obj[field][i][external_key] = value
+                        obj[field][i][external_key] = None
                     del obj[field][i][child_field]
 
         return obj

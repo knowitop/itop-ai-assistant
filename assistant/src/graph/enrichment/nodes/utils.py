@@ -7,6 +7,13 @@ from markdownify import markdownify
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
 
+def bind_oql(oql: str, params: dict[str, str]) -> str:
+    """Substitute :this->field placeholders in an OQL template string."""
+    for key, value in params.items():
+        oql = oql.replace(f":this->{key}", value)
+    return oql
+
+
 def strip_thinking(text: str | None) -> str:
     """Remove <think>…</think> reasoning blocks emitted by reasoning models."""
     if not text:

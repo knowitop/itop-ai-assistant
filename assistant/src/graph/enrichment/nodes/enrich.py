@@ -53,7 +53,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
 
 
 async def _generate_note(ticket: dict, itop_client: Itop) -> str:
-    ai_person = await itop_client.schema("Person").find({"id": ("=", ":current_contact_id")})
+    ai_person = await itop_client.schema("Person").find_one({"id": ("=", ":current_contact_id")})
     caller_name = ticket["caller_id_friendlyname"]
     conversation = build_conversation(ticket["public_log"].get("entries") or [], ai_person["friendlyname"], caller_name)
 

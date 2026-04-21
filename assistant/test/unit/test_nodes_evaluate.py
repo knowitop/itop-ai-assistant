@@ -30,7 +30,7 @@ def _make_runtime() -> MagicMock:
             "ServiceSubcategory": {"name": "Hardware", "description": ""},
             "Person": {"friendlyname": "ai-assistant"},
         }
-        m.find = AsyncMock(return_value=data.get(class_name, {}))
+        m.find_one = AsyncMock(return_value=data.get(class_name))
         return m
 
     runtime = MagicMock()
@@ -125,7 +125,7 @@ class TestBuildServiceContext(unittest.IsolatedAsyncioTestCase):
         def _schema(class_name):
             m = MagicMock()
             data = {"Service": service, "ServiceSubcategory": subcategory}
-            m.find = AsyncMock(return_value=data.get(class_name))
+            m.find_one = AsyncMock(return_value=data.get(class_name))
             return m
 
         itop_client = MagicMock()

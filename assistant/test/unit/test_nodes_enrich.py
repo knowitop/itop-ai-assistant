@@ -21,7 +21,7 @@ def _make_ticket() -> dict:
 
 def _make_runtime() -> MagicMock:
     person_schema = MagicMock()
-    person_schema.find = AsyncMock(return_value={"friendlyname": "AI Assistant"})
+    person_schema.find_one = AsyncMock(return_value={"friendlyname": "AI Assistant"})
 
     ticket_schema = MagicMock()
     ticket_schema.update = AsyncMock()

@@ -28,7 +28,7 @@ async def _run_enrichment_graph(ticket, processing_id: UUID):
 async def process_webhook_logic(payload: WebhookPayload, processing_id: UUID):
     match payload.event:
         case TicketEvent.CREATED | TicketEvent.USER_COMMENTED:
-            ticket = await itop_client.schema(payload.obj_class).find({"id": payload.id})
+            ticket = await itop_client.schema(payload.obj_class).find_one({"id": payload.id})
             await _run_enrichment_graph(ticket, processing_id)
 
         case TicketEvent.ASSIGNED:

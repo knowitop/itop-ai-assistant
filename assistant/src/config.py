@@ -25,8 +25,25 @@ from graph.enrichment.prompts import (
 _ROOT = Path(__file__).parent.parent  # assistant/
 
 
+_CLASSIFY_SERVICE_OQL = (
+    "SELECT Service AS s"
+    " JOIN lnkCustomerContractToService AS l1 ON l1.service_id=s.id"
+    " JOIN CustomerContract AS cc ON l1.customercontract_id=cc.id"
+    " WHERE cc.org_id = :this->org_id AND s.status != 'obsolete'"
+)
+
+_CLASSIFY_SUBCATEGORY_OQL = (
+    "SELECT ServiceSubcategory"
+    " WHERE service_id = :this->service_id"
+    " AND (ISNULL(:this->request_type) OR request_type = :this->request_type)"
+    " AND status != 'obsolete'"
+)
+
+
 class EnrichmentConfig(BaseModel):
     classification_enabled: bool = True
+    classify_service_oql: str = _CLASSIFY_SERVICE_OQL
+    classify_subcategory_oql: str = _CLASSIFY_SUBCATEGORY_OQL
     classify_service_system_prompt: str = CLASSIFY_SERVICE_SYSTEM
     classify_service_human_prompt: str = CLASSIFY_SERVICE_HUMAN
     classify_subcategory_system_prompt: str = CLASSIFY_SUBCATEGORY_SYSTEM

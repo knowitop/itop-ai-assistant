@@ -43,7 +43,7 @@ def _make_runtime(classify_rounds: int = 0) -> MagicMock:
         m = MagicMock()
         m.update = AsyncMock()
         if class_name == "Person":
-            m.find = AsyncMock(return_value={"friendlyname": "ai-assistant"})
+            m.find_one = AsyncMock(return_value={"friendlyname": "ai-assistant"})
         else:
             m.find = AsyncMock(return_value=[])
         return m
@@ -69,7 +69,7 @@ def _schema_with(service=None, subcategory=None, ticket_schema=None):
         m = MagicMock()
         m.update = AsyncMock()
         if class_name == "Person":
-            m.find = AsyncMock(return_value={"friendlyname": "ai-assistant"})
+            m.find_one = AsyncMock(return_value={"friendlyname": "ai-assistant"})
         elif class_name == "Service" and service is not None:
             m.find = AsyncMock(return_value=service)
         elif class_name == "ServiceSubcategory" and subcategory is not None:
