@@ -7,10 +7,10 @@ from markdownify import markdownify
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
 
-def bind_oql(oql: str, params: dict[str, str]) -> str:
+def bind_oql(oql: str, this: dict[str, str | None]) -> str:
     """Substitute :this->field placeholders in an OQL template string."""
-    for key, value in params.items():
-        oql = oql.replace(f":this->{key}", value)
+    for key, value in this.items():
+        oql = oql.replace(f":this->{key}", "NULL" if value is None else value)
     return oql
 
 

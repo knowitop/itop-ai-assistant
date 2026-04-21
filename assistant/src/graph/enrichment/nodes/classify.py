@@ -105,7 +105,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
 
     # Stage 1: classify service
     if not int(service_id):
-        services_filter = bind_oql(cfg.classify_service_oql, {"org_id": ticket["org_id"]})
+        services_filter = bind_oql(cfg.classify_service_oql, ticket)
         services_list = await itop_client.schema("Service").find(
             services_filter, projection=["id", "name", "description"]
         )
@@ -135,10 +135,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
 
     # Stage 2: classify subcategory
     if not int(subcategory_id):
-        subcategories_filter = bind_oql(
-            cfg.classify_subcategory_oql,
-            {"service_id": service_id, "request_type": ticket["request_type"]},
-        )
+        subcategories_filter = bind_oql(cfg.classify_subcategory_oql, {**ticket, "service_id": service_id})
         subcategories_list = await itop_client.schema("ServiceSubcategory").find(
             subcategories_filter,
             projection=["id", "name", "description"],
