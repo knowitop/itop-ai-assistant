@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 
 import graph.enrichment.nodes.classify as classify_module
 from config import EnrichmentConfig
+from domain.catalog import CatalogItem
 from domain.ticket import Ticket
 from graph.enrichment.prompts import build_enrichment_prompts
 from graph.enrichment.state import Action, EnrichmentState
@@ -31,39 +32,24 @@ def _make_ticket(service_id: str = "0", subcategory_id: str = "0") -> Ticket:
     )
 
 
-def _make_services() -> list[dict]:
+def _make_services() -> list[CatalogItem]:
     return [
-        {"id": "10", "name": "Printing", "description": "Printer issues"},
-        {"id": "20", "name": "Network", "description": "Network problems"},
+        CatalogItem(id="10", name="Printing", description="Printer issues"),
+        CatalogItem(id="20", name="Network", description="Network problems"),
     ]
 
 
-def _make_subcategories() -> list[dict]:
+def _make_subcategories() -> list[CatalogItem]:
     return [
-        {"id": "101", "name": "Hardware fault", "description": ""},
-        {"id": "102", "name": "Driver issue", "description": ""},
+        CatalogItem(id="101", name="Hardware fault"),
+        CatalogItem(id="102", name="Driver issue"),
     ]
-
-
-def _schema_with(service: list | None = None, subcategory: list | None = None):
-    """Factory: returns a _schema(class_name) serving Service/ServiceSubcategory option lists."""
-
-    def _schema(class_name):
-        m = MagicMock()
-        if class_name == "Service" and service is not None:
-            m.find = AsyncMock(return_value=service)
-        elif class_name == "ServiceSubcategory" and subcategory is not None:
-            m.find = AsyncMock(return_value=subcategory)
-        else:
-            m.find = AsyncMock(return_value=[])
-        return m
-
-    return _schema
 
 
 def _make_runtime(classify_rounds: int = 0) -> MagicMock:
     runtime = MagicMock()
-    runtime.context.itop_client.schema = MagicMock(side_effect=_schema_with())
+    runtime.context.catalog_repo.find_services = AsyncMock(return_value=[])
+    runtime.context.catalog_repo.find_subcategories = AsyncMock(return_value=[])
     runtime.context.ticket_repo.get_ai_person_name = AsyncMock(return_value="ai-assistant")
     runtime.context.ticket_repo.set_fields = AsyncMock()
     runtime.context.ticket_repo.append_private_log = AsyncMock()
@@ -92,7 +78,7 @@ class TestClassifySkip(unittest.IsolatedAsyncioTestCase):
         result = await classify_module.run(state, runtime)
 
         self.assertEqual(result, {})
-        runtime.context.itop_client.schema.assert_not_called()
+        runtime.context.catalog_repo.find_services.assert_not_called()
 
     async def test_zero_id_string_not_treated_as_set(self):
         state: EnrichmentState = {
@@ -101,16 +87,14 @@ class TestClassifySkip(unittest.IsolatedAsyncioTestCase):
             "question": None,
         }
         runtime = _make_runtime()
+        runtime.context.catalog_repo.find_services = AsyncMock(return_value=_make_services())
+        runtime.context.catalog_repo.find_subcategories = AsyncMock(return_value=_make_subcategories())
 
         service_response = _llm_response(
             "<result><service_id>10</service_id><confidence>high</confidence><reason>ok</reason></result>"
         )
         subcategory_response = _llm_response(
             "<result><subcategory_id>101</subcategory_id><confidence>high</confidence><reason>ok</reason></result>"
-        )
-
-        runtime.context.itop_client.schema = MagicMock(
-            side_effect=_schema_with(service=_make_services(), subcategory=_make_subcategories())
         )
 
         with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(side_effect=[service_response, subcategory_response])):
@@ -139,16 +123,14 @@ class TestClassifyHighConfidence(unittest.IsolatedAsyncioTestCase):
         ticket = _make_ticket()
         state: EnrichmentState = {"ticket": ticket, "action": None, "question": None}
         runtime = _make_runtime()
+        runtime.context.catalog_repo.find_services = AsyncMock(return_value=_make_services())
+        runtime.context.catalog_repo.find_subcategories = AsyncMock(return_value=_make_subcategories())
 
         service_response = _llm_response(
             "<result><service_id>10</service_id><confidence>high</confidence><reason>clear match</reason></result>"
         )
         subcategory_response = _llm_response(
             "<result><subcategory_id>101</subcategory_id><confidence>high</confidence><reason>ok</reason></result>"
-        )
-
-        runtime.context.itop_client.schema = MagicMock(
-            side_effect=_schema_with(service=_make_services(), subcategory=_make_subcategories())
         )
 
         responses = [service_response, subcategory_response]
@@ -172,18 +154,18 @@ class TestClassifyHighConfidence(unittest.IsolatedAsyncioTestCase):
             "question": None,
         }
         runtime = _make_runtime()
+        runtime.context.catalog_repo.find_subcategories = AsyncMock(return_value=_make_subcategories())
 
         subcategory_response = _llm_response(
             "<result><subcategory_id>101</subcategory_id><confidence>high</confidence><reason>ok</reason></result>"
         )
-
-        runtime.context.itop_client.schema = MagicMock(side_effect=_schema_with(subcategory=_make_subcategories()))
 
         with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(return_value=subcategory_response)) as mock_llm:
             result = await classify_module.run(state, runtime)
 
         # Only one LLM call (subcategory, not service)
         self.assertEqual(mock_llm.call_count, 1)
+        runtime.context.catalog_repo.find_services.assert_not_called()
         self.assertIn("ticket", result)
         self.assertEqual(result["ticket"].subcategory_id, "101")
 
@@ -192,13 +174,12 @@ class TestClassifyLowConfidence(unittest.IsolatedAsyncioTestCase):
     async def test_low_confidence_service_asks_question(self):
         state: EnrichmentState = {"ticket": _make_ticket(), "action": None, "question": None}
         runtime = _make_runtime(classify_rounds=0)
+        runtime.context.catalog_repo.find_services = AsyncMock(return_value=_make_services())
 
         service_response = _llm_response(
             "<result><service_id></service_id><confidence>low</confidence><reason>unclear</reason></result>"
         )
         ask_response = _llm_response("Could you describe what exactly stopped working?")
-
-        runtime.context.itop_client.schema = MagicMock(side_effect=_schema_with(service=_make_services()))
 
         responses = [service_response, ask_response]
         with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(side_effect=responses)):
@@ -215,13 +196,12 @@ class TestClassifyLowConfidence(unittest.IsolatedAsyncioTestCase):
             "question": None,
         }
         runtime = _make_runtime(classify_rounds=0)
+        runtime.context.catalog_repo.find_subcategories = AsyncMock(return_value=_make_subcategories())
 
         subcategory_response = _llm_response(
             "<result><subcategory_id></subcategory_id><confidence>low</confidence><reason>unclear</reason></result>"
         )
         ask_response = _llm_response("What exactly is happening with the printer?")
-
-        runtime.context.itop_client.schema = MagicMock(side_effect=_schema_with(subcategory=_make_subcategories()))
 
         responses = [subcategory_response, ask_response]
         with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(side_effect=responses)):
@@ -233,14 +213,13 @@ class TestClassifyLowConfidence(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_service_id_treated_as_low_confidence(self):
         state: EnrichmentState = {"ticket": _make_ticket(), "action": None, "question": None}
         runtime = _make_runtime(classify_rounds=0)
+        runtime.context.catalog_repo.find_services = AsyncMock(return_value=_make_services())
 
         # LLM returns ID not in the list
         service_response = _llm_response(
             "<result><service_id>999</service_id><confidence>high</confidence><reason>match</reason></result>"
         )
         ask_response = _llm_response("What is the issue?")
-
-        runtime.context.itop_client.schema = MagicMock(side_effect=_schema_with(service=_make_services()))
 
         responses = [service_response, ask_response]
         with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(side_effect=responses)):
@@ -254,12 +233,11 @@ class TestClassifyFallback(unittest.IsolatedAsyncioTestCase):
         ticket = _make_ticket()
         state: EnrichmentState = {"ticket": ticket, "action": None, "question": None}
         runtime = _make_runtime(classify_rounds=2)
+        runtime.context.catalog_repo.find_services = AsyncMock(return_value=_make_services())
 
         service_response = _llm_response(
             "<result><service_id></service_id><confidence>low</confidence><reason>unclear</reason></result>"
         )
-
-        runtime.context.itop_client.schema = MagicMock(side_effect=_schema_with(service=_make_services()))
 
         with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(return_value=service_response)):
             result = await classify_module.run(state, runtime)

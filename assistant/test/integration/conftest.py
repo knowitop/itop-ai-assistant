@@ -17,6 +17,7 @@ import pytest
 
 logger = logging.getLogger(__name__)
 
+from catalog_repository import CatalogRepository
 from config import get_settings
 from deps import create_llm
 from domain.ticket import Ticket
@@ -100,8 +101,8 @@ def make_ctx(
     llm = create_llm(settings)
     ctx = GraphContext(
         processing_id=uuid4(),
-        itop_client=itop,
         ticket_repo=TicketRepository(itop, settings.ticket_mapping),
+        catalog_repo=CatalogRepository(itop),
         ticket_mapping=settings.ticket_mapping,
         state_manager=state_manager,
         enrichment=enrichment,
@@ -141,8 +142,8 @@ def ctx(itop: Itop, state_manager: TicketStateManager) -> GraphContext:
     llm = create_llm(settings)
     return GraphContext(
         processing_id=uuid4(),
-        itop_client=itop,
         ticket_repo=TicketRepository(itop, settings.ticket_mapping),
+        catalog_repo=CatalogRepository(itop),
         ticket_mapping=settings.ticket_mapping,
         state_manager=state_manager,
         enrichment=settings.enrichment,

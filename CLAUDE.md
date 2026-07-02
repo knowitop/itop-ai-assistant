@@ -143,6 +143,8 @@ cd docker && docker-compose up -d
 | `src/graph/enrichment/context.py`               | `GraphContext` — per-run dependencies for nodes     |
 | `src/domain/ticket.py`                          | `Ticket` — semantic domain model (no iTop names)    |
 | `src/ticket_repository.py`                      | `TicketRepository` — semantic ↔ iTop attribute adapter |
+| `src/catalog_repository.py`                     | `CatalogRepository` — Service/Subcategory as `CatalogItem` |
+| `src/domain/catalog.py`                         | `CatalogItem` — semantic service-catalog model      |
 | `src/state/ticket_state.py`                     | Redis-backed `TicketState` and `TicketStateManager` |
 | `src/itop_client/`                              | `Itop` — vendored iTop REST API library (itoptop fork) |
 
@@ -174,9 +176,13 @@ iTop attribute names happens only in `TicketRepository`, driven by the
 `ticket_mapping` config: `fields` (semantic → attribute code),
 `class_overrides` (per-class differences, e.g. `Incident` has no
 `request_type`), `active_statuses` (when the assistant may act). Adapting to
-a customized iTop datamodel is a config change, not a code change. Never
-access raw iTop attribute names in nodes; OQL templates use semantic
-`:this->field` placeholders bound from `ticket.model_dump()`.
+a customized iTop datamodel is a config change, not a code change. Service
+catalog reads go through `CatalogRepository` (fixed `Service`/
+`ServiceSubcategory` classes — those are practically never customized),
+nodes see `CatalogItem` only. Nodes never touch the raw iTop client or
+attribute names — all iTop access goes through the repositories; OQL
+templates use semantic `:this->field` placeholders bound from
+`ticket.model_dump()`.
 
 ### LLM Stack
 

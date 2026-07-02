@@ -3,8 +3,8 @@ import logging
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.runtime import Runtime
 
+from catalog_repository import CatalogRepository
 from domain.ticket import Ticket
-from itop_client import Itop
 
 from ..context import GraphContext
 from ..prompts import EnrichmentPrompts
@@ -37,7 +37,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
         logger.info(f"{ticket.label}: rounds exhausted, moving to enrich")
         return {"action": Action.ENRICH}
 
-    service_context = await _build_service_context(ticket, runtime.context.itop_client)
+    service_context = await _build_service_context(ticket, runtime.context.catalog_repo)
 
     ai_name = await runtime.context.ticket_repo.get_ai_person_name()
     conversation = build_conversation(ticket.public_log, ai_name, ticket.caller_name)
@@ -73,24 +73,20 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     return {"action": Action.ASK, "question": question}
 
 
-async def _build_service_context(ticket: Ticket, itop_client: Itop) -> str:
-    service = await itop_client.schema("Service").find_one(
-        {"id": ticket.service_id}, projection=["id", "name", "description"]
-    )
-    service_subcategory = await itop_client.schema("ServiceSubcategory").find_one(
-        {"id": ticket.subcategory_id}, projection=["id", "name", "description"]
-    )
+async def _build_service_context(ticket: Ticket, catalog: CatalogRepository) -> str:
+    service = await catalog.get_service(ticket.service_id)
+    subcategory = await catalog.get_subcategory(ticket.subcategory_id)
 
     parts = []
 
     if service:
-        parts.append(f"Service: {service['name']}")
-        if service["description"]:
-            parts.append(f"Service description:\n{service['description']}")
-    if service_subcategory:
-        parts.append(f"Subcategory: {service_subcategory['name']}")
-        if service_subcategory["description"]:
-            parts.append(f"Subcategory description:\n{service_subcategory['description']}")
+        parts.append(f"Service: {service.name}")
+        if service.description:
+            parts.append(f"Service description:\n{service.description}")
+    if subcategory:
+        parts.append(f"Subcategory: {subcategory.name}")
+        if subcategory.description:
+            parts.append(f"Subcategory description:\n{subcategory.description}")
 
     if not parts:
         return "No service context provided."

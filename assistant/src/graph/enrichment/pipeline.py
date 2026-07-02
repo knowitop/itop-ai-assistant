@@ -72,8 +72,8 @@ async def _run_enrichment_graph(ticket: Ticket, processing_id: UUID, deps: AppDe
     prompts = build_enrichment_prompts(await deps.prompt_store.get("enrichment"))
     context = GraphContext(
         processing_id=processing_id,
-        itop_client=deps.itop_client,
         ticket_repo=deps.ticket_repo,
+        catalog_repo=deps.catalog_repo,
         ticket_mapping=deps.settings.ticket_mapping,
         state_manager=deps.state_manager,
         enrichment=enrichment,

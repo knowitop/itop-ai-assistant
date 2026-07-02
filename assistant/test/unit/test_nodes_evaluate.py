@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 
 import graph.enrichment.nodes.evaluate as evaluate_module
 from config import EnrichmentConfig
+from domain.catalog import CatalogItem
 from domain.ticket import Ticket
 from graph.enrichment.prompts import build_enrichment_prompts
 from graph.enrichment.state import Action, EnrichmentState
@@ -31,18 +32,10 @@ def _make_ticket(**overrides) -> Ticket:
 
 
 def _make_runtime() -> MagicMock:
-    def _schema(class_name):
-        m = MagicMock()
-        data = {
-            "Service": {"name": "IT", "description": ""},
-            "ServiceSubcategory": {"name": "Hardware", "description": ""},
-        }
-        m.find_one = AsyncMock(return_value=data.get(class_name))
-        return m
-
     runtime = MagicMock()
     runtime.context.state_manager.get = AsyncMock(return_value=TicketState(rounds=0, ai_done=False))
-    runtime.context.itop_client.schema = MagicMock(side_effect=_schema)
+    runtime.context.catalog_repo.get_service = AsyncMock(return_value=CatalogItem(id="5", name="IT"))
+    runtime.context.catalog_repo.get_subcategory = AsyncMock(return_value=CatalogItem(id="3", name="Hardware"))
     runtime.context.ticket_repo.get_ai_person_name = AsyncMock(return_value="ai-assistant")
     runtime.context.enrichment = EnrichmentConfig()
     runtime.context.prompts = _PROMPTS
@@ -168,22 +161,17 @@ class TestEvaluateEarlyReturns(unittest.IsolatedAsyncioTestCase):
 
 
 class TestBuildServiceContext(unittest.IsolatedAsyncioTestCase):
-    async def _run_with_schema(self, service: dict | None, subcategory: dict | None) -> str:
-        def _schema(class_name):
-            m = MagicMock()
-            data = {"Service": service, "ServiceSubcategory": subcategory}
-            m.find_one = AsyncMock(return_value=data.get(class_name))
-            return m
-
-        itop_client = MagicMock()
-        itop_client.schema = MagicMock(side_effect=_schema)
+    async def _run_with_catalog(self, service: CatalogItem | None, subcategory: CatalogItem | None) -> str:
+        catalog = MagicMock()
+        catalog.get_service = AsyncMock(return_value=service)
+        catalog.get_subcategory = AsyncMock(return_value=subcategory)
         ticket = _make_ticket()
-        return await evaluate_module._build_service_context(ticket, itop_client)
+        return await evaluate_module._build_service_context(ticket, catalog)
 
     async def test_service_and_subcategory_with_descriptions(self):
-        result = await self._run_with_schema(
-            service={"name": "IT", "description": "IT services"},
-            subcategory={"name": "Hardware", "description": "Hardware issues"},
+        result = await self._run_with_catalog(
+            service=CatalogItem(id="5", name="IT", description="IT services"),
+            subcategory=CatalogItem(id="3", name="Hardware", description="Hardware issues"),
         )
 
         self.assertIn("Service: IT", result)
@@ -192,8 +180,8 @@ class TestBuildServiceContext(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Subcategory description:\nHardware issues", result)
 
     async def test_service_without_description(self):
-        result = await self._run_with_schema(
-            service={"name": "IT", "description": ""},
+        result = await self._run_with_catalog(
+            service=CatalogItem(id="5", name="IT"),
             subcategory=None,
         )
 
@@ -201,16 +189,16 @@ class TestBuildServiceContext(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Service description", result)
 
     async def test_subcategory_without_description(self):
-        result = await self._run_with_schema(
+        result = await self._run_with_catalog(
             service=None,
-            subcategory={"name": "Hardware", "description": ""},
+            subcategory=CatalogItem(id="3", name="Hardware"),
         )
 
         self.assertIn("Subcategory: Hardware", result)
         self.assertNotIn("Subcategory description", result)
 
     async def test_no_service_no_subcategory_returns_fallback(self):
-        result = await self._run_with_schema(service=None, subcategory=None)
+        result = await self._run_with_catalog(service=None, subcategory=None)
 
         self.assertEqual(result, "No service context provided.")
 

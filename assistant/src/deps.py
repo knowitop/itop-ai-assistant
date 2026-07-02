@@ -4,6 +4,7 @@ from pathlib import Path
 import redis.asyncio as aioredis
 from langchain_openai import ChatOpenAI
 
+from catalog_repository import CatalogRepository
 from config import Settings
 from config_store import ConfigStore, StaticConfigStore
 from itop_client import Itop
@@ -21,6 +22,7 @@ class AppDeps:
     settings: Settings
     itop_client: Itop
     ticket_repo: TicketRepository
+    catalog_repo: CatalogRepository
     state_manager: TicketStateManager
     config_store: ConfigStore
     prompt_store: PromptStore
@@ -54,6 +56,7 @@ def build_deps(settings: Settings) -> AppDeps:
         settings=settings,
         itop_client=itop_client,
         ticket_repo=TicketRepository(itop_client, settings.ticket_mapping),
+        catalog_repo=CatalogRepository(itop_client),
         state_manager=state_manager,
         config_store=StaticConfigStore(settings),
         prompt_store=FilePromptStore(_DEFAULT_PROMPTS_DIR, settings.prompts_dir),

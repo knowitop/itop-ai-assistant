@@ -3,6 +3,7 @@ import logging
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.runtime import Runtime
 
+from domain.catalog import CatalogItem
 from domain.ticket import Ticket
 
 from ..context import GraphContext
@@ -22,11 +23,11 @@ def _build_prompt(system: str, human: str) -> ChatPromptTemplate:
     )
 
 
-def _format_options(options: list[dict]) -> str:
+def _format_options(options: list[CatalogItem]) -> str:
     lines = []
     for opt in options:
-        line = f"- ID {opt['id']}: {opt['name']}"
-        desc = (opt["description"] or "").strip()
+        line = f"- ID {opt.id}: {opt.name}"
+        desc = opt.description.strip()
         if desc:
             line += f" — {desc}"
         lines.append(line)
@@ -53,7 +54,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     if ticket.has_service and ticket.has_subcategory:
         return {}
 
-    itop_client = runtime.context.itop_client
+    catalog = runtime.context.catalog_repo
     llm = runtime.context.llm_classify
     prompts = runtime.context.prompts
 
@@ -70,11 +71,9 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     # Stage 1: classify service
     if not ticket.has_service:
         services_filter = bind_oql(cfg.classify_service_oql, ticket.model_dump())
-        services_list = await itop_client.schema("Service").find(
-            services_filter, projection=["id", "name", "description"]
-        )
+        services_list = await catalog.find_services(services_filter)
         services_text = _format_options(services_list)
-        valid_service_ids = {str(s["id"]) for s in services_list}
+        valid_service_ids = {item.id for item in services_list}
 
         chain = _build_prompt(prompts.classify_service_system, prompts.classify_service_human) | llm
         extracted_id, confidence = await _invoke_and_extract(
@@ -101,12 +100,9 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     # Stage 2: classify subcategory
     if not ticket.has_subcategory:
         subcategories_filter = bind_oql(cfg.classify_subcategory_oql, {**ticket.model_dump(), "service_id": service_id})
-        subcategories_list = await itop_client.schema("ServiceSubcategory").find(
-            subcategories_filter,
-            projection=["id", "name", "description"],
-        )
+        subcategories_list = await catalog.find_subcategories(subcategories_filter)
         subcategories_text = _format_options(subcategories_list)
-        valid_subcategory_ids = {str(s["id"]) for s in subcategories_list}
+        valid_subcategory_ids = {item.id for item in subcategories_list}
 
         chain = _build_prompt(prompts.classify_subcategory_system, prompts.classify_subcategory_human) | llm
         extracted_id, confidence = await _invoke_and_extract(
