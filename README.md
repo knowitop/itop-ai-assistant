@@ -14,10 +14,14 @@ Engineers waste time on tickets that arrive without enough information: vague de
 
 > **The engineer sees the ticket only when it's ready to work on.**
 
-When a new ticket arrives, the assistant intercepts it via webhook — no changes to iTop itself are needed. It looks up the **service subcategory** configured on the ticket and uses its description as the completeness criteria. This means the questions it asks are specific to the service context, not generic prompts.
+When a new ticket arrives, the assistant intercepts it via webhook — no changes to iTop itself are needed. It works in two stages:
+
+1. **Classify** — if the ticket has no service or subcategory set, the assistant queries iTop for the available options and picks the best match based on the title and description. If it cannot determine the right category confidently, it posts one clarifying question in the public log and waits for the user to reply.
+
+2. **Evaluate** — once the category is known, the assistant uses the subcategory's description as the completeness criteria. This means the questions it asks are specific to the service context, not generic prompts.
 
 - If the description is **complete** — it generates a structured internal note for the engineer and marks the ticket ready.
-- If the description is **incomplete** — it posts one focused clarifying question in the iTop public log. The user replies through the portal as usual, the assistant re-evaluates and either asks one follow-up or proceeds to enrich. Maximum two rounds.
+- If the description is **incomplete** — it posts one focused clarifying question in the iTop public log. The user replies through the portal as usual, the assistant re-evaluates and either asks one follow-up or proceeds to enrich. Maximum two rounds per stage.
 
 All AI actions are performed under a dedicated iTop service account, so every comment is clearly attributed and auditable.
 
@@ -62,8 +66,23 @@ Ticket created          User commented
                    ▼
          Already processed?  ──yes──▶  stop
          Engineer assigned?  ──yes──▶  stop
-         Round limit reached? ─yes──▶  stop
                    │ no
+                   ▼
+        Service/subcategory set?
+                   │
+        ┌──────────┴──────────────────────┐
+        │ yes                             │ no
+        │                                 ▼
+        │                    LLM picks category from iTop
+        │                                 │
+        │                    ┌────────────┴──────────┐
+        │                    │ confident              │ unsure
+        │                    ▼                        ▼
+        │             category set        Ask clarifying question
+        │                    │            in public log,
+        │                    │            wait for reply
+        │                    │            (triggers new webhook)
+        └──────────┬─────────┘
                    ▼
         Is description sufficient?
                    │

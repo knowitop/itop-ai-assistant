@@ -26,9 +26,10 @@ user data always come from iTop. Never cache or duplicate this data locally.
 Read fresh on every webhook.
 
 **Redis stores operational ticket state.** iTop is not the place for AI
-metadata. Two fields per ticket — `rounds` (how many clarifying questions AI
-has asked) and `ai_done` (whether AI has finished processing) — live in Redis
-with a 30-day TTL. This is the only state the service owns.
+metadata. Three fields per ticket — `rounds` (how many completeness clarifying
+questions AI has asked), `classify_rounds` (how many classification clarifying
+questions AI has asked), and `ai_done` (whether AI has finished processing) —
+live in Redis with a 30-day TTL. This is the only state the service owns.
 
 **AI acts as a named iTop user.** All comments posted to iTop are written on
 behalf of a dedicated service account (e.g. `ai-assistant`). This makes AI
@@ -100,8 +101,9 @@ cd docker && docker-compose up -d
 4. Fetch full ticket from iTop API; for `UserRequest`/`Incident` also fetch
    related `Service` and `ServiceSubcategory`; fetch `Person` of caller
 5. If ticket status is not "New" (engineer already working), stop silently
-6. If `rounds >= 2`, skip LLM evaluation — enrich with available data and mark
-   done
+6. **Classify:** if Service/ServiceSubcategory are not set, LLM queries iTop
+   for available options and selects the best match; if it cannot determine
+   confidently, posts one clarifying question, increments `classify_rounds`
 7. LLM evaluates whether ticket description is sufficient for the engineer
 8. **If incomplete:** post one clarifying question as a public log entry via
    iTop API, increment `rounds` in Redis
@@ -118,12 +120,12 @@ cd docker && docker-compose up -d
 | `src/webhook/handler.py`                        | Webhook event processing logic                      |
 | `src/graph/enrichment/graph.py`                 | LangGraph graph definition and compilation          |
 | `src/graph/enrichment/nodes/guard.py`           | Pre-check node (ai_done, ticket status)             |
+| `src/graph/enrichment/nodes/classify.py`        | LLM classification node (Service/ServiceSubcategory)|
 | `src/graph/enrichment/nodes/evaluate.py`        | LLM completeness evaluation node                   |
 | `src/graph/enrichment/nodes/ask.py`             | Post clarifying question node                       |
 | `src/graph/enrichment/nodes/enrich.py`          | Ticket enrichment node                              |
-| `src/graph/enrichment/nodes/utils.py`           | `strip_thinking` — removes `<think>` blocks         |
-| `src/graph/enrichment/prompts/evaluate.yaml`    | Evaluate prompt template                            |
-| `src/graph/enrichment/prompts/enrich.yaml`      | Enrich prompt template                              |
+| `src/graph/enrichment/nodes/utils.py`           | `strip_thinking`, `bind_oql`, `html_to_markdown`    |
+| `src/graph/enrichment/prompts.py`               | All prompt templates (evaluate, enrich, classify)   |
 | `src/state/ticket_state.py`                     | Redis-backed `TicketState` and `TicketStateManager` |
 | `src/itop_client/itop.py`                       | `Itop` — iTop REST API wrapper                      |
 | `src/itop/client.py`                            | `itop_client` singleton factory                     |
@@ -168,4 +170,5 @@ See `docker/.env.dist` for a full template.
 - Redis is mocked with `fakeredis`
 - `get_settings()` is cached via `lru_cache`; call `get_settings.cache_clear()`
   in `setUp`/`tearDown` when tests need to control env vars
-- Current test files: `test_config.py`, `test_router.py`, `test_ticket_state.py`
+- Current test files: `test_config.py`, `test_router.py`, `test_ticket_state.py`,
+  `test_nodes_classify.py`, `test_nodes_evaluate.py`, `test_nodes_enrich.py`
