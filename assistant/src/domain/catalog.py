@@ -1,11 +1,17 @@
-"""Semantic service-catalog model, decoupled from iTop attribute names."""
+"""Semantic service-catalog models, decoupled from iTop attribute names."""
 
 from pydantic import BaseModel
 
 
-class CatalogItem(BaseModel):
-    """A selectable catalog option: a Service or a ServiceSubcategory."""
-
+class Service(BaseModel):
     id: str
     name: str = ""
     description: str = ""
+
+
+class ServiceSubcategory(BaseModel):
+    id: str
+    name: str = ""
+    description: str = ""
+    # Mandatory external key in iTop: a subcategory always belongs to a service
+    service_id: str

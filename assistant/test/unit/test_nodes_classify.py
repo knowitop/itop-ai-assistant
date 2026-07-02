@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAI
 
 import graph.enrichment.nodes.classify as classify_module
 from config import EnrichmentConfig
-from domain.catalog import CatalogItem
+from domain.catalog import Service, ServiceSubcategory
 from domain.ticket import Ticket
 from graph.enrichment.prompts import build_enrichment_prompts
 from graph.enrichment.state import Action, EnrichmentState
@@ -32,17 +32,17 @@ def _make_ticket(service_id: str = "0", subcategory_id: str = "0") -> Ticket:
     )
 
 
-def _make_services() -> list[CatalogItem]:
+def _make_services() -> list[Service]:
     return [
-        CatalogItem(id="10", name="Printing", description="Printer issues"),
-        CatalogItem(id="20", name="Network", description="Network problems"),
+        Service(id="10", name="Printing", description="Printer issues"),
+        Service(id="20", name="Network", description="Network problems"),
     ]
 
 
-def _make_subcategories() -> list[CatalogItem]:
+def _make_subcategories() -> list[ServiceSubcategory]:
     return [
-        CatalogItem(id="101", name="Hardware fault"),
-        CatalogItem(id="102", name="Driver issue"),
+        ServiceSubcategory(id="101", name="Hardware fault", service_id="10"),
+        ServiceSubcategory(id="102", name="Driver issue", service_id="10"),
     ]
 
 

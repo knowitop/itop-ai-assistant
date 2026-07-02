@@ -3,7 +3,7 @@ import logging
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.runtime import Runtime
 
-from domain.catalog import CatalogItem
+from domain.catalog import Service, ServiceSubcategory
 from domain.ticket import Ticket
 
 from ..context import GraphContext
@@ -23,7 +23,7 @@ def _build_prompt(system: str, human: str) -> ChatPromptTemplate:
     )
 
 
-def _format_options(options: list[CatalogItem]) -> str:
+def _format_options(options: list[Service] | list[ServiceSubcategory]) -> str:
     lines = []
     for opt in options:
         line = f"- ID {opt.id}: {opt.name}"

@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAI
 
 import graph.enrichment.nodes.evaluate as evaluate_module
 from config import EnrichmentConfig
-from domain.catalog import CatalogItem
+from domain.catalog import Service, ServiceSubcategory
 from domain.ticket import Ticket
 from graph.enrichment.prompts import build_enrichment_prompts
 from graph.enrichment.state import Action, EnrichmentState
@@ -34,8 +34,10 @@ def _make_ticket(**overrides) -> Ticket:
 def _make_runtime() -> MagicMock:
     runtime = MagicMock()
     runtime.context.state_manager.get = AsyncMock(return_value=TicketState(rounds=0, ai_done=False))
-    runtime.context.catalog_repo.get_service = AsyncMock(return_value=CatalogItem(id="5", name="IT"))
-    runtime.context.catalog_repo.get_subcategory = AsyncMock(return_value=CatalogItem(id="3", name="Hardware"))
+    runtime.context.catalog_repo.get_service = AsyncMock(return_value=Service(id="5", name="IT"))
+    runtime.context.catalog_repo.get_subcategory = AsyncMock(
+        return_value=ServiceSubcategory(id="3", name="Hardware", service_id="5")
+    )
     runtime.context.ticket_repo.get_ai_person_name = AsyncMock(return_value="ai-assistant")
     runtime.context.enrichment = EnrichmentConfig()
     runtime.context.prompts = _PROMPTS
@@ -161,7 +163,7 @@ class TestEvaluateEarlyReturns(unittest.IsolatedAsyncioTestCase):
 
 
 class TestBuildServiceContext(unittest.IsolatedAsyncioTestCase):
-    async def _run_with_catalog(self, service: CatalogItem | None, subcategory: CatalogItem | None) -> str:
+    async def _run_with_catalog(self, service: Service | None, subcategory: ServiceSubcategory | None) -> str:
         catalog = MagicMock()
         catalog.get_service = AsyncMock(return_value=service)
         catalog.get_subcategory = AsyncMock(return_value=subcategory)
@@ -170,8 +172,8 @@ class TestBuildServiceContext(unittest.IsolatedAsyncioTestCase):
 
     async def test_service_and_subcategory_with_descriptions(self):
         result = await self._run_with_catalog(
-            service=CatalogItem(id="5", name="IT", description="IT services"),
-            subcategory=CatalogItem(id="3", name="Hardware", description="Hardware issues"),
+            service=Service(id="5", name="IT", description="IT services"),
+            subcategory=ServiceSubcategory(id="3", name="Hardware", description="Hardware issues", service_id="5"),
         )
 
         self.assertIn("Service: IT", result)
@@ -181,7 +183,7 @@ class TestBuildServiceContext(unittest.IsolatedAsyncioTestCase):
 
     async def test_service_without_description(self):
         result = await self._run_with_catalog(
-            service=CatalogItem(id="5", name="IT"),
+            service=Service(id="5", name="IT"),
             subcategory=None,
         )
 
@@ -191,7 +193,7 @@ class TestBuildServiceContext(unittest.IsolatedAsyncioTestCase):
     async def test_subcategory_without_description(self):
         result = await self._run_with_catalog(
             service=None,
-            subcategory=CatalogItem(id="3", name="Hardware"),
+            subcategory=ServiceSubcategory(id="3", name="Hardware", service_id="5"),
         )
 
         self.assertIn("Subcategory: Hardware", result)
