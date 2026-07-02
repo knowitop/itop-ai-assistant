@@ -26,7 +26,7 @@ class AppDeps:
 def create_llm(settings: Settings, model: str | None = None) -> ChatOpenAI:
     """Create an LLM client. `model` overrides the default `settings.llm_model`."""
     return ChatOpenAI(
-        model_name=model or settings.llm_model,
+        model=model or settings.llm_model,
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
     )

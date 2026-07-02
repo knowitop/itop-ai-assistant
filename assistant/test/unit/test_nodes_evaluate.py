@@ -8,7 +8,7 @@ from config import EnrichmentConfig
 from graph.enrichment.state import Action, EnrichmentState
 from state.ticket_state import TicketState
 
-_TEST_LLM = ChatOpenAI(model_name="test-model", api_key="test-key", base_url="http://localhost:9")
+_TEST_LLM = ChatOpenAI(model="test-model", api_key="test-key", base_url="http://localhost:9")
 
 
 def _make_ticket() -> dict:
