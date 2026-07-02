@@ -8,6 +8,7 @@ Integration tests for the enrichment LangGraph.
 Run: uv run pytest test/integration/ -v
 """
 
+from domain.ticket import LogEntry
 from graph.enrichment.graph import build_graph
 from graph.enrichment.state import Action
 
@@ -38,6 +39,21 @@ class TestGuardShortCircuits:
 
         assert result["action"] == Action.STOP
         assert itop_transport.calls == []
+
+    async def test_last_public_entry_from_ai(self, ctx, itop_transport):
+        """Guard stops when our own question is the last public entry — waiting for the user."""
+        ticket = make_ticket(
+            public_log=[
+                LogEntry(user_login="John Doe", message="Help!"),
+                LogEntry(user_login="ai-assistant", message="What is the model of your printer?"),
+            ]
+        )
+
+        result = await _run(ctx, ticket)
+
+        assert result["action"] == Action.STOP
+        # Only the AI Person lookup is allowed — no LLM, no ticket updates
+        assert itop_transport.update_calls() == []
 
 
 class TestEnrichWithoutEvaluate:

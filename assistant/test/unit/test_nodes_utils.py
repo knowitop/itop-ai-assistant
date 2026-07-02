@@ -78,6 +78,24 @@ class TestStripThinking(unittest.TestCase):
     def test_multiline_think_block_stripped(self):
         self.assertEqual(strip_thinking("<think>\nline1\nline2\n</think>result"), "result")
 
+    def test_thinking_tag_variant_stripped(self):
+        self.assertEqual(strip_thinking("<thinking>hm</thinking>answer"), "answer")
+
+    def test_orphan_closing_tag_drops_leading_reasoning(self):
+        # Some chat templates emit the opening <think> in the prompt, so the
+        # completion starts mid-reasoning and ends with </think>.
+        self.assertEqual(strip_thinking("step 1... step 2...</think>answer"), "answer")
+
+    def test_unclosed_opening_tag_drops_truncated_reasoning(self):
+        self.assertEqual(strip_thinking("<think>truncated reasoning without cl"), "")
+
+    def test_reasoning_tag_preserved(self):
+        # <reasoning> is a data field in our classify response format — not a think tag
+        self.assertEqual(
+            strip_thinking("<reasoning>clear match</reasoning>"),
+            "<reasoning>clear match</reasoning>",
+        )
+
     def test_list_content_of_strings_joined(self):
         self.assertEqual(strip_thinking(["hello ", "world"]), "hello world")
 

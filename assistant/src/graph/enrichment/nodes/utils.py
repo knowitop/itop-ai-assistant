@@ -6,7 +6,15 @@ from markdownify import markdownify
 
 from domain.ticket import LogEntry
 
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+# <think> is the de-facto standard for open-weight reasoning models
+# (DeepSeek-R1, Qwen3, QwQ); <thinking> appears in some fine-tunes.
+# Deliberately NOT <reasoning> — our classify prompts use it as a data field.
+_THINK_PAIR_RE = re.compile(r"<(think|thinking)>.*?</\1>", re.DOTALL | re.IGNORECASE)
+# Orphan closing tag: some chat templates emit the opening <think> as part of
+# the prompt, so the completion starts mid-reasoning and ends with </think>.
+_THINK_ORPHAN_CLOSE_RE = re.compile(r"^.*?</(think|thinking)>", re.DOTALL | re.IGNORECASE)
+# Unclosed opening tag (truncated output): reasoning must not leak to the user.
+_THINK_ORPHAN_OPEN_RE = re.compile(r"<(think|thinking)>.*$", re.DOTALL | re.IGNORECASE)
 
 
 _NUMERIC_RE = re.compile(r"-?\d+(\.\d+)?")
@@ -49,7 +57,10 @@ def strip_thinking(content: str | list | None) -> str:
             block if isinstance(block, str) else str(block.get("text", "")) if isinstance(block, dict) else ""
             for block in content
         )
-    return _THINK_RE.sub("", content).strip()
+    text = _THINK_PAIR_RE.sub("", content)
+    text = _THINK_ORPHAN_CLOSE_RE.sub("", text)
+    text = _THINK_ORPHAN_OPEN_RE.sub("", text)
+    return text.strip()
 
 
 def extract_xml_field(text: str, tag: str) -> str | None:
