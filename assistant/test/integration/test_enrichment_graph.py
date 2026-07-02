@@ -42,7 +42,7 @@ class TestGuardShortCircuits:
 
 class TestEnrichWithoutEvaluate:
     async def test_no_service_context_goes_to_enrich(self, ctx, itop_transport):
-        """service_id=0 skips evaluate entirely and goes straight to enrich."""
+        """service_id=0 triggers classification, then evaluation and enrichment proceed normally."""
         result = await _run(ctx, make_ticket(service_id="0"))
 
         assert result["action"] == Action.ENRICH
@@ -50,8 +50,9 @@ class TestEnrichWithoutEvaluate:
         assert state.ai_done is True
 
         updates = itop_transport.update_calls()
-        assert len(updates) == 1
-        assert "private_log" in updates[0]["fields"]
+        assert len(updates) == 2
+        assert "service_id" in updates[0]["fields"]
+        assert "private_log" in updates[1]["fields"]
 
     async def test_rounds_exhausted_goes_to_enrich(self, ctx, itop_transport):
         """When rounds >= 2, evaluate is bypassed and ticket is enriched directly."""
