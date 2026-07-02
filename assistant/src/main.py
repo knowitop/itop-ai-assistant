@@ -1,8 +1,10 @@
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from config import get_settings
+from deps import build_deps
 from webhook.router import router
 
 settings = get_settings()
@@ -12,15 +14,27 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
-if settings.webhook_token is None:
-    logging.getLogger(__name__).warning("WEBHOOK_TOKEN is not set — /webhook accepts unauthenticated requests")
+logger = logging.getLogger(__name__)
 
-app = FastAPI(title="iTop AI Assistant")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = get_settings()
+    if settings.webhook_token is None:
+        logger.warning("WEBHOOK_TOKEN is not set — /webhook accepts unauthenticated requests")
+    deps = build_deps(settings)
+    app.state.deps = deps
+    try:
+        yield
+    finally:
+        await deps.aclose()
+
+
+app = FastAPI(title="iTop AI Assistant", lifespan=lifespan)
 app.include_router(router)
 
 if __name__ == "__main__":
     import uvicorn
 
-    logger = logging.getLogger(__name__)
     logger.info(f"Starting iTop AI Assistant on {settings.app_host}:{settings.app_port}")
     uvicorn.run(app, host=settings.app_host, port=settings.app_port)

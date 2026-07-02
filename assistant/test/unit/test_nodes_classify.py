@@ -4,8 +4,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from langchain_openai import ChatOpenAI
 
 import graph.enrichment.nodes.classify as classify_module
+from config import EnrichmentConfig
 from graph.enrichment.state import Action, EnrichmentState
 from state.ticket_state import TicketState
+
+_TEST_LLM = ChatOpenAI(model_name="test-model", api_key="test-key", base_url="http://localhost:9")
 
 
 def _make_ticket(service_id: str = "0", subcategory_id: str = "0") -> dict:
@@ -55,6 +58,8 @@ def _make_runtime(classify_rounds: int = 0) -> MagicMock:
     )
     runtime.context.state_manager.increment_classify_rounds = AsyncMock()
     runtime.context.state_manager.mark_done = AsyncMock()
+    runtime.context.enrichment = EnrichmentConfig()
+    runtime.context.llm_classify = _TEST_LLM
     return runtime
 
 
@@ -87,13 +92,9 @@ class TestClassifySkip(unittest.IsolatedAsyncioTestCase):
     async def test_classification_disabled_skips(self):
         state: EnrichmentState = {"ticket": _make_ticket(), "action": None, "question": None}
         runtime = _make_runtime()
+        runtime.context.enrichment = EnrichmentConfig(classification_enabled=False)
 
-        with patch("graph.enrichment.nodes.classify.get_settings") as mock_settings:
-            mock_settings.return_value.enrichment.classification_enabled = False
-            mock_settings.return_value.llm_model = "test"
-            mock_settings.return_value.llm_api_key = "x"
-            mock_settings.return_value.llm_base_url = "http://localhost"
-            result = await classify_module.run(state, runtime)
+        result = await classify_module.run(state, runtime)
 
         self.assertEqual(result, {})
         runtime.context.itop_client.schema.assert_not_called()

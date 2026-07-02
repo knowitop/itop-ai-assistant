@@ -4,7 +4,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from langchain_openai import ChatOpenAI
 
 import graph.enrichment.nodes.enrich as enrich_module
+from config import EnrichmentConfig
 from graph.enrichment.state import EnrichmentState
+
+_TEST_LLM = ChatOpenAI(model_name="test-model", api_key="test-key", base_url="http://localhost:9")
 
 
 def _make_ticket() -> dict:
@@ -34,6 +37,8 @@ def _make_runtime() -> MagicMock:
     runtime = MagicMock()
     runtime.context.itop_client.schema = MagicMock(side_effect=_schema)
     runtime.context.state_manager.mark_done = AsyncMock()
+    runtime.context.enrichment = EnrichmentConfig()
+    runtime.context.llm_enrich = _TEST_LLM
     return runtime
 
 

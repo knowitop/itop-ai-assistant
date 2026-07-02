@@ -1,12 +1,10 @@
 import logging
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_openai import ChatOpenAI
 from langgraph.runtime import Runtime
 
-from config import get_settings
+from config import EnrichmentConfig
 from itop.utils import ticket_label
-from itop_client import Itop
 
 from ..context import GraphContext
 from ..state import EnrichmentState
@@ -14,16 +12,8 @@ from .utils import build_conversation, html_to_markdown, strip_thinking
 
 logger = logging.getLogger(__name__)
 
-_s = get_settings()
-_llm = ChatOpenAI(
-    api_key=_s.llm_api_key,
-    base_url=_s.llm_base_url,
-    model_name=_s.llm_model,
-)
 
-
-def _build_enrich_prompt() -> ChatPromptTemplate:
-    cfg = get_settings().enrichment
+def _build_enrich_prompt(cfg: EnrichmentConfig) -> ChatPromptTemplate:
     return ChatPromptTemplate.from_messages(
         [
             ("system", cfg.enrich_system_prompt),
@@ -36,7 +26,7 @@ def _build_enrich_prompt() -> ChatPromptTemplate:
 async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     ticket = state["ticket"]
 
-    note = await _generate_note(ticket, runtime.context.itop_client)
+    note = await _generate_note(ticket, runtime)
 
     if note:
         await runtime.context.itop_client.schema(ticket["finalclass"]).update(
@@ -52,13 +42,13 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     return {}
 
 
-async def _generate_note(ticket: dict, itop_client: Itop) -> str:
-    ai_person = await itop_client.schema("Person").find_one({"id": ("=", ":current_contact_id")})
+async def _generate_note(ticket: dict, runtime: Runtime[GraphContext]) -> str:
+    ctx = runtime.context
+    ai_person = await ctx.itop_client.schema("Person").find_one({"id": ("=", ":current_contact_id")})
     caller_name = ticket["caller_id_friendlyname"]
     conversation = build_conversation(ticket["public_log"].get("entries") or [], ai_person["friendlyname"], caller_name)
 
-    prompt = _build_enrich_prompt()
-    chain = prompt | _llm
+    chain = _build_enrich_prompt(ctx.enrichment) | ctx.llm_enrich
 
     response = await chain.ainvoke(
         {

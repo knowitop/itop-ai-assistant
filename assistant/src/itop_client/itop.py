@@ -47,6 +47,10 @@ class Itop:
             for schema_name in self.data_model.schemas:
                 setattr(self, schema_name, Schema(self, schema_name))
 
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client."""
+        await self._http.aclose()
+
     async def check_credentials(self) -> None:
         """Verify credentials against iTop. Raises ItopError if invalid."""
         await self.request({"operation": "core/check_credentials", "user": self.auth_user, "password": self.auth_pwd})

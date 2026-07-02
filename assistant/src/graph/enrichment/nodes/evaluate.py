@@ -1,10 +1,9 @@
 import logging
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_openai import ChatOpenAI
 from langgraph.runtime import Runtime
 
-from config import get_settings
+from config import EnrichmentConfig
 from itop.utils import ticket_label
 from itop_client import Itop
 
@@ -14,16 +13,8 @@ from .utils import build_conversation, html_to_markdown, strip_thinking
 
 logger = logging.getLogger(__name__)
 
-_s = get_settings()
-_llm = ChatOpenAI(
-    model_name=_s.llm_model,
-    api_key=_s.llm_api_key,
-    base_url=_s.llm_base_url,
-)
 
-
-def _build_evaluate_prompt() -> ChatPromptTemplate:
-    cfg = get_settings().enrichment
+def _build_evaluate_prompt(cfg: EnrichmentConfig) -> ChatPromptTemplate:
     return ChatPromptTemplate.from_messages(
         [
             ("system", cfg.evaluate_system_prompt),
@@ -35,13 +26,14 @@ def _build_evaluate_prompt() -> ChatPromptTemplate:
 
 async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     ticket = state["ticket"]
+    cfg = runtime.context.enrichment
 
     if not _has_service_context(ticket):
         logger.info(f"{ticket_label(ticket)}: no service context, moving to enrich")
         return {"action": Action.ENRICH}
 
     ticket_state = await runtime.context.state_manager.get(ticket_label(ticket))
-    if ticket_state.rounds >= get_settings().enrichment.max_rounds:
+    if ticket_state.rounds >= cfg.max_rounds:
         logger.info(f"{ticket_label(ticket)}: rounds exhausted, moving to enrich")
         return {"action": Action.ENRICH}
 
@@ -52,8 +44,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     caller_name = ticket["caller_id_friendlyname"]
     conversation = build_conversation(ticket["public_log"].get("entries") or [], ai_person["friendlyname"], caller_name)
 
-    prompt = _build_evaluate_prompt()
-    chain = prompt | _llm
+    chain = _build_evaluate_prompt(cfg) | runtime.context.llm_evaluate
     response = await chain.ainvoke(
         {
             "service_context": service_context,

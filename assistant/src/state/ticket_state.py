@@ -114,15 +114,6 @@ class TicketStateManager:
         except RedisError as e:
             logger.warning(f"Redis error releasing lock for ticket {ticket_ref} (will expire by TTL): {e}")
 
-
-def create_state_manager() -> TicketStateManager:
-    import redis.asyncio as aioredis
-
-    from config import get_settings
-
-    settings = get_settings()
-    client = aioredis.from_url(settings.redis_url, decode_responses=True)
-    return TicketStateManager(client, ttl_seconds=settings.state_ttl_days * 24 * 60 * 60)
-
-
-state_manager = create_state_manager()
+    async def aclose(self) -> None:
+        """Close the underlying Redis connection."""
+        await self._redis.aclose()

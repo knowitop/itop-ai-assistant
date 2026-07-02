@@ -4,3 +4,7 @@ line-length = 120
 [lint]
 # Enable the isort rules
 extend-select = ["I"]
+
+[lint.per-file-ignores]
+# conftest must load .env.test before any project import touches get_settings()
+"test/integration/conftest.py" = ["E402"]

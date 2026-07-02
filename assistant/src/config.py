@@ -44,6 +44,10 @@ class EnrichmentConfig(BaseModel):
     classification_enabled: bool = True
     max_rounds: int = 2
     max_classify_rounds: int = 2
+    # Per-node model overrides; None falls back to the global llm_model
+    classify_model: str | None = None
+    evaluate_model: str | None = None
+    enrich_model: str | None = None
     classify_fallback_note: str = "Could not determine the request category. Manual classification required."
     classify_service_oql: str = _CLASSIFY_SERVICE_OQL
     classify_subcategory_oql: str = _CLASSIFY_SUBCATEGORY_OQL

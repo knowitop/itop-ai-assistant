@@ -2,10 +2,8 @@ import logging
 import re
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_openai import ChatOpenAI
 from langgraph.runtime import Runtime
 
-from config import get_settings
 from itop.utils import ticket_label
 
 from ..context import GraphContext
@@ -13,13 +11,6 @@ from ..state import Action, EnrichmentState
 from .utils import bind_oql, build_conversation, html_to_markdown, strip_thinking
 
 logger = logging.getLogger(__name__)
-
-_s = get_settings()
-_llm = ChatOpenAI(
-    model_name=_s.llm_model,
-    api_key=_s.llm_api_key,
-    base_url=_s.llm_base_url,
-)
 
 
 def _build_prompt(system: str, human: str) -> ChatPromptTemplate:
@@ -72,7 +63,7 @@ async def _invoke_and_extract(chain, invoke_vars: dict, id_tag: str) -> tuple[st
 
 async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     ticket = state["ticket"]
-    cfg = get_settings().enrichment
+    cfg = runtime.context.enrichment
 
     if not cfg.classification_enabled:
         return {}
@@ -84,7 +75,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
         return {}
 
     itop_client = runtime.context.itop_client
-    state_manager = runtime.context.state_manager
+    llm = runtime.context.llm_classify
     label = ticket_label(ticket)
 
     title = ticket["title"]
@@ -110,7 +101,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
         services_text = _format_services(services_list)
         valid_service_ids = {str(s["id"]) for s in services_list}
 
-        chain = _build_prompt(cfg.classify_service_system_prompt, cfg.classify_service_human_prompt) | _llm
+        chain = _build_prompt(cfg.classify_service_system_prompt, cfg.classify_service_human_prompt) | llm
         extracted_id, confidence = await _invoke_and_extract(
             chain,
             {
@@ -129,7 +120,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
             service_id = extracted_id
         else:
             logger.info(f"{label}: service classification confidence={confidence}, asking user")
-            return await _ask_or_fallback(ticket, state_manager, itop_client, conversation)
+            return await _ask_or_fallback(ticket, runtime, conversation)
 
     # Stage 2: classify subcategory
     if not int(subcategory_id):
@@ -141,7 +132,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
         subcategories_text = _format_subcategories(subcategories_list)
         valid_subcategory_ids = {str(s["id"]) for s in subcategories_list}
 
-        chain = _build_prompt(cfg.classify_subcategory_system_prompt, cfg.classify_subcategory_human_prompt) | _llm
+        chain = _build_prompt(cfg.classify_subcategory_system_prompt, cfg.classify_subcategory_human_prompt) | llm
         extracted_id, confidence = await _invoke_and_extract(
             chain,
             {
@@ -159,7 +150,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
             new_subcategory_id = extracted_id
         else:
             logger.info(f"{label}: subcategory classification confidence={confidence}, asking user")
-            return await _ask_or_fallback(ticket, state_manager, itop_client, conversation)
+            return await _ask_or_fallback(ticket, runtime, conversation)
 
     # Update iTop once with all newly determined fields
     if new_service_id or new_subcategory_id:
@@ -181,20 +172,22 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     return {}
 
 
-async def _ask_or_fallback(ticket: dict, state_manager, itop_client, conversation: list) -> dict:
+async def _ask_or_fallback(ticket: dict, runtime: Runtime[GraphContext], conversation: list) -> dict:
+    ctx = runtime.context
+    cfg = ctx.enrichment
     label = ticket_label(ticket)
-    ticket_state = await state_manager.get(label)
-    cfg = get_settings().enrichment
+    ticket_state = await ctx.state_manager.get(label)
 
     if ticket_state.classify_rounds >= cfg.max_classify_rounds:
         logger.info(f"{label}: classify rounds exhausted, fallback")
-        await itop_client.schema(ticket["finalclass"]).update(
+        await ctx.itop_client.schema(ticket["finalclass"]).update(
             {"id": ticket["id"]},
             {"private_log": {"add_item": {"message": cfg.classify_fallback_note, "format": "text"}}},
         )
-        await state_manager.mark_done(label)
+        await ctx.state_manager.mark_done(label)
         return {"action": Action.STOP}
-    chain = _build_prompt(cfg.classify_ask_system_prompt, cfg.classify_ask_human_prompt) | _llm
+
+    chain = _build_prompt(cfg.classify_ask_system_prompt, cfg.classify_ask_human_prompt) | ctx.llm_classify
     response = await chain.ainvoke(
         {
             "caller_name": ticket["caller_id_friendlyname"],
@@ -205,6 +198,6 @@ async def _ask_or_fallback(ticket: dict, state_manager, itop_client, conversatio
     )
     question = strip_thinking(response.content)
 
-    await state_manager.increment_classify_rounds(label)
+    await ctx.state_manager.increment_classify_rounds(label)
     logger.info(f"{label}: posting classify clarification question (round {ticket_state.classify_rounds + 1})")
     return {"action": Action.ASK, "question": question}

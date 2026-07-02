@@ -117,9 +117,11 @@ cd docker && docker-compose up -d
 
 | File                                            | Role                                                |
 |-------------------------------------------------|-----------------------------------------------------|
-| `src/main.py`                                   | FastAPI app init, logging setup                     |
+| `src/main.py`                                   | FastAPI app init, lifespan (builds `AppDeps`)       |
 | `src/config.py`                                 | `Settings` — centralized config (pydantic-settings) |
-| `src/webhook/router.py`                         | Webhook endpoint, async dispatch                    |
+| `src/deps.py`                                   | Composition root: `AppDeps`, `build_deps`, `create_llm` |
+| `src/config_store.py`                           | `ConfigStore` — runtime business-config source (static for now) |
+| `src/webhook/router.py`                         | Webhook endpoint, auth, async dispatch              |
 | `src/webhook/handler.py`                        | Webhook event processing logic                      |
 | `src/graph/enrichment/graph.py`                 | LangGraph graph definition and compilation          |
 | `src/graph/enrichment/nodes/guard.py`           | Pre-check node (ai_done, ticket status)             |
@@ -129,9 +131,15 @@ cd docker && docker-compose up -d
 | `src/graph/enrichment/nodes/enrich.py`          | Ticket enrichment node                              |
 | `src/graph/enrichment/nodes/utils.py`           | `strip_thinking`, `bind_oql`, `html_to_markdown`    |
 | `src/graph/enrichment/prompts.py`               | All prompt templates (evaluate, enrich, classify)   |
+| `src/graph/enrichment/context.py`               | `GraphContext` — per-run dependencies for nodes     |
 | `src/state/ticket_state.py`                     | Redis-backed `TicketState` and `TicketStateManager` |
 | `src/itop_client/itop.py`                       | `Itop` — iTop REST API wrapper                      |
-| `src/itop/client.py`                            | `itop_client` singleton factory                     |
+
+**Dependency injection:** no module-level singletons. `build_deps()` in
+`src/deps.py` assembles all shared dependencies at startup (FastAPI lifespan,
+stored in `app.state.deps`). Each processing run builds a `GraphContext` with
+a config snapshot from `ConfigStore` and per-run LLM clients — nodes take
+everything from `runtime.context`, never from globals or `get_settings()`.
 
 ### LLM Stack
 
@@ -168,7 +176,10 @@ environment-specific values go in `.env` (not committed).
 | `log_level` | default `INFO` | Logging level |
 
 Per-module limits live in `EnrichmentConfig` (`enrichment.*`): `max_rounds`
-and `max_classify_rounds` (both default 2) cap clarifying-question rounds.
+and `max_classify_rounds` (both default 2) cap clarifying-question rounds;
+`classify_model` / `evaluate_model` / `enrich_model` optionally override the
+global `llm_model` per node (set via `config.yaml`, e.g. `enrichment:
+classify_model: ...`).
 
 See `docker/.env.dist` for a full template.
 

@@ -1,5 +1,5 @@
-# Load .env.test BEFORE any project imports so module-level singletons
-# (e.g. _llm in evaluate.py / enrich.py) pick up the correct settings.
+# Load .env.test BEFORE any project imports so get_settings() (cached on first
+# call) picks up the test LLM endpoint.
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -17,6 +17,8 @@ import pytest
 
 logger = logging.getLogger(__name__)
 
+from config import get_settings
+from deps import create_llm
 from graph.enrichment.context import GraphContext
 from itop_client import Itop
 from state.ticket_state import TicketStateManager
@@ -87,7 +89,18 @@ def make_ctx(
     """Create a GraphContext with a fresh ItopMockTransport. Returns both for assertions."""
     transport = ItopMockTransport(subcategory_fields=subcategory_fields)
     itop = Itop(url=ITOP_URL, version="1.3", auth_user="dummy", auth_pwd="dummy", transport=transport)
-    ctx = GraphContext(processing_id=uuid4(), itop_client=itop, state_manager=state_manager)
+    settings = get_settings()
+    enrichment = settings.enrichment
+    llm = create_llm(settings)
+    ctx = GraphContext(
+        processing_id=uuid4(),
+        itop_client=itop,
+        state_manager=state_manager,
+        enrichment=enrichment,
+        llm_classify=llm,
+        llm_evaluate=llm,
+        llm_enrich=llm,
+    )
     return ctx, transport
 
 
@@ -115,10 +128,16 @@ async def state_manager() -> TicketStateManager:
 
 @pytest.fixture
 def ctx(itop: Itop, state_manager: TicketStateManager) -> GraphContext:
+    settings = get_settings()
+    llm = create_llm(settings)
     return GraphContext(
         processing_id=uuid4(),
         itop_client=itop,
         state_manager=state_manager,
+        enrichment=settings.enrichment,
+        llm_classify=llm,
+        llm_evaluate=llm,
+        llm_enrich=llm,
     )
 
 
