@@ -13,7 +13,7 @@ class TestWebhook(unittest.TestCase):
     def setUp(self):
         self.client = self.enterContext(TestClient(app))
 
-    @patch("webhook.handler._run_enrichment_graph", new_callable=AsyncMock)
+    @patch("graph.enrichment.pipeline._run_enrichment_graph", new_callable=AsyncMock)
     def test_created_event_accepted(self, mock_run):
         mock_run.return_value = None
 
@@ -27,7 +27,7 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(data["status"], "accepted")
         UUID(data["processing_id"])
 
-    @patch("webhook.handler._run_enrichment_graph", new_callable=AsyncMock)
+    @patch("graph.enrichment.pipeline._run_enrichment_graph", new_callable=AsyncMock)
     def test_user_commented_event_accepted(self, mock_run):
         mock_run.return_value = None
 
@@ -76,7 +76,7 @@ class TestWebhook(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 422)
 
-    @patch("webhook.handler._run_enrichment_graph", new_callable=AsyncMock)
+    @patch("graph.enrichment.pipeline._run_enrichment_graph", new_callable=AsyncMock)
     def test_incident_class_accepted(self, mock_run):
         mock_run.return_value = None
 
@@ -90,7 +90,7 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(data["status"], "accepted")
         UUID(data["processing_id"])
 
-    @patch("webhook.handler._run_enrichment_graph", new_callable=AsyncMock)
+    @patch("graph.enrichment.pipeline._run_enrichment_graph", new_callable=AsyncMock)
     def test_each_request_gets_unique_processing_id(self, mock_run):
         mock_run.return_value = None
 
@@ -124,7 +124,7 @@ class TestWebhookAuth(unittest.TestCase):
         response = self.client.post("/webhook", json=self.PAYLOAD, headers={"X-Auth-Token": "wrong"})
         self.assertEqual(response.status_code, 401)
 
-    @patch("webhook.handler._run_enrichment_graph", new_callable=AsyncMock)
+    @patch("graph.enrichment.pipeline._run_enrichment_graph", new_callable=AsyncMock)
     def test_correct_token_accepted(self, mock_run):
         response = self.client.post("/webhook", json=self.PAYLOAD, headers={"X-Auth-Token": "test-secret"})
         self.assertEqual(response.status_code, 202)
@@ -138,7 +138,7 @@ class TestWebhookNoAuthConfigured(unittest.TestCase):
 
         with (
             TestClient(app) as client,
-            patch("webhook.handler._run_enrichment_graph", new_callable=AsyncMock),
+            patch("graph.enrichment.pipeline._run_enrichment_graph", new_callable=AsyncMock),
         ):
             response = client.post("/webhook", json={"id": "123", "class": "UserRequest", "event": "created"})
         self.assertEqual(response.status_code, 202)

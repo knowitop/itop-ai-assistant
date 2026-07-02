@@ -74,6 +74,8 @@ class TicketMappingConfig(BaseModel):
 
 
 class EnrichmentConfig(BaseModel):
+    enabled: bool = True
+    classes: list[str] = ["UserRequest", "Incident"]
     classification_enabled: bool = True
     max_rounds: int = 2
     max_classify_rounds: int = 2

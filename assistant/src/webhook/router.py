@@ -8,13 +8,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
 from deps import AppDeps
-from webhook.handler import process_webhook_logic
+from pipelines.registry import PipelineHandler
 from webhook.models import WebhookPayload
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-SUPPORTED_CLASSES = {"UserRequest", "Incident"}
 
 # Keep strong references so tasks are not garbage-collected mid-run.
 _background_tasks: set[asyncio.Task] = set()
@@ -33,22 +31,25 @@ async def verify_webhook_token(request: Request, x_auth_token: Annotated[str | N
         raise HTTPException(status_code=401, detail="Invalid or missing X-Auth-Token header")
 
 
-async def _process_safely(payload: WebhookPayload, processing_id: UUID, deps: AppDeps) -> None:
+async def _process_safely(
+    handler: PipelineHandler, payload: WebhookPayload, processing_id: UUID, deps: AppDeps
+) -> None:
     try:
-        await process_webhook_logic(payload=payload, processing_id=processing_id, deps=deps)
+        await handler(payload, processing_id, deps)
     except Exception:
         logger.exception(f"[{processing_id}] Processing failed for {payload.obj_class}::{payload.id}")
 
 
 @router.post("/webhook", status_code=202, dependencies=[Depends(verify_webhook_token)])
 async def receive_webhook(payload: WebhookPayload, request: Request) -> WebhookResponse:
-    if payload.obj_class not in SUPPORTED_CLASSES:
-        raise HTTPException(status_code=400, detail=f"Unsupported class: {payload.obj_class}")
+    handler = request.app.state.registry.resolve(payload.obj_class, payload.event)
+    if handler is None:
+        raise HTTPException(status_code=400, detail=f"Unsupported class/event: {payload.obj_class}/{payload.event}")
 
     deps: AppDeps = request.app.state.deps
     processing_id = uuid4()
-    logger.info(f"[{processing_id}] Accepted {payload.obj_class}::{payload.id}")
-    task = asyncio.create_task(_process_safely(payload, processing_id, deps))
+    logger.info(f"[{processing_id}] Accepted {payload.obj_class}::{payload.id} ({payload.event})")
+    task = asyncio.create_task(_process_safely(handler, payload, processing_id, deps))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
     return WebhookResponse(status="accepted", processing_id=processing_id)

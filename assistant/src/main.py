@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from config import get_settings
 from deps import build_deps
 from graph.enrichment.prompts import build_enrichment_prompts
+from pipelines.registry import build_registry
 from webhook.router import router
 
 settings = get_settings()
@@ -27,6 +28,7 @@ async def lifespan(app: FastAPI):
     # Fail fast on missing or broken prompt templates instead of on a live ticket
     build_enrichment_prompts(await deps.prompt_store.get("enrichment"))
     app.state.deps = deps
+    app.state.registry = build_registry(settings)
     try:
         yield
     finally:

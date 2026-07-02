@@ -121,8 +121,9 @@ cd docker && docker-compose up -d
 | `src/config.py`                                 | `Settings` — centralized config (pydantic-settings) |
 | `src/deps.py`                                   | Composition root: `AppDeps`, `build_deps`, `create_llm` |
 | `src/config_store.py`                           | `ConfigStore` — runtime business-config source (static for now) |
-| `src/webhook/router.py`                         | Webhook endpoint, auth, async dispatch              |
-| `src/webhook/handler.py`                        | Webhook event processing logic                      |
+| `src/webhook/router.py`                         | Webhook endpoint: auth, registry lookup, dispatch   |
+| `src/pipelines/registry.py`                     | `PipelineRegistry` — (class, event) → module handler |
+| `src/graph/enrichment/pipeline.py`              | Enrichment module: registration + event handlers    |
 | `src/graph/enrichment/graph.py`                 | LangGraph graph definition and compilation          |
 | `src/graph/enrichment/nodes/guard.py`           | Pre-check node (ai_done, ticket status)             |
 | `src/graph/enrichment/nodes/classify.py`        | LLM classification node (Service/ServiceSubcategory)|
@@ -144,6 +145,16 @@ cd docker && docker-compose up -d
 stored in `app.state.deps`). Each processing run builds a `GraphContext` with
 a config snapshot from `ConfigStore` and per-run LLM clients — nodes take
 everything from `runtime.context`, never from globals or `get_settings()`.
+
+**Pipeline registry:** webhook events reach business modules through
+`PipelineRegistry` — a startup-built map of `(object class, event)` → handler.
+The router accepts only registered combinations. Adding a new module: create
+`src/graph/<module>/pipeline.py` with `register(registry, settings)` exposing
+a `ModuleInfo` (name, description, config model, prompt names — consumed by
+the future admin UI) and its routes, add one call in
+`pipelines/registry.py::build_registry`, add a config section in `config.py`.
+The enrichment module is enabled/scoped via `enrichment.enabled` and
+`enrichment.classes` (default `[UserRequest, Incident]`).
 
 **Domain model, not raw dicts:** processing code works with the semantic
 `Ticket` model (`domain/ticket.py`) — fields like `subcategory_id`,
@@ -215,7 +226,8 @@ See `docker/.env.dist` for a full template.
 - Redis is mocked with `fakeredis`
 - `get_settings()` is cached via `lru_cache`; call `get_settings.cache_clear()`
   in `setUp`/`tearDown` when tests need to control env vars
-- Current test files: `test_config.py`, `test_router.py`, `test_handler.py`,
+- Current test files: `test_config.py`, `test_router.py`,
+  `test_enrichment_pipeline.py`, `test_pipelines_registry.py`,
   `test_ticket_state.py`, `test_prompt_store.py`, `test_ticket_repository.py`,
   `test_nodes_guard.py`, `test_nodes_classify.py`, `test_nodes_evaluate.py`,
   `test_nodes_ask.py`, `test_nodes_enrich.py`, `test_nodes_utils.py`
