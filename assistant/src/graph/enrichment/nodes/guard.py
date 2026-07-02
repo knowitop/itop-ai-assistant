@@ -20,4 +20,13 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
         logger.info(f"{ticket.label}: status={ticket.status} not in {active_statuses}, stopping")
         return {"action": Action.STOP}
 
+    # Loop protection, second line of defense after iTop trigger contexts:
+    # if our own question is the last public entry, wait for the user instead
+    # of reacting to our own comment or a duplicate webhook.
+    if ticket.public_log:
+        ai_name = await runtime.context.ticket_repo.get_ai_person_name()
+        if ticket.public_log[-1].user_login == ai_name:
+            logger.info(f"{ticket.label}: last public entry is ours, waiting for user reply, stopping")
+            return {"action": Action.STOP}
+
     return {}

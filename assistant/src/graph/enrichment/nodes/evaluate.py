@@ -9,7 +9,7 @@ from itop_client import Itop
 from ..context import GraphContext
 from ..prompts import EnrichmentPrompts
 from ..state import Action, EnrichmentState
-from .utils import build_conversation, html_to_markdown, strip_thinking
+from .utils import build_conversation, drop_xml_field, extract_xml_field, html_to_markdown, strip_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -56,10 +56,17 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     if not answer:
         logger.warning(f"{ticket.label}: LLM returned empty response in evaluate, moving to enrich")
         return {"action": Action.ENRICH}
-    question = None if "<result>SUFFICIENT</result>".upper() in answer.upper() else answer
 
-    if question is None:
+    verdict = extract_xml_field(answer, "result")
+    if verdict and verdict.upper() == "SUFFICIENT":
         logger.info(f"{ticket.label}: description sufficient, moving to enrich")
+        return {"action": Action.ENRICH}
+
+    # The question goes to the user verbatim — drop any service tags the model
+    # may have emitted despite the prompt.
+    question = drop_xml_field(answer, "result")
+    if not question:
+        logger.warning(f"{ticket.label}: LLM returned no question text in evaluate, moving to enrich")
         return {"action": Action.ENRICH}
 
     logger.info(f"{ticket.label}: incomplete, will ask question")

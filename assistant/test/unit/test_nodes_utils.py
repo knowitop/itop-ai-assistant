@@ -3,7 +3,14 @@ import unittest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from domain.ticket import LogEntry
-from graph.enrichment.nodes.utils import bind_oql, build_conversation, html_to_markdown, strip_thinking
+from graph.enrichment.nodes.utils import (
+    bind_oql,
+    build_conversation,
+    drop_xml_field,
+    extract_xml_field,
+    html_to_markdown,
+    strip_thinking,
+)
 
 
 class TestBindOql(unittest.TestCase):
@@ -70,6 +77,41 @@ class TestStripThinking(unittest.TestCase):
 
     def test_multiline_think_block_stripped(self):
         self.assertEqual(strip_thinking("<think>\nline1\nline2\n</think>result"), "result")
+
+    def test_list_content_of_strings_joined(self):
+        self.assertEqual(strip_thinking(["hello ", "world"]), "hello world")
+
+    def test_list_content_of_text_blocks_joined(self):
+        blocks = [{"type": "text", "text": "<think>hm</think>"}, {"type": "text", "text": "answer"}]
+        self.assertEqual(strip_thinking(blocks), "answer")
+
+
+class TestExtractXmlField(unittest.TestCase):
+    def test_extracts_value(self):
+        self.assertEqual(extract_xml_field("<result>SUFFICIENT</result>", "result"), "SUFFICIENT")
+
+    def test_case_insensitive_tag(self):
+        self.assertEqual(extract_xml_field("<Result>ok</Result>", "result"), "ok")
+
+    def test_missing_tag_returns_none(self):
+        self.assertIsNone(extract_xml_field("no tags here", "result"))
+
+    def test_empty_tag_returns_none(self):
+        self.assertIsNone(extract_xml_field("<result>  </result>", "result"))
+
+    def test_multiline_value_trimmed(self):
+        self.assertEqual(extract_xml_field("<result>\n  42\n</result>", "result"), "42")
+
+
+class TestDropXmlField(unittest.TestCase):
+    def test_removes_tag_block(self):
+        self.assertEqual(drop_xml_field("<result>X</result>\nQuestion?", "result"), "Question?")
+
+    def test_removes_all_occurrences(self):
+        self.assertEqual(drop_xml_field("<r>1</r>text<r>2</r>", "r"), "text")
+
+    def test_no_tag_returns_trimmed_text(self):
+        self.assertEqual(drop_xml_field("  plain  ", "result"), "plain")
 
 
 class TestHtmlToMarkdown(unittest.TestCase):

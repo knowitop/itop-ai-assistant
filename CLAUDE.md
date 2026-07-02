@@ -52,6 +52,12 @@ status. If an engineer has already picked it up (status changed from "New"),
 stop processing silently. Check Redis `ai_done` first — if true, skip without
 even calling iTop.
 
+**Never react to our own comments.** Two lines of defense against webhook
+loops: iTop trigger contexts must exclude `REST/JSON` (documented in README),
+and the guard node stops if the last public log entry was posted by the AI
+service account — a misconfigured trigger degrades to a no-op instead of an
+infinite question loop.
+
 ## iTop Domain Knowledge
 
 See `.claude/rules/itop.md` for iTop-specific context: API patterns, ticket
@@ -125,7 +131,7 @@ cd docker && docker-compose up -d
 | `src/pipelines/registry.py`                     | `PipelineRegistry` — (class, event) → module handler |
 | `src/graph/enrichment/pipeline.py`              | Enrichment module: registration + event handlers    |
 | `src/graph/enrichment/graph.py`                 | LangGraph graph definition and compilation          |
-| `src/graph/enrichment/nodes/guard.py`           | Pre-check node (ai_done, ticket status)             |
+| `src/graph/enrichment/nodes/guard.py`           | Pre-check node (ai_done, status, last-entry-not-AI) |
 | `src/graph/enrichment/nodes/classify.py`        | LLM classification node (Service/ServiceSubcategory)|
 | `src/graph/enrichment/nodes/evaluate.py`        | LLM completeness evaluation node                   |
 | `src/graph/enrichment/nodes/ask.py`             | Post clarifying question node                       |

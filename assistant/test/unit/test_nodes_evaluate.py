@@ -108,6 +108,43 @@ class TestEvaluateEmptyLLMResponse(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["action"], Action.ASK)
         self.assertEqual(result["question"], "What is the model of your laptop?")
 
+    async def test_lowercase_sufficient_verdict_returns_enrich(self):
+        state: EnrichmentState = {"ticket": _make_ticket(), "action": None, "question": None}
+        runtime = _make_runtime()
+
+        with patch.object(
+            ChatOpenAI,
+            "ainvoke",
+            new=AsyncMock(return_value=MagicMock(content="<result>sufficient</result>")),
+        ):
+            result = await evaluate_module.run(state, runtime)
+
+        self.assertEqual(result["action"], Action.ENRICH)
+
+    async def test_result_tag_stripped_from_question(self):
+        state: EnrichmentState = {"ticket": _make_ticket(), "action": None, "question": None}
+        runtime = _make_runtime()
+
+        content = "<result>INSUFFICIENT</result>\nWhat is the model of your laptop?"
+        with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(return_value=MagicMock(content=content))):
+            result = await evaluate_module.run(state, runtime)
+
+        self.assertEqual(result["action"], Action.ASK)
+        self.assertEqual(result["question"], "What is the model of your laptop?")
+
+    async def test_non_sufficient_tag_without_question_returns_enrich(self):
+        state: EnrichmentState = {"ticket": _make_ticket(), "action": None, "question": None}
+        runtime = _make_runtime()
+
+        with patch.object(
+            ChatOpenAI,
+            "ainvoke",
+            new=AsyncMock(return_value=MagicMock(content="<result>INSUFFICIENT</result>")),
+        ):
+            result = await evaluate_module.run(state, runtime)
+
+        self.assertEqual(result["action"], Action.ENRICH)
+
 
 class TestEvaluateEarlyReturns(unittest.IsolatedAsyncioTestCase):
     async def test_no_service_context_returns_enrich(self):

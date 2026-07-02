@@ -1,5 +1,4 @@
 import logging
-import re
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.runtime import Runtime
@@ -8,7 +7,7 @@ from domain.ticket import Ticket
 
 from ..context import GraphContext
 from ..state import Action, EnrichmentState
-from .utils import bind_oql, build_conversation, html_to_markdown, strip_thinking
+from .utils import bind_oql, build_conversation, extract_xml_field, html_to_markdown, strip_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -21,14 +20,6 @@ def _build_prompt(system: str, human: str) -> ChatPromptTemplate:
             MessagesPlaceholder("conversation"),
         ]
     )
-
-
-def _extract_xml_field(text: str, tag: str) -> str | None:
-    m = re.search(rf"<{tag}>\s*(.*?)\s*</{tag}>", text, re.DOTALL | re.IGNORECASE)
-    if not m:
-        return None
-    value = m.group(1).strip()
-    return value if value else None
 
 
 def _format_options(options: list[dict]) -> str:
@@ -45,8 +36,8 @@ def _format_options(options: list[dict]) -> str:
 async def _invoke_and_extract(chain, invoke_vars: dict, id_tag: str) -> tuple[str | None, str]:
     response = await chain.ainvoke(invoke_vars)
     answer = strip_thinking(response.content)
-    extracted_id = _extract_xml_field(answer, id_tag)
-    confidence = _extract_xml_field(answer, "confidence") or "low"
+    extracted_id = extract_xml_field(answer, id_tag)
+    confidence = extract_xml_field(answer, "confidence") or "low"
     return extracted_id, confidence.lower()
 
 

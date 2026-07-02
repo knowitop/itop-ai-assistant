@@ -36,11 +36,34 @@ def bind_oql(oql: str, this: dict) -> str:
     return oql
 
 
-def strip_thinking(text: str | None) -> str:
-    """Remove <think>…</think> reasoning blocks emitted by reasoning models."""
-    if not text:
+def strip_thinking(content: str | list | None) -> str:
+    """Remove <think>…</think> reasoning blocks emitted by reasoning models.
+
+    Accepts message content as returned by LangChain: a plain string or a
+    list of content blocks (strings or {"type": "text", "text": ...} dicts).
+    """
+    if not content:
         return ""
-    return _THINK_RE.sub("", text).strip()
+    if isinstance(content, list):
+        content = "".join(
+            block if isinstance(block, str) else str(block.get("text", "")) if isinstance(block, dict) else ""
+            for block in content
+        )
+    return _THINK_RE.sub("", content).strip()
+
+
+def extract_xml_field(text: str, tag: str) -> str | None:
+    """Return the trimmed content of the first <tag>…</tag> block, or None."""
+    m = re.search(rf"<{tag}>\s*(.*?)\s*</{tag}>", text, re.DOTALL | re.IGNORECASE)
+    if not m:
+        return None
+    value = m.group(1).strip()
+    return value if value else None
+
+
+def drop_xml_field(text: str, tag: str) -> str:
+    """Remove all <tag>…</tag> blocks from the text."""
+    return re.sub(rf"<{tag}>.*?</{tag}>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
 
 
 def html_to_markdown(text: str | None) -> str:
