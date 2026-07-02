@@ -2,7 +2,50 @@ import unittest
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from graph.enrichment.nodes.utils import build_conversation, html_to_markdown, strip_thinking
+from graph.enrichment.nodes.utils import bind_oql, build_conversation, html_to_markdown, strip_thinking
+
+
+class TestBindOql(unittest.TestCase):
+    def test_numeric_value_substituted_bare(self):
+        self.assertEqual(
+            bind_oql("SELECT Service WHERE org_id = :this->org_id", {"org_id": "42"}),
+            "SELECT Service WHERE org_id = 42",
+        )
+
+    def test_none_becomes_null(self):
+        self.assertEqual(
+            bind_oql("SELECT S WHERE ISNULL(:this->request_type)", {"request_type": None}),
+            "SELECT S WHERE ISNULL(NULL)",
+        )
+
+    def test_string_value_quoted(self):
+        self.assertEqual(
+            bind_oql("SELECT S WHERE request_type = :this->request_type", {"request_type": "incident"}),
+            'SELECT S WHERE request_type = "incident"',
+        )
+
+    def test_quotes_in_value_escaped(self):
+        result = bind_oql("SELECT S WHERE name = :this->name", {"name": 'a" OR 1=1 --'})
+        self.assertEqual(result, 'SELECT S WHERE name = "a\\" OR 1=1 --"')
+
+    def test_backslash_in_value_escaped(self):
+        result = bind_oql("SELECT S WHERE name = :this->name", {"name": "dom\\user"})
+        self.assertEqual(result, 'SELECT S WHERE name = "dom\\\\user"')
+
+    def test_key_prefix_does_not_clobber_longer_key(self):
+        result = bind_oql("SELECT S WHERE a = :this->org AND b = :this->org_id", {"org": "7", "org_id": "42"})
+        self.assertEqual(result, "SELECT S WHERE a = 7 AND b = 42")
+
+    def test_keys_without_placeholder_ignored(self):
+        oql = "SELECT Service WHERE org_id = :this->org_id"
+        result = bind_oql(oql, {"org_id": "1", "public_log": {"entries": []}})
+        self.assertEqual(result, "SELECT Service WHERE org_id = 1")
+
+    def test_int_value_accepted(self):
+        self.assertEqual(
+            bind_oql("SELECT S WHERE service_id = :this->service_id", {"service_id": 5}),
+            "SELECT S WHERE service_id = 5",
+        )
 
 
 class TestStripThinking(unittest.TestCase):

@@ -26,12 +26,22 @@ async def _run_enrichment_graph(ticket, processing_id: UUID):
 
 
 async def process_webhook_logic(payload: WebhookPayload, processing_id: UUID):
+    label = f"{payload.obj_class}::{payload.id}"
+
     match payload.event:
         case TicketEvent.CREATED | TicketEvent.USER_COMMENTED:
-            ticket = await itop_client.schema(payload.obj_class).find_one({"id": payload.id})
-            await _run_enrichment_graph(ticket, processing_id)
+            if not await state_manager.acquire_lock(label):
+                logger.info(f"[{processing_id}] {label} is already being processed, skipping")
+                return
+            try:
+                ticket = await itop_client.schema(payload.obj_class).find_one({"id": payload.id})
+                if ticket is None:
+                    logger.warning(f"[{processing_id}] {label} not found in iTop, skipping")
+                    return
+                await _run_enrichment_graph(ticket, processing_id)
+            finally:
+                await state_manager.release_lock(label)
 
         case TicketEvent.ASSIGNED:
-            label = f"{payload.obj_class}::{payload.id}"
             await state_manager.mark_done(label)
             logger.info(f"[{processing_id}] {label} assigned, marked done")

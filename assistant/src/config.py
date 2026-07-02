@@ -42,6 +42,8 @@ _CLASSIFY_SUBCATEGORY_OQL = (
 
 class EnrichmentConfig(BaseModel):
     classification_enabled: bool = True
+    max_rounds: int = 2
+    max_classify_rounds: int = 2
     classify_fallback_note: str = "Could not determine the request category. Manual classification required."
     classify_service_oql: str = _CLASSIFY_SERVICE_OQL
     classify_subcategory_oql: str = _CLASSIFY_SUBCATEGORY_OQL
@@ -69,9 +71,12 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     log_level: str = "INFO"
+    webhook_token: SecretStr | None = None
 
     # iTop
     itop_url: str = "http://localhost/webservices/rest.php"
+    itop_api_version: str = "1.3"
+    itop_timeout: float = 30.0
     itop_user: str | None = None
     itop_pwd: SecretStr | None = None
     itop_token: SecretStr | None = None
@@ -83,6 +88,7 @@ class Settings(BaseSettings):
 
     # Redis
     redis_url: str = "redis://localhost:6379"
+    state_ttl_days: int = 30
 
     # Business modules
     enrichment: EnrichmentConfig = EnrichmentConfig()

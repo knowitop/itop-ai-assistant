@@ -184,6 +184,8 @@ Create two triggers in iTop (**Configuration → Notifications → Triggers**):
 
 In iTop, go to **Configuration → Webhooks → Remote Application Connections** and add a new connection for the assistant.
 
+If you set `WEBHOOK_TOKEN` in `.env` (recommended), configure the connection to send that value in the `X-Auth-Token` header — requests without it are rejected with 401.
+
 ![Remote application connection](docs/remote_app_connection.png)
 
 For each trigger, create a **Webhook action** that sends `POST http://assistant:8000/webhook` with the corresponding JSON body:
@@ -226,6 +228,7 @@ All variables go in `.env`. A full template with examples is in `docker/.env.dis
 | `LLM_BASE_URL` | default `http://localhost:1234/v1` | OpenAI-compatible LLM endpoint |
 | `LLM_API_KEY` | optional | API key — omit entirely for local LM Studio |
 | `ITOP_URL` | default `http://localhost/webservices/rest.php` | iTop REST API URL |
+| `WEBHOOK_TOKEN` | recommended | Shared secret for `/webhook`; iTop must send it in the `X-Auth-Token` header. Unset = unauthenticated access |
 | `REDIS_URL` | default `redis://localhost:6379` | Redis connection URL |
 | `LOG_LEVEL` | default `INFO` | Logging level |
 

@@ -14,8 +14,6 @@ from .utils import build_conversation, html_to_markdown, strip_thinking
 
 logger = logging.getLogger(__name__)
 
-MAX_ROUNDS = 2
-
 _s = get_settings()
 _llm = ChatOpenAI(
     model_name=_s.llm_model,
@@ -43,7 +41,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
         return {"action": Action.ENRICH}
 
     ticket_state = await runtime.context.state_manager.get(ticket_label(ticket))
-    if ticket_state.rounds >= MAX_ROUNDS:
+    if ticket_state.rounds >= get_settings().enrichment.max_rounds:
         logger.info(f"{ticket_label(ticket)}: rounds exhausted, moving to enrich")
         return {"action": Action.ENRICH}
 

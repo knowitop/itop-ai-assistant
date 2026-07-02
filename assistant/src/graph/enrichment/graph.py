@@ -25,7 +25,6 @@ def build_graph():
         lambda s: s["action"],
         {
             Action.STOP: END,
-            Action.ASK: "classify",
             None: "classify",
         },
     )

@@ -18,6 +18,7 @@ class Itop:
         auth_token: Optional[str] = None,
         data_model: Optional[str] = None,
         transport: Optional[httpx.AsyncBaseTransport] = None,
+        timeout: float = 30.0,
     ):
         """
         Create iTop API client.
@@ -31,6 +32,7 @@ class Itop:
                            When provided, iTop class schemas are accessible as attributes
                            (e.g. itop.UserRequest, itop.Person).
         :param transport: Optional httpx transport — used for testing (httpx.MockTransport).
+        :param timeout: HTTP timeout in seconds for all iTop requests.
         """
         self.url = url
         self.version = version
@@ -38,7 +40,7 @@ class Itop:
         self.auth_pwd = auth_pwd
         self.auth_token = auth_token
         self.data_model: Optional[DataModel] = None
-        self._http = httpx.AsyncClient(transport=transport)
+        self._http = httpx.AsyncClient(transport=transport, timeout=timeout)
 
         if data_model:
             self.data_model = DataModel(data_model)
@@ -89,10 +91,6 @@ class Itop:
             return json_return["objects"]
 
         clean_objects = [{**obj["fields"], "id": obj["key"]} for obj in json_return["objects"].values()]
-
-        if "output_fields" in data:
-            if len(data["output_fields"].split(", ")) > 1 and data["output_fields"] != "*":
-                clean_objects = []
 
         return clean_objects
 

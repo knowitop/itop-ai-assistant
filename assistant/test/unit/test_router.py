@@ -1,9 +1,11 @@
+import os
 import unittest
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 from fastapi.testclient import TestClient
 
+from config import get_settings
 from main import app
 
 
@@ -100,6 +102,44 @@ class TestWebhook(unittest.TestCase):
         )
 
         self.assertNotEqual(r1.json()["processing_id"], r2.json()["processing_id"])
+
+
+class TestWebhookAuth(unittest.TestCase):
+    PAYLOAD = {"id": "123", "class": "UserRequest", "event": "created"}
+
+    def setUp(self):
+        self.client = TestClient(app)
+        self._env = patch.dict(os.environ, {"WEBHOOK_TOKEN": "test-secret"})
+        self._env.start()
+        get_settings.cache_clear()
+
+    def tearDown(self):
+        self._env.stop()
+        get_settings.cache_clear()
+
+    def test_missing_token_rejected(self):
+        response = self.client.post("/webhook", json=self.PAYLOAD)
+        self.assertEqual(response.status_code, 401)
+
+    def test_wrong_token_rejected(self):
+        response = self.client.post("/webhook", json=self.PAYLOAD, headers={"X-Auth-Token": "wrong"})
+        self.assertEqual(response.status_code, 401)
+
+    @patch("webhook.handler._run_enrichment_graph", new_callable=AsyncMock)
+    def test_correct_token_accepted(self, mock_run):
+        response = self.client.post("/webhook", json=self.PAYLOAD, headers={"X-Auth-Token": "test-secret"})
+        self.assertEqual(response.status_code, 202)
+
+    def test_no_token_configured_accepts_unauthenticated(self):
+        self._env.stop()
+        os.environ.pop("WEBHOOK_TOKEN", None)
+        get_settings.cache_clear()
+        self._env = patch.dict(os.environ, {})  # keep tearDown symmetric
+        self._env.start()
+
+        with patch("webhook.handler._run_enrichment_graph", new_callable=AsyncMock):
+            response = self.client.post("/webhook", json=self.PAYLOAD)
+        self.assertEqual(response.status_code, 202)
 
 
 if __name__ == "__main__":

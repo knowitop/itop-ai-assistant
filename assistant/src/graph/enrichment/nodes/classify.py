@@ -14,8 +14,6 @@ from .utils import bind_oql, build_conversation, html_to_markdown, strip_thinkin
 
 logger = logging.getLogger(__name__)
 
-MAX_CLASSIFY_ROUNDS = 2
-
 _s = get_settings()
 _llm = ChatOpenAI(
     model_name=_s.llm_model,
@@ -186,21 +184,16 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
 async def _ask_or_fallback(ticket: dict, state_manager, itop_client, conversation: list) -> dict:
     label = ticket_label(ticket)
     ticket_state = await state_manager.get(label)
+    cfg = get_settings().enrichment
 
-    if ticket_state.classify_rounds >= MAX_CLASSIFY_ROUNDS:
+    if ticket_state.classify_rounds >= cfg.max_classify_rounds:
         logger.info(f"{label}: classify rounds exhausted, fallback")
         await itop_client.schema(ticket["finalclass"]).update(
             {"id": ticket["id"]},
-            {
-                "private_log": {
-                    "add_item": {"message": get_settings().enrichment.classify_fallback_note, "format": "text"}
-                }
-            },
+            {"private_log": {"add_item": {"message": cfg.classify_fallback_note, "format": "text"}}},
         )
         await state_manager.mark_done(label)
         return {"action": Action.STOP}
-
-    cfg = get_settings().enrichment
     chain = _build_prompt(cfg.classify_ask_system_prompt, cfg.classify_ask_human_prompt) | _llm
     response = await chain.ainvoke(
         {

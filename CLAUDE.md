@@ -29,7 +29,10 @@ Read fresh on every webhook.
 metadata. Three fields per ticket — `rounds` (how many completeness clarifying
 questions AI has asked), `classify_rounds` (how many classification clarifying
 questions AI has asked), and `ai_done` (whether AI has finished processing) —
-live in Redis with a 30-day TTL. This is the only state the service owns.
+live in Redis with a configurable TTL (default 30 days). Redis also holds a
+short-lived per-ticket processing lock (`lock:{ref}`) so concurrent webhooks
+for the same ticket are not processed twice. This is the only state the
+service owns.
 
 **AI acts as a named iTop user.** All comments posted to iTop are written on
 behalf of a dedicated service account (e.g. `ai-assistant`). This makes AI
@@ -152,13 +155,20 @@ environment-specific values go in `.env` (not committed).
 | Field | Required | Purpose |
 |-------|----------|---------|
 | `itop_url` | default | iTop REST API base URL |
+| `itop_api_version` | default `1.3` | iTop REST API version |
+| `itop_timeout` | default `30.0` | HTTP timeout (seconds) for iTop requests |
 | `itop_user` + `itop_pwd` | one of | iTop basic auth |
 | `itop_token` | one of | iTop token auth (alternative to user+pwd) |
+| `webhook_token` | recommended | Shared secret for `/webhook` (`X-Auth-Token` header); unset = no auth |
 | `llm_base_url` | default | OpenAI-compatible endpoint |
 | `llm_model` | **required** | Model name as exposed by the endpoint |
 | `llm_api_key` | optional | API key (omit for local LM Studio) |
 | `redis_url` | default | Redis connection URL |
+| `state_ttl_days` | default `30` | TTL for per-ticket state in Redis |
 | `log_level` | default `INFO` | Logging level |
+
+Per-module limits live in `EnrichmentConfig` (`enrichment.*`): `max_rounds`
+and `max_classify_rounds` (both default 2) cap clarifying-question rounds.
 
 See `docker/.env.dist` for a full template.
 
@@ -170,5 +180,7 @@ See `docker/.env.dist` for a full template.
 - Redis is mocked with `fakeredis`
 - `get_settings()` is cached via `lru_cache`; call `get_settings.cache_clear()`
   in `setUp`/`tearDown` when tests need to control env vars
-- Current test files: `test_config.py`, `test_router.py`, `test_ticket_state.py`,
-  `test_nodes_classify.py`, `test_nodes_evaluate.py`, `test_nodes_enrich.py`
+- Current test files: `test_config.py`, `test_router.py`, `test_handler.py`,
+  `test_ticket_state.py`, `test_nodes_guard.py`, `test_nodes_classify.py`,
+  `test_nodes_evaluate.py`, `test_nodes_ask.py`, `test_nodes_enrich.py`,
+  `test_nodes_utils.py`

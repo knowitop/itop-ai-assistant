@@ -7,10 +7,30 @@ from markdownify import markdownify
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
 
-def bind_oql(oql: str, this: dict[str, str | None]) -> str:
-    """Substitute :this->field placeholders in an OQL template string."""
-    for key, value in this.items():
-        oql = oql.replace(f":this->{key}", "NULL" if value is None else str(value))
+_NUMERIC_RE = re.compile(r"-?\d+(\.\d+)?")
+
+
+def bind_oql(oql: str, this: dict) -> str:
+    """Substitute :this->field placeholders in an OQL template string.
+
+    Non-numeric values are quoted and escaped to prevent OQL injection.
+    """
+    # Longest keys first so :this->org never matches inside :this->org_id.
+    for key in sorted(this, key=len, reverse=True):
+        placeholder = f":this->{key}"
+        if placeholder not in oql:
+            continue
+        value = this[key]
+        if value is None:
+            replacement = "NULL"
+        else:
+            text = str(value)
+            if _NUMERIC_RE.fullmatch(text):
+                replacement = text
+            else:
+                escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+                replacement = f'"{escaped}"'
+        oql = oql.replace(placeholder, replacement)
     return oql
 
 

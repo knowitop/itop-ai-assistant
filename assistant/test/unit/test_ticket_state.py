@@ -76,6 +76,54 @@ class TestTicketStateIncrementRounds(unittest.IsolatedAsyncioTestCase):
                 await manager.increment_rounds(1)
 
 
+class TestTicketStateLock(unittest.IsolatedAsyncioTestCase):
+    async def test_acquire_lock_returns_true_when_free(self):
+        manager, _ = _make_manager()
+        self.assertTrue(await manager.acquire_lock("R-000001"))
+
+    async def test_acquire_lock_returns_false_when_held(self):
+        manager, _ = _make_manager()
+        await manager.acquire_lock("R-000001")
+        self.assertFalse(await manager.acquire_lock("R-000001"))
+
+    async def test_release_lock_allows_reacquire(self):
+        manager, _ = _make_manager()
+        await manager.acquire_lock("R-000001")
+        await manager.release_lock("R-000001")
+        self.assertTrue(await manager.acquire_lock("R-000001"))
+
+    async def test_locks_are_per_ticket(self):
+        manager, _ = _make_manager()
+        await manager.acquire_lock("R-000001")
+        self.assertTrue(await manager.acquire_lock("R-000002"))
+
+    async def test_lock_has_ttl(self):
+        manager, redis = _make_manager()
+        await manager.acquire_lock("R-000001")
+        ttl = await redis.ttl("lock:R-000001")
+        self.assertGreater(ttl, 0)
+
+    async def test_acquire_raises_on_redis_error(self):
+        manager, _ = _make_manager()
+        with patch.object(manager._redis, "set", AsyncMock(side_effect=RedisError("conn refused"))):
+            with self.assertRaises(StateUnavailableError):
+                await manager.acquire_lock("R-000001")
+
+    async def test_release_swallows_redis_error(self):
+        manager, _ = _make_manager()
+        with patch.object(manager._redis, "delete", AsyncMock(side_effect=RedisError("conn refused"))):
+            await manager.release_lock("R-000001")  # must not raise
+
+
+class TestTicketStateCustomTtl(unittest.IsolatedAsyncioTestCase):
+    async def test_custom_ttl_applied_to_state_keys(self):
+        redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        manager = TicketStateManager(redis, ttl_seconds=3600)
+        await manager.increment_rounds("R-000001")
+        ttl = await redis.ttl("ticket:R-000001")
+        self.assertAlmostEqual(ttl, 3600, delta=5)
+
+
 class TestTicketStateMarkDone(unittest.IsolatedAsyncioTestCase):
     async def test_mark_done_sets_flag(self):
         manager, _ = _make_manager()
