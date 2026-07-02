@@ -4,6 +4,8 @@ from bs4 import BeautifulSoup
 from langchain_core.messages import AIMessage, HumanMessage
 from markdownify import markdownify
 
+from domain.ticket import LogEntry
+
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
 
@@ -51,15 +53,15 @@ def html_to_markdown(text: str | None) -> str:
     return markdownify(str(soup)).strip()
 
 
-def build_conversation(entries: list, ai_name: str, caller_name: str) -> list:
+def build_conversation(entries: list[LogEntry], ai_name: str, caller_name: str) -> list:
     """Convert case log entries into a list of LangChain messages."""
     messages = []
     for e in entries:
-        if e["user_login"] == ai_name:
-            messages.append(AIMessage(content=e["message"]))
+        if e.user_login == ai_name:
+            messages.append(AIMessage(content=e.message))
         else:
-            user_prefix = e["user_login"]
-            if e["user_login"] == caller_name:
+            user_prefix = e.user_login
+            if e.user_login == caller_name:
                 user_prefix += " [Requester]"
-            messages.append(HumanMessage(content=f"{user_prefix}: {e['message']}", name=e["user_login"]))
+            messages.append(HumanMessage(content=f"{user_prefix}: {e.message}", name=e.user_login))
     return messages

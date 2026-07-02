@@ -19,8 +19,10 @@ logger = logging.getLogger(__name__)
 
 from config import get_settings
 from deps import create_llm
+from domain.ticket import Ticket
 from graph.enrichment.context import GraphContext
 from graph.enrichment.prompts import build_enrichment_prompts
+from itop.repository import TicketRepository
 from itop_client import Itop
 from prompt_store import read_prompt_dir
 from state.ticket_state import TicketStateManager
@@ -99,6 +101,8 @@ def make_ctx(
     ctx = GraphContext(
         processing_id=uuid4(),
         itop_client=itop,
+        ticket_repo=TicketRepository(itop, settings.ticket_mapping),
+        ticket_mapping=settings.ticket_mapping,
         state_manager=state_manager,
         enrichment=enrichment,
         prompts=_PROMPTS,
@@ -138,6 +142,8 @@ def ctx(itop: Itop, state_manager: TicketStateManager) -> GraphContext:
     return GraphContext(
         processing_id=uuid4(),
         itop_client=itop,
+        ticket_repo=TicketRepository(itop, settings.ticket_mapping),
+        ticket_mapping=settings.ticket_mapping,
         state_manager=state_manager,
         enrichment=settings.enrichment,
         prompts=_PROMPTS,
@@ -147,11 +153,11 @@ def ctx(itop: Itop, state_manager: TicketStateManager) -> GraphContext:
     )
 
 
-def make_ticket(**overrides: object) -> dict:
+def make_ticket(**overrides: object) -> Ticket:
     base: dict = {
+        "obj_class": "UserRequest",
         "id": "42",
         "ref": "R-000042",
-        "finalclass": "UserRequest",
         "title": "Printer does not print after Windows update",
         "description": (
             "<p>My HP LaserJet 400 M401dn stopped printing after a Windows update yesterday. "
@@ -160,9 +166,10 @@ def make_ticket(**overrides: object) -> dict:
             "This affects all applications. The printer is connected via USB.</p>"
         ),
         "service_id": "5",
-        "servicesubcategory_id": "3",
+        "subcategory_id": "3",
         "status": "new",
-        "caller_id_friendlyname": "John Doe",
-        "public_log": {"entries": []},
+        "caller_name": "John Doe",
+        "org_id": "1",
+        "public_log": [],
     }
-    return {**base, **overrides}
+    return Ticket(**{**base, **overrides})

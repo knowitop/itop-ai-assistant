@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from config import Settings, get_settings
+from config import Settings, TicketMappingConfig, get_settings
 
 _REQUIRED = {
     "LLM_BASE_URL": "http://localhost/v1",
@@ -52,6 +52,34 @@ class TestSettings(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True):
             with self.assertRaises(ValidationError):
                 Settings(_env_file=None)  # disable .env so file-based auth can't satisfy the check
+
+
+class TestTicketMapping(unittest.TestCase):
+    def test_default_mapping(self):
+        mapping = TicketMappingConfig()
+        resolved = mapping.for_class("UserRequest")
+        self.assertEqual(resolved["subcategory_id"], "servicesubcategory_id")
+        self.assertEqual(resolved["caller_name"], "caller_id_friendlyname")
+        self.assertEqual(resolved["request_type"], "request_type")
+
+    def test_incident_override_drops_request_type(self):
+        mapping = TicketMappingConfig()
+        resolved = mapping.for_class("Incident")
+        self.assertIsNone(resolved["request_type"])
+        self.assertEqual(resolved["title"], "title")
+
+    def test_partial_fields_override_keeps_defaults(self):
+        mapping = TicketMappingConfig(fields={"title": "custom_title"})
+        resolved = mapping.for_class("UserRequest")
+        self.assertEqual(resolved["title"], "custom_title")
+        self.assertEqual(resolved["description"], "description")
+
+    def test_unknown_override_field_raises(self):
+        with self.assertRaises(ValidationError):
+            TicketMappingConfig(class_overrides={"Incident": {"no_such_field": None}})
+
+    def test_default_active_statuses(self):
+        self.assertEqual(TicketMappingConfig().active_statuses, ["new"])
 
 
 class TestGetSettings(unittest.TestCase):

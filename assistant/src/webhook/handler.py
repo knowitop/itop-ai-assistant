@@ -2,24 +2,26 @@ import logging
 from uuid import UUID
 
 from deps import AppDeps, create_llm
+from domain.ticket import Ticket
 from graph.enrichment.context import GraphContext
 from graph.enrichment.graph import graph
 from graph.enrichment.prompts import build_enrichment_prompts
-from itop.utils import ticket_label
 
 from .models import TicketEvent, WebhookPayload
 
 logger = logging.getLogger(__name__)
 
 
-async def _run_enrichment_graph(ticket: dict, processing_id: UUID, deps: AppDeps):
-    logger.info(f"{processing_id} Running enrichment graph for {ticket_label(ticket)}")
+async def _run_enrichment_graph(ticket: Ticket, processing_id: UUID, deps: AppDeps):
+    logger.info(f"{processing_id} Running enrichment graph for {ticket.label}")
 
     enrichment = await deps.config_store.get_enrichment()
     prompts = build_enrichment_prompts(await deps.prompt_store.get("enrichment"))
     context = GraphContext(
         processing_id=processing_id,
         itop_client=deps.itop_client,
+        ticket_repo=deps.ticket_repo,
+        ticket_mapping=deps.settings.ticket_mapping,
         state_manager=deps.state_manager,
         enrichment=enrichment,
         prompts=prompts,
@@ -47,7 +49,7 @@ async def process_webhook_logic(payload: WebhookPayload, processing_id: UUID, de
                 logger.info(f"[{processing_id}] {label} is already being processed, skipping")
                 return
             try:
-                ticket = await deps.itop_client.schema(payload.obj_class).find_one({"id": payload.id})
+                ticket = await deps.ticket_repo.fetch(payload.obj_class, payload.id)
                 if ticket is None:
                     logger.warning(f"[{processing_id}] {label} not found in iTop, skipping")
                     return

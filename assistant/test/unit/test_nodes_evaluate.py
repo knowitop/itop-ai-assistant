@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 
 import graph.enrichment.nodes.evaluate as evaluate_module
 from config import EnrichmentConfig
+from domain.ticket import Ticket
 from graph.enrichment.prompts import build_enrichment_prompts
 from graph.enrichment.state import Action, EnrichmentState
 from prompt_store import read_prompt_dir
@@ -15,18 +16,18 @@ _TEST_LLM = ChatOpenAI(model="test-model", api_key="test-key", base_url="http://
 _PROMPTS = build_enrichment_prompts(read_prompt_dir(Path(__file__).parents[2] / "prompts" / "enrichment"))
 
 
-def _make_ticket() -> dict:
-    return {
-        "id": 1,
+def _make_ticket(**overrides) -> Ticket:
+    base = {
+        "obj_class": "UserRequest",
+        "id": "1",
         "ref": "R-000001",
-        "finalclass": "UserRequest",
         "title": "Broken laptop",
         "description": "My laptop does not turn on.",
         "service_id": "5",
-        "servicesubcategory_id": "3",
-        "caller_id_friendlyname": "John Doe",
-        "public_log": {"entries": []},
+        "subcategory_id": "3",
+        "caller_name": "John Doe",
     }
+    return Ticket(**{**base, **overrides})
 
 
 def _make_runtime() -> MagicMock:
@@ -35,7 +36,6 @@ def _make_runtime() -> MagicMock:
         data = {
             "Service": {"name": "IT", "description": ""},
             "ServiceSubcategory": {"name": "Hardware", "description": ""},
-            "Person": {"friendlyname": "ai-assistant"},
         }
         m.find_one = AsyncMock(return_value=data.get(class_name))
         return m
@@ -43,6 +43,7 @@ def _make_runtime() -> MagicMock:
     runtime = MagicMock()
     runtime.context.state_manager.get = AsyncMock(return_value=TicketState(rounds=0, ai_done=False))
     runtime.context.itop_client.schema = MagicMock(side_effect=_schema)
+    runtime.context.ticket_repo.get_ai_person_name = AsyncMock(return_value="ai-assistant")
     runtime.context.enrichment = EnrichmentConfig()
     runtime.context.prompts = _PROMPTS
     runtime.context.llm_evaluate = _TEST_LLM
@@ -110,9 +111,7 @@ class TestEvaluateEmptyLLMResponse(unittest.IsolatedAsyncioTestCase):
 
 class TestEvaluateEarlyReturns(unittest.IsolatedAsyncioTestCase):
     async def test_no_service_context_returns_enrich(self):
-        ticket = _make_ticket()
-        ticket["service_id"] = "0"
-        state: EnrichmentState = {"ticket": ticket, "action": None, "question": None}
+        state: EnrichmentState = {"ticket": _make_ticket(service_id="0"), "action": None, "question": None}
         runtime = _make_runtime()
 
         result = await evaluate_module.run(state, runtime)

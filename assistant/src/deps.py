@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 
 from config import Settings
 from config_store import ConfigStore, StaticConfigStore
+from itop.repository import TicketRepository
 from itop_client import Itop
 from prompt_store import FilePromptStore, PromptStore
 from state.ticket_state import TicketStateManager
@@ -19,6 +20,7 @@ class AppDeps:
 
     settings: Settings
     itop_client: Itop
+    ticket_repo: TicketRepository
     state_manager: TicketStateManager
     config_store: ConfigStore
     prompt_store: PromptStore
@@ -51,6 +53,7 @@ def build_deps(settings: Settings) -> AppDeps:
     return AppDeps(
         settings=settings,
         itop_client=itop_client,
+        ticket_repo=TicketRepository(itop_client, settings.ticket_mapping),
         state_manager=state_manager,
         config_store=StaticConfigStore(settings),
         prompt_store=FilePromptStore(_DEFAULT_PROMPTS_DIR, settings.prompts_dir),

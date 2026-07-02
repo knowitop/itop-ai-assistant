@@ -3,8 +3,6 @@ import logging
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.runtime import Runtime
 
-from itop.utils import ticket_label
-
 from ..context import GraphContext
 from ..prompts import EnrichmentPrompts
 from ..state import EnrichmentState
@@ -26,35 +24,33 @@ def _build_enrich_prompt(prompts: EnrichmentPrompts) -> ChatPromptTemplate:
 async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     ticket = state["ticket"]
 
-    note = await _generate_note(ticket, runtime)
+    note = await _generate_note(state, runtime)
 
     if note:
-        await runtime.context.itop_client.schema(ticket["finalclass"]).update(
-            {"id": ticket["id"]},
-            {"private_log": {"add_item": {"message": note, "format": "text"}}},
-        )
+        await runtime.context.ticket_repo.append_private_log(ticket, note)
     else:
-        logger.warning(f"{ticket_label(ticket)}: LLM returned empty note, skipping private log entry")
-    await runtime.context.state_manager.mark_done(ticket_label(ticket))
+        logger.warning(f"{ticket.label}: LLM returned empty note, skipping private log entry")
+    await runtime.context.state_manager.mark_done(ticket.label)
 
-    logger.info(f"{ticket_label(ticket)}: enriched and marked done")
+    logger.info(f"{ticket.label}: enriched and marked done")
 
     return {}
 
 
-async def _generate_note(ticket: dict, runtime: Runtime[GraphContext]) -> str:
+async def _generate_note(state: EnrichmentState, runtime: Runtime[GraphContext]) -> str:
+    ticket = state["ticket"]
     ctx = runtime.context
-    ai_person = await ctx.itop_client.schema("Person").find_one({"id": ("=", ":current_contact_id")})
-    caller_name = ticket["caller_id_friendlyname"]
-    conversation = build_conversation(ticket["public_log"].get("entries") or [], ai_person["friendlyname"], caller_name)
+
+    ai_name = await ctx.ticket_repo.get_ai_person_name()
+    conversation = build_conversation(ticket.public_log, ai_name, ticket.caller_name)
 
     chain = _build_enrich_prompt(ctx.prompts) | ctx.llm_enrich
 
     response = await chain.ainvoke(
         {
-            "caller_name": caller_name,
-            "title": ticket["title"],
-            "description": html_to_markdown(ticket["description"]),
+            "caller_name": ticket.caller_name,
+            "title": ticket.title,
+            "description": html_to_markdown(ticket.description),
             "conversation": conversation,
         }
     )

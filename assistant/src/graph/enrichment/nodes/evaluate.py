@@ -3,7 +3,7 @@ import logging
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.runtime import Runtime
 
-from itop.utils import ticket_label
+from domain.ticket import Ticket
 from itop_client import Itop
 
 from ..context import GraphContext
@@ -28,55 +28,47 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     ticket = state["ticket"]
     cfg = runtime.context.enrichment
 
-    if not _has_service_context(ticket):
-        logger.info(f"{ticket_label(ticket)}: no service context, moving to enrich")
+    if not ticket.has_service:
+        logger.info(f"{ticket.label}: no service context, moving to enrich")
         return {"action": Action.ENRICH}
 
-    ticket_state = await runtime.context.state_manager.get(ticket_label(ticket))
+    ticket_state = await runtime.context.state_manager.get(ticket.label)
     if ticket_state.rounds >= cfg.max_rounds:
-        logger.info(f"{ticket_label(ticket)}: rounds exhausted, moving to enrich")
+        logger.info(f"{ticket.label}: rounds exhausted, moving to enrich")
         return {"action": Action.ENRICH}
 
     service_context = await _build_service_context(ticket, runtime.context.itop_client)
 
-    # DRY: see nodes.enrich._generate_note
-    ai_person = await runtime.context.itop_client.schema("Person").find_one({"id": ("=", ":current_contact_id")})
-    caller_name = ticket["caller_id_friendlyname"]
-    conversation = build_conversation(ticket["public_log"].get("entries") or [], ai_person["friendlyname"], caller_name)
+    ai_name = await runtime.context.ticket_repo.get_ai_person_name()
+    conversation = build_conversation(ticket.public_log, ai_name, ticket.caller_name)
 
     chain = _build_evaluate_prompt(runtime.context.prompts) | runtime.context.llm_evaluate
     response = await chain.ainvoke(
         {
             "service_context": service_context,
-            "caller_name": caller_name,
-            "title": ticket["title"],
-            "description": html_to_markdown(ticket["description"]),
+            "caller_name": ticket.caller_name,
+            "title": ticket.title,
+            "description": html_to_markdown(ticket.description),
             "conversation": conversation,
         }
     )
     answer = strip_thinking(response.content)
     if not answer:
-        logger.warning(f"{ticket_label(ticket)}: LLM returned empty response in evaluate, moving to enrich")
+        logger.warning(f"{ticket.label}: LLM returned empty response in evaluate, moving to enrich")
         return {"action": Action.ENRICH}
     question = None if "<result>SUFFICIENT</result>".upper() in answer.upper() else answer
 
     if question is None:
-        logger.info(f"{ticket_label(ticket)}: description sufficient, moving to enrich")
+        logger.info(f"{ticket.label}: description sufficient, moving to enrich")
         return {"action": Action.ENRICH}
 
-    logger.info(f"{ticket_label(ticket)}: incomplete, will ask question")
+    logger.info(f"{ticket.label}: incomplete, will ask question")
     return {"action": Action.ASK, "question": question}
 
 
-def _has_service_context(ticket: dict) -> bool:
-    return bool(int(ticket["service_id"]))
-
-
-async def _build_service_context(ticket: dict, itop_client: Itop) -> str:
-    service = await itop_client.schema("Service").find_one({"id": ticket["service_id"]})
-    service_subcategory = await itop_client.schema("ServiceSubcategory").find_one(
-        {"id": ticket["servicesubcategory_id"]}
-    )
+async def _build_service_context(ticket: Ticket, itop_client: Itop) -> str:
+    service = await itop_client.schema("Service").find_one({"id": ticket.service_id})
+    service_subcategory = await itop_client.schema("ServiceSubcategory").find_one({"id": ticket.subcategory_id})
 
     parts = []
 

@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from domain.ticket import Ticket
 from webhook.handler import process_webhook_logic
 from webhook.models import WebhookPayload
 
@@ -18,8 +19,8 @@ class TestProcessWebhookLock(unittest.IsolatedAsyncioTestCase):
         self.state_manager.release_lock = AsyncMock()
         self.state_manager.mark_done = AsyncMock()
 
-        self.schema = AsyncMock()
-        self.deps.itop_client.schema = MagicMock(return_value=self.schema)
+        self.fetch = AsyncMock(return_value=Ticket(obj_class="UserRequest", id="123"))
+        self.deps.ticket_repo.fetch = self.fetch
 
         run_patch = patch("webhook.handler._run_enrichment_graph", new_callable=AsyncMock)
         self.mock_run = run_patch.start()
@@ -30,20 +31,18 @@ class TestProcessWebhookLock(unittest.IsolatedAsyncioTestCase):
 
         await process_webhook_logic(_payload(), uuid4(), self.deps)
 
-        self.schema.find_one.assert_not_called()
+        self.fetch.assert_not_called()
         self.mock_run.assert_not_called()
         self.state_manager.release_lock.assert_not_called()
 
     async def test_lock_acquired_runs_graph_and_releases(self):
-        self.schema.find_one.return_value = {"id": "123", "finalclass": "UserRequest"}
-
         await process_webhook_logic(_payload(), uuid4(), self.deps)
 
+        self.fetch.assert_awaited_once_with("UserRequest", "123")
         self.mock_run.assert_awaited_once()
         self.state_manager.release_lock.assert_awaited_once_with("UserRequest::123")
 
     async def test_lock_released_on_graph_failure(self):
-        self.schema.find_one.return_value = {"id": "123", "finalclass": "UserRequest"}
         self.mock_run.side_effect = RuntimeError("LLM down")
 
         with self.assertRaises(RuntimeError):
@@ -52,7 +51,7 @@ class TestProcessWebhookLock(unittest.IsolatedAsyncioTestCase):
         self.state_manager.release_lock.assert_awaited_once_with("UserRequest::123")
 
     async def test_ticket_not_found_skips_graph_and_releases(self):
-        self.schema.find_one.return_value = None
+        self.fetch.return_value = None
 
         await process_webhook_logic(_payload(), uuid4(), self.deps)
 

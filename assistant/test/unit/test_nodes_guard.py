@@ -2,23 +2,20 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 
 import graph.enrichment.nodes.guard as guard_module
+from config import TicketMappingConfig
+from domain.ticket import Ticket
 from graph.enrichment.state import Action, EnrichmentState
-from itop.models import TicketStatus
 from state.ticket_state import TicketState
 
 
-def _make_ticket(status: str = TicketStatus.NEW) -> dict:
-    return {
-        "id": 1,
-        "ref": "R-000001",
-        "finalclass": "UserRequest",
-        "status": status,
-    }
+def _make_ticket(status: str = "new") -> Ticket:
+    return Ticket(obj_class="UserRequest", id="1", ref="R-000001", status=status)
 
 
 def _make_runtime(ticket_state: TicketState) -> MagicMock:
     runtime = MagicMock()
     runtime.context.state_manager.get = AsyncMock(return_value=ticket_state)
+    runtime.context.ticket_mapping = TicketMappingConfig()
     return runtime
 
 
@@ -42,7 +39,7 @@ class TestGuardAiDone(unittest.IsolatedAsyncioTestCase):
 
 class TestGuardTicketStatus(unittest.IsolatedAsyncioTestCase):
     async def test_status_new_continues(self):
-        state: EnrichmentState = {"ticket": _make_ticket(TicketStatus.NEW), "action": None, "question": None}
+        state: EnrichmentState = {"ticket": _make_ticket("new"), "action": None, "question": None}
         runtime = _make_runtime(TicketState(rounds=0, ai_done=False))
 
         result = await guard_module.run(state, runtime)
@@ -64,6 +61,15 @@ class TestGuardTicketStatus(unittest.IsolatedAsyncioTestCase):
         result = await guard_module.run(state, runtime)
 
         self.assertEqual(result["action"], Action.STOP)
+
+    async def test_custom_active_statuses_allow_processing(self):
+        state: EnrichmentState = {"ticket": _make_ticket("approved"), "action": None, "question": None}
+        runtime = _make_runtime(TicketState(rounds=0, ai_done=False))
+        runtime.context.ticket_mapping = TicketMappingConfig(active_statuses=["new", "approved"])
+
+        result = await guard_module.run(state, runtime)
+
+        self.assertNotIn("action", result)
 
 
 if __name__ == "__main__":

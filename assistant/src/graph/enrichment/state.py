@@ -1,6 +1,8 @@
 from enum import StrEnum
 from typing import Optional, TypedDict
 
+from domain.ticket import Ticket
+
 
 class Action(StrEnum):
     ASK = "ask"
@@ -9,6 +11,6 @@ class Action(StrEnum):
 
 
 class EnrichmentState(TypedDict):
-    ticket: dict
+    ticket: Ticket
     action: Optional[Action]
     question: Optional[str]

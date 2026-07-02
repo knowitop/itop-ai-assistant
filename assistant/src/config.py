@@ -27,6 +27,52 @@ _CLASSIFY_SUBCATEGORY_OQL = (
 )
 
 
+class TicketFieldMap(BaseModel):
+    """Semantic ticket field → iTop attribute code. None = attribute absent."""
+
+    ref: str | None = "ref"
+    title: str | None = "title"
+    description: str | None = "description"
+    status: str | None = "status"
+    service_id: str | None = "service_id"
+    subcategory_id: str | None = "servicesubcategory_id"
+    caller_name: str | None = "caller_id_friendlyname"
+    org_id: str | None = "org_id"
+    request_type: str | None = "request_type"
+    public_log: str | None = "public_log"
+    private_log: str | None = "private_log"
+
+
+class TicketMappingConfig(BaseModel):
+    """How ticket semantics map onto the customer's iTop datamodel."""
+
+    fields: TicketFieldMap = TicketFieldMap()
+    # Per-class field overrides, e.g. a class without some attribute (None)
+    # or with a renamed one. Merged over `fields` for that class.
+    class_overrides: dict[str, dict[str, str | None]] = {
+        "Incident": {"request_type": None},  # Incident has no request_type in stock iTop
+    }
+    # Process a ticket only while its status is in this list
+    active_statuses: list[str] = ["new"]
+
+    def for_class(self, obj_class: str) -> dict[str, str | None]:
+        resolved = self.fields.model_dump()
+        resolved.update(self.class_overrides.get(obj_class, {}))
+        return resolved
+
+    @model_validator(mode="after")
+    def check_override_fields(self) -> "TicketMappingConfig":
+        known = set(TicketFieldMap.model_fields)
+        for obj_class, overrides in self.class_overrides.items():
+            unknown = overrides.keys() - known
+            if unknown:
+                raise ValueError(
+                    f"ticket_mapping.class_overrides[{obj_class!r}]: unknown fields {sorted(unknown)}, "
+                    f"known: {sorted(known)}"
+                )
+        return self
+
+
 class EnrichmentConfig(BaseModel):
     classification_enabled: bool = True
     max_rounds: int = 2
@@ -72,6 +118,9 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379"
     state_ttl_days: int = 30
+
+    # iTop datamodel mapping
+    ticket_mapping: TicketMappingConfig = TicketMappingConfig()
 
     # Business modules
     enrichment: EnrichmentConfig = EnrichmentConfig()

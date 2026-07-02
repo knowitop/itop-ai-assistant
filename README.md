@@ -235,6 +235,24 @@ All variables go in `.env`. A full template with examples is in `docker/.env.dis
 
 `LLM_BASE_URL` accepts any OpenAI-compatible endpoint: [LM Studio](https://lmstudio.ai/) for local models, [LiteLLM Proxy](https://docs.litellm.ai/) to front any cloud provider or OpenAI directly.
 
+### Adapting to a customized iTop datamodel
+
+If your iTop uses renamed attributes, extra ticket classes or a custom
+lifecycle, adjust the `ticket_mapping` section in `config.yaml` — no code
+changes needed:
+
+```yaml
+ticket_mapping:
+  fields:                      # semantic field -> your attribute code
+    caller_name: "contact_friendlyname"
+  class_overrides:             # per-class differences (null = attribute absent)
+    Incident:
+      request_type: null
+  active_statuses: ["new", "approved"]   # when the assistant may act
+```
+
+Unspecified fields keep their stock-iTop defaults.
+
 ### Customizing prompts
 
 All LLM prompts are plain text templates shipped in [`assistant/prompts/enrichment/`](assistant/prompts/enrichment). To adapt them to your organization, set `PROMPTS_DIR` to a directory of your own and place files with the same names under `<PROMPTS_DIR>/enrichment/` — each file overrides one prompt, the rest keep their defaults:

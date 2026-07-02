@@ -6,6 +6,7 @@ from langchain_openai import ChatOpenAI
 
 import graph.enrichment.nodes.classify as classify_module
 from config import EnrichmentConfig
+from domain.ticket import Ticket
 from graph.enrichment.prompts import build_enrichment_prompts
 from graph.enrichment.state import Action, EnrichmentState
 from prompt_store import read_prompt_dir
@@ -15,20 +16,19 @@ _TEST_LLM = ChatOpenAI(model="test-model", api_key="test-key", base_url="http://
 _PROMPTS = build_enrichment_prompts(read_prompt_dir(Path(__file__).parents[2] / "prompts" / "enrichment"))
 
 
-def _make_ticket(service_id: str = "0", subcategory_id: str = "0") -> dict:
-    return {
-        "id": 1,
-        "ref": "R-000001",
-        "finalclass": "UserRequest",
-        "org_id": "42",
-        "request_type": "incident",
-        "title": "My printer is broken",
-        "description": "Cannot print anything.",
-        "caller_id_friendlyname": "John Doe",
-        "service_id": service_id,
-        "servicesubcategory_id": subcategory_id,
-        "public_log": {"entries": []},
-    }
+def _make_ticket(service_id: str = "0", subcategory_id: str = "0") -> Ticket:
+    return Ticket(
+        obj_class="UserRequest",
+        id="1",
+        ref="R-000001",
+        org_id="42",
+        request_type="incident",
+        title="My printer is broken",
+        description="Cannot print anything.",
+        caller_name="John Doe",
+        service_id=service_id,
+        subcategory_id=subcategory_id,
+    )
 
 
 def _make_services() -> list[dict]:
@@ -45,18 +45,28 @@ def _make_subcategories() -> list[dict]:
     ]
 
 
-def _make_runtime(classify_rounds: int = 0) -> MagicMock:
+def _schema_with(service: list | None = None, subcategory: list | None = None):
+    """Factory: returns a _schema(class_name) serving Service/ServiceSubcategory option lists."""
+
     def _schema(class_name):
         m = MagicMock()
-        m.update = AsyncMock()
-        if class_name == "Person":
-            m.find_one = AsyncMock(return_value={"friendlyname": "ai-assistant"})
+        if class_name == "Service" and service is not None:
+            m.find = AsyncMock(return_value=service)
+        elif class_name == "ServiceSubcategory" and subcategory is not None:
+            m.find = AsyncMock(return_value=subcategory)
         else:
             m.find = AsyncMock(return_value=[])
         return m
 
+    return _schema
+
+
+def _make_runtime(classify_rounds: int = 0) -> MagicMock:
     runtime = MagicMock()
-    runtime.context.itop_client.schema = MagicMock(side_effect=_schema)
+    runtime.context.itop_client.schema = MagicMock(side_effect=_schema_with())
+    runtime.context.ticket_repo.get_ai_person_name = AsyncMock(return_value="ai-assistant")
+    runtime.context.ticket_repo.set_fields = AsyncMock()
+    runtime.context.ticket_repo.append_private_log = AsyncMock()
     runtime.context.state_manager.get = AsyncMock(
         return_value=TicketState(rounds=0, classify_rounds=classify_rounds, ai_done=False)
     )
@@ -70,27 +80,6 @@ def _make_runtime(classify_rounds: int = 0) -> MagicMock:
 
 def _llm_response(content: str) -> MagicMock:
     return MagicMock(content=content)
-
-
-def _schema_with(service=None, subcategory=None, ticket_schema=None):
-    """Factory: returns a _schema(class_name) that handles Person + optionally Service/Subcategory."""
-
-    def _schema(class_name):
-        m = MagicMock()
-        m.update = AsyncMock()
-        if class_name == "Person":
-            m.find_one = AsyncMock(return_value={"friendlyname": "ai-assistant"})
-        elif class_name == "Service" and service is not None:
-            m.find = AsyncMock(return_value=service)
-        elif class_name == "ServiceSubcategory" and subcategory is not None:
-            m.find = AsyncMock(return_value=subcategory)
-        elif ticket_schema is not None:
-            return ticket_schema
-        else:
-            m.find = AsyncMock(return_value=[])
-        return m
-
-    return _schema
 
 
 class TestClassifySkip(unittest.IsolatedAsyncioTestCase):
@@ -146,7 +135,8 @@ class TestClassifySkip(unittest.IsolatedAsyncioTestCase):
 
 class TestClassifyHighConfidence(unittest.IsolatedAsyncioTestCase):
     async def test_high_confidence_both_stages_updates_itop(self):
-        state: EnrichmentState = {"ticket": _make_ticket(), "action": None, "question": None}
+        ticket = _make_ticket()
+        state: EnrichmentState = {"ticket": ticket, "action": None, "question": None}
         runtime = _make_runtime()
 
         service_response = _llm_response(
@@ -156,14 +146,8 @@ class TestClassifyHighConfidence(unittest.IsolatedAsyncioTestCase):
             "<result><subcategory_id>101</subcategory_id><confidence>high</confidence><reasoning>ok</reasoning></result>"
         )
 
-        ticket_schema = MagicMock()
-        ticket_schema.find = AsyncMock(return_value={"friendlyname": "ai-assistant"})
-        ticket_schema.update = AsyncMock()
-
         runtime.context.itop_client.schema = MagicMock(
-            side_effect=_schema_with(
-                service=_make_services(), subcategory=_make_subcategories(), ticket_schema=ticket_schema
-            )
+            side_effect=_schema_with(service=_make_services(), subcategory=_make_subcategories())
         )
 
         responses = [service_response, subcategory_response]
@@ -171,15 +155,14 @@ class TestClassifyHighConfidence(unittest.IsolatedAsyncioTestCase):
             result = await classify_module.run(state, runtime)
 
         self.assertIn("ticket", result)
-        self.assertEqual(result["ticket"]["service_id"], "10")
-        self.assertEqual(result["ticket"]["servicesubcategory_id"], "101")
+        self.assertEqual(result["ticket"].service_id, "10")
+        self.assertEqual(result["ticket"].subcategory_id, "101")
         self.assertNotIn("action", result)
 
-        # iTop updated once with both fields
-        ticket_schema.update.assert_called_once()
-        update_fields = ticket_schema.update.call_args[0][1]
-        self.assertEqual(update_fields["service_id"], "10")
-        self.assertEqual(update_fields["servicesubcategory_id"], "101")
+        # iTop updated once with both semantic fields
+        runtime.context.ticket_repo.set_fields.assert_awaited_once_with(
+            ticket, {"service_id": "10", "subcategory_id": "101"}
+        )
 
     async def test_service_already_set_only_runs_stage2(self):
         state: EnrichmentState = {
@@ -201,7 +184,7 @@ class TestClassifyHighConfidence(unittest.IsolatedAsyncioTestCase):
         # Only one LLM call (subcategory, not service)
         self.assertEqual(mock_llm.call_count, 1)
         self.assertIn("ticket", result)
-        self.assertEqual(result["ticket"]["servicesubcategory_id"], "101")
+        self.assertEqual(result["ticket"].subcategory_id, "101")
 
 
 class TestClassifyLowConfidence(unittest.IsolatedAsyncioTestCase):
@@ -267,20 +250,15 @@ class TestClassifyLowConfidence(unittest.IsolatedAsyncioTestCase):
 
 class TestClassifyFallback(unittest.IsolatedAsyncioTestCase):
     async def test_classify_rounds_exhausted_triggers_fallback(self):
-        state: EnrichmentState = {"ticket": _make_ticket(), "action": None, "question": None}
+        ticket = _make_ticket()
+        state: EnrichmentState = {"ticket": ticket, "action": None, "question": None}
         runtime = _make_runtime(classify_rounds=2)
 
         service_response = _llm_response(
             "<result><service_id></service_id><confidence>low</confidence><reasoning>unclear</reasoning></result>"
         )
 
-        ticket_schema = MagicMock()
-        ticket_schema.find = AsyncMock(return_value={"friendlyname": "ai-assistant"})
-        ticket_schema.update = AsyncMock()
-
-        runtime.context.itop_client.schema = MagicMock(
-            side_effect=_schema_with(service=_make_services(), ticket_schema=ticket_schema)
-        )
+        runtime.context.itop_client.schema = MagicMock(side_effect=_schema_with(service=_make_services()))
 
         with patch.object(ChatOpenAI, "ainvoke", new=AsyncMock(return_value=service_response)):
             result = await classify_module.run(state, runtime)
@@ -289,10 +267,10 @@ class TestClassifyFallback(unittest.IsolatedAsyncioTestCase):
         runtime.context.state_manager.mark_done.assert_called_once_with("UserRequest::1")
         runtime.context.state_manager.increment_classify_rounds.assert_not_called()
 
-        # Fallback note written to private_log
-        ticket_schema.update.assert_called_once()
-        update_fields = ticket_schema.update.call_args[0][1]
-        self.assertIn("private_log", update_fields)
+        # Fallback note written to private log
+        runtime.context.ticket_repo.append_private_log.assert_awaited_once()
+        note = runtime.context.ticket_repo.append_private_log.await_args.args[1]
+        self.assertEqual(note, EnrichmentConfig().classify_fallback_note)
 
 
 if __name__ == "__main__":

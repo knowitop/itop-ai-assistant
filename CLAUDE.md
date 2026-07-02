@@ -134,6 +134,8 @@ cd docker && docker-compose up -d
 | `src/prompt_store.py`                           | `PromptStore` — file-based templates with overrides |
 | `prompts/enrichment/*.md`                       | Default prompt templates (one file per prompt)      |
 | `src/graph/enrichment/context.py`               | `GraphContext` — per-run dependencies for nodes     |
+| `src/domain/ticket.py`                          | `Ticket` — semantic domain model (no iTop names)    |
+| `src/itop/repository.py`                        | `TicketRepository` — semantic ↔ iTop attribute adapter |
 | `src/state/ticket_state.py`                     | Redis-backed `TicketState` and `TicketStateManager` |
 | `src/itop_client/itop.py`                       | `Itop` — iTop REST API wrapper                      |
 
@@ -142,6 +144,17 @@ cd docker && docker-compose up -d
 stored in `app.state.deps`). Each processing run builds a `GraphContext` with
 a config snapshot from `ConfigStore` and per-run LLM clients — nodes take
 everything from `runtime.context`, never from globals or `get_settings()`.
+
+**Domain model, not raw dicts:** processing code works with the semantic
+`Ticket` model (`domain/ticket.py`) — fields like `subcategory_id`,
+`caller_name`, `ticket.label`, `ticket.has_service`. Translation to actual
+iTop attribute names happens only in `TicketRepository`, driven by the
+`ticket_mapping` config: `fields` (semantic → attribute code),
+`class_overrides` (per-class differences, e.g. `Incident` has no
+`request_type`), `active_statuses` (when the assistant may act). Adapting to
+a customized iTop datamodel is a config change, not a code change. Never
+access raw iTop attribute names in nodes; OQL templates use semantic
+`:this->field` placeholders bound from `ticket.model_dump()`.
 
 ### LLM Stack
 
@@ -203,6 +216,6 @@ See `docker/.env.dist` for a full template.
 - `get_settings()` is cached via `lru_cache`; call `get_settings.cache_clear()`
   in `setUp`/`tearDown` when tests need to control env vars
 - Current test files: `test_config.py`, `test_router.py`, `test_handler.py`,
-  `test_ticket_state.py`, `test_prompt_store.py`, `test_nodes_guard.py`,
-  `test_nodes_classify.py`, `test_nodes_evaluate.py`, `test_nodes_ask.py`,
-  `test_nodes_enrich.py`, `test_nodes_utils.py`
+  `test_ticket_state.py`, `test_prompt_store.py`, `test_ticket_repository.py`,
+  `test_nodes_guard.py`, `test_nodes_classify.py`, `test_nodes_evaluate.py`,
+  `test_nodes_ask.py`, `test_nodes_enrich.py`, `test_nodes_utils.py`
