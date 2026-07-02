@@ -33,7 +33,8 @@ ITOP_URL = "http://mock-itop/webservices/rest.php"
 _PROMPTS = build_enrichment_prompts(read_prompt_dir(Path(__file__).parents[2] / "prompts" / "enrichment"))
 
 _SERVICE_FIELDS = {"name": "IT Support", "description": "General IT support services"}
-_SUBCATEGORY_FIELDS = {"name": "Hardware", "description": "Hardware-related issues"}
+# service_id is a mandatory external key in iTop — always present in real responses
+_SUBCATEGORY_FIELDS = {"name": "Hardware", "description": "Hardware-related issues", "service_id": "5"}
 _SUBCATEGORY_WITH_REQUIREMENTS = {
     "name": "Hardware",
     "description": (
@@ -41,6 +42,7 @@ _SUBCATEGORY_WITH_REQUIREMENTS = {
         "Required information: device manufacturer and model, "
         "operating system, exact error message or failure symptom."
     ),
+    "service_id": "5",
 }
 _AI_PERSON_FIELDS = {"friendlyname": "ai-assistant", "email": "ai@example.com"}
 
