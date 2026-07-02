@@ -4,9 +4,9 @@ from uuid import UUID
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from config import EnrichmentConfig, TicketMappingConfig
-from itop.repository import TicketRepository
 from itop_client import Itop
 from state.ticket_state import TicketStateManager
+from ticket_repository import TicketRepository
 
 from .prompts import EnrichmentPrompts
 

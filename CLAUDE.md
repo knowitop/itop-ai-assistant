@@ -142,9 +142,14 @@ cd docker && docker-compose up -d
 | `prompts/enrichment/*.md`                       | Default prompt templates (one file per prompt)      |
 | `src/graph/enrichment/context.py`               | `GraphContext` — per-run dependencies for nodes     |
 | `src/domain/ticket.py`                          | `Ticket` — semantic domain model (no iTop names)    |
-| `src/itop/repository.py`                        | `TicketRepository` — semantic ↔ iTop attribute adapter |
+| `src/ticket_repository.py`                      | `TicketRepository` — semantic ↔ iTop attribute adapter |
 | `src/state/ticket_state.py`                     | Redis-backed `TicketState` and `TicketStateManager` |
-| `src/itop_client/itop.py`                       | `Itop` — iTop REST API wrapper                      |
+| `src/itop_client/`                              | `Itop` — vendored iTop REST API library (itoptop fork) |
+
+**`src/itop_client/` is a vendored external library** (fork of itoptop,
+rewritten with httpx). Keep it self-contained and generic: no imports from
+this application, and do not remove functionality that this service happens
+not to use. Application-specific logic belongs in `ticket_repository.py`.
 
 **Dependency injection:** no module-level singletons. `build_deps()` in
 `src/deps.py` assembles all shared dependencies at startup (FastAPI lifespan,
@@ -236,5 +241,6 @@ See `docker/.env.dist` for a full template.
 - Current test files: `test_config.py`, `test_router.py`,
   `test_enrichment_pipeline.py`, `test_pipelines_registry.py`,
   `test_ticket_state.py`, `test_prompt_store.py`, `test_ticket_repository.py`,
-  `test_nodes_guard.py`, `test_nodes_classify.py`, `test_nodes_evaluate.py`,
-  `test_nodes_ask.py`, `test_nodes_enrich.py`, `test_nodes_utils.py`
+  `test_itop_schema.py`, `test_nodes_guard.py`, `test_nodes_classify.py`,
+  `test_nodes_evaluate.py`, `test_nodes_ask.py`, `test_nodes_enrich.py`,
+  `test_nodes_utils.py`

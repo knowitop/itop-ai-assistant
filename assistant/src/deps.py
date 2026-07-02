@@ -6,10 +6,10 @@ from langchain_openai import ChatOpenAI
 
 from config import Settings
 from config_store import ConfigStore, StaticConfigStore
-from itop.repository import TicketRepository
 from itop_client import Itop
 from prompt_store import FilePromptStore, PromptStore
 from state.ticket_state import TicketStateManager
+from ticket_repository import TicketRepository
 
 _DEFAULT_PROMPTS_DIR = Path(__file__).parent.parent / "prompts"  # assistant/prompts
 

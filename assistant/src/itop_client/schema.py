@@ -51,7 +51,9 @@ class Schema:
             "comment": f"Get {self.name}",
             "class": self.name,
             "key": query if isinstance(query, str) else self.__make_key(query),
-            "output_fields": "*+",
+            # Request only the projected fields — asking for everything ("*+")
+            # can be expensive on classes with large link sets.
+            "output_fields": ",".join(projection) if projection else "*+",
             "limit": limit,
             "page": page,
         }

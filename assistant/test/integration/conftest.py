@@ -22,10 +22,10 @@ from deps import create_llm
 from domain.ticket import Ticket
 from graph.enrichment.context import GraphContext
 from graph.enrichment.prompts import build_enrichment_prompts
-from itop.repository import TicketRepository
 from itop_client import Itop
 from prompt_store import read_prompt_dir
 from state.ticket_state import TicketStateManager
+from ticket_repository import TicketRepository
 
 ITOP_URL = "http://mock-itop/webservices/rest.php"
 

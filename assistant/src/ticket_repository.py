@@ -21,7 +21,11 @@ class TicketRepository:
         self._ai_person_name: str | None = None
 
     async def fetch(self, obj_class: str, ticket_id: str) -> Ticket | None:
-        raw = await self._itop.schema(obj_class).find_one({"id": ticket_id})
+        # Request only the attributes the mapping reads — fetching everything
+        # ("*+") drags in link sets and the private log for no reason.
+        fields = self.mapping.for_class(obj_class)
+        attrs = [attr for semantic, attr in fields.items() if attr and semantic != "private_log"]
+        raw = await self._itop.schema(obj_class).find_one({"id": ticket_id}, projection=["id", *attrs])
         if raw is None:
             return None
         return self.to_ticket(obj_class, raw)

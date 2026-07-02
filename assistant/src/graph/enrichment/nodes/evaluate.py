@@ -74,8 +74,12 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
 
 
 async def _build_service_context(ticket: Ticket, itop_client: Itop) -> str:
-    service = await itop_client.schema("Service").find_one({"id": ticket.service_id})
-    service_subcategory = await itop_client.schema("ServiceSubcategory").find_one({"id": ticket.subcategory_id})
+    service = await itop_client.schema("Service").find_one(
+        {"id": ticket.service_id}, projection=["id", "name", "description"]
+    )
+    service_subcategory = await itop_client.schema("ServiceSubcategory").find_one(
+        {"id": ticket.subcategory_id}, projection=["id", "name", "description"]
+    )
 
     parts = []
 

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from config import TicketMappingConfig
 from domain.ticket import Ticket
-from itop.repository import TicketRepository
+from ticket_repository import TicketRepository
 
 _RAW_TICKET = {
     "id": "42",
@@ -89,6 +89,27 @@ class TestFetch(unittest.IsolatedAsyncioTestCase):
         schema.find_one.return_value = None
 
         self.assertIsNone(await repo.fetch("UserRequest", "42"))
+
+    async def test_fetch_projects_only_mapped_attributes(self):
+        repo, schema = _make_repo()
+        schema.find_one.return_value = _RAW_TICKET
+
+        await repo.fetch("UserRequest", "42")
+
+        projection = schema.find_one.await_args.kwargs["projection"]
+        self.assertIn("id", projection)
+        self.assertIn("servicesubcategory_id", projection)
+        self.assertIn("public_log", projection)
+        self.assertNotIn("private_log", projection)
+
+    async def test_fetch_projection_respects_class_overrides(self):
+        repo, schema = _make_repo()
+        schema.find_one.return_value = _RAW_TICKET
+
+        await repo.fetch("Incident", "42")
+
+        projection = schema.find_one.await_args.kwargs["projection"]
+        self.assertNotIn("request_type", projection)
 
 
 class TestSetFields(unittest.IsolatedAsyncioTestCase):
