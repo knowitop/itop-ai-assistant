@@ -74,6 +74,7 @@ def _make_runtime(classify_rounds: int = 0) -> MagicMock:
     runtime.context.state_manager.mark_done = AsyncMock()
     runtime.context.enrichment = EnrichmentConfig()
     runtime.context.prompts = _PROMPTS
+    runtime.context.think_tags = ("think", "thinking", "reasoning")
     runtime.context.llm_classify = _TEST_LLM
     return runtime
 
@@ -102,10 +103,10 @@ class TestClassifySkip(unittest.IsolatedAsyncioTestCase):
         runtime = _make_runtime()
 
         service_response = _llm_response(
-            "<result><service_id>10</service_id><confidence>high</confidence><reasoning>ok</reasoning></result>"
+            "<result><service_id>10</service_id><confidence>high</confidence><reason>ok</reason></result>"
         )
         subcategory_response = _llm_response(
-            "<result><subcategory_id>101</subcategory_id><confidence>high</confidence><reasoning>ok</reasoning></result>"
+            "<result><subcategory_id>101</subcategory_id><confidence>high</confidence><reason>ok</reason></result>"
         )
 
         runtime.context.itop_client.schema = MagicMock(
@@ -140,10 +141,10 @@ class TestClassifyHighConfidence(unittest.IsolatedAsyncioTestCase):
         runtime = _make_runtime()
 
         service_response = _llm_response(
-            "<result><service_id>10</service_id><confidence>high</confidence><reasoning>clear match</reasoning></result>"
+            "<result><service_id>10</service_id><confidence>high</confidence><reason>clear match</reason></result>"
         )
         subcategory_response = _llm_response(
-            "<result><subcategory_id>101</subcategory_id><confidence>high</confidence><reasoning>ok</reasoning></result>"
+            "<result><subcategory_id>101</subcategory_id><confidence>high</confidence><reason>ok</reason></result>"
         )
 
         runtime.context.itop_client.schema = MagicMock(
@@ -173,7 +174,7 @@ class TestClassifyHighConfidence(unittest.IsolatedAsyncioTestCase):
         runtime = _make_runtime()
 
         subcategory_response = _llm_response(
-            "<result><subcategory_id>101</subcategory_id><confidence>high</confidence><reasoning>ok</reasoning></result>"
+            "<result><subcategory_id>101</subcategory_id><confidence>high</confidence><reason>ok</reason></result>"
         )
 
         runtime.context.itop_client.schema = MagicMock(side_effect=_schema_with(subcategory=_make_subcategories()))
@@ -193,7 +194,7 @@ class TestClassifyLowConfidence(unittest.IsolatedAsyncioTestCase):
         runtime = _make_runtime(classify_rounds=0)
 
         service_response = _llm_response(
-            "<result><service_id></service_id><confidence>low</confidence><reasoning>unclear</reasoning></result>"
+            "<result><service_id></service_id><confidence>low</confidence><reason>unclear</reason></result>"
         )
         ask_response = _llm_response("Could you describe what exactly stopped working?")
 
@@ -216,7 +217,7 @@ class TestClassifyLowConfidence(unittest.IsolatedAsyncioTestCase):
         runtime = _make_runtime(classify_rounds=0)
 
         subcategory_response = _llm_response(
-            "<result><subcategory_id></subcategory_id><confidence>low</confidence><reasoning>unclear</reasoning></result>"
+            "<result><subcategory_id></subcategory_id><confidence>low</confidence><reason>unclear</reason></result>"
         )
         ask_response = _llm_response("What exactly is happening with the printer?")
 
@@ -235,7 +236,7 @@ class TestClassifyLowConfidence(unittest.IsolatedAsyncioTestCase):
 
         # LLM returns ID not in the list
         service_response = _llm_response(
-            "<result><service_id>999</service_id><confidence>high</confidence><reasoning>match</reasoning></result>"
+            "<result><service_id>999</service_id><confidence>high</confidence><reason>match</reason></result>"
         )
         ask_response = _llm_response("What is the issue?")
 
@@ -255,7 +256,7 @@ class TestClassifyFallback(unittest.IsolatedAsyncioTestCase):
         runtime = _make_runtime(classify_rounds=2)
 
         service_response = _llm_response(
-            "<result><service_id></service_id><confidence>low</confidence><reasoning>unclear</reasoning></result>"
+            "<result><service_id></service_id><confidence>low</confidence><reason>unclear</reason></result>"
         )
 
         runtime.context.itop_client.schema = MagicMock(side_effect=_schema_with(service=_make_services()))

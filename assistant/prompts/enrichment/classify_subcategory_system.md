@@ -23,5 +23,5 @@ Reply strictly in this XML format with no extra text:
 <result>
   <subcategory_id>numeric ID or empty</subcategory_id>
   <confidence>high or low</confidence>
-  <reasoning>one short sentence</reasoning>
+  <reason>one short sentence</reason>
 </result>

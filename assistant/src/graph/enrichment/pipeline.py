@@ -81,6 +81,7 @@ async def _run_enrichment_graph(ticket: Ticket, processing_id: UUID, deps: AppDe
         llm_classify=create_llm(deps.settings, enrichment.classify_model),
         llm_evaluate=create_llm(deps.settings, enrichment.evaluate_model),
         llm_enrich=create_llm(deps.settings, enrichment.enrich_model),
+        think_tags=tuple(deps.settings.llm_think_tags),
     )
 
     await graph.ainvoke(

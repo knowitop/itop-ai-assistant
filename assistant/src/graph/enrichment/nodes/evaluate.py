@@ -52,7 +52,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
             "conversation": conversation,
         }
     )
-    answer = strip_thinking(response.content)
+    answer = strip_thinking(response.content, runtime.context.think_tags)
     if not answer:
         logger.warning(f"{ticket.label}: LLM returned empty response in evaluate, moving to enrich")
         return {"action": Action.ENRICH}

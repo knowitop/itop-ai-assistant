@@ -54,4 +54,4 @@ async def _generate_note(state: EnrichmentState, runtime: Runtime[GraphContext])
             "conversation": conversation,
         }
     )
-    return strip_thinking(response.content)
+    return strip_thinking(response.content, ctx.think_tags)

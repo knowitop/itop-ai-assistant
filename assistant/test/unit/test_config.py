@@ -39,6 +39,7 @@ class TestSettings(unittest.TestCase):
         self.assertEqual(s.state_ttl_days, 30)
         self.assertEqual(s.enrichment.max_rounds, 2)
         self.assertEqual(s.enrichment.max_classify_rounds, 2)
+        self.assertEqual(s.llm_think_tags, ["think", "thinking", "reasoning"])
 
     def test_webhook_token_is_secret(self):
         with patch.dict(os.environ, {**_REQUIRED, "WEBHOOK_TOKEN": "hunter2"}, clear=True):

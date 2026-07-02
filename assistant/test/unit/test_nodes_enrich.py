@@ -33,6 +33,7 @@ def _make_runtime() -> MagicMock:
     runtime.context.state_manager.mark_done = AsyncMock()
     runtime.context.enrichment = EnrichmentConfig()
     runtime.context.prompts = _PROMPTS
+    runtime.context.think_tags = ("think", "thinking", "reasoning")
     runtime.context.llm_enrich = _TEST_LLM
     return runtime
 

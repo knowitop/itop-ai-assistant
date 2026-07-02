@@ -33,9 +33,11 @@ def _format_options(options: list[dict]) -> str:
     return "\n".join(lines)
 
 
-async def _invoke_and_extract(chain, invoke_vars: dict, id_tag: str) -> tuple[str | None, str]:
+async def _invoke_and_extract(
+    chain, invoke_vars: dict, id_tag: str, think_tags: tuple[str, ...]
+) -> tuple[str | None, str]:
     response = await chain.ainvoke(invoke_vars)
-    answer = strip_thinking(response.content)
+    answer = strip_thinking(response.content, think_tags)
     extracted_id = extract_xml_field(answer, id_tag)
     confidence = extract_xml_field(answer, "confidence") or "low"
     return extracted_id, confidence.lower()
@@ -85,6 +87,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
                 "conversation": conversation,
             },
             "service_id",
+            runtime.context.think_tags,
         )
 
         if confidence == "high" and extracted_id and extracted_id in valid_service_ids:
@@ -116,6 +119,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
                 "conversation": conversation,
             },
             "subcategory_id",
+            runtime.context.think_tags,
         )
 
         if confidence == "high" and extracted_id and extracted_id in valid_subcategory_ids:
@@ -161,7 +165,7 @@ async def _ask_or_fallback(ticket: Ticket, runtime: Runtime[GraphContext], conve
             "conversation": conversation,
         }
     )
-    question = strip_thinking(response.content)
+    question = strip_thinking(response.content, ctx.think_tags)
 
     await ctx.state_manager.increment_classify_rounds(ticket.label)
     logger.info(f"{ticket.label}: posting classify clarification question (round {ticket_state.classify_rounds + 1})")

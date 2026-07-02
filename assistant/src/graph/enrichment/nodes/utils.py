@@ -1,4 +1,5 @@
 import re
+from functools import lru_cache
 
 from bs4 import BeautifulSoup
 from langchain_core.messages import AIMessage, HumanMessage
@@ -7,14 +8,24 @@ from markdownify import markdownify
 from domain.ticket import LogEntry
 
 # <think> is the de-facto standard for open-weight reasoning models
-# (DeepSeek-R1, Qwen3, QwQ); <thinking> appears in some fine-tunes.
-# Deliberately NOT <reasoning> — our classify prompts use it as a data field.
-_THINK_PAIR_RE = re.compile(r"<(think|thinking)>.*?</\1>", re.DOTALL | re.IGNORECASE)
-# Orphan closing tag: some chat templates emit the opening <think> as part of
-# the prompt, so the completion starts mid-reasoning and ends with </think>.
-_THINK_ORPHAN_CLOSE_RE = re.compile(r"^.*?</(think|thinking)>", re.DOTALL | re.IGNORECASE)
-# Unclosed opening tag (truncated output): reasoning must not leak to the user.
-_THINK_ORPHAN_OPEN_RE = re.compile(r"<(think|thinking)>.*$", re.DOTALL | re.IGNORECASE)
+# (DeepSeek-R1, Qwen3, QwQ); <thinking> and <reasoning> appear in fine-tunes.
+# Overridable via the llm_think_tags setting.
+DEFAULT_THINK_TAGS: tuple[str, ...] = ("think", "thinking", "reasoning")
+
+
+@lru_cache
+def _think_patterns(tags: tuple[str, ...]) -> tuple[re.Pattern, re.Pattern, re.Pattern]:
+    alt = "|".join(re.escape(tag) for tag in tags)
+    return (
+        # Balanced <tag>…</tag> blocks
+        re.compile(rf"<({alt})>.*?</\1>", re.DOTALL | re.IGNORECASE),
+        # Orphan closing tag: some chat templates emit the opening <think> as
+        # part of the prompt, so the completion starts mid-reasoning and ends
+        # with </think>.
+        re.compile(rf"^.*?</({alt})>", re.DOTALL | re.IGNORECASE),
+        # Unclosed opening tag (truncated output): reasoning must not leak.
+        re.compile(rf"<({alt})>.*$", re.DOTALL | re.IGNORECASE),
+    )
 
 
 _NUMERIC_RE = re.compile(r"-?\d+(\.\d+)?")
@@ -44,11 +55,13 @@ def bind_oql(oql: str, this: dict) -> str:
     return oql
 
 
-def strip_thinking(content: str | list | None) -> str:
+def strip_thinking(content: str | list | None, tags: tuple[str, ...] = DEFAULT_THINK_TAGS) -> str:
     """Remove <think>…</think> reasoning blocks emitted by reasoning models.
 
     Accepts message content as returned by LangChain: a plain string or a
     list of content blocks (strings or {"type": "text", "text": ...} dicts).
+    `tags` lists the tag names to strip (incl. orphan halves); an empty tuple
+    disables stripping.
     """
     if not content:
         return ""
@@ -57,9 +70,12 @@ def strip_thinking(content: str | list | None) -> str:
             block if isinstance(block, str) else str(block.get("text", "")) if isinstance(block, dict) else ""
             for block in content
         )
-    text = _THINK_PAIR_RE.sub("", content)
-    text = _THINK_ORPHAN_CLOSE_RE.sub("", text)
-    text = _THINK_ORPHAN_OPEN_RE.sub("", text)
+    if not tags:
+        return content.strip()
+    pair_re, orphan_close_re, orphan_open_re = _think_patterns(tags)
+    text = pair_re.sub("", content)
+    text = orphan_close_re.sub("", text)
+    text = orphan_open_re.sub("", text)
     return text.strip()
 
 

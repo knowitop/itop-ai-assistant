@@ -204,6 +204,7 @@ environment-specific values go in `.env` (not committed).
 | `llm_base_url` | default | OpenAI-compatible endpoint |
 | `llm_model` | **required** | Model name as exposed by the endpoint |
 | `llm_api_key` | optional | API key (omit for local LM Studio) |
+| `llm_think_tags` | default `[think, thinking, reasoning]` | Tag names stripped as inline reasoning blocks |
 | `redis_url` | default | Redis connection URL |
 | `state_ttl_days` | default `30` | TTL for per-ticket state in Redis |
 | `log_level` | default `INFO` | Logging level |

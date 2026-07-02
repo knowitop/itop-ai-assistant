@@ -89,12 +89,24 @@ class TestStripThinking(unittest.TestCase):
     def test_unclosed_opening_tag_drops_truncated_reasoning(self):
         self.assertEqual(strip_thinking("<think>truncated reasoning without cl"), "")
 
-    def test_reasoning_tag_preserved(self):
-        # <reasoning> is a data field in our classify response format — not a think tag
+    def test_reasoning_tag_variant_stripped(self):
+        self.assertEqual(strip_thinking("<reasoning>hm</reasoning>answer"), "answer")
+
+    def test_reason_data_field_preserved(self):
+        # <reason> is a data field in our classify response format — not a think tag
         self.assertEqual(
-            strip_thinking("<reasoning>clear match</reasoning>"),
-            "<reasoning>clear match</reasoning>",
+            strip_thinking("<reason>clear match</reason>"),
+            "<reason>clear match</reason>",
         )
+
+    def test_custom_tags_stripped(self):
+        self.assertEqual(strip_thinking("<ctx>hm</ctx>answer", tags=("ctx",)), "answer")
+
+    def test_custom_tags_replace_defaults(self):
+        self.assertEqual(strip_thinking("<think>kept</think>answer", tags=("ctx",)), "<think>kept</think>answer")
+
+    def test_empty_tags_disable_stripping(self):
+        self.assertEqual(strip_thinking("<think>kept</think>answer", tags=()), "<think>kept</think>answer")
 
     def test_list_content_of_strings_joined(self):
         self.assertEqual(strip_thinking(["hello ", "world"]), "hello world")

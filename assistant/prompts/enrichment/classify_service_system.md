@@ -23,5 +23,5 @@ Reply strictly in this XML format with no extra text:
 <result>
   <service_id>numeric ID or empty</service_id>
   <confidence>high or low</confidence>
-  <reasoning>one short sentence</reasoning>
+  <reason>one short sentence</reason>
 </result>

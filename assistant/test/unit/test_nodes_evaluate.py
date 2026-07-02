@@ -46,6 +46,7 @@ def _make_runtime() -> MagicMock:
     runtime.context.ticket_repo.get_ai_person_name = AsyncMock(return_value="ai-assistant")
     runtime.context.enrichment = EnrichmentConfig()
     runtime.context.prompts = _PROMPTS
+    runtime.context.think_tags = ("think", "thinking", "reasoning")
     runtime.context.llm_evaluate = _TEST_LLM
     return runtime
 

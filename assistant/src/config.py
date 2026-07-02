@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     llm_base_url: str = "http://localhost:1234/v1"
     llm_model: str
     llm_api_key: SecretStr
+    # Tag names treated as inline reasoning blocks in LLM output and stripped
+    # before parsing/posting (as <tag>…</tag> pairs or orphan halves).
+    # Asymmetric markers (e.g. Gemma's <context|>…<|context>) are not supported.
+    llm_think_tags: list[str] = ["think", "thinking", "reasoning"]
 
     # Redis
     redis_url: str = "redis://localhost:6379"

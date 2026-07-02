@@ -32,3 +32,4 @@ class GraphContext:
     llm_classify: BaseChatModel
     llm_evaluate: BaseChatModel
     llm_enrich: BaseChatModel
+    think_tags: tuple[str, ...] = ("think", "thinking", "reasoning")
