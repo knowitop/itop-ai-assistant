@@ -126,7 +126,9 @@ cd docker && docker-compose up -d
 | `src/main.py`                                   | FastAPI app init, lifespan (builds `AppDeps`)       |
 | `src/config.py`                                 | `Settings` — centralized config (pydantic-settings) |
 | `src/deps.py`                                   | Composition root: `AppDeps`, `build_deps`, `create_llm` |
-| `src/config_store.py`                           | `ConfigStore` — runtime business-config source (static for now) |
+| `src/config_store.py`                           | `RedisConfigStore` — runtime-editable module config |
+| `src/journal.py`                                | `RunJournal` — per-run status/steps in Redis        |
+| `src/admin/router.py`                           | Admin API: config, prompts, runs, module discovery  |
 | `src/webhook/router.py`                         | Webhook endpoint: auth, registry lookup, dispatch   |
 | `src/pipelines/registry.py`                     | `PipelineRegistry` — (class, event) → module handler |
 | `src/graph/enrichment/pipeline.py`              | Enrichment module: registration + event handlers    |
@@ -212,6 +214,7 @@ environment-specific values go in `.env` (not committed).
 | `itop_user` + `itop_pwd` | one of | iTop basic auth |
 | `itop_token` | one of | iTop token auth (alternative to user+pwd) |
 | `webhook_token` | recommended | Shared secret for `/webhook` (`X-Auth-Token` header); unset = no auth |
+| `admin_token` | recommended | Shared secret for `/api` admin endpoints (`X-Admin-Token` header); unset = no auth |
 | `prompts_dir` | optional | Directory with per-deployment prompt overrides |
 | `llm_base_url` | default | OpenAI-compatible endpoint |
 | `llm_model` | **required** | Model name as exposed by the endpoint |
@@ -219,6 +222,7 @@ environment-specific values go in `.env` (not committed).
 | `llm_think_tags` | default `[think, thinking, reasoning]` | Tag names stripped as inline reasoning blocks |
 | `redis_url` | default | Redis connection URL |
 | `state_ttl_days` | default `30` | TTL for per-ticket state in Redis |
+| `run_ttl_days` | default `7` | TTL for processing-run journal entries |
 | `log_level` | default `INFO` | Logging level |
 
 Per-module limits live in `EnrichmentConfig` (`enrichment.*`): `max_rounds`
@@ -226,6 +230,16 @@ and `max_classify_rounds` (both default 2) cap clarifying-question rounds;
 `classify_model` / `evaluate_model` / `enrich_model` optionally override the
 global `llm_model` per node (set via `config.yaml`, e.g. `enrichment:
 classify_model: ...`).
+
+**Runtime-editable config and prompts.** Business config (module sections
+like `enrichment.*`) and prompts can be edited at runtime through the
+admin API (`/api/config/...`, `/api/prompts/...`): overrides live in Redis
+on top of env/yaml/file defaults and apply from the next processed ticket.
+Reads degrade to defaults when Redis is unavailable; writes are validated
+(pydantic for config, placeholder registry for prompts) before storing.
+Every processing run leaves a trace in the `RunJournal` (status, node
+steps, error) — journal writes are non-fatal by design. Inspect via
+`GET /api/runs`.
 
 **Prompts are files, not code.** Defaults live in `prompts/enrichment/*.md`;
 a deployment overrides individual prompts by placing same-named files under
@@ -248,6 +262,7 @@ See `docker/.env.dist` for a full template.
 - Current test files: `test_config.py`, `test_router.py`,
   `test_enrichment_pipeline.py`, `test_pipelines_registry.py`,
   `test_ticket_state.py`, `test_prompt_store.py`, `test_ticket_repository.py`,
-  `test_itop_schema.py`, `test_nodes_guard.py`, `test_nodes_classify.py`,
-  `test_nodes_evaluate.py`, `test_nodes_ask.py`, `test_nodes_enrich.py`,
-  `test_nodes_utils.py`
+  `test_catalog_repository.py`, `test_itop_schema.py`, `test_journal.py`,
+  `test_config_store.py`, `test_admin_api.py`, `test_nodes_guard.py`,
+  `test_nodes_classify.py`, `test_nodes_evaluate.py`, `test_nodes_ask.py`,
+  `test_nodes_enrich.py`, `test_nodes_utils.py`

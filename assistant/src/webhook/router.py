@@ -32,24 +32,30 @@ async def verify_webhook_token(request: Request, x_auth_token: Annotated[str | N
 
 
 async def _process_safely(
-    handler: PipelineHandler, payload: WebhookPayload, processing_id: UUID, deps: AppDeps
+    module: str, handler: PipelineHandler, payload: WebhookPayload, processing_id: UUID, deps: AppDeps
 ) -> None:
+    label = f"{payload.obj_class}::{payload.id}"
+    await deps.journal.start(processing_id, ticket=label, event=str(payload.event), module=module)
     try:
         await handler(payload, processing_id, deps)
-    except Exception:
-        logger.exception(f"[{processing_id}] Processing failed for {payload.obj_class}::{payload.id}")
+    except Exception as e:
+        logger.exception(f"[{processing_id}] Processing failed for {label}")
+        await deps.journal.finish(processing_id, "failed", error=f"{type(e).__name__}: {e}")
+    else:
+        await deps.journal.finish(processing_id, "done")
 
 
 @router.post("/webhook", status_code=202, dependencies=[Depends(verify_webhook_token)])
 async def receive_webhook(payload: WebhookPayload, request: Request) -> WebhookResponse:
-    handler = request.app.state.registry.resolve(payload.obj_class, payload.event)
-    if handler is None:
+    entry = request.app.state.registry.resolve_entry(payload.obj_class, payload.event)
+    if entry is None:
         raise HTTPException(status_code=400, detail=f"Unsupported class/event: {payload.obj_class}/{payload.event}")
+    module, handler = entry
 
     deps: AppDeps = request.app.state.deps
     processing_id = uuid4()
     logger.info(f"[{processing_id}] Accepted {payload.obj_class}::{payload.id} ({payload.event})")
-    task = asyncio.create_task(_process_safely(handler, payload, processing_id, deps))
+    task = asyncio.create_task(_process_safely(module, handler, payload, processing_id, deps))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
     return WebhookResponse(status="accepted", processing_id=processing_id)

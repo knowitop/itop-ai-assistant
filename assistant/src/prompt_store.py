@@ -1,5 +1,13 @@
+from __future__ import annotations
+
+import logging
 from pathlib import Path
 from typing import Protocol
+
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
+
+logger = logging.getLogger(__name__)
 
 
 class PromptStoreError(Exception):
@@ -10,11 +18,19 @@ class PromptStore(Protocol):
     """Source of prompt templates for business modules.
 
     Read once per processing run so a single run always sees a consistent
-    set. File-based for now; a UI-editable store (e.g. Redis-backed) can
-    replace it without touching the processing code.
+    set. Priority: runtime overrides (Redis, edited via admin API) >
+    per-deployment files (prompts_dir) > packaged defaults.
     """
 
     async def get(self, module: str) -> dict[str, str]: ...
+
+    async def set(self, module: str, name: str, text: str) -> None: ...
+
+    async def reset(self, module: str, name: str) -> None: ...
+
+    async def overrides(self, module: str) -> frozenset[str]:
+        """Names of prompts currently overridden at runtime."""
+        ...
 
 
 def read_prompt_dir(path: Path) -> dict[str, str]:
@@ -53,3 +69,55 @@ class FilePromptStore:
             prompts.update(overrides)
 
         return prompts
+
+    async def set(self, module: str, name: str, text: str) -> None:
+        raise PromptStoreError("FilePromptStore is read-only")
+
+    async def reset(self, module: str, name: str) -> None:
+        raise PromptStoreError("FilePromptStore is read-only")
+
+    async def overrides(self, module: str) -> frozenset[str]:
+        return frozenset()
+
+
+class RedisPromptStore:
+    """Runtime prompt overrides in Redis on top of a file-based store.
+
+    Edits made through the admin API land here and apply from the next run.
+    Placeholder validation is the caller's job (see the module's
+    `validate_prompts` in its ModuleInfo) — the store only guards names.
+    """
+
+    def __init__(self, files: FilePromptStore, redis: Redis):
+        self._files = files
+        self._redis = redis
+
+    def _key(self, module: str) -> str:
+        return f"prompts:{module}"
+
+    async def get(self, module: str) -> dict[str, str]:
+        prompts = await self._files.get(module)
+        try:
+            stored = await self._redis.hgetall(self._key(module))
+        except RedisError as e:
+            # Runtime overrides are an enhancement — degrade to file prompts
+            logger.warning(f"Redis unavailable, using file prompts for {module!r}: {e}")
+            return prompts
+        unknown = stored.keys() - prompts.keys()
+        if unknown:
+            logger.warning(f"Ignoring unknown runtime prompt overrides for {module!r}: {sorted(unknown)}")
+        prompts.update({name: text for name, text in stored.items() if name in prompts})
+        return prompts
+
+    async def set(self, module: str, name: str, text: str) -> None:
+        known = await self._files.get(module)
+        if name not in known:
+            raise PromptStoreError(f"Unknown prompt {name!r} for module {module!r}. Known: {sorted(known)}")
+        await self._redis.hset(self._key(module), name, text)
+
+    async def reset(self, module: str, name: str) -> None:
+        await self._redis.hdel(self._key(module), name)
+
+    async def overrides(self, module: str) -> frozenset[str]:
+        stored = await self._redis.hgetall(self._key(module))
+        return frozenset(stored.keys())

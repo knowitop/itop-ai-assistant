@@ -21,6 +21,7 @@ class TestHandleTicketEvent(unittest.IsolatedAsyncioTestCase):
 
         self.fetch = AsyncMock(return_value=Ticket(obj_class="UserRequest", id="123"))
         self.deps.ticket_repo.fetch = self.fetch
+        self.deps.journal = AsyncMock()
 
         run_patch = patch("graph.enrichment.pipeline._run_enrichment_graph", new_callable=AsyncMock)
         self.mock_run = run_patch.start()

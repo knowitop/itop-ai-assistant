@@ -2,8 +2,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import fakeredis.aioredis
+
 from graph.enrichment.prompts import PROMPT_VARIABLES, build_enrichment_prompts
-from prompt_store import FilePromptStore, PromptStoreError, read_prompt_dir
+from prompt_store import FilePromptStore, PromptStoreError, RedisPromptStore, read_prompt_dir
 
 _DEFAULTS_DIR = Path(__file__).parents[2] / "prompts"
 
@@ -52,6 +54,44 @@ class TestFilePromptStore(unittest.IsolatedAsyncioTestCase):
         store = FilePromptStore(_DEFAULTS_DIR, Path("/nonexistent"))
         prompts = await store.get("enrichment")
         self.assertEqual(prompts.keys(), PROMPT_VARIABLES.keys())
+
+
+class TestRedisPromptStore(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        self.store = RedisPromptStore(FilePromptStore(_DEFAULTS_DIR), self.redis)
+
+    async def test_get_without_overrides_returns_files(self):
+        prompts = await self.store.get("enrichment")
+        self.assertEqual(prompts, _default_prompts())
+        self.assertEqual(await self.store.overrides("enrichment"), frozenset())
+
+    async def test_set_overrides_single_prompt(self):
+        await self.store.set("enrichment", "enrich_system", "Runtime override")
+
+        prompts = await self.store.get("enrichment")
+        self.assertEqual(prompts["enrich_system"], "Runtime override")
+        self.assertEqual(prompts["evaluate_system"], _default_prompts()["evaluate_system"])
+        self.assertEqual(await self.store.overrides("enrichment"), frozenset({"enrich_system"}))
+
+    async def test_set_unknown_name_raises(self):
+        with self.assertRaises(PromptStoreError):
+            await self.store.set("enrichment", "no_such_prompt", "text")
+
+    async def test_reset_restores_file_value(self):
+        await self.store.set("enrichment", "enrich_system", "Runtime override")
+
+        await self.store.reset("enrichment", "enrich_system")
+
+        prompts = await self.store.get("enrichment")
+        self.assertEqual(prompts["enrich_system"], _default_prompts()["enrich_system"])
+
+    async def test_stale_override_for_removed_prompt_ignored(self):
+        await self.redis.hset("prompts:enrichment", "removed_prompt", "stale")
+
+        prompts = await self.store.get("enrichment")
+
+        self.assertNotIn("removed_prompt", prompts)
 
 
 class TestBuildEnrichmentPrompts(unittest.TestCase):

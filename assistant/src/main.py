@@ -1,8 +1,9 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
+from admin.router import router as admin_router
 from config import get_settings
 from deps import build_deps
 from graph.enrichment.prompts import build_enrichment_prompts
@@ -24,6 +25,8 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     if settings.webhook_token is None:
         logger.warning("WEBHOOK_TOKEN is not set — /webhook accepts unauthenticated requests")
+    if settings.admin_token is None:
+        logger.warning("ADMIN_TOKEN is not set — /api accepts unauthenticated requests")
     deps = build_deps(settings)
     # Fail fast on missing or broken prompt templates instead of on a live ticket
     build_enrichment_prompts(await deps.prompt_store.get("enrichment"))
@@ -37,6 +40,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="iTop AI Assistant", lifespan=lifespan)
 app.include_router(router)
+app.include_router(admin_router)
+
+
+@app.get("/health")
+async def health(request: Request) -> dict:
+    try:
+        await request.app.state.deps.state_manager.ping()
+        redis_ok = True
+    except Exception:
+        redis_ok = False
+    return {"status": "ok" if redis_ok else "degraded", "redis": redis_ok}
+
 
 if __name__ == "__main__":
     import uvicorn

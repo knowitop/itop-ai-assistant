@@ -114,6 +114,10 @@ class TicketStateManager:
         except RedisError as e:
             logger.warning(f"Redis error releasing lock for ticket {ticket_ref} (will expire by TTL): {e}")
 
+    async def ping(self) -> None:
+        """Raise if Redis is unreachable (used by the health endpoint)."""
+        await self._redis.ping()
+
     async def aclose(self) -> None:
         """Close the underlying Redis connection."""
         await self._redis.aclose()

@@ -229,6 +229,7 @@ All variables go in `.env`. A full template with examples is in `docker/.env.dis
 | `LLM_API_KEY` | optional | API key — omit entirely for local LM Studio |
 | `ITOP_URL` | default `http://localhost/webservices/rest.php` | iTop REST API URL |
 | `WEBHOOK_TOKEN` | recommended | Shared secret for `/webhook`; iTop must send it in the `X-Auth-Token` header. Unset = unauthenticated access |
+| `ADMIN_TOKEN` | recommended | Shared secret for the `/api` admin endpoints (`X-Admin-Token` header). Unset = unauthenticated access |
 | `REDIS_URL` | default `redis://localhost:6379` | Redis connection URL |
 | `PROMPTS_DIR` | optional | Directory with prompt overrides (see below) |
 | `LOG_LEVEL` | default `INFO` | Logging level |
@@ -252,6 +253,22 @@ ticket_mapping:
 ```
 
 Unspecified fields keep their stock-iTop defaults.
+
+### Admin API
+
+The assistant exposes a small admin API (protected by `ADMIN_TOKEN`, header `X-Admin-Token`) — the backend for the upcoming admin UI:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /health` | Liveness + Redis connectivity |
+| `GET /api/modules` | Registered business modules |
+| `GET/PUT/DELETE /api/config/{module}` | Read / edit / reset module config at runtime (validated; applies from the next ticket, no restart) |
+| `GET /api/config/{module}/schema` | JSON Schema of the module config (for form generation) |
+| `GET /api/prompts/{module}` | Effective prompts + which are overridden |
+| `PUT/DELETE /api/prompts/{module}/{name}` | Edit / reset a single prompt (placeholders validated before saving) |
+| `GET /api/runs`, `GET /api/runs/{id}` | Processing-run journal: status, per-node steps, errors |
+
+The `processing_id` returned by `/webhook` is the key into `/api/runs/{id}`.
 
 ### Customizing prompts
 

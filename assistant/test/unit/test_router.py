@@ -45,6 +45,7 @@ class TestWebhook(unittest.TestCase):
         mock_deps = MagicMock()
         mock_deps.settings.webhook_token = None
         mock_deps.state_manager.mark_done = AsyncMock()
+        mock_deps.journal = AsyncMock()
         self.client.app.state.deps = mock_deps
 
         response = self.client.post(

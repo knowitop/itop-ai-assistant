@@ -51,6 +51,23 @@ class TestPipelineRegistry(unittest.TestCase):
 
         self.assertEqual([m.name for m in registry.modules], ["a", "b"])
 
+    def test_resolve_entry_returns_module_name(self):
+        registry = PipelineRegistry()
+        handler = AsyncMock()
+        registry.register(_module("my-module"), {("UserRequest", "created"): handler})
+
+        entry = registry.resolve_entry("UserRequest", "created")
+
+        self.assertEqual(entry, ("my-module", handler))
+        self.assertIsNone(registry.resolve_entry("Change", "created"))
+
+    def test_get_module(self):
+        registry = PipelineRegistry()
+        registry.register(_module("a"), {})
+
+        self.assertEqual(registry.get_module("a").name, "a")
+        self.assertIsNone(registry.get_module("nope"))
+
 
 class TestBuildRegistry(unittest.TestCase):
     def test_default_settings_register_enrichment(self):
@@ -64,6 +81,7 @@ class TestBuildRegistry(unittest.TestCase):
         self.assertEqual(module.name, "enrichment")
         self.assertIs(module.config_model, EnrichmentConfig)
         self.assertIn("evaluate_system", module.prompt_names)
+        self.assertIsNotNone(module.validate_prompts)
 
     def test_disabled_enrichment_registers_nothing(self):
         registry = build_registry(_settings(enabled=False))

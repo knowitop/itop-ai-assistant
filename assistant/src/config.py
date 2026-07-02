@@ -101,6 +101,8 @@ class Settings(BaseSettings):
     app_port: int = 8000
     log_level: str = "INFO"
     webhook_token: SecretStr | None = None
+    # Shared secret for the admin API (X-Admin-Token header); None = no auth
+    admin_token: SecretStr | None = None
     # Directory with per-deployment prompt overrides (see prompt_store.FilePromptStore)
     prompts_dir: Path | None = None
 
@@ -124,6 +126,8 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379"
     state_ttl_days: int = 30
+    # How long processing-run journal entries are kept
+    run_ttl_days: int = 7
 
     # iTop datamodel mapping
     ticket_mapping: TicketMappingConfig = TicketMappingConfig()

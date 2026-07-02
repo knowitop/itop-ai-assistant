@@ -6,9 +6,10 @@ from langchain_openai import ChatOpenAI
 
 from catalog_repository import CatalogRepository
 from config import Settings
-from config_store import ConfigStore, StaticConfigStore
+from config_store import ConfigStore, RedisConfigStore
 from itop_client import Itop
-from prompt_store import FilePromptStore, PromptStore
+from journal import RunJournal
+from prompt_store import FilePromptStore, PromptStore, RedisPromptStore
 from state.ticket_state import TicketStateManager
 from ticket_repository import TicketRepository
 
@@ -26,6 +27,7 @@ class AppDeps:
     state_manager: TicketStateManager
     config_store: ConfigStore
     prompt_store: PromptStore
+    journal: RunJournal
 
     async def aclose(self) -> None:
         await self.itop_client.aclose()
@@ -50,6 +52,7 @@ def build_deps(settings: Settings) -> AppDeps:
         auth_token=settings.itop_token.get_secret_value() if settings.itop_token else None,
         timeout=settings.itop_timeout,
     )
+    # One shared Redis connection pool for state, journal, config and prompts
     redis = aioredis.from_url(settings.redis_url, decode_responses=True)
     state_manager = TicketStateManager(redis, ttl_seconds=settings.state_ttl_days * 24 * 60 * 60)
     return AppDeps(
@@ -58,6 +61,7 @@ def build_deps(settings: Settings) -> AppDeps:
         ticket_repo=TicketRepository(itop_client, settings.ticket_mapping),
         catalog_repo=CatalogRepository(itop_client),
         state_manager=state_manager,
-        config_store=StaticConfigStore(settings),
-        prompt_store=FilePromptStore(_DEFAULT_PROMPTS_DIR, settings.prompts_dir),
+        config_store=RedisConfigStore(redis, settings),
+        prompt_store=RedisPromptStore(FilePromptStore(_DEFAULT_PROMPTS_DIR, settings.prompts_dir), redis),
+        journal=RunJournal(redis, ttl_seconds=settings.run_ttl_days * 24 * 60 * 60),
     )

@@ -24,12 +24,15 @@ PipelineHandler = Callable[["WebhookPayload", UUID, "AppDeps"], Awaitable[None]]
 
 @dataclass(frozen=True)
 class ModuleInfo:
-    """Metadata a business module exposes for discovery (and a future admin UI)."""
+    """Metadata a business module exposes for discovery and the admin API."""
 
     name: str
     description: str
     config_model: type | None = None
     prompt_names: tuple[str, ...] = ()
+    # Validates a full {name: template} set; raises ValueError on bad templates.
+    # Used at startup and by the admin API before saving prompt edits.
+    validate_prompts: Callable[[dict[str, str]], object] | None = None
 
 
 class PipelineRegistry:
@@ -40,7 +43,7 @@ class PipelineRegistry:
     """
 
     def __init__(self) -> None:
-        self._routes: dict[tuple[str, str], PipelineHandler] = {}
+        self._routes: dict[tuple[str, str], tuple[str, PipelineHandler]] = {}
         self._modules: dict[str, ModuleInfo] = {}
 
     def register(self, module: ModuleInfo, routes: dict[tuple[str, str], PipelineHandler]) -> None:
@@ -50,11 +53,19 @@ class PipelineRegistry:
         if conflicts:
             raise ValueError(f"Routes already claimed by another module: {sorted(conflicts)}")
         self._modules[module.name] = module
-        self._routes.update(routes)
+        self._routes.update({key: (module.name, handler) for key, handler in routes.items()})
         logger.info(f"Registered module {module.name!r} with {len(routes)} routes")
 
     def resolve(self, obj_class: str, event: str) -> PipelineHandler | None:
+        entry = self._routes.get((obj_class, str(event)))
+        return entry[1] if entry else None
+
+    def resolve_entry(self, obj_class: str, event: str) -> tuple[str, PipelineHandler] | None:
+        """Return (module name, handler) for a route, or None."""
         return self._routes.get((obj_class, str(event)))
+
+    def get_module(self, name: str) -> ModuleInfo | None:
+        return self._modules.get(name)
 
     @property
     def modules(self) -> list[ModuleInfo]:

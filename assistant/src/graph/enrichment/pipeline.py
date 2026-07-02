@@ -32,6 +32,7 @@ def register(registry: PipelineRegistry, settings: Settings) -> None:
         description="First-contact ticket enrichment: classify, evaluate completeness, ask, enrich",
         config_model=EnrichmentConfig,
         prompt_names=tuple(PROMPT_VARIABLES),
+        validate_prompts=build_enrichment_prompts,
     )
     routes = {}
     for obj_class in cfg.classes:
@@ -47,11 +48,13 @@ async def handle_ticket_event(payload: WebhookPayload, processing_id: UUID, deps
 
     if not await deps.state_manager.acquire_lock(label):
         logger.info(f"[{processing_id}] {label} is already being processed, skipping")
+        await deps.journal.add_step(processing_id, "lock", "ticket is already being processed — skipped")
         return
     try:
         ticket = await deps.ticket_repo.fetch(payload.obj_class, payload.id)
         if ticket is None:
             logger.warning(f"[{processing_id}] {label} not found in iTop, skipping")
+            await deps.journal.add_step(processing_id, "fetch", "ticket not found in iTop — skipped")
             return
         await _run_enrichment_graph(ticket, processing_id, deps)
     finally:
@@ -68,7 +71,7 @@ async def handle_assigned(payload: WebhookPayload, processing_id: UUID, deps: Ap
 async def _run_enrichment_graph(ticket: Ticket, processing_id: UUID, deps: AppDeps) -> None:
     logger.info(f"{processing_id} Running enrichment graph for {ticket.label}")
 
-    enrichment = await deps.config_store.get_enrichment()
+    enrichment = await deps.config_store.get("enrichment", EnrichmentConfig)
     prompts = build_enrichment_prompts(await deps.prompt_store.get("enrichment"))
     context = GraphContext(
         processing_id=processing_id,
@@ -84,11 +87,25 @@ async def _run_enrichment_graph(ticket: Ticket, processing_id: UUID, deps: AppDe
         think_tags=tuple(deps.settings.llm_think_tags),
     )
 
-    await graph.ainvoke(
-        {
-            "ticket": ticket,
-            "action": None,
-            "question": None,
-        },
-        context=context,
-    )
+    graph_input = {
+        "ticket": ticket,
+        "action": None,
+        "question": None,
+    }
+    # Stream node updates so every run leaves a step trace in the journal
+    async for update in graph.astream(graph_input, context=context):
+        for node_name, output in update.items():
+            await deps.journal.add_step(processing_id, node_name, _summarize_update(output))
+
+
+def _summarize_update(output: dict | None) -> str:
+    if not output:
+        return ""
+    parts = []
+    if action := output.get("action"):
+        parts.append(f"action={action}")
+    if question := output.get("question"):
+        parts.append(f"question={question[:200]}")
+    if output.get("ticket") is not None:
+        parts.append("ticket fields updated")
+    return "; ".join(parts)
