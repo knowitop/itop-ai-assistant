@@ -19,6 +19,7 @@ COPY --from=builder /app/.venv /app/.venv
 
 # Copy application code and default config
 COPY src ./src
+COPY prompts ./prompts
 COPY config.yaml ./
 
 ENV PATH="/app/.venv/bin:$PATH"

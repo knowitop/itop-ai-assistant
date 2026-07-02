@@ -130,7 +130,9 @@ cd docker && docker-compose up -d
 | `src/graph/enrichment/nodes/ask.py`             | Post clarifying question node                       |
 | `src/graph/enrichment/nodes/enrich.py`          | Ticket enrichment node                              |
 | `src/graph/enrichment/nodes/utils.py`           | `strip_thinking`, `bind_oql`, `html_to_markdown`    |
-| `src/graph/enrichment/prompts.py`               | All prompt templates (evaluate, enrich, classify)   |
+| `src/graph/enrichment/prompts.py`               | `EnrichmentPrompts` + placeholder registry/validation |
+| `src/prompt_store.py`                           | `PromptStore` — file-based templates with overrides |
+| `prompts/enrichment/*.md`                       | Default prompt templates (one file per prompt)      |
 | `src/graph/enrichment/context.py`               | `GraphContext` — per-run dependencies for nodes     |
 | `src/state/ticket_state.py`                     | Redis-backed `TicketState` and `TicketStateManager` |
 | `src/itop_client/itop.py`                       | `Itop` — iTop REST API wrapper                      |
@@ -168,6 +170,7 @@ environment-specific values go in `.env` (not committed).
 | `itop_user` + `itop_pwd` | one of | iTop basic auth |
 | `itop_token` | one of | iTop token auth (alternative to user+pwd) |
 | `webhook_token` | recommended | Shared secret for `/webhook` (`X-Auth-Token` header); unset = no auth |
+| `prompts_dir` | optional | Directory with per-deployment prompt overrides |
 | `llm_base_url` | default | OpenAI-compatible endpoint |
 | `llm_model` | **required** | Model name as exposed by the endpoint |
 | `llm_api_key` | optional | API key (omit for local LM Studio) |
@@ -181,6 +184,14 @@ and `max_classify_rounds` (both default 2) cap clarifying-question rounds;
 global `llm_model` per node (set via `config.yaml`, e.g. `enrichment:
 classify_model: ...`).
 
+**Prompts are files, not code.** Defaults live in `prompts/enrichment/*.md`;
+a deployment overrides individual prompts by placing same-named files under
+`<prompts_dir>/enrichment/`. Placeholders are validated against
+`PROMPT_VARIABLES` (in `graph/enrichment/prompts.py`) at startup — adding a
+new placeholder to a prompt requires adding it there and passing the value at
+invoke time in the node. Prompt files are re-read on every run, so edits apply
+without restart.
+
 See `docker/.env.dist` for a full template.
 
 ## Testing Notes
@@ -192,6 +203,6 @@ See `docker/.env.dist` for a full template.
 - `get_settings()` is cached via `lru_cache`; call `get_settings.cache_clear()`
   in `setUp`/`tearDown` when tests need to control env vars
 - Current test files: `test_config.py`, `test_router.py`, `test_handler.py`,
-  `test_ticket_state.py`, `test_nodes_guard.py`, `test_nodes_classify.py`,
-  `test_nodes_evaluate.py`, `test_nodes_ask.py`, `test_nodes_enrich.py`,
-  `test_nodes_utils.py`
+  `test_ticket_state.py`, `test_prompt_store.py`, `test_nodes_guard.py`,
+  `test_nodes_classify.py`, `test_nodes_evaluate.py`, `test_nodes_ask.py`,
+  `test_nodes_enrich.py`, `test_nodes_utils.py`

@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from config import get_settings
 from deps import build_deps
+from graph.enrichment.prompts import build_enrichment_prompts
 from webhook.router import router
 
 settings = get_settings()
@@ -23,6 +24,8 @@ async def lifespan(app: FastAPI):
     if settings.webhook_token is None:
         logger.warning("WEBHOOK_TOKEN is not set — /webhook accepts unauthenticated requests")
     deps = build_deps(settings)
+    # Fail fast on missing or broken prompt templates instead of on a live ticket
+    build_enrichment_prompts(await deps.prompt_store.get("enrichment"))
     app.state.deps = deps
     try:
         yield

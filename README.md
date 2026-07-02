@@ -230,9 +230,22 @@ All variables go in `.env`. A full template with examples is in `docker/.env.dis
 | `ITOP_URL` | default `http://localhost/webservices/rest.php` | iTop REST API URL |
 | `WEBHOOK_TOKEN` | recommended | Shared secret for `/webhook`; iTop must send it in the `X-Auth-Token` header. Unset = unauthenticated access |
 | `REDIS_URL` | default `redis://localhost:6379` | Redis connection URL |
+| `PROMPTS_DIR` | optional | Directory with prompt overrides (see below) |
 | `LOG_LEVEL` | default `INFO` | Logging level |
 
 `LLM_BASE_URL` accepts any OpenAI-compatible endpoint: [LM Studio](https://lmstudio.ai/) for local models, [LiteLLM Proxy](https://docs.litellm.ai/) to front any cloud provider or OpenAI directly.
+
+### Customizing prompts
+
+All LLM prompts are plain text templates shipped in [`assistant/prompts/enrichment/`](assistant/prompts/enrichment). To adapt them to your organization, set `PROMPTS_DIR` to a directory of your own and place files with the same names under `<PROMPTS_DIR>/enrichment/` — each file overrides one prompt, the rest keep their defaults:
+
+```
+my-prompts/
+└── enrichment/
+    └── evaluate_system.md   # overrides only this prompt
+```
+
+Templates use `{placeholder}` variables (e.g. `{title}`, `{description}`, `{caller_name}`). The service validates all templates at startup and refuses to start if a template references an unknown placeholder, so typos surface immediately instead of breaking live tickets. Edits to prompt files apply from the next processed ticket — no restart needed.
 
 ---
 

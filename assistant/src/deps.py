@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 
 import redis.asyncio as aioredis
 from langchain_openai import ChatOpenAI
@@ -6,7 +7,10 @@ from langchain_openai import ChatOpenAI
 from config import Settings
 from config_store import ConfigStore, StaticConfigStore
 from itop_client import Itop
+from prompt_store import FilePromptStore, PromptStore
 from state.ticket_state import TicketStateManager
+
+_DEFAULT_PROMPTS_DIR = Path(__file__).parent.parent / "prompts"  # assistant/prompts
 
 
 @dataclass
@@ -17,6 +21,7 @@ class AppDeps:
     itop_client: Itop
     state_manager: TicketStateManager
     config_store: ConfigStore
+    prompt_store: PromptStore
 
     async def aclose(self) -> None:
         await self.itop_client.aclose()
@@ -48,4 +53,5 @@ def build_deps(settings: Settings) -> AppDeps:
         itop_client=itop_client,
         state_manager=state_manager,
         config_store=StaticConfigStore(settings),
+        prompt_store=FilePromptStore(_DEFAULT_PROMPTS_DIR, settings.prompts_dir),
     )

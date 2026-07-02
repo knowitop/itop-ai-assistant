@@ -20,10 +20,14 @@ logger = logging.getLogger(__name__)
 from config import get_settings
 from deps import create_llm
 from graph.enrichment.context import GraphContext
+from graph.enrichment.prompts import build_enrichment_prompts
 from itop_client import Itop
+from prompt_store import read_prompt_dir
 from state.ticket_state import TicketStateManager
 
 ITOP_URL = "http://mock-itop/webservices/rest.php"
+
+_PROMPTS = build_enrichment_prompts(read_prompt_dir(Path(__file__).parents[2] / "prompts" / "enrichment"))
 
 _SERVICE_FIELDS = {"name": "IT Support", "description": "General IT support services"}
 _SUBCATEGORY_FIELDS = {"name": "Hardware", "description": "Hardware-related issues"}
@@ -97,6 +101,7 @@ def make_ctx(
         itop_client=itop,
         state_manager=state_manager,
         enrichment=enrichment,
+        prompts=_PROMPTS,
         llm_classify=llm,
         llm_evaluate=llm,
         llm_enrich=llm,
@@ -135,6 +140,7 @@ def ctx(itop: Itop, state_manager: TicketStateManager) -> GraphContext:
         itop_client=itop,
         state_manager=state_manager,
         enrichment=settings.enrichment,
+        prompts=_PROMPTS,
         llm_classify=llm,
         llm_evaluate=llm,
         llm_enrich=llm,

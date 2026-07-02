@@ -4,6 +4,7 @@ from uuid import UUID
 from deps import AppDeps, create_llm
 from graph.enrichment.context import GraphContext
 from graph.enrichment.graph import graph
+from graph.enrichment.prompts import build_enrichment_prompts
 from itop.utils import ticket_label
 
 from .models import TicketEvent, WebhookPayload
@@ -15,11 +16,13 @@ async def _run_enrichment_graph(ticket: dict, processing_id: UUID, deps: AppDeps
     logger.info(f"{processing_id} Running enrichment graph for {ticket_label(ticket)}")
 
     enrichment = await deps.config_store.get_enrichment()
+    prompts = build_enrichment_prompts(await deps.prompt_store.get("enrichment"))
     context = GraphContext(
         processing_id=processing_id,
         itop_client=deps.itop_client,
         state_manager=deps.state_manager,
         enrichment=enrichment,
+        prompts=prompts,
         llm_classify=create_llm(deps.settings, enrichment.classify_model),
         llm_evaluate=create_llm(deps.settings, enrichment.evaluate_model),
         llm_enrich=create_llm(deps.settings, enrichment.enrich_model),

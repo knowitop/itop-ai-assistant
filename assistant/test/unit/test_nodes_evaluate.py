@@ -1,14 +1,18 @@
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from langchain_openai import ChatOpenAI
 
 import graph.enrichment.nodes.evaluate as evaluate_module
 from config import EnrichmentConfig
+from graph.enrichment.prompts import build_enrichment_prompts
 from graph.enrichment.state import Action, EnrichmentState
+from prompt_store import read_prompt_dir
 from state.ticket_state import TicketState
 
 _TEST_LLM = ChatOpenAI(model="test-model", api_key="test-key", base_url="http://localhost:9")
+_PROMPTS = build_enrichment_prompts(read_prompt_dir(Path(__file__).parents[2] / "prompts" / "enrichment"))
 
 
 def _make_ticket() -> dict:
@@ -40,6 +44,7 @@ def _make_runtime() -> MagicMock:
     runtime.context.state_manager.get = AsyncMock(return_value=TicketState(rounds=0, ai_done=False))
     runtime.context.itop_client.schema = MagicMock(side_effect=_schema)
     runtime.context.enrichment = EnrichmentConfig()
+    runtime.context.prompts = _PROMPTS
     runtime.context.llm_evaluate = _TEST_LLM
     return runtime
 

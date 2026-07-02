@@ -3,21 +3,21 @@ import logging
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.runtime import Runtime
 
-from config import EnrichmentConfig
 from itop.utils import ticket_label
 
 from ..context import GraphContext
+from ..prompts import EnrichmentPrompts
 from ..state import EnrichmentState
 from .utils import build_conversation, html_to_markdown, strip_thinking
 
 logger = logging.getLogger(__name__)
 
 
-def _build_enrich_prompt(cfg: EnrichmentConfig) -> ChatPromptTemplate:
+def _build_enrich_prompt(prompts: EnrichmentPrompts) -> ChatPromptTemplate:
     return ChatPromptTemplate.from_messages(
         [
-            ("system", cfg.enrich_system_prompt),
-            ("human", cfg.enrich_human_prompt),
+            ("system", prompts.enrich_system),
+            ("human", prompts.enrich_human),
             MessagesPlaceholder("conversation"),
         ]
     )
@@ -48,7 +48,7 @@ async def _generate_note(ticket: dict, runtime: Runtime[GraphContext]) -> str:
     caller_name = ticket["caller_id_friendlyname"]
     conversation = build_conversation(ticket["public_log"].get("entries") or [], ai_person["friendlyname"], caller_name)
 
-    chain = _build_enrich_prompt(ctx.enrichment) | ctx.llm_enrich
+    chain = _build_enrich_prompt(ctx.prompts) | ctx.llm_enrich
 
     response = await chain.ainvoke(
         {

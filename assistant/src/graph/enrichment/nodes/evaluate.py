@@ -3,22 +3,22 @@ import logging
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langgraph.runtime import Runtime
 
-from config import EnrichmentConfig
 from itop.utils import ticket_label
 from itop_client import Itop
 
 from ..context import GraphContext
+from ..prompts import EnrichmentPrompts
 from ..state import Action, EnrichmentState
 from .utils import build_conversation, html_to_markdown, strip_thinking
 
 logger = logging.getLogger(__name__)
 
 
-def _build_evaluate_prompt(cfg: EnrichmentConfig) -> ChatPromptTemplate:
+def _build_evaluate_prompt(prompts: EnrichmentPrompts) -> ChatPromptTemplate:
     return ChatPromptTemplate.from_messages(
         [
-            ("system", cfg.evaluate_system_prompt),
-            ("human", cfg.evaluate_human_prompt),
+            ("system", prompts.evaluate_system),
+            ("human", prompts.evaluate_human),
             MessagesPlaceholder("conversation"),
         ]
     )
@@ -44,7 +44,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
     caller_name = ticket["caller_id_friendlyname"]
     conversation = build_conversation(ticket["public_log"].get("entries") or [], ai_person["friendlyname"], caller_name)
 
-    chain = _build_evaluate_prompt(cfg) | runtime.context.llm_evaluate
+    chain = _build_evaluate_prompt(runtime.context.prompts) | runtime.context.llm_evaluate
     response = await chain.ainvoke(
         {
             "service_context": service_context,

@@ -1,14 +1,18 @@
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from langchain_openai import ChatOpenAI
 
 import graph.enrichment.nodes.classify as classify_module
 from config import EnrichmentConfig
+from graph.enrichment.prompts import build_enrichment_prompts
 from graph.enrichment.state import Action, EnrichmentState
+from prompt_store import read_prompt_dir
 from state.ticket_state import TicketState
 
 _TEST_LLM = ChatOpenAI(model="test-model", api_key="test-key", base_url="http://localhost:9")
+_PROMPTS = build_enrichment_prompts(read_prompt_dir(Path(__file__).parents[2] / "prompts" / "enrichment"))
 
 
 def _make_ticket(service_id: str = "0", subcategory_id: str = "0") -> dict:
@@ -59,6 +63,7 @@ def _make_runtime(classify_rounds: int = 0) -> MagicMock:
     runtime.context.state_manager.increment_classify_rounds = AsyncMock()
     runtime.context.state_manager.mark_done = AsyncMock()
     runtime.context.enrichment = EnrichmentConfig()
+    runtime.context.prompts = _PROMPTS
     runtime.context.llm_classify = _TEST_LLM
     return runtime
 

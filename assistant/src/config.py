@@ -9,19 +9,6 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-from graph.enrichment.prompts import (
-    CLASSIFY_ASK_HUMAN,
-    CLASSIFY_ASK_SYSTEM,
-    CLASSIFY_SERVICE_HUMAN,
-    CLASSIFY_SERVICE_SYSTEM,
-    CLASSIFY_SUBCATEGORY_HUMAN,
-    CLASSIFY_SUBCATEGORY_SYSTEM,
-    ENRICH_HUMAN,
-    ENRICH_SYSTEM,
-    EVALUATE_HUMAN,
-    EVALUATE_SYSTEM,
-)
-
 _ROOT = Path(__file__).parent.parent  # assistant/
 
 
@@ -51,16 +38,6 @@ class EnrichmentConfig(BaseModel):
     classify_fallback_note: str = "Could not determine the request category. Manual classification required."
     classify_service_oql: str = _CLASSIFY_SERVICE_OQL
     classify_subcategory_oql: str = _CLASSIFY_SUBCATEGORY_OQL
-    classify_service_system_prompt: str = CLASSIFY_SERVICE_SYSTEM
-    classify_service_human_prompt: str = CLASSIFY_SERVICE_HUMAN
-    classify_subcategory_system_prompt: str = CLASSIFY_SUBCATEGORY_SYSTEM
-    classify_subcategory_human_prompt: str = CLASSIFY_SUBCATEGORY_HUMAN
-    classify_ask_system_prompt: str = CLASSIFY_ASK_SYSTEM
-    classify_ask_human_prompt: str = CLASSIFY_ASK_HUMAN
-    evaluate_system_prompt: str = EVALUATE_SYSTEM
-    evaluate_human_prompt: str = EVALUATE_HUMAN
-    enrich_system_prompt: str = ENRICH_SYSTEM
-    enrich_human_prompt: str = ENRICH_HUMAN
 
 
 class Settings(BaseSettings):
@@ -76,6 +53,8 @@ class Settings(BaseSettings):
     app_port: int = 8000
     log_level: str = "INFO"
     webhook_token: SecretStr | None = None
+    # Directory with per-deployment prompt overrides (see prompt_store.FilePromptStore)
+    prompts_dir: Path | None = None
 
     # iTop
     itop_url: str = "http://localhost/webservices/rest.php"

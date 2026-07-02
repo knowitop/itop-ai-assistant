@@ -76,6 +76,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
 
     itop_client = runtime.context.itop_client
     llm = runtime.context.llm_classify
+    prompts = runtime.context.prompts
     label = ticket_label(ticket)
 
     title = ticket["title"]
@@ -101,7 +102,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
         services_text = _format_services(services_list)
         valid_service_ids = {str(s["id"]) for s in services_list}
 
-        chain = _build_prompt(cfg.classify_service_system_prompt, cfg.classify_service_human_prompt) | llm
+        chain = _build_prompt(prompts.classify_service_system, prompts.classify_service_human) | llm
         extracted_id, confidence = await _invoke_and_extract(
             chain,
             {
@@ -132,7 +133,7 @@ async def run(state: EnrichmentState, runtime: Runtime[GraphContext]) -> dict:
         subcategories_text = _format_subcategories(subcategories_list)
         valid_subcategory_ids = {str(s["id"]) for s in subcategories_list}
 
-        chain = _build_prompt(cfg.classify_subcategory_system_prompt, cfg.classify_subcategory_human_prompt) | llm
+        chain = _build_prompt(prompts.classify_subcategory_system, prompts.classify_subcategory_human) | llm
         extracted_id, confidence = await _invoke_and_extract(
             chain,
             {
@@ -187,7 +188,7 @@ async def _ask_or_fallback(ticket: dict, runtime: Runtime[GraphContext], convers
         await ctx.state_manager.mark_done(label)
         return {"action": Action.STOP}
 
-    chain = _build_prompt(cfg.classify_ask_system_prompt, cfg.classify_ask_human_prompt) | ctx.llm_classify
+    chain = _build_prompt(ctx.prompts.classify_ask_system, ctx.prompts.classify_ask_human) | ctx.llm_classify
     response = await chain.ainvoke(
         {
             "caller_name": ticket["caller_id_friendlyname"],
