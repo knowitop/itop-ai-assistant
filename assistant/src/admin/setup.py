@@ -19,6 +19,7 @@ from pydantic import BaseModel, ValidationError
 from config import ItopConfig, LlmConfig, SecurityConfig, TicketMappingConfig, missing_setup
 from deps import AppDeps, create_itop_client, create_llm
 from graph.enrichment.nodes.utils import strip_thinking
+from itop_provisioning import provision_itop
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ SETUP_SECTIONS: dict[str, type[BaseModel]] = {
 }
 
 _TEST_TIMEOUT = 30.0  # seconds; keeps connection tests from hanging the wizard
+_PROVISION_TIMEOUT = 60.0  # seconds; provisioning makes ~10 sequential iTop requests
 
 
 def _deps(request: Request) -> AppDeps:
@@ -141,6 +143,51 @@ async def test_itop(request: Request, body: dict[str, Any] | None = None) -> dic
     if person is None:
         return {"ok": False, "error": "Authenticated, but no Person is linked to the account"}
     return {"ok": True, "ai_person": person.get("friendlyname")}
+
+
+@router.post("/provision-itop")
+async def provision_itop_endpoint(request: Request, body: dict[str, Any]) -> dict:
+    """Create the iTop-side triggers and webhooks (see itop_provisioning).
+
+    Requires one-time admin credentials in the body (`user`+`pwd` or `token`)
+    — they are used for these requests only and are never stored. `url`
+    defaults to the saved itop section; the webhook token comes from the
+    saved security section.
+    """
+    deps = _deps(request)
+    security = await deps.config_store.get("security", SecurityConfig)
+    if not security.webhook_token:
+        return {"ok": False, "error": "Set the webhook token first (security section)"}
+    backend_url = str(body.get("backend_url") or "").strip()
+    if not backend_url:
+        return {"ok": False, "error": "backend_url is required"}
+
+    stored = await deps.config_store.get("itop", ItopConfig)
+    try:
+        cfg = ItopConfig(
+            url=str(body.get("url") or stored.url),
+            api_version=stored.api_version,
+            timeout=stored.timeout,
+            user=body.get("user"),
+            pwd=body.get("pwd"),
+            token=body.get("token"),
+        )
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    if not cfg.has_auth:
+        return {"ok": False, "error": "No admin credentials: provide user+pwd or token"}
+
+    client = create_itop_client(cfg)
+    try:
+        report = await asyncio.wait_for(
+            provision_itop(client, backend_url, security.webhook_token), timeout=_PROVISION_TIMEOUT
+        )
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    finally:
+        await client.aclose()
+    logger.info(f"iTop provisioning finished: {[(r['status'], r['name']) for r in report]}")
+    return {"ok": True, "report": report}
 
 
 @router.post("/test-llm")

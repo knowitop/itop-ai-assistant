@@ -131,6 +131,7 @@ cd docker && docker-compose up -d
 | `src/journal.py`                                | `RunJournal` — per-run status/steps in Redis        |
 | `src/admin/router.py`                           | Admin API: config, prompts, runs, module discovery  |
 | `src/admin/setup.py`                            | Setup API: connection sections + probes (wizard backend) |
+| `src/itop_provisioning.py`                      | iTop-side triggers/webhooks: find-or-create + CLI   |
 | `src/webhook/router.py`                         | Webhook endpoint: auth, configured-gate, dispatch   |
 | `src/pipelines/registry.py`                     | `PipelineRegistry` — (class, event) → module handler |
 | `src/graph/enrichment/pipeline.py`              | Enrichment module: registration + event handlers    |
@@ -271,6 +272,13 @@ over the current effective config; GET responses mask secrets
 stored value, explicit `null` clears it. Until an admin token is set the
 admin API is open (first-run mode). Redis persistence is required for
 runtime config to survive restarts (compose already enables appendonly).
+`POST /provision-itop` creates the iTop-side triggers and webhooks
+(`itop_provisioning.py`, find-or-create by name, webhook auth via
+`X-Auth-Token`) under one-time admin credentials from the body — never
+stored; the same logic runs standalone as a CLI
+(`PYTHONPATH=src uv run python -m itop_provisioning`). The wizard step
+order is Security → iTop → LLM → iTop webhooks: provisioning needs the
+saved webhook token.
 
 **Prompts are files, not code.** Defaults live in `prompts/enrichment/*.md`;
 a deployment overrides individual prompts by placing same-named files under

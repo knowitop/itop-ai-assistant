@@ -228,5 +228,76 @@ class TestConnectionProbes(SetupApiTestCase):
         self.assertIn("TimeoutError", body["error"])
 
 
+class TestProvisionItop(SetupApiTestCase):
+    def test_requires_webhook_token(self):
+        body = self.client.post(
+            "/api/setup/provision-itop", json={"backend_url": "http://assistant:8000", "token": "tok"}
+        ).json()
+
+        self.assertFalse(body["ok"])
+        self.assertIn("webhook token", body["error"])
+
+    def test_requires_backend_url(self):
+        self.client.patch("/api/setup/security", json={"webhook_token": "wh"})
+
+        body = self.client.post("/api/setup/provision-itop", json={"token": "tok"}).json()
+
+        self.assertFalse(body["ok"])
+        self.assertIn("backend_url", body["error"])
+
+    def test_requires_admin_credentials(self):
+        self.client.patch("/api/setup/security", json={"webhook_token": "wh"})
+
+        body = self.client.post("/api/setup/provision-itop", json={"backend_url": "http://assistant:8000"}).json()
+
+        self.assertFalse(body["ok"])
+        self.assertIn("credentials", body["error"])
+
+    def test_happy_path_credentials_used_once_and_never_stored(self):
+        self.client.patch("/api/setup/security", json={"webhook_token": "wh"})
+        self.client.patch("/api/setup/itop", json={"url": "http://itop/rest.php"})
+        report = [{"class": "RemoteApplicationType", "name": "iTop AI Assistant", "status": "created", "id": "1"}]
+        client = MagicMock()
+        client.aclose = AsyncMock()
+
+        with (
+            patch("admin.setup.create_itop_client", return_value=client) as factory,
+            patch("admin.setup.provision_itop", AsyncMock(return_value=report)) as provision,
+        ):
+            body = self.client.post(
+                "/api/setup/provision-itop",
+                json={"backend_url": "http://assistant:8000", "user": "admin", "pwd": "admin-pw"},
+            ).json()
+
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["report"], report)
+        provision.assert_awaited_once_with(client, "http://assistant:8000", "wh")
+        # Admin credentials go into the one-off client (url from the stored
+        # section) and never reach the config store.
+        self.assertEqual(factory.call_args.args[0].user, "admin")
+        self.assertEqual(factory.call_args.args[0].url, "http://itop/rest.php")
+        itop_section = self.client.get("/api/setup/itop").json()
+        self.assertIsNone(itop_section["values"]["user"])
+        self.assertFalse(itop_section["secrets"]["pwd"])
+        client.aclose.assert_awaited_once()
+
+    def test_provision_error_reported(self):
+        self.client.patch("/api/setup/security", json={"webhook_token": "wh"})
+        client = MagicMock()
+        client.aclose = AsyncMock()
+
+        with (
+            patch("admin.setup.create_itop_client", return_value=client),
+            patch("admin.setup.provision_itop", AsyncMock(side_effect=ConnectionError("refused"))),
+        ):
+            body = self.client.post(
+                "/api/setup/provision-itop", json={"backend_url": "http://assistant:8000", "token": "tok"}
+            ).json()
+
+        self.assertFalse(body["ok"])
+        self.assertIn("refused", body["error"])
+        client.aclose.assert_awaited_once()
+
+
 if __name__ == "__main__":
     unittest.main()

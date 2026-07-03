@@ -1,5 +1,6 @@
 import {
   Alert,
+  Badge,
   Button,
   Code,
   Group,
@@ -9,11 +10,12 @@ import {
   SegmentedControl,
   Stack,
   Stepper,
+  Table,
   Text,
   TextInput,
   Title,
 } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { apiGet, apiSend, fetchSetupStatus, SetupStatus, setToken } from './api';
@@ -35,6 +37,61 @@ function generateToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+// Step icons: inline SVG outlines from Tabler Icons (MIT) — the dependency
+// budget has no room for an icon package because of four pictograms.
+function StepIcon({ children }: { children: ReactNode }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={16}
+      height={16}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {children}
+    </svg>
+  );
+}
+
+const SECURITY_ICON = (
+  // lock
+  <StepIcon>
+    <rect x="5" y="11" width="14" height="10" rx="2" />
+    <circle cx="12" cy="16" r="1" />
+    <path d="M8 11v-4a4 4 0 0 1 8 0v4" />
+  </StepIcon>
+);
+
+const ITOP_ICON = (
+  // plug
+  <StepIcon>
+    <path d="M9.785 6l8.215 8.215l-2.054 2.054a5.81 5.81 0 1 1 -8.215 -8.215l2.054 -2.054z" />
+    <path d="M4 20l3.5 -3.5" />
+    <path d="M15 4l-3.5 3.5" />
+    <path d="M20 9l-3.5 3.5" />
+  </StepIcon>
+);
+
+const WEBHOOKS_ICON = (
+  // webhook
+  <StepIcon>
+    <path d="M4.876 13.61a4 4 0 1 0 6.124 3.39h6" />
+    <path d="M15.066 20.502a4 4 0 1 0 1.934 -7.502c-.706 0 -1.424 .179 -2 .5l-3 -5.5" />
+    <path d="M16 8a4 4 0 1 0 -8 0c0 1.506 .77 2.818 2 3.5l-3 5.5" />
+  </StepIcon>
+);
+
+const LLM_ICON = (
+  // sparkles
+  <StepIcon>
+    <path d="M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2zm0 -12a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2zm-7 12a6 6 0 0 1 6 -6a6 6 0 0 1 -6 -6a6 6 0 0 1 -6 6a6 6 0 0 1 6 6z" />
+  </StepIcon>
+);
 
 export default function SetupWizard() {
   const [status, setStatus] = useState<SetupStatus | null>(null);
@@ -84,7 +141,7 @@ export default function SetupWizard() {
   }
 
   const finish = async () => {
-    setStep(3);
+    setStep(4);
     // Refresh so the final screen reflects what the wizard actually saved.
     try {
       setStatus(await fetchSetupStatus());
@@ -93,18 +150,22 @@ export default function SetupWizard() {
     }
   };
 
+  // Security comes first: the webhooks step needs a saved webhook token.
   return (
     <Stack maw={640}>
       <Title order={2}>Setup wizard</Title>
-      <Stepper active={step} onStepClick={setStep} allowNextStepsSelect={false} size="sm">
-        <Stepper.Step label="LLM" description="Model endpoint">
-          <LlmStep onDone={() => setStep(1)} />
+      <Stepper active={step} onStepClick={setStep} allowNextStepsSelect={false} size="xs">
+        <Stepper.Step label="Security" description="Access tokens" icon={SECURITY_ICON}>
+          <SecurityStep onDone={() => setStep(1)} />
         </Stepper.Step>
-        <Stepper.Step label="iTop" description="REST API access">
+        <Stepper.Step label="iTop connection" description="REST API access" icon={ITOP_ICON}>
           <ItopStep onBack={() => setStep(0)} onDone={() => setStep(2)} />
         </Stepper.Step>
-        <Stepper.Step label="Security" description="Access tokens">
-          <SecurityStep onBack={() => setStep(1)} onDone={finish} />
+        <Stepper.Step label="iTop webhooks" description="Triggers in iTop" icon={WEBHOOKS_ICON}>
+          <WebhooksStep onBack={() => setStep(1)} onDone={() => setStep(3)} />
+        </Stepper.Step>
+        <Stepper.Step label="LLM" description="Model endpoint" icon={LLM_ICON}>
+          <LlmStep onBack={() => setStep(2)} onDone={finish} />
         </Stepper.Step>
         <Stepper.Completed>
           <FinalStep status={status} />
@@ -114,7 +175,7 @@ export default function SetupWizard() {
   );
 }
 
-function LlmStep({ onDone }: { onDone: () => void }) {
+function LlmStep({ onBack, onDone }: { onBack: () => void; onDone: () => void }) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
@@ -204,6 +265,9 @@ function LlmStep({ onDone }: { onDone: () => void }) {
         onChange={(e) => setApiKey(e.currentTarget.value)}
       />
       <Group>
+        <Button variant="subtle" onClick={onBack}>
+          Back
+        </Button>
         <Button variant="default" onClick={test} loading={busy}>
           Test LLM
         </Button>
@@ -349,7 +413,7 @@ function ItopStep({ onBack, onDone }: { onBack: () => void; onDone: () => void }
   );
 }
 
-function SecurityStep({ onBack, onDone }: { onBack: () => void; onDone: () => void }) {
+function SecurityStep({ onDone }: { onDone: () => void }) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -403,8 +467,8 @@ function SecurityStep({ onBack, onDone }: { onBack: () => void; onDone: () => vo
       )}
       <Alert color="orange">
         Copy the tokens now — they are shown only this once. The admin token is saved to this
-        browser automatically; the webhook token must be set in the iTop Remote Application
-        Connection (<Code>X-Auth-Token</Code> header).
+        browser automatically; the webhook token is written into the iTop webhook configuration
+        at the iTop webhooks step (<Code>X-Auth-Token</Code> header).
       </Alert>
       <WizardTokenField
         label="Webhook token"
@@ -421,11 +485,8 @@ function SecurityStep({ onBack, onDone }: { onBack: () => void; onDone: () => vo
         onChange={setAdminToken}
       />
       <Group>
-        <Button variant="subtle" onClick={onBack}>
-          Back
-        </Button>
         <Button onClick={save} loading={busy}>
-          {webhookToken || adminToken ? 'Save and finish' : 'Finish'}
+          {webhookToken || adminToken ? 'Save and continue' : 'Continue'}
         </Button>
       </Group>
     </Stack>
@@ -467,6 +528,145 @@ function WizardTokenField(props: {
   );
 }
 
+// POST /api/setup/provision-itop report line (same shape in Connections).
+interface ProvisionItem {
+  class: string;
+  name: string;
+  status: 'created' | 'exists' | 'skipped';
+}
+
+const PROVISION_STATUS_COLORS: Record<ProvisionItem['status'], string> = {
+  created: 'green',
+  exists: 'blue',
+  skipped: 'yellow',
+};
+
+function WebhooksStep({ onBack, onDone }: { onBack: () => void; onDone: () => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [report, setReport] = useState<ProvisionItem[] | null>(null);
+
+  const [backendUrl, setBackendUrl] = useState(window.location.origin);
+  const [auth, setAuth] = useState<'basic' | 'token'>('basic');
+  const [user, setUser] = useState('');
+  const [pwd, setPwd] = useState('');
+  const [token, setTokenValue] = useState('');
+
+  const configure = async () => {
+    setBusy(true);
+    setError(null);
+    setReport(null);
+    try {
+      const body: Record<string, unknown> = { backend_url: backendUrl };
+      if (auth === 'basic') {
+        body.user = user;
+        body.pwd = pwd;
+      } else {
+        body.token = token;
+      }
+      const result = await apiSend<{ ok: boolean; report?: ProvisionItem[]; error?: string }>(
+        'POST',
+        '/setup/provision-itop',
+        body,
+      );
+      if (result.ok) setReport(result.report ?? []);
+      else setError(result.error ?? 'Provisioning failed');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Stack pt="md">
+      {error && (
+        <Alert color="red" style={{ whiteSpace: 'pre-wrap' }}>
+          {error}
+        </Alert>
+      )}
+      <Text size="sm" c="dimmed">
+        Creates the triggers and webhooks in iTop that call this assistant on ticket creation and
+        public log updates. Requires an iTop <b>administrator</b> account — the credentials are
+        used for this one operation and are not stored anywhere. Existing objects are left
+        untouched. This step is optional: the same objects can be created manually (see README)
+        or with the CLI.
+      </Text>
+      <TextInput
+        label="Backend URL"
+        description="This assistant as reachable from the iTop server"
+        value={backendUrl}
+        onChange={(e) => setBackendUrl(e.currentTarget.value)}
+      />
+      <SegmentedControl
+        value={auth}
+        onChange={(value) => setAuth(value as 'basic' | 'token')}
+        data={[
+          { label: 'Admin user + password', value: 'basic' },
+          { label: 'Admin token', value: 'token' },
+        ]}
+      />
+      {auth === 'basic' ? (
+        <Group grow align="start">
+          <TextInput label="Admin user" value={user} onChange={(e) => setUser(e.currentTarget.value)} />
+          <PasswordInput label="Admin password" value={pwd} onChange={(e) => setPwd(e.currentTarget.value)} />
+        </Group>
+      ) : (
+        <PasswordInput
+          label="Admin token"
+          value={token}
+          onChange={(e) => setTokenValue(e.currentTarget.value)}
+        />
+      )}
+      {report && <ProvisionReport report={report} />}
+      <Group>
+        <Button variant="subtle" onClick={onBack}>
+          Back
+        </Button>
+        {report ? (
+          <Button onClick={onDone}>Continue</Button>
+        ) : (
+          <>
+            <Button
+              onClick={configure}
+              loading={busy}
+              disabled={!backendUrl || (auth === 'basic' ? !user || !pwd : !token)}
+            >
+              Configure iTop
+            </Button>
+            <Button variant="default" onClick={onDone}>
+              Skip
+            </Button>
+          </>
+        )}
+      </Group>
+    </Stack>
+  );
+}
+
+function ProvisionReport({ report }: { report: ProvisionItem[] }) {
+  return (
+    <Table withTableBorder verticalSpacing={4}>
+      <Table.Tbody>
+        {report.map((item) => (
+          <Table.Tr key={`${item.class}:${item.name}`}>
+            <Table.Td width={90}>
+              <Badge size="sm" color={PROVISION_STATUS_COLORS[item.status] ?? 'gray'}>
+                {item.status}
+              </Badge>
+            </Table.Td>
+            <Table.Td>
+              <Text size="sm">
+                {item.class} — {item.name}
+              </Text>
+            </Table.Td>
+          </Table.Tr>
+        ))}
+      </Table.Tbody>
+    </Table>
+  );
+}
+
 function FinalStep({ status }: { status: SetupStatus }) {
   return (
     <Stack pt="md">
@@ -474,10 +674,11 @@ function FinalStep({ status }: { status: SetupStatus }) {
         <Alert color="green">
           <Text fw={500}>Setup complete — /webhook is active.</Text>
           <Text size="sm" mt={4}>
-            Point the iTop Remote Application Connection at{' '}
-            <Code>{window.location.origin}/webhook</Code> with the webhook token in the{' '}
-            <Code>X-Auth-Token</Code> header, and make sure the trigger context excludes{' '}
-            <Code>REST/JSON</Code> (see README).
+            If you ran the iTop webhooks step, iTop is already calling{' '}
+            <Code>{window.location.origin}/webhook</Code>. If you skipped it, configure the
+            triggers and webhooks manually (see README) or from the Connections screen — the
+            webhook token goes in the <Code>X-Auth-Token</Code> header and the trigger context
+            must exclude <Code>REST/JSON</Code>.
           </Text>
         </Alert>
       ) : (

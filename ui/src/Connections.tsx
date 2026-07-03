@@ -1,6 +1,8 @@
 import {
   Alert,
+  Badge,
   Button,
+  Divider,
   Group,
   JsonInput,
   Loader,
@@ -8,6 +10,7 @@ import {
   PasswordInput,
   SegmentedControl,
   Stack,
+  Table,
   Tabs,
   TagsInput,
   Text,
@@ -43,6 +46,8 @@ export default function Connections() {
         </Tabs.List>
         <Tabs.Panel value="itop" pt="md">
           <ItopForm />
+          <Divider my="lg" maw={560} />
+          <ItopWebhooksForm />
         </Tabs.Panel>
         <Tabs.Panel value="llm" pt="md">
           <LlmForm />
@@ -224,6 +229,134 @@ function ItopForm() {
         </Button>
         <Button variant="subtle" color="red" onClick={reset}>
           Reset to defaults
+        </Button>
+      </Group>
+    </Stack>
+  );
+}
+
+// POST /api/setup/provision-itop report line (same shape in the wizard).
+interface ProvisionItem {
+  class: string;
+  name: string;
+  status: 'created' | 'exists' | 'skipped';
+}
+
+const PROVISION_STATUS_COLORS: Record<ProvisionItem['status'], string> = {
+  created: 'green',
+  exists: 'blue',
+  skipped: 'yellow',
+};
+
+// Deliberate copy of the wizard's webhooks step (same duplication pattern as
+// the connection forms) so webhooks can be (re)provisioned without the wizard.
+function ItopWebhooksForm() {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [report, setReport] = useState<ProvisionItem[] | null>(null);
+
+  const [backendUrl, setBackendUrl] = useState(window.location.origin);
+  const [auth, setAuth] = useState<'basic' | 'token'>('basic');
+  const [user, setUser] = useState('');
+  const [pwd, setPwd] = useState('');
+  const [token, setTokenValue] = useState('');
+
+  const configure = async () => {
+    setBusy(true);
+    setError(null);
+    setReport(null);
+    try {
+      const body: Record<string, unknown> = { backend_url: backendUrl };
+      if (auth === 'basic') {
+        body.user = user;
+        body.pwd = pwd;
+      } else {
+        body.token = token;
+      }
+      const result = await apiSend<{ ok: boolean; report?: ProvisionItem[]; error?: string }>(
+        'POST',
+        '/setup/provision-itop',
+        body,
+      );
+      if (result.ok) setReport(result.report ?? []);
+      else setError(result.error ?? 'Provisioning failed');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Stack maw={560}>
+      <Title order={4}>iTop webhooks</Title>
+      {error && (
+        <Alert color="red" style={{ whiteSpace: 'pre-wrap' }}>
+          {error}
+        </Alert>
+      )}
+      <Text c="dimmed" size="sm">
+        Creates the triggers and webhooks in iTop that call this assistant (uses the saved webhook
+        token). Requires an iTop <b>administrator</b> account — the credentials are used once and
+        never stored. Existing objects are left untouched.
+      </Text>
+      <TextInput
+        label="Backend URL"
+        description="This assistant as reachable from the iTop server"
+        value={backendUrl}
+        onChange={(e) => setBackendUrl(e.currentTarget.value)}
+      />
+      <SegmentedControl
+        value={auth}
+        onChange={(value) => setAuth(value as 'basic' | 'token')}
+        data={[
+          { label: 'Admin user + password', value: 'basic' },
+          { label: 'Admin token', value: 'token' },
+        ]}
+      />
+      {auth === 'basic' ? (
+        <Group grow align="start">
+          <TextInput label="Admin user" value={user} onChange={(e) => setUser(e.currentTarget.value)} />
+          <PasswordInput
+            label="Admin password"
+            value={pwd}
+            onChange={(e) => setPwd(e.currentTarget.value)}
+          />
+        </Group>
+      ) : (
+        <PasswordInput
+          label="Admin token"
+          value={token}
+          onChange={(e) => setTokenValue(e.currentTarget.value)}
+        />
+      )}
+      {report && (
+        <Table withTableBorder verticalSpacing={4}>
+          <Table.Tbody>
+            {report.map((item) => (
+              <Table.Tr key={`${item.class}:${item.name}`}>
+                <Table.Td width={90}>
+                  <Badge size="sm" color={PROVISION_STATUS_COLORS[item.status] ?? 'gray'}>
+                    {item.status}
+                  </Badge>
+                </Table.Td>
+                <Table.Td>
+                  <Text size="sm">
+                    {item.class} — {item.name}
+                  </Text>
+                </Table.Td>
+              </Table.Tr>
+            ))}
+          </Table.Tbody>
+        </Table>
+      )}
+      <Group>
+        <Button
+          onClick={configure}
+          loading={busy}
+          disabled={!backendUrl || (auth === 'basic' ? !user || !pwd : !token)}
+        >
+          Configure iTop
         </Button>
       </Group>
     </Stack>

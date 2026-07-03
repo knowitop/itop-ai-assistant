@@ -132,7 +132,7 @@ Once running:
 
 The assistant starts **unconfigured**: it is up, `/health` and the admin API work, but `/webhook` returns 503 until the LLM and iTop connections are set. Configure it either way:
 
-- **Setup wizard (recommended).** Open `http://localhost:8001/ui` — the wizard starts automatically on an unconfigured system and walks through the LLM connection, the iTop connection and the security tokens, with a connection probe on every step. No restart needed. See [Admin UI](#admin-ui).
+- **Setup wizard (recommended).** Open `http://localhost:8001/ui` — the wizard starts automatically on an unconfigured system and walks through the security tokens, the iTop connection and the LLM connection, with a connection probe on every step; the final step can create the iTop-side triggers and webhooks for you (asks for one-time iTop admin credentials). No restart needed. See [Admin UI](#admin-ui).
 - **Setup API.** The same backend without the UI — open `http://localhost:8001/docs` and walk through `/api/setup`:
   1. `GET /api/setup/status` — shows what is still missing;
   2. `PATCH /api/setup/llm` `{"model": "...", "base_url": "...", "api_key": "..."}` and `POST /api/setup/test-llm` to verify;
@@ -147,6 +147,28 @@ The assistant starts **unconfigured**: it is up, `/health` and the admin API wor
 ## iTop configuration
 
 Four steps, roughly 10 minutes.
+
+Steps 2 and 3 (triggers and webhooks) can be automated: the setup wizard's
+**iTop webhooks** step — or the CLI below — creates the same objects through
+the iTop REST API under one-time admin credentials (used for that run only,
+never stored). Existing objects are left untouched, so re-running is safe.
+The manual instructions stay as the reference for what gets created.
+
+```bash
+# from a local checkout
+cd assistant && PYTHONPATH=src uv run python -m itop_provisioning \
+  --itop-url http://localhost:8000/webservices/rest.php --user admin \
+  --backend-url http://assistant:8000 --webhook-token <WEBHOOK_TOKEN>
+
+# or inside the Docker stack
+docker compose exec assistant python -m itop_provisioning \
+  --itop-url http://itop/webservices/rest.php --user admin \
+  --backend-url http://assistant:8000 --webhook-token <WEBHOOK_TOKEN>
+```
+
+`--backend-url` is the assistant as reachable **from the iTop server** (in the
+bundled compose stack that is `http://assistant:8000`); `--webhook-token` must
+match the `security` section so iTop's calls pass authentication.
 
 ### 1. Configure service subcategories
 
@@ -226,8 +248,8 @@ Use this account's credentials for `ITOP_TOKEN` (or `ITOP_USER` / `ITOP_PWD`) in
 
 The assistant ships with a built-in admin UI at `http://localhost:8001/ui` — everything below is also available via the [admin API](#admin-api), the UI is just the friendlier way in.
 
-- **Setup** — the first-run wizard (LLM → iTop → security tokens, each step with a live connection test); on a configured system, a status summary with the option to re-run the wizard.
-- **Connections** — fine-grained editing of the `itop`, `llm`, `security` and `ticket_mapping` sections: secrets are write-only (shown as "set"/"not set"), every change can be probed before saving, and each section can be reset back to its environment defaults.
+- **Setup** — the first-run wizard (security tokens → iTop → LLM → iTop webhooks, each step with a live connection test); the optional webhooks step provisions the iTop-side triggers and webhooks under one-time admin credentials. On a configured system, a status summary with the option to re-run the wizard.
+- **Connections** — fine-grained editing of the `itop`, `llm`, `security` and `ticket_mapping` sections: secrets are write-only (shown as "set"/"not set"), every change can be probed before saving, and each section can be reset back to its environment defaults. The iTop tab also hosts the same webhook-provisioning form as the wizard.
 - **Modules** — per-module business settings (question round limits, per-node model overrides, OQL scoping) on forms generated from the config schema; changes apply from the next processed ticket.
 - **Prompts** — view and edit every LLM prompt, with overridden ones flagged; placeholder validation errors are shown on save, and any prompt can be reset to its default.
 - **Runs** — the processing journal: filterable list of runs with a step-by-step timeline and full error text for each, auto-refreshing while a run is in progress.
@@ -288,6 +310,7 @@ The assistant exposes a small admin API (bearer auth: `Authorization: Bearer <to
 | `GET /api/setup/status` | Setup state: what is configured, what is still missing |
 | `GET/PATCH/DELETE /api/setup/{section}` | Connection sections (`itop`, `llm`, `security`, `ticket_mapping`): read (secrets masked) / partial update / reset to env defaults. In PATCH bodies, an absent field keeps the stored value; an explicit `null` clears it |
 | `POST /api/setup/test-itop`, `POST /api/setup/test-llm` | Probe a connection (stored config merged with body overrides) without saving anything |
+| `POST /api/setup/provision-itop` | Create the iTop-side triggers and webhooks (find-or-create). One-time admin credentials in the body, never stored; uses the saved webhook token |
 | `GET /api/modules` | Registered business modules |
 | `GET/PUT/DELETE /api/config/{module}` | Read / edit / reset module config at runtime (validated; applies from the next ticket, no restart) |
 | `GET /api/config/{module}/schema` | JSON Schema of the module config (for form generation) |
