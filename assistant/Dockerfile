@@ -1,9 +1,24 @@
+# Build context is the repository root (ui/ and assistant/ are siblings):
+#   docker build -f assistant/Dockerfile .
+
+FROM node:22-alpine AS ui-builder
+
+WORKDIR /ui
+
+# Install dependencies first — this layer is cached unless the lockfile changes
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+
+COPY ui/ ./
+RUN npm run build
+
+# ---- python dependencies ----
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
 WORKDIR /app
 
 # Install dependencies into a separate venv — this layer is cached unless lockfile changes
-COPY pyproject.toml uv.lock ./
+COPY assistant/pyproject.toml assistant/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
 # ---- runtime image ----
@@ -17,10 +32,11 @@ WORKDIR /app
 # Copy venv from builder
 COPY --from=builder /app/.venv /app/.venv
 
-# Copy application code and default config
-COPY src ./src
-COPY prompts ./prompts
-COPY config.yaml ./
+# Copy application code, default config and the admin UI build
+COPY assistant/src ./src
+COPY assistant/prompts ./prompts
+COPY assistant/config.yaml ./
+COPY --from=ui-builder /ui/dist ./ui/dist
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH=/app/src

@@ -1,7 +1,10 @@
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from admin.router import router as admin_router
 from config import ItopConfig, LlmConfig, SecurityConfig, get_settings, missing_setup
@@ -54,6 +57,26 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="iTop AI Assistant", lifespan=lifespan)
 app.include_router(router)
 app.include_router(admin_router)
+
+
+def _find_ui_dist() -> Path | None:
+    # In the Docker image the SPA build sits next to src/ (/app/ui/dist);
+    # in a local checkout ui/ is a sibling of assistant/ at the repo root.
+    here = Path(__file__).resolve()
+    for root in (here.parents[1], here.parents[2]):
+        candidate = root / "ui" / "dist"
+        if (candidate / "index.html").is_file():
+            return candidate
+    return None
+
+
+_ui_dist = _find_ui_dist()
+if _ui_dist is not None:
+    app.mount("/ui", StaticFiles(directory=_ui_dist, html=True), name="ui")
+
+    @app.get("/", include_in_schema=False)
+    async def index() -> RedirectResponse:
+        return RedirectResponse("/ui/")
 
 
 @app.get("/health")

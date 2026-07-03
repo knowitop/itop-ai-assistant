@@ -282,6 +282,30 @@ without restart.
 
 See `docker/.env.dist` for a full template.
 
+## Admin UI (`ui/`)
+
+The admin SPA (setup wizard, settings, prompts, run monitoring) lives in
+`ui/` and is built with **Vite + React + TypeScript + Mantine**. It is
+maintained primarily with AI assistance by a non-frontend developer, so
+simplicity beats elegance. These constraints are mandatory:
+
+- **Minimal dependencies**: `react`, `react-dom`, `react-router-dom`,
+  `@mantine/core`, `@mantine/form` (plus their peer deps) — nothing else.
+  No Redux, TanStack Query, axios, or CSS-in-JS libraries: state is
+  `useState`, HTTP is the single fetch wrapper in `api.ts`.
+- **Flat structure**: one file per screen (`SetupWizard.tsx`,
+  `Connections.tsx`, `Modules.tsx`, `Prompts.tsx`, `Runs.tsx`) plus
+  `api.ts` and `Layout.tsx`. No hook factories, barrel files, or clever
+  abstractions.
+- **Pin exact versions** in `package.json` (no `^`/`~`), commit the lock
+  file; upgrade dependencies only when something requires it.
+- **Prompt editor is a plain Mantine `Textarea`** — introduce CodeMirror
+  only if syntax highlighting becomes a real need.
+- The SPA builds into `ui/dist`; FastAPI serves it via `StaticFiles` at
+  `/ui` (API stays under `/api`). In dev, use the vite proxy to `:8001` —
+  no CORS. The admin token lives in `localStorage`; 401 shows the token
+  entry screen.
+
 ## Testing Notes
 
 - Tests live in `assistant/test/unit/`
