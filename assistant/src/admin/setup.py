@@ -5,8 +5,8 @@ the same ConfigStore as module config (Redis overrides > env defaults), but
 served by dedicated endpoints because secrets need special treatment:
 
 - GET never returns secret values — only `secrets: {field: is_set}` flags;
-- PUT merges the body over the current *effective* config, so a field absent
-  from the body keeps its value and an explicit null clears it.
+- PATCH merges the body over the current *effective* config, so a field
+  absent from the body keeps its value and an explicit null clears it.
 """
 
 import asyncio
@@ -91,7 +91,7 @@ async def get_section(section: str, request: Request) -> dict:
     return _masked(cfg)
 
 
-@router.put("/{section}")
+@router.patch("/{section}")
 async def update_section(section: str, body: dict[str, Any], request: Request) -> dict:
     model = _model_or_404(section)
     values = await _merged_with_current(request, section, model, body)

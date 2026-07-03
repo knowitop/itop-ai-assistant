@@ -177,14 +177,20 @@ class TestAdminAuth(unittest.TestCase):
         self.client.app.state.deps = _make_deps(redis, settings)
 
     def test_missing_token_rejected(self):
-        self.assertEqual(self.client.get("/api/modules").status_code, 401)
+        response = self.client.get("/api/modules")
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.headers["WWW-Authenticate"], "Bearer")
 
     def test_wrong_token_rejected(self):
-        response = self.client.get("/api/modules", headers={"X-Admin-Token": "wrong"})
+        response = self.client.get("/api/modules", headers={"Authorization": "Bearer wrong"})
+        self.assertEqual(response.status_code, 401)
+
+    def test_non_bearer_scheme_rejected(self):
+        response = self.client.get("/api/modules", headers={"Authorization": "Basic YWRtaW46YWRtaW4="})
         self.assertEqual(response.status_code, 401)
 
     def test_correct_token_accepted(self):
-        response = self.client.get("/api/modules", headers={"X-Admin-Token": "admin-secret"})
+        response = self.client.get("/api/modules", headers={"Authorization": "Bearer admin-secret"})
         self.assertEqual(response.status_code, 200)
 
     def test_health_is_public(self):

@@ -174,7 +174,7 @@ class Settings(BaseSettings):
     app_port: int = 8000
     log_level: str = "INFO"
     webhook_token: SecretStr | None = None
-    # Shared secret for the admin API (X-Admin-Token header); None = no auth
+    # Bearer token for the admin API (Authorization header); None = no auth
     admin_token: SecretStr | None = None
     # Directory with per-deployment prompt overrides (see prompt_store.FilePromptStore)
     prompts_dir: Path | None = None

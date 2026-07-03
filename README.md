@@ -133,14 +133,14 @@ The assistant starts **unconfigured**: it is up, `/health` and the admin API wor
 
 - **Setup API — no restart needed.** Open `http://localhost:8001/docs` and walk through `/api/setup`:
   1. `GET /api/setup/status` — shows what is still missing;
-  2. `PUT /api/setup/llm` `{"model": "...", "base_url": "...", "api_key": "..."}` and `POST /api/setup/test-llm` to verify;
-  3. `PUT /api/setup/itop` `{"url": "...", "token": "..."}` and `POST /api/setup/test-itop` to verify;
-  4. `PUT /api/setup/security` `{"admin_token": "...", "webhook_token": "..."}` — after this the admin API requires the `X-Admin-Token` header.
+  2. `PATCH /api/setup/llm` `{"model": "...", "base_url": "...", "api_key": "..."}` and `POST /api/setup/test-llm` to verify;
+  3. `PATCH /api/setup/itop` `{"url": "...", "token": "..."}` and `POST /api/setup/test-itop` to verify;
+  4. `PATCH /api/setup/security` `{"admin_token": "...", "webhook_token": "..."}` — after this the admin API requires the token (`Authorization: Bearer <token>`).
 
   This is the backend the upcoming setup-wizard UI is built on.
 - **Environment.** Fill `.env` and `docker compose up -d` again — env values act as defaults for the same settings.
 
-> The iTop service account and its token (see [iTop configuration](#itop-configuration) step 4) can only be created after iTop is up — runtime setup makes this a single flow: start the stack, create the account in iTop, then `PUT /api/setup/itop`.
+> The iTop service account and its token (see [iTop configuration](#itop-configuration) step 4) can only be created after iTop is up — runtime setup makes this a single flow: start the stack, create the account in iTop, then `PATCH /api/setup/itop`.
 
 ---
 
@@ -237,7 +237,7 @@ A full `.env` template with examples is in `docker/.env.dist`.
 | `LLM_API_KEY` | optional | API key — omit entirely for local LM Studio |
 | `ITOP_URL` | default `http://localhost/webservices/rest.php` | iTop REST API URL |
 | `WEBHOOK_TOKEN` | recommended | Shared secret for `/webhook`; iTop must send it in the `X-Auth-Token` header. Unset = unauthenticated access |
-| `ADMIN_TOKEN` | recommended | Shared secret for the `/api` admin endpoints (`X-Admin-Token` header). Unset = unauthenticated access |
+| `ADMIN_TOKEN` | recommended | Bearer token for the `/api` admin endpoints (`Authorization: Bearer <token>`). Unset = unauthenticated access |
 | `REDIS_URL` | default `redis://localhost:6379` | Redis connection URL (bootstrap, env-only) |
 | `PROMPTS_DIR` | optional | Directory with prompt overrides (see below; env-only) |
 | `LOG_LEVEL` | default `INFO` | Logging level (env-only) |
@@ -250,7 +250,7 @@ A full `.env` template with examples is in `docker/.env.dist`.
 
 If your iTop uses renamed attributes, extra ticket classes or a custom
 lifecycle, adjust the `ticket_mapping` section — in `config.yaml`, or at
-runtime via `PUT /api/setup/ticket_mapping` — no code changes needed:
+runtime via `PATCH /api/setup/ticket_mapping` — no code changes needed:
 
 ```yaml
 ticket_mapping:
@@ -266,13 +266,13 @@ Unspecified fields keep their stock-iTop defaults.
 
 ### Admin API
 
-The assistant exposes a small admin API (header `X-Admin-Token`) — the backend for the upcoming admin UI. Until an admin token is set (env `ADMIN_TOKEN` or `PUT /api/setup/security`), the API is **open** — first-run mode for the setup wizard; set the token before exposing the service:
+The assistant exposes a small admin API (bearer auth: `Authorization: Bearer <token>`) — the backend for the upcoming admin UI. Until an admin token is set (env `ADMIN_TOKEN` or `PATCH /api/setup/security`), the API is **open** — first-run mode for the setup wizard; set the token before exposing the service:
 
 | Endpoint | Purpose |
 |----------|---------|
 | `GET /health` | Liveness + Redis connectivity |
 | `GET /api/setup/status` | Setup state: what is configured, what is still missing |
-| `GET/PUT/DELETE /api/setup/{section}` | Connection sections (`itop`, `llm`, `security`, `ticket_mapping`): read (secrets masked) / edit / reset to env defaults. In PUT bodies, an absent secret field keeps the stored value; an explicit `null` clears it |
+| `GET/PATCH/DELETE /api/setup/{section}` | Connection sections (`itop`, `llm`, `security`, `ticket_mapping`): read (secrets masked) / partial update / reset to env defaults. In PATCH bodies, an absent field keeps the stored value; an explicit `null` clears it |
 | `POST /api/setup/test-itop`, `POST /api/setup/test-llm` | Probe a connection (stored config merged with body overrides) without saving anything |
 | `GET /api/modules` | Registered business modules |
 | `GET/PUT/DELETE /api/config/{module}` | Read / edit / reset module config at runtime (validated; applies from the next ticket, no restart) |

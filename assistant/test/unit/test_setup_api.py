@@ -60,8 +60,8 @@ class TestSetupStatus(SetupApiTestCase):
         self.assertFalse(body["sections"]["itop"]["secrets"]["token"])
 
     def test_configured_after_both_sections_set(self):
-        self.client.put("/api/setup/itop", json={"url": "http://itop/rest.php", "token": "tok"})
-        self.client.put("/api/setup/llm", json={"model": "gpt-test"})
+        self.client.patch("/api/setup/itop", json={"url": "http://itop/rest.php", "token": "tok"})
+        self.client.patch("/api/setup/llm", json={"model": "gpt-test"})
 
         body = self.client.get("/api/setup/status").json()
 
@@ -80,7 +80,7 @@ class TestSetupStatus(SetupApiTestCase):
 
 class TestSetupSections(SetupApiTestCase):
     def test_get_section_never_returns_secret_values(self):
-        self.client.put("/api/setup/itop", json={"user": "ai", "pwd": "hunter2"})
+        self.client.patch("/api/setup/itop", json={"user": "ai", "pwd": "hunter2"})
 
         body = self.client.get("/api/setup/itop").json()
 
@@ -89,29 +89,29 @@ class TestSetupSections(SetupApiTestCase):
         self.assertTrue(body["secrets"]["pwd"])
         self.assertEqual(body["values"]["user"], "ai")
 
-    def test_put_without_secret_keeps_stored_value(self):
-        self.client.put("/api/setup/itop", json={"user": "ai", "pwd": "hunter2"})
+    def test_patch_without_secret_keeps_stored_value(self):
+        self.client.patch("/api/setup/itop", json={"user": "ai", "pwd": "hunter2"})
 
         # UI round-trip: form resubmitted without the password field
-        response = self.client.put("/api/setup/itop", json={"user": "ai", "url": "http://new/rest.php"})
+        response = self.client.patch("/api/setup/itop", json={"user": "ai", "url": "http://new/rest.php"})
 
         self.assertTrue(response.json()["secrets"]["pwd"])
         self.assertEqual(response.json()["values"]["url"], "http://new/rest.php")
 
-    def test_put_explicit_null_clears_secret(self):
-        self.client.put("/api/setup/itop", json={"user": "ai", "pwd": "hunter2"})
+    def test_patch_explicit_null_clears_secret(self):
+        self.client.patch("/api/setup/itop", json={"user": "ai", "pwd": "hunter2"})
 
-        response = self.client.put("/api/setup/itop", json={"pwd": None})
+        response = self.client.patch("/api/setup/itop", json={"pwd": None})
 
         self.assertFalse(response.json()["secrets"]["pwd"])
 
-    def test_put_invalid_value_rejected(self):
-        response = self.client.put("/api/setup/itop", json={"timeout": "soon"})
+    def test_patch_invalid_value_rejected(self):
+        response = self.client.patch("/api/setup/itop", json={"timeout": "soon"})
         self.assertEqual(response.status_code, 422)
 
     def test_delete_resets_to_env_defaults(self):
         self.client.app.state.deps = _make_deps(self.redis, llm_model="env-model")
-        self.client.put("/api/setup/llm", json={"model": "runtime-model"})
+        self.client.patch("/api/setup/llm", json={"model": "runtime-model"})
 
         response = self.client.delete("/api/setup/llm")
 
@@ -119,26 +119,26 @@ class TestSetupSections(SetupApiTestCase):
         self.assertEqual(self.client.get("/api/setup/llm").json()["values"]["model"], "env-model")
 
     def test_ticket_mapping_is_editable(self):
-        response = self.client.put("/api/setup/ticket_mapping", json={"active_statuses": ["new", "assigned"]})
+        response = self.client.patch("/api/setup/ticket_mapping", json={"active_statuses": ["new", "assigned"]})
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["values"]["active_statuses"], ["new", "assigned"])
 
     def test_unknown_section_404(self):
         self.assertEqual(self.client.get("/api/setup/nope").status_code, 404)
-        self.assertEqual(self.client.put("/api/setup/nope", json={}).status_code, 404)
+        self.assertEqual(self.client.patch("/api/setup/nope", json={}).status_code, 404)
 
 
 class TestAdminTokenBootstrap(SetupApiTestCase):
     def test_api_locks_after_admin_token_is_set(self):
         # First-run mode: API is open, the wizard sets a token…
-        response = self.client.put("/api/setup/security", json={"admin_token": "s3cret"})
+        response = self.client.patch("/api/setup/security", json={"admin_token": "s3cret"})
         self.assertEqual(response.status_code, 200)
 
-        # …after which requests without the header are rejected,
+        # …after which requests without the bearer token are rejected,
         self.assertEqual(self.client.get("/api/setup/status").status_code, 401)
         # and requests with it keep working.
-        response = self.client.get("/api/setup/status", headers={"X-Admin-Token": "s3cret"})
+        response = self.client.get("/api/setup/status", headers={"Authorization": "Bearer s3cret"})
         self.assertEqual(response.status_code, 200)
 
 
@@ -168,7 +168,7 @@ class TestConnectionProbes(SetupApiTestCase):
         client.aclose.assert_awaited_once()
 
     def test_itop_probe_uses_stored_secret_when_absent_from_body(self):
-        self.client.put("/api/setup/itop", json={"user": "ai", "pwd": "stored-pw"})
+        self.client.patch("/api/setup/itop", json={"user": "ai", "pwd": "stored-pw"})
         client = MagicMock()
         client.schema.return_value.find_one = AsyncMock(return_value={"friendlyname": "AI"})
         client.aclose = AsyncMock()

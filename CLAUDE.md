@@ -235,7 +235,7 @@ None (`RuntimeSectionConfig`). Webhook/admin token checks read the effective
 | `itop_user` + `itop_pwd` | one of (env or setup API) | iTop basic auth |
 | `itop_token` | one of (env or setup API) | iTop token auth (alternative to user+pwd) |
 | `webhook_token` | recommended | Shared secret for `/webhook` (`X-Auth-Token` header); unset = no auth |
-| `admin_token` | recommended | Shared secret for `/api` admin endpoints (`X-Admin-Token` header); unset = no auth (first-run mode) |
+| `admin_token` | recommended | Bearer token for `/api` admin endpoints (`Authorization: Bearer`); unset = no auth (first-run mode) |
 | `prompts_dir` | optional (env-only) | Directory with per-deployment prompt overrides |
 | `llm_base_url` | default | OpenAI-compatible endpoint |
 | `llm_model` | required (env or setup API) | Model name as exposed by the endpoint |
@@ -263,10 +263,11 @@ steps, error) — journal writes are non-fatal by design. Inspect via
 `GET /api/runs`.
 
 **Setup API (wizard backend).** Connection sections are managed via
-`/api/setup`: `GET /status` (what's missing), `GET/PUT/DELETE /{section}`
+`/api/setup`: `GET /status` (what's missing), `GET/PATCH/DELETE /{section}`
 for `itop` / `llm` / `security` / `ticket_mapping`, `POST /test-itop` and
-`POST /test-llm` probes (nothing saved). GET responses mask secrets
-(`secrets: {field: is_set}`); in PUT bodies an absent secret field keeps the
+`POST /test-llm` probes (nothing saved). PATCH is a partial update merged
+over the current effective config; GET responses mask secrets
+(`secrets: {field: is_set}`); in PATCH bodies an absent field keeps the
 stored value, explicit `null` clears it. Until an admin token is set the
 admin API is open (first-run mode). Redis persistence is required for
 runtime config to survive restarts (compose already enables appendonly).

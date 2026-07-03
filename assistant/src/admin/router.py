@@ -1,14 +1,16 @@
 """Admin API: configuration, prompts and processing-run monitoring.
 
-Backend for the future admin UI. Protected by the `admin_token` setting
-(X-Admin-Token header), separate from the webhook token.
+Backend for the future admin UI. Protected by the `security.admin_token`
+runtime setting (standard bearer auth: `Authorization: Bearer <token>`),
+separate from the webhook token.
 """
 
 import logging
 import secrets
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ValidationError
 
 from admin.setup import router as setup_router
@@ -20,15 +22,26 @@ from prompt_store import PromptStoreError
 
 logger = logging.getLogger(__name__)
 
+# auto_error=False: a missing header must fall through to our own check —
+# the API is open until an admin token is set (first-run mode)
+_bearer = HTTPBearer(auto_error=False)
 
-async def verify_admin_token(request: Request, x_admin_token: Annotated[str | None, Header()] = None) -> None:
+
+async def verify_admin_token(
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)] = None,
+) -> None:
     deps: AppDeps = request.app.state.deps
     security = await deps.config_store.get("security", SecurityConfig)
     if security.admin_token is None:
         # First-run mode: the API stays open until the wizard sets a token
         return
-    if x_admin_token is None or not secrets.compare_digest(x_admin_token, security.admin_token):
-        raise HTTPException(status_code=401, detail="Invalid or missing X-Admin-Token header")
+    if credentials is None or not secrets.compare_digest(credentials.credentials, security.admin_token):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 router = APIRouter(prefix="/api", dependencies=[Depends(verify_admin_token)])
