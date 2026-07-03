@@ -306,6 +306,15 @@ simplicity beats elegance. These constraints are mandatory:
   no CORS. The admin token lives in `localStorage`; 401 shows the token
   entry screen.
 
+**Commands** (run from `ui/`; the dev server proxies `/api` and `/health`
+to the assistant on `:8001`, so run the backend alongside):
+
+```bash
+npm ci          # install pinned dependencies
+npm run dev     # vite dev server with hot reload
+npm run build   # type-check (tsc --noEmit) + production build into ui/dist
+```
+
 ## Testing Notes
 
 - Tests live in `assistant/test/unit/`

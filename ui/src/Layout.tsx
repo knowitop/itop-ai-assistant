@@ -1,4 +1,4 @@
-import { AppShell, Badge, Group, NavLink, Title } from '@mantine/core';
+import { Alert, Anchor, AppShell, Badge, Group, NavLink, Title } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
@@ -58,6 +58,16 @@ export default function Layout() {
         ))}
       </AppShell.Navbar>
       <AppShell.Main>
+        {setup && !setup.configured && location.pathname !== '/setup' && (
+          <Alert color="orange" mb="md" title="Setup required">
+            The assistant is not configured yet — /webhook returns 503 until the LLM and iTop
+            connections are set.{' '}
+            <Anchor component={Link} to="/setup">
+              Run the setup wizard
+            </Anchor>
+            .
+          </Alert>
+        )}
         <Outlet />
       </AppShell.Main>
     </AppShell>

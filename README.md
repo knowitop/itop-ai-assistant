@@ -127,17 +127,17 @@ Once running:
 |-----------|-----------------------------|
 | iTop      | `http://localhost:8000`     |
 | Assistant | `http://localhost:8001`     |
+| Admin UI  | `http://localhost:8001/ui`  |
 | API docs  | `http://localhost:8001/docs`|
 
 The assistant starts **unconfigured**: it is up, `/health` and the admin API work, but `/webhook` returns 503 until the LLM and iTop connections are set. Configure it either way:
 
-- **Setup API — no restart needed.** Open `http://localhost:8001/docs` and walk through `/api/setup`:
+- **Setup wizard (recommended).** Open `http://localhost:8001/ui` — the wizard starts automatically on an unconfigured system and walks through the LLM connection, the iTop connection and the security tokens, with a connection probe on every step. No restart needed. See [Admin UI](#admin-ui).
+- **Setup API.** The same backend without the UI — open `http://localhost:8001/docs` and walk through `/api/setup`:
   1. `GET /api/setup/status` — shows what is still missing;
   2. `PATCH /api/setup/llm` `{"model": "...", "base_url": "...", "api_key": "..."}` and `POST /api/setup/test-llm` to verify;
   3. `PATCH /api/setup/itop` `{"url": "...", "token": "..."}` and `POST /api/setup/test-itop` to verify;
   4. `PATCH /api/setup/security` `{"admin_token": "...", "webhook_token": "..."}` — after this the admin API requires the token (`Authorization: Bearer <token>`).
-
-  This is the backend the upcoming setup-wizard UI is built on.
 - **Environment.** Fill `.env` and `docker compose up -d` again — env values act as defaults for the same settings.
 
 > The iTop service account and its token (see [iTop configuration](#itop-configuration) step 4) can only be created after iTop is up — runtime setup makes this a single flow: start the stack, create the account in iTop, then `PATCH /api/setup/itop`.
@@ -222,6 +222,20 @@ Use this account's credentials for `ITOP_TOKEN` (or `ITOP_USER` / `ITOP_PWD`) in
 
 ---
 
+## Admin UI
+
+The assistant ships with a built-in admin UI at `http://localhost:8001/ui` — everything below is also available via the [admin API](#admin-api), the UI is just the friendlier way in.
+
+- **Setup** — the first-run wizard (LLM → iTop → security tokens, each step with a live connection test); on a configured system, a status summary with the option to re-run the wizard.
+- **Connections** — fine-grained editing of the `itop`, `llm`, `security` and `ticket_mapping` sections: secrets are write-only (shown as "set"/"not set"), every change can be probed before saving, and each section can be reset back to its environment defaults.
+- **Modules** — per-module business settings (question round limits, per-node model overrides, OQL scoping) on forms generated from the config schema; changes apply from the next processed ticket.
+- **Prompts** — view and edit every LLM prompt, with overridden ones flagged; placeholder validation errors are shown on save, and any prompt can be reset to its default.
+- **Runs** — the processing journal: filterable list of runs with a step-by-step timeline and full error text for each, auto-refreshing while a run is in progress.
+
+Authentication uses the admin token (`Authorization: Bearer`) — the UI asks for it once and keeps it in the browser's localStorage. Until a token is set the API is open (first-run mode), which is what lets the wizard bootstrap a clean install; the wizard's security step closes it.
+
+---
+
 ## Configuration
 
 Settings resolve in priority order: **runtime overrides (setup API, stored in Redis) → environment / `.env` → built-in defaults**. Env vars remain the IaC-friendly path; the setup API edits the same settings at runtime without a restart. Only the bootstrap values (`REDIS_URL`, host/port, `LOG_LEVEL`, `PROMPTS_DIR`) are env-only.
@@ -266,7 +280,7 @@ Unspecified fields keep their stock-iTop defaults.
 
 ### Admin API
 
-The assistant exposes a small admin API (bearer auth: `Authorization: Bearer <token>`) — the backend for the upcoming admin UI. Until an admin token is set (env `ADMIN_TOKEN` or `PATCH /api/setup/security`), the API is **open** — first-run mode for the setup wizard; set the token before exposing the service:
+The assistant exposes a small admin API (bearer auth: `Authorization: Bearer <token>`) — the backend behind the [admin UI](#admin-ui). Until an admin token is set (env `ADMIN_TOKEN` or `PATCH /api/setup/security`), the API is **open** — first-run mode for the setup wizard; set the token before exposing the service:
 
 | Endpoint | Purpose |
 |----------|---------|
@@ -328,6 +342,17 @@ uvicorn src.main:app --host 0.0.0.0 --port 8001 --reload
 cd assistant
 uv run pytest              # unit tests
 uv run pytest --cov=src    # with coverage report
+```
+
+### Admin UI development
+
+Requires Node.js. The dev server proxies `/api` and `/health` to the assistant on `:8001`, so run the backend alongside it:
+
+```bash
+cd ui
+npm ci
+npm run dev     # dev server with hot reload, open the printed URL
+npm run build   # production build into ui/dist — FastAPI serves it at /ui
 ```
 
 ---
