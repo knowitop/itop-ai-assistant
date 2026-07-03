@@ -17,10 +17,11 @@ export default function Layout() {
   const [health, setHealth] = useState<Health | null>(null);
   const [setup, setSetup] = useState<SetupStatus | null>(null);
 
+  // Refetched on every navigation so the badges reflect wizard progress.
   useEffect(() => {
     fetchHealth().then(setHealth).catch(() => setHealth(null));
     fetchSetupStatus().then(setSetup).catch(() => setSetup(null));
-  }, []);
+  }, [location.pathname]);
 
   return (
     <AppShell header={{ height: 56 }} navbar={{ width: 220, breakpoint: 'sm' }} padding="md">

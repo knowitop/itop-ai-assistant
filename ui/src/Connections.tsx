@@ -25,10 +25,9 @@ interface SectionData {
   secrets: Record<string, boolean>;
 }
 
-const SECRET_KEEP_HINT = 'Leave empty to keep the current value';
-
+// One placeholder style for every secret field, here and in the wizard.
 function secretPlaceholder(isSet: boolean): string {
-  return isSet ? '•••• (set)' : 'not set';
+  return isSet ? '•••• (already set — leave empty to keep)' : 'not set';
 }
 
 export default function Connections() {
@@ -204,7 +203,6 @@ function ItopForm() {
           <PasswordInput
             label="Password"
             placeholder={secretPlaceholder(secrets.pwd)}
-            description={secrets.pwd ? SECRET_KEEP_HINT : undefined}
             value={pwd}
             onChange={(e) => setPwd(e.currentTarget.value)}
           />
@@ -213,7 +211,6 @@ function ItopForm() {
         <PasswordInput
           label="Token"
           placeholder={secretPlaceholder(secrets.token)}
-          description={secrets.token ? SECRET_KEEP_HINT : undefined}
           value={token}
           onChange={(e) => setTokenValue(e.currentTarget.value)}
         />
@@ -348,7 +345,7 @@ function LlmForm() {
       <PasswordInput
         label="API key"
         placeholder={secretPlaceholder(secrets.api_key)}
-        description={secrets.api_key ? SECRET_KEEP_HINT : 'Omit for local LM Studio'}
+        description={secrets.api_key ? undefined : 'Omit for local LM Studio'}
         value={apiKey}
         onChange={(e) => setApiKey(e.currentTarget.value)}
         rightSectionWidth={70}
