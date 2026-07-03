@@ -106,14 +106,25 @@ class TestRuntimeSections(unittest.TestCase):
 
 
 class TestMissingSetup(unittest.TestCase):
-    def test_unconfigured_reports_both_steps(self):
+    def test_unconfigured_reports_all_steps(self):
+        # No url + no auth for iTop, no base_url + no model for LLM.
         missing = missing_setup(ItopConfig(), LlmConfig())
-        self.assertEqual(len(missing), 2)
+        self.assertEqual(len(missing), 4)
         self.assertTrue(any("iTop" in m for m in missing))
         self.assertTrue(any("LLM" in m for m in missing))
 
+    def test_url_required_even_with_auth(self):
+        missing = missing_setup(ItopConfig(token="tok"), LlmConfig(base_url="http://x/v1", model="m"))
+        self.assertEqual(missing, ["iTop REST API URL (itop: url)"])
+
+    def test_base_url_required_even_with_model(self):
+        missing = missing_setup(ItopConfig(url="http://x", token="tok"), LlmConfig(model="m"))
+        self.assertEqual(missing, ["LLM endpoint (llm: base_url)"])
+
     def test_fully_configured_is_empty(self):
-        self.assertEqual(missing_setup(ItopConfig(token="tok"), LlmConfig(model="m")), [])
+        itop = ItopConfig(url="http://itop/rest.php", token="tok")
+        llm = LlmConfig(base_url="http://llm/v1", model="m")
+        self.assertEqual(missing_setup(itop, llm), [])
 
 
 class TestTicketMapping(unittest.TestCase):

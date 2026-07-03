@@ -97,7 +97,7 @@ class ItopConfig(RuntimeSectionConfig):
 
     SECRET_FIELDS: ClassVar[frozenset[str]] = frozenset({"pwd", "token"})
 
-    url: str = "http://localhost/webservices/rest.php"
+    url: str | None = None
     api_version: str = "1.3"
     timeout: float = 30.0
     user: str | None = None
@@ -114,7 +114,7 @@ class LlmConfig(RuntimeSectionConfig):
 
     SECRET_FIELDS: ClassVar[frozenset[str]] = frozenset({"api_key"})
 
-    base_url: str = "http://localhost:1234/v1"
+    base_url: str | None = None
     model: str | None = None
     api_key: str | None = None
     # Tag names treated as inline reasoning blocks in LLM output and stripped
@@ -139,8 +139,12 @@ class SecurityConfig(RuntimeSectionConfig):
 def missing_setup(itop: ItopConfig, llm: LlmConfig) -> list[str]:
     """Setup steps still required before the assistant may process tickets."""
     missing = []
+    if not itop.url:
+        missing.append("iTop REST API URL (itop: url)")
     if not itop.has_auth:
         missing.append("iTop credentials (itop: user+pwd or token)")
+    if not llm.base_url:
+        missing.append("LLM endpoint (llm: base_url)")
     if not llm.model:
         missing.append("LLM model (llm: model)")
     return missing
@@ -180,7 +184,7 @@ class Settings(BaseSettings):
     prompts_dir: Path | None = None
 
     # iTop
-    itop_url: str = "http://localhost/webservices/rest.php"
+    itop_url: str | None = None
     itop_api_version: str = "1.3"
     itop_timeout: float = 30.0
     itop_user: str | None = None
@@ -188,7 +192,7 @@ class Settings(BaseSettings):
     itop_token: SecretStr | None = None
 
     # LLM
-    llm_base_url: str = "http://localhost:1234/v1"
+    llm_base_url: str | None = None
     llm_model: str | None = None
     llm_api_key: SecretStr | None = None
     llm_think_tags: list[str] = ["think", "thinking", "reasoning"]

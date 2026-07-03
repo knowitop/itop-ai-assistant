@@ -12,8 +12,8 @@ def _mock_deps(security: SecurityConfig | None = None, configured: bool = True) 
     """AppDeps double: sections served from memory, iTop/journal stubbed out."""
     sections = {
         "security": security or SecurityConfig(),
-        "itop": ItopConfig(token="tok") if configured else ItopConfig(),
-        "llm": LlmConfig(model="test-model") if configured else LlmConfig(),
+        "itop": ItopConfig(url="http://itop/rest.php", token="tok") if configured else ItopConfig(),
+        "llm": LlmConfig(base_url="http://llm/v1", model="test-model") if configured else LlmConfig(),
         "ticket_mapping": TicketMappingConfig(),
     }
 

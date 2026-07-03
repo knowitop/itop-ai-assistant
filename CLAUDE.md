@@ -230,7 +230,7 @@ None (`RuntimeSectionConfig`). Webhook/admin token checks read the effective
 
 | Field (env) | Required | Purpose |
 |-------|----------|---------|
-| `itop_url` | default | iTop REST API base URL |
+| `itop_url` | required (env or setup API) | iTop REST API base URL (no default) |
 | `itop_api_version` | default `1.3` | iTop REST API version |
 | `itop_timeout` | default `30.0` | HTTP timeout (seconds) for iTop requests |
 | `itop_user` + `itop_pwd` | one of (env or setup API) | iTop basic auth |
@@ -238,7 +238,7 @@ None (`RuntimeSectionConfig`). Webhook/admin token checks read the effective
 | `webhook_token` | recommended | Shared secret for `/webhook` (`X-Auth-Token` header); unset = no auth |
 | `admin_token` | recommended | Bearer token for `/api` admin endpoints (`Authorization: Bearer`); unset = no auth (first-run mode) |
 | `prompts_dir` | optional (env-only) | Directory with per-deployment prompt overrides |
-| `llm_base_url` | default | OpenAI-compatible endpoint |
+| `llm_base_url` | required (env or setup API) | OpenAI-compatible endpoint (no default) |
 | `llm_model` | required (env or setup API) | Model name as exposed by the endpoint |
 | `llm_api_key` | optional | API key (omit for local LM Studio) |
 | `llm_think_tags` | default `[think, thinking, reasoning]` | Tag names stripped as inline reasoning blocks |

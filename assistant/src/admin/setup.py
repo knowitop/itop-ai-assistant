@@ -125,6 +125,8 @@ async def test_itop(request: Request, body: dict[str, Any] | None = None) -> dic
         cfg = ItopConfig(**values)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+    if not cfg.url:
+        return {"ok": False, "error": "No URL: set the iTop REST API URL first"}
     if not cfg.has_auth:
         return {"ok": False, "error": "No credentials: set user+pwd or token"}
 
@@ -198,6 +200,8 @@ async def test_llm(request: Request, body: dict[str, Any] | None = None) -> dict
         cfg = LlmConfig(**values)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+    if not cfg.base_url:
+        return {"ok": False, "error": "No endpoint: set the LLM base URL first"}
     if not cfg.model:
         return {"ok": False, "error": "No model: set llm model first"}
 

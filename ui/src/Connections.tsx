@@ -185,7 +185,12 @@ function ItopForm() {
   return (
     <Stack maw={560}>
       <StatusAlert error={error} success={success} />
-      <TextInput label="REST API URL" value={url} onChange={(e) => setUrl(e.currentTarget.value)} />
+      <TextInput
+        label="REST API URL"
+        placeholder="http://itop.example.com/webservices/rest.php"
+        value={url}
+        onChange={(e) => setUrl(e.currentTarget.value)}
+      />
       <Group grow>
         <TextInput
           label="API version"
@@ -466,6 +471,7 @@ function LlmForm() {
       <TextInput
         label="Base URL"
         description="OpenAI-compatible endpoint, e.g. http://localhost:1234/v1"
+        placeholder="http://localhost:1234/v1"
         value={baseUrl}
         onChange={(e) => setBaseUrl(e.currentTarget.value)}
       />

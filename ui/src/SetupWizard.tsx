@@ -248,6 +248,7 @@ function LlmStep({ onBack, onDone }: { onBack: () => void; onDone: () => void })
       <TextInput
         label="Base URL"
         description="OpenAI-compatible endpoint, e.g. http://localhost:1234/v1"
+        placeholder="http://localhost:1234/v1"
         value={baseUrl}
         onChange={(e) => setBaseUrl(e.currentTarget.value)}
       />
@@ -365,6 +366,7 @@ function ItopStep({ onBack, onDone }: { onBack: () => void; onDone: () => void }
       <TextInput
         label="REST API URL"
         description="e.g. http://itop.example.com/webservices/rest.php"
+        placeholder="http://itop.example.com/webservices/rest.php"
         value={url}
         onChange={(e) => setUrl(e.currentTarget.value)}
       />

@@ -19,9 +19,11 @@ _PROMPTS_DIR = Path(__file__).parents[2] / "prompts"
 # Env/yaml on the developer machine must not leak into these tests — blank
 # out every field that feeds the runtime section defaults.
 _BLANK = {
+    "itop_url": None,
     "itop_user": None,
     "itop_pwd": None,
     "itop_token": None,
+    "llm_base_url": None,
     "llm_model": None,
     "llm_api_key": None,
     "webhook_token": None,
@@ -55,13 +57,14 @@ class TestSetupStatus(SetupApiTestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertFalse(body["configured"])
-        self.assertEqual(len(body["missing"]), 2)
+        # url + credentials for iTop, base_url + model for LLM
+        self.assertEqual(len(body["missing"]), 4)
         self.assertIn("itop", body["sections"])
         self.assertFalse(body["sections"]["itop"]["secrets"]["token"])
 
     def test_configured_after_both_sections_set(self):
         self.client.patch("/api/setup/itop", json={"url": "http://itop/rest.php", "token": "tok"})
-        self.client.patch("/api/setup/llm", json={"model": "gpt-test"})
+        self.client.patch("/api/setup/llm", json={"base_url": "http://llm/v1", "model": "gpt-test"})
 
         body = self.client.get("/api/setup/status").json()
 
@@ -70,7 +73,13 @@ class TestSetupStatus(SetupApiTestCase):
         self.assertTrue(body["sections"]["itop"]["secrets"]["token"])
 
     def test_env_defaults_show_through(self):
-        self.client.app.state.deps = _make_deps(self.redis, llm_model="from-env", itop_token=SecretStr("t"))
+        self.client.app.state.deps = _make_deps(
+            self.redis,
+            itop_url="http://itop/rest.php",
+            itop_token=SecretStr("t"),
+            llm_base_url="http://llm/v1",
+            llm_model="from-env",
+        )
 
         body = self.client.get("/api/setup/status").json()
 
@@ -143,8 +152,16 @@ class TestAdminTokenBootstrap(SetupApiTestCase):
 
 
 class TestConnectionProbes(SetupApiTestCase):
+    def test_itop_probe_without_url(self):
+        response = self.client.post("/api/setup/test-itop", json={"token": "tok"})
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertFalse(body["ok"])
+        self.assertIn("URL", body["error"])
+
     def test_itop_probe_without_credentials(self):
-        response = self.client.post("/api/setup/test-itop", json={})
+        response = self.client.post("/api/setup/test-itop", json={"url": "http://itop/rest.php"})
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
@@ -157,7 +174,9 @@ class TestConnectionProbes(SetupApiTestCase):
         client.aclose = AsyncMock()
 
         with patch("admin.setup.create_itop_client", return_value=client) as factory:
-            response = self.client.post("/api/setup/test-itop", json={"user": "ai", "pwd": "pw"})
+            response = self.client.post(
+                "/api/setup/test-itop", json={"url": "http://itop/rest.php", "user": "ai", "pwd": "pw"}
+            )
 
         body = response.json()
         self.assertTrue(body["ok"])
@@ -168,7 +187,7 @@ class TestConnectionProbes(SetupApiTestCase):
         client.aclose.assert_awaited_once()
 
     def test_itop_probe_uses_stored_secret_when_absent_from_body(self):
-        self.client.patch("/api/setup/itop", json={"user": "ai", "pwd": "stored-pw"})
+        self.client.patch("/api/setup/itop", json={"url": "http://itop/rest.php", "user": "ai", "pwd": "stored-pw"})
         client = MagicMock()
         client.schema.return_value.find_one = AsyncMock(return_value={"friendlyname": "AI"})
         client.aclose = AsyncMock()
@@ -184,7 +203,7 @@ class TestConnectionProbes(SetupApiTestCase):
         client.aclose = AsyncMock()
 
         with patch("admin.setup.create_itop_client", return_value=client):
-            body = self.client.post("/api/setup/test-itop", json={"token": "tok"}).json()
+            body = self.client.post("/api/setup/test-itop", json={"url": "http://itop/rest.php", "token": "tok"}).json()
 
         self.assertFalse(body["ok"])
         self.assertIn("refused", body["error"])
@@ -195,13 +214,19 @@ class TestConnectionProbes(SetupApiTestCase):
         client.aclose = AsyncMock()
 
         with patch("admin.setup.create_itop_client", return_value=client):
-            body = self.client.post("/api/setup/test-itop", json={"token": "tok"}).json()
+            body = self.client.post("/api/setup/test-itop", json={"url": "http://itop/rest.php", "token": "tok"}).json()
 
         self.assertFalse(body["ok"])
         self.assertIn("Person", body["error"])
 
+    def test_llm_probe_without_base_url(self):
+        body = self.client.post("/api/setup/test-llm", json={"model": "gpt-test"}).json()
+
+        self.assertFalse(body["ok"])
+        self.assertIn("endpoint", body["error"])
+
     def test_llm_probe_without_model(self):
-        body = self.client.post("/api/setup/test-llm", json={}).json()
+        body = self.client.post("/api/setup/test-llm", json={"base_url": "http://llm/v1"}).json()
 
         self.assertFalse(body["ok"])
         self.assertIn("model", body["error"])
@@ -211,7 +236,9 @@ class TestConnectionProbes(SetupApiTestCase):
         llm.ainvoke = AsyncMock(return_value=MagicMock(content="<think>hmm</think>OK"))
 
         with patch("admin.setup.create_llm", return_value=llm):
-            body = self.client.post("/api/setup/test-llm", json={"model": "gpt-test"}).json()
+            body = self.client.post(
+                "/api/setup/test-llm", json={"base_url": "http://llm/v1", "model": "gpt-test"}
+            ).json()
 
         self.assertTrue(body["ok"])
         self.assertEqual(body["model"], "gpt-test")
@@ -222,7 +249,9 @@ class TestConnectionProbes(SetupApiTestCase):
         llm.ainvoke = AsyncMock(side_effect=TimeoutError("no answer"))
 
         with patch("admin.setup.create_llm", return_value=llm):
-            body = self.client.post("/api/setup/test-llm", json={"model": "gpt-test"}).json()
+            body = self.client.post(
+                "/api/setup/test-llm", json={"base_url": "http://llm/v1", "model": "gpt-test"}
+            ).json()
 
         self.assertFalse(body["ok"])
         self.assertIn("TimeoutError", body["error"])

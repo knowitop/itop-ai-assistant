@@ -1,11 +1,8 @@
+# Non-secret, environment-independent defaults only. Connection endpoints,
+# credentials and the model name are environment-specific — set them in .env
+# (see docker/.env.dist) or at runtime through the setup API, not here.
 app_host: "0.0.0.0"
 app_port: 8000
 log_level: "INFO"
-
-itop_url: "http://localhost/webservices/rest.php"
-
-llm_base_url: "http://localhost:1234/v1"
-llm_model: "qwen/qwen3.5-9b"
-llm_api_key: "lm-studio"
 
 redis_url: "redis://localhost:6379"
