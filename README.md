@@ -269,9 +269,9 @@ A full `.env` template with examples is in `docker/.env.dist`.
 | `LLM_MODEL` | yes — env or setup API | Model name as exposed by the endpoint |
 | `ITOP_USER` + `ITOP_PWD` | one of — env or setup API | iTop basic auth — use this or `ITOP_TOKEN` |
 | `ITOP_TOKEN` | one of — env or setup API | iTop personal/app token — use this or basic auth |
-| `LLM_BASE_URL` | default `http://localhost:1234/v1` | OpenAI-compatible LLM endpoint |
+| `LLM_BASE_URL` | yes — env or setup API | OpenAI-compatible LLM endpoint |
 | `LLM_API_KEY` | optional | API key — omit entirely for local LM Studio |
-| `ITOP_URL` | default `http://localhost/webservices/rest.php` | iTop REST API URL |
+| `ITOP_URL` | yes — env or setup API | iTop REST API URL |
 | `WEBHOOK_TOKEN` | recommended | Shared secret for `/webhook`; iTop must send it in the `X-Auth-Token` header. Unset = unauthenticated access |
 | `ADMIN_TOKEN` | recommended | Bearer token for the `/api` admin endpoints (`Authorization: Bearer <token>`). Unset = unauthenticated access |
 | `REDIS_URL` | default `redis://localhost:6379` | Redis connection URL (bootstrap, env-only) |
