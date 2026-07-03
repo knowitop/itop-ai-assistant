@@ -31,8 +31,9 @@ questions AI has asked), `classify_rounds` (how many classification clarifying
 questions AI has asked), and `ai_done` (whether AI has finished processing) —
 live in Redis with a configurable TTL (default 30 days). Redis also holds a
 short-lived per-ticket processing lock (`lock:{ref}`) so concurrent webhooks
-for the same ticket are not processed twice. This is the only state the
-service owns.
+for the same ticket are not processed twice, plus the runtime overrides for
+config, prompts and connection settings (`config:*`, `prompts:*`) and the
+processing-run journal. This is the only state the service owns.
 
 **AI acts as a named iTop user.** All comments posted to iTop are written on
 behalf of a dedicated service account (e.g. `ai-assistant`). This makes AI
@@ -129,7 +130,8 @@ cd docker && docker-compose up -d
 | `src/config_store.py`                           | `RedisConfigStore` — runtime-editable module config |
 | `src/journal.py`                                | `RunJournal` — per-run status/steps in Redis        |
 | `src/admin/router.py`                           | Admin API: config, prompts, runs, module discovery  |
-| `src/webhook/router.py`                         | Webhook endpoint: auth, registry lookup, dispatch   |
+| `src/admin/setup.py`                            | Setup API: connection sections + probes (wizard backend) |
+| `src/webhook/router.py`                         | Webhook endpoint: auth, configured-gate, dispatch   |
 | `src/pipelines/registry.py`                     | `PipelineRegistry` — (class, event) → module handler |
 | `src/graph/enrichment/pipeline.py`              | Enrichment module: registration + event handlers    |
 | `src/graph/enrichment/graph.py`                 | LangGraph graph definition and compilation          |
@@ -160,6 +162,11 @@ not to use. Application-specific logic belongs in `ticket_repository.py`.
 stored in `app.state.deps`). Each processing run builds a `GraphContext` with
 a config snapshot from `ConfigStore` and per-run LLM clients — nodes take
 everything from `runtime.context`, never from globals or `get_settings()`.
+The iTop client and repositories come from `ItopProvider` (`deps.itop.get()`
+→ `ItopBundle`): the bundle is cached by a fingerprint of the `itop` +
+`ticket_mapping` sections and rebuilt (old client closed, repo caches
+dropped) when the runtime config changes — connection edits apply from the
+next ticket without a restart.
 
 **Pipeline registry:** webhook events reach business modules through
 `PipelineRegistry` — a startup-built map of `(object class, event)` → handler.
@@ -201,29 +208,43 @@ plain LangChain chains for anything beyond a single LLM call.
 ### Configuration
 
 Config is centralized in `src/config.py` using **pydantic-settings**.
-Priority (high → low): env vars → `.env` file → `config.yaml` → field defaults.
+Priority (high → low): Redis runtime overrides (setup/admin API) → env vars
+→ `.env` file → `config.yaml` → field defaults.
 
 `config.yaml` (committed to repo) holds non-secret defaults. Secrets and
-environment-specific values go in `.env` (not committed).
+environment-specific values go in `.env` (not committed) or are set at
+runtime through the setup API.
 
-| Field | Required | Purpose |
+**No field is required at startup.** The app always boots; until the `itop`
+and `llm` sections are complete (`missing_setup()` in `config.py`), `/webhook`
+returns 503 and the admin API stays available for the setup wizard.
+
+**Runtime-editable sections** (`ItopConfig`, `LlmConfig`, `SecurityConfig`,
+`TicketMappingConfig`) are served by `RedisConfigStore` under `config:{name}`;
+env fields act as their defaults via `Settings.itop` / `.llm` / `.security`
+properties. Secrets inside sections are plain `str` (storage round-trip);
+masking lives in the setup API (`SECRET_FIELDS`). Blank strings normalize to
+None (`RuntimeSectionConfig`). Webhook/admin token checks read the effective
+`security` section per request.
+
+| Field (env) | Required | Purpose |
 |-------|----------|---------|
 | `itop_url` | default | iTop REST API base URL |
 | `itop_api_version` | default `1.3` | iTop REST API version |
 | `itop_timeout` | default `30.0` | HTTP timeout (seconds) for iTop requests |
-| `itop_user` + `itop_pwd` | one of | iTop basic auth |
-| `itop_token` | one of | iTop token auth (alternative to user+pwd) |
+| `itop_user` + `itop_pwd` | one of (env or setup API) | iTop basic auth |
+| `itop_token` | one of (env or setup API) | iTop token auth (alternative to user+pwd) |
 | `webhook_token` | recommended | Shared secret for `/webhook` (`X-Auth-Token` header); unset = no auth |
-| `admin_token` | recommended | Shared secret for `/api` admin endpoints (`X-Admin-Token` header); unset = no auth |
-| `prompts_dir` | optional | Directory with per-deployment prompt overrides |
+| `admin_token` | recommended | Shared secret for `/api` admin endpoints (`X-Admin-Token` header); unset = no auth (first-run mode) |
+| `prompts_dir` | optional (env-only) | Directory with per-deployment prompt overrides |
 | `llm_base_url` | default | OpenAI-compatible endpoint |
-| `llm_model` | **required** | Model name as exposed by the endpoint |
+| `llm_model` | required (env or setup API) | Model name as exposed by the endpoint |
 | `llm_api_key` | optional | API key (omit for local LM Studio) |
 | `llm_think_tags` | default `[think, thinking, reasoning]` | Tag names stripped as inline reasoning blocks |
-| `redis_url` | default | Redis connection URL |
+| `redis_url` | default (env-only, bootstrap) | Redis connection URL |
 | `state_ttl_days` | default `30` | TTL for per-ticket state in Redis |
 | `run_ttl_days` | default `7` | TTL for processing-run journal entries |
-| `log_level` | default `INFO` | Logging level |
+| `log_level` | default `INFO` (env-only) | Logging level |
 
 Per-module limits live in `EnrichmentConfig` (`enrichment.*`): `max_rounds`
 and `max_classify_rounds` (both default 2) cap clarifying-question rounds;
@@ -240,6 +261,15 @@ Reads degrade to defaults when Redis is unavailable; writes are validated
 Every processing run leaves a trace in the `RunJournal` (status, node
 steps, error) — journal writes are non-fatal by design. Inspect via
 `GET /api/runs`.
+
+**Setup API (wizard backend).** Connection sections are managed via
+`/api/setup`: `GET /status` (what's missing), `GET/PUT/DELETE /{section}`
+for `itop` / `llm` / `security` / `ticket_mapping`, `POST /test-itop` and
+`POST /test-llm` probes (nothing saved). GET responses mask secrets
+(`secrets: {field: is_set}`); in PUT bodies an absent secret field keeps the
+stored value, explicit `null` clears it. Until an admin token is set the
+admin API is open (first-run mode). Redis persistence is required for
+runtime config to survive restarts (compose already enables appendonly).
 
 **Prompts are files, not code.** Defaults live in `prompts/enrichment/*.md`;
 a deployment overrides individual prompts by placing same-named files under
@@ -259,10 +289,10 @@ See `docker/.env.dist` for a full template.
 - Redis is mocked with `fakeredis`
 - `get_settings()` is cached via `lru_cache`; call `get_settings.cache_clear()`
   in `setUp`/`tearDown` when tests need to control env vars
-- Current test files: `test_config.py`, `test_router.py`,
+- Current test files: `test_config.py`, `test_router.py`, `test_deps.py`,
   `test_enrichment_pipeline.py`, `test_pipelines_registry.py`,
   `test_ticket_state.py`, `test_prompt_store.py`, `test_ticket_repository.py`,
   `test_catalog_repository.py`, `test_itop_schema.py`, `test_journal.py`,
-  `test_config_store.py`, `test_admin_api.py`, `test_nodes_guard.py`,
-  `test_nodes_classify.py`, `test_nodes_evaluate.py`, `test_nodes_ask.py`,
-  `test_nodes_enrich.py`, `test_nodes_utils.py`
+  `test_config_store.py`, `test_admin_api.py`, `test_setup_api.py`,
+  `test_nodes_guard.py`, `test_nodes_classify.py`, `test_nodes_evaluate.py`,
+  `test_nodes_ask.py`, `test_nodes_enrich.py`, `test_nodes_utils.py`

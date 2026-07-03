@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from config import Settings, TicketMappingConfig, get_settings
+from config import ItopConfig, LlmConfig, Settings, TicketMappingConfig, get_settings, missing_setup
 
 _REQUIRED = {
     "LLM_BASE_URL": "http://localhost/v1",
@@ -23,11 +23,13 @@ class TestSettings(unittest.TestCase):
     def test_secret_not_in_str(self):
         with patch.dict(os.environ, _REQUIRED, clear=True):
             s = Settings()
+        assert s.llm_api_key is not None
         self.assertNotIn(s.llm_api_key.get_secret_value(), str(s.llm_api_key))
 
     def test_get_secret_value_returns_actual(self):
         with patch.dict(os.environ, {**_REQUIRED, "LLM_API_KEY": "my-secret-key"}, clear=True):
             s = Settings()
+        assert s.llm_api_key is not None
         self.assertEqual(s.llm_api_key.get_secret_value(), "my-secret-key")
 
     def test_new_fields_have_defaults(self):
@@ -48,11 +50,70 @@ class TestSettings(unittest.TestCase):
         self.assertNotIn("hunter2", str(s.webhook_token))
         self.assertEqual(s.webhook_token.get_secret_value(), "hunter2")
 
-    def test_missing_itop_auth_raises(self):
-        env = {k: v for k, v in _REQUIRED.items() if k != "ITOP_TOKEN"}
-        with patch.dict(os.environ, env, clear=True):
-            with self.assertRaises(ValidationError):
-                Settings(_env_file=None)  # disable .env so file-based auth can't satisfy the check
+    def test_starts_with_no_configuration_at_all(self):
+        # Zero-config start: no field is required anymore — the app must
+        # boot with env/yaml defaults alone; setup completeness is checked
+        # at runtime (missing_setup), not at startup.
+        with patch.dict(os.environ, {}, clear=True):
+            s = Settings(_env_file=None)  # config.yaml may still supply non-secret defaults
+        self.assertIsNone(s.itop_user)
+        self.assertIsNone(s.itop_pwd)
+        self.assertIsNone(s.itop_token)
+        self.assertFalse(s.itop.has_auth)
+
+
+class TestRuntimeSections(unittest.TestCase):
+    def _settings(self, extra: dict[str, str] | None = None) -> Settings:
+        with patch.dict(os.environ, {**_REQUIRED, **(extra or {})}, clear=True):
+            return Settings(_env_file=None)
+
+    def test_itop_section_defaults_from_flat_env(self):
+        s = self._settings({"ITOP_URL": "http://example/rest.php", "ITOP_TOKEN": "tok-123"})
+        itop = s.itop
+        self.assertEqual(itop.url, "http://example/rest.php")
+        self.assertEqual(itop.token, "tok-123")  # plain str for storage round-trip
+        self.assertTrue(itop.has_auth)
+
+    def test_llm_section_defaults_from_flat_env(self):
+        s = self._settings()
+        llm = s.llm
+        self.assertEqual(llm.model, "test-model")
+        self.assertEqual(llm.api_key, "test-key")
+        self.assertEqual(llm.think_tags, ["think", "thinking", "reasoning"])
+
+    def test_security_section_defaults_from_flat_env(self):
+        s = self._settings({"WEBHOOK_TOKEN": "wh", "ADMIN_TOKEN": "adm"})
+        sec = s.security
+        self.assertEqual(sec.webhook_token, "wh")
+        self.assertEqual(sec.admin_token, "adm")
+
+    def test_secret_fields_declared(self):
+        self.assertEqual(ItopConfig.SECRET_FIELDS, frozenset({"pwd", "token"}))
+        self.assertEqual(LlmConfig.SECRET_FIELDS, frozenset({"api_key"}))
+
+    def test_blank_env_secret_means_not_set(self):
+        # Blank lines in .env (WEBHOOK_TOKEN=) must not enable auth with an
+        # empty token or count as iTop credentials
+        s = self._settings({"WEBHOOK_TOKEN": "", "ITOP_TOKEN": ""})
+        self.assertIsNone(s.security.webhook_token)
+        self.assertIsNone(s.itop.token)
+        self.assertFalse(s.itop.has_auth)
+
+    def test_has_auth_requires_full_basic_pair(self):
+        self.assertFalse(ItopConfig(user="admin").has_auth)
+        self.assertTrue(ItopConfig(user="admin", pwd="secret").has_auth)
+        self.assertTrue(ItopConfig(token="tok").has_auth)
+
+
+class TestMissingSetup(unittest.TestCase):
+    def test_unconfigured_reports_both_steps(self):
+        missing = missing_setup(ItopConfig(), LlmConfig())
+        self.assertEqual(len(missing), 2)
+        self.assertTrue(any("iTop" in m for m in missing))
+        self.assertTrue(any("LLM" in m for m in missing))
+
+    def test_fully_configured_is_empty(self):
+        self.assertEqual(missing_setup(ItopConfig(token="tok"), LlmConfig(model="m")), [])
 
 
 class TestTicketMapping(unittest.TestCase):

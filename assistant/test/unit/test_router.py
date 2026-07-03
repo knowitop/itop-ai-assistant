@@ -1,22 +1,43 @@
-import os
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 from fastapi.testclient import TestClient
 
-from config import get_settings
+from config import ItopConfig, LlmConfig, SecurityConfig, TicketMappingConfig
 from main import app
 
 
-class TestWebhook(unittest.TestCase):
+def _mock_deps(security: SecurityConfig | None = None, configured: bool = True) -> MagicMock:
+    """AppDeps double: sections served from memory, iTop/journal stubbed out."""
+    sections = {
+        "security": security or SecurityConfig(),
+        "itop": ItopConfig(token="tok") if configured else ItopConfig(),
+        "llm": LlmConfig(model="test-model") if configured else LlmConfig(),
+        "ticket_mapping": TicketMappingConfig(),
+    }
+
+    deps = MagicMock()
+    deps.config_store.get = AsyncMock(side_effect=lambda module, model: sections[module])
+    deps.journal = AsyncMock()
+    deps.state_manager.acquire_lock = AsyncMock(return_value=True)
+    deps.state_manager.release_lock = AsyncMock()
+    deps.state_manager.mark_done = AsyncMock()
+    bundle = MagicMock()
+    bundle.ticket_repo.fetch = AsyncMock(return_value=None)  # "not found" → graph is skipped
+    deps.itop.get = AsyncMock(return_value=bundle)
+    return deps
+
+
+class WebhookTestCase(unittest.TestCase):
     def setUp(self):
         self.client = self.enterContext(TestClient(app))
+        self.deps = _mock_deps()
+        self.client.app.state.deps = self.deps
 
-    @patch("graph.enrichment.pipeline._run_enrichment_graph", new_callable=AsyncMock)
-    def test_created_event_accepted(self, mock_run):
-        mock_run.return_value = None
 
+class TestWebhook(WebhookTestCase):
+    def test_created_event_accepted(self):
         response = self.client.post(
             "/webhook",
             json={"id": "123", "class": "UserRequest", "event": "created"},
@@ -27,35 +48,23 @@ class TestWebhook(unittest.TestCase):
         self.assertEqual(data["status"], "accepted")
         UUID(data["processing_id"])
 
-    @patch("graph.enrichment.pipeline._run_enrichment_graph", new_callable=AsyncMock)
-    def test_user_commented_event_accepted(self, mock_run):
-        mock_run.return_value = None
-
+    def test_user_commented_event_accepted(self):
         response = self.client.post(
             "/webhook",
             json={"id": "123", "class": "UserRequest", "event": "user_commented"},
         )
 
         self.assertEqual(response.status_code, 202)
-        data = response.json()
-        self.assertEqual(data["status"], "accepted")
-        UUID(data["processing_id"])
+        self.assertEqual(response.json()["status"], "accepted")
 
     def test_assigned_event_marks_done(self):
-        mock_deps = MagicMock()
-        mock_deps.settings.webhook_token = None
-        mock_deps.state_manager.mark_done = AsyncMock()
-        mock_deps.journal = AsyncMock()
-        self.client.app.state.deps = mock_deps
-
         response = self.client.post(
             "/webhook",
             json={"id": "123", "class": "UserRequest", "event": "assigned"},
         )
 
         self.assertEqual(response.status_code, 202)
-        data = response.json()
-        self.assertEqual(data["status"], "accepted")
+        self.assertEqual(response.json()["status"], "accepted")
 
     def test_unsupported_class_rejected(self):
         response = self.client.post(
@@ -77,32 +86,18 @@ class TestWebhook(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 422)
 
-    @patch("graph.enrichment.pipeline._run_enrichment_graph", new_callable=AsyncMock)
-    def test_incident_class_accepted(self, mock_run):
-        mock_run.return_value = None
-
+    def test_incident_class_accepted(self):
         response = self.client.post(
             "/webhook",
             json={"id": "456", "class": "Incident", "event": "created"},
         )
 
         self.assertEqual(response.status_code, 202)
-        data = response.json()
-        self.assertEqual(data["status"], "accepted")
-        UUID(data["processing_id"])
+        UUID(response.json()["processing_id"])
 
-    @patch("graph.enrichment.pipeline._run_enrichment_graph", new_callable=AsyncMock)
-    def test_each_request_gets_unique_processing_id(self, mock_run):
-        mock_run.return_value = None
-
-        r1 = self.client.post(
-            "/webhook",
-            json={"id": "1", "class": "UserRequest", "event": "created"},
-        )
-        r2 = self.client.post(
-            "/webhook",
-            json={"id": "2", "class": "UserRequest", "event": "created"},
-        )
+    def test_each_request_gets_unique_processing_id(self):
+        r1 = self.client.post("/webhook", json={"id": "1", "class": "UserRequest", "event": "created"})
+        r2 = self.client.post("/webhook", json={"id": "2", "class": "UserRequest", "event": "created"})
 
         self.assertNotEqual(r1.json()["processing_id"], r2.json()["processing_id"])
 
@@ -111,11 +106,8 @@ class TestWebhookAuth(unittest.TestCase):
     PAYLOAD = {"id": "123", "class": "UserRequest", "event": "created"}
 
     def setUp(self):
-        # Token must be in env BEFORE the client starts: lifespan builds deps from settings.
-        self.enterContext(patch.dict(os.environ, {"WEBHOOK_TOKEN": "test-secret"}))
-        get_settings.cache_clear()
-        self.addCleanup(get_settings.cache_clear)
         self.client = self.enterContext(TestClient(app))
+        self.client.app.state.deps = _mock_deps(security=SecurityConfig(webhook_token="test-secret"))
 
     def test_missing_token_rejected(self):
         response = self.client.post("/webhook", json=self.PAYLOAD)
@@ -125,24 +117,28 @@ class TestWebhookAuth(unittest.TestCase):
         response = self.client.post("/webhook", json=self.PAYLOAD, headers={"X-Auth-Token": "wrong"})
         self.assertEqual(response.status_code, 401)
 
-    @patch("graph.enrichment.pipeline._run_enrichment_graph", new_callable=AsyncMock)
-    def test_correct_token_accepted(self, mock_run):
+    def test_correct_token_accepted(self):
         response = self.client.post("/webhook", json=self.PAYLOAD, headers={"X-Auth-Token": "test-secret"})
         self.assertEqual(response.status_code, 202)
 
 
-class TestWebhookNoAuthConfigured(unittest.TestCase):
+class TestWebhookNoAuthConfigured(WebhookTestCase):
     def test_no_token_configured_accepts_unauthenticated(self):
-        os.environ.pop("WEBHOOK_TOKEN", None)
-        get_settings.cache_clear()
-        self.addCleanup(get_settings.cache_clear)
-
-        with (
-            TestClient(app) as client,
-            patch("graph.enrichment.pipeline._run_enrichment_graph", new_callable=AsyncMock),
-        ):
-            response = client.post("/webhook", json={"id": "123", "class": "UserRequest", "event": "created"})
+        response = self.client.post("/webhook", json={"id": "123", "class": "UserRequest", "event": "created"})
         self.assertEqual(response.status_code, 202)
+
+
+class TestWebhookNotConfigured(unittest.TestCase):
+    def setUp(self):
+        self.client = self.enterContext(TestClient(app))
+        self.client.app.state.deps = _mock_deps(configured=False)
+
+    def test_webhook_disabled_until_setup_complete(self):
+        response = self.client.post("/webhook", json={"id": "123", "class": "UserRequest", "event": "created"})
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("not configured", response.json()["detail"])
+        self.assertIn("/api/setup/status", response.json()["detail"])
 
 
 if __name__ == "__main__":

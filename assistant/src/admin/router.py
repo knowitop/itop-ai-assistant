@@ -11,6 +11,8 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 
+from admin.setup import router as setup_router
+from config import SecurityConfig
 from deps import AppDeps
 from journal import ProcessingRun
 from pipelines.registry import ModuleInfo
@@ -20,14 +22,17 @@ logger = logging.getLogger(__name__)
 
 
 async def verify_admin_token(request: Request, x_admin_token: Annotated[str | None, Header()] = None) -> None:
-    token = request.app.state.deps.settings.admin_token
-    if token is None:
+    deps: AppDeps = request.app.state.deps
+    security = await deps.config_store.get("security", SecurityConfig)
+    if security.admin_token is None:
+        # First-run mode: the API stays open until the wizard sets a token
         return
-    if x_admin_token is None or not secrets.compare_digest(x_admin_token, token.get_secret_value()):
+    if x_admin_token is None or not secrets.compare_digest(x_admin_token, security.admin_token):
         raise HTTPException(status_code=401, detail="Invalid or missing X-Admin-Token header")
 
 
 router = APIRouter(prefix="/api", dependencies=[Depends(verify_admin_token)])
+router.include_router(setup_router)
 
 
 def _deps(request: Request) -> AppDeps:

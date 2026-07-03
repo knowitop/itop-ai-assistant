@@ -1,0 +1,163 @@
+"""Setup API: runtime connection configuration — backend for the setup wizard.
+
+Connection sections (itop, llm, security, ticket_mapping) are stored through
+the same ConfigStore as module config (Redis overrides > env defaults), but
+served by dedicated endpoints because secrets need special treatment:
+
+- GET never returns secret values — only `secrets: {field: is_set}` flags;
+- PUT merges the body over the current *effective* config, so a field absent
+  from the body keeps its value and an explicit null clears it.
+"""
+
+import asyncio
+import logging
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, ValidationError
+
+from config import ItopConfig, LlmConfig, SecurityConfig, TicketMappingConfig, missing_setup
+from deps import AppDeps, create_itop_client, create_llm
+from graph.enrichment.nodes.utils import strip_thinking
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/setup")
+
+SETUP_SECTIONS: dict[str, type[BaseModel]] = {
+    "itop": ItopConfig,
+    "llm": LlmConfig,
+    "security": SecurityConfig,
+    "ticket_mapping": TicketMappingConfig,
+}
+
+_TEST_TIMEOUT = 30.0  # seconds; keeps connection tests from hanging the wizard
+
+
+def _deps(request: Request) -> AppDeps:
+    return request.app.state.deps
+
+
+def _model_or_404(section: str) -> type[BaseModel]:
+    model = SETUP_SECTIONS.get(section)
+    if model is None:
+        raise HTTPException(
+            status_code=404, detail=f"Unknown setup section: {section}. Known: {sorted(SETUP_SECTIONS)}"
+        )
+    return model
+
+
+def _masked(cfg: BaseModel) -> dict:
+    """Section values safe to return to the UI: secrets replaced by is-set flags."""
+    values = cfg.model_dump()
+    secrets_state = {}
+    for field in getattr(type(cfg), "SECRET_FIELDS", frozenset()):
+        secrets_state[field] = bool(values.pop(field))
+    return {"values": values, "secrets": secrets_state}
+
+
+async def _merged_with_current(request: Request, section: str, model: type[BaseModel], body: dict[str, Any]) -> dict:
+    """Body merged over the current effective config.
+
+    Absent field = keep current value (secrets survive UI round-trips),
+    explicit null = clear.
+    """
+    current = await _deps(request).config_store.get(section, model)
+    return {**current.model_dump(), **body}
+
+
+@router.get("/status")
+async def setup_status(request: Request) -> dict:
+    store = _deps(request).config_store
+    itop_cfg = await store.get("itop", ItopConfig)
+    llm_cfg = await store.get("llm", LlmConfig)
+    security_cfg = await store.get("security", SecurityConfig)
+    missing = missing_setup(itop_cfg, llm_cfg)
+    return {
+        "configured": not missing,
+        "missing": missing,
+        "sections": {
+            "itop": _masked(itop_cfg),
+            "llm": _masked(llm_cfg),
+            "security": _masked(security_cfg),
+        },
+    }
+
+
+@router.get("/{section}")
+async def get_section(section: str, request: Request) -> dict:
+    model = _model_or_404(section)
+    cfg = await _deps(request).config_store.get(section, model)
+    return _masked(cfg)
+
+
+@router.put("/{section}")
+async def update_section(section: str, body: dict[str, Any], request: Request) -> dict:
+    model = _model_or_404(section)
+    values = await _merged_with_current(request, section, model, body)
+    try:
+        cfg = await _deps(request).config_store.set(section, values, model)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    logger.info(f"Setup section {section!r} updated via admin API")
+    return _masked(cfg)
+
+
+@router.delete("/{section}", status_code=204)
+async def reset_section(section: str, request: Request) -> None:
+    _model_or_404(section)
+    await _deps(request).config_store.reset(section)
+    logger.info(f"Setup section {section!r} reset to env defaults via admin API")
+
+
+@router.post("/test-itop")
+async def test_itop(request: Request, body: dict[str, Any] | None = None) -> dict:
+    """Probe the iTop connection: auth + REST profile + AI service account.
+
+    Body fields override the stored config for this probe only — nothing is
+    saved. Secrets absent from the body are taken from the stored config, so
+    the UI can re-test without re-entering the password.
+    """
+    values = await _merged_with_current(request, "itop", ItopConfig, body or {})
+    try:
+        cfg = ItopConfig(**values)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    if not cfg.has_auth:
+        return {"ok": False, "error": "No credentials: set user+pwd or token"}
+
+    client = create_itop_client(cfg)
+    try:
+        # Resolves the Person behind the credentials — fails on bad auth or a
+        # missing "REST Services User" profile, exactly what the wizard checks.
+        person = await asyncio.wait_for(
+            client.schema("Person").find_one({"id": ("=", ":current_contact_id")}),
+            timeout=_TEST_TIMEOUT,
+        )
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    finally:
+        await client.aclose()
+    if person is None:
+        return {"ok": False, "error": "Authenticated, but no Person is linked to the account"}
+    return {"ok": True, "ai_person": person.get("friendlyname")}
+
+
+@router.post("/test-llm")
+async def test_llm(request: Request, body: dict[str, Any] | None = None) -> dict:
+    """Probe the LLM endpoint with a one-word completion. Nothing is saved."""
+    values = await _merged_with_current(request, "llm", LlmConfig, body or {})
+    try:
+        cfg = LlmConfig(**values)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    if not cfg.model:
+        return {"ok": False, "error": "No model: set llm model first"}
+
+    llm = create_llm(cfg)
+    try:
+        answer = await asyncio.wait_for(llm.ainvoke("Reply with a single word: OK"), timeout=_TEST_TIMEOUT)
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    text = strip_thinking(answer.content, tuple(cfg.think_tags)).strip()
+    return {"ok": True, "model": cfg.model, "response": text[:200]}

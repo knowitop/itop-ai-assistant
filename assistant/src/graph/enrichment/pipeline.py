@@ -8,8 +8,8 @@ fetch, graph run, mark-done on assignment.
 import logging
 from uuid import UUID
 
-from config import EnrichmentConfig, Settings
-from deps import AppDeps, create_llm
+from config import EnrichmentConfig, LlmConfig, Settings
+from deps import AppDeps, ItopBundle, create_llm
 from domain.ticket import Ticket
 from pipelines.registry import ModuleInfo, PipelineRegistry
 from webhook.models import TicketEvent, WebhookPayload
@@ -51,12 +51,13 @@ async def handle_ticket_event(payload: WebhookPayload, processing_id: UUID, deps
         await deps.journal.add_step(processing_id, "lock", "ticket is already being processed — skipped")
         return
     try:
-        ticket = await deps.ticket_repo.fetch(payload.obj_class, payload.id)
+        bundle = await deps.itop.get()
+        ticket = await bundle.ticket_repo.fetch(payload.obj_class, payload.id)
         if ticket is None:
             logger.warning(f"[{processing_id}] {label} not found in iTop, skipping")
             await deps.journal.add_step(processing_id, "fetch", "ticket not found in iTop — skipped")
             return
-        await _run_enrichment_graph(ticket, processing_id, deps)
+        await _run_enrichment_graph(ticket, bundle, processing_id, deps)
     finally:
         await deps.state_manager.release_lock(label)
 
@@ -68,23 +69,24 @@ async def handle_assigned(payload: WebhookPayload, processing_id: UUID, deps: Ap
     logger.info(f"[{processing_id}] {label} assigned, marked done")
 
 
-async def _run_enrichment_graph(ticket: Ticket, processing_id: UUID, deps: AppDeps) -> None:
+async def _run_enrichment_graph(ticket: Ticket, bundle: ItopBundle, processing_id: UUID, deps: AppDeps) -> None:
     logger.info(f"{processing_id} Running enrichment graph for {ticket.label}")
 
     enrichment = await deps.config_store.get("enrichment", EnrichmentConfig)
+    llm_cfg = await deps.config_store.get("llm", LlmConfig)
     prompts = build_enrichment_prompts(await deps.prompt_store.get("enrichment"))
     context = GraphContext(
         processing_id=processing_id,
-        ticket_repo=deps.ticket_repo,
-        catalog_repo=deps.catalog_repo,
-        ticket_mapping=deps.settings.ticket_mapping,
+        ticket_repo=bundle.ticket_repo,
+        catalog_repo=bundle.catalog_repo,
+        ticket_mapping=bundle.ticket_repo.mapping,
         state_manager=deps.state_manager,
         enrichment=enrichment,
         prompts=prompts,
-        llm_classify=create_llm(deps.settings, enrichment.classify_model),
-        llm_evaluate=create_llm(deps.settings, enrichment.evaluate_model),
-        llm_enrich=create_llm(deps.settings, enrichment.enrich_model),
-        think_tags=tuple(deps.settings.llm_think_tags),
+        llm_classify=create_llm(llm_cfg, enrichment.classify_model),
+        llm_evaluate=create_llm(llm_cfg, enrichment.evaluate_model),
+        llm_enrich=create_llm(llm_cfg, enrichment.enrich_model),
+        think_tags=tuple(llm_cfg.think_tags),
     )
 
     graph_input = {

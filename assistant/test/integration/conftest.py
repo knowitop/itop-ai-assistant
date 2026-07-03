@@ -100,7 +100,7 @@ def make_ctx(
     itop = Itop(url=ITOP_URL, version="1.3", auth_user="dummy", auth_pwd="dummy", transport=transport)
     settings = get_settings()
     enrichment = settings.enrichment
-    llm = create_llm(settings)
+    llm = create_llm(settings.llm)
     ctx = GraphContext(
         processing_id=uuid4(),
         ticket_repo=TicketRepository(itop, settings.ticket_mapping),
@@ -141,7 +141,7 @@ async def state_manager() -> TicketStateManager:
 @pytest.fixture
 def ctx(itop: Itop, state_manager: TicketStateManager) -> GraphContext:
     settings = get_settings()
-    llm = create_llm(settings)
+    llm = create_llm(settings.llm)
     return GraphContext(
         processing_id=uuid4(),
         ticket_repo=TicketRepository(itop, settings.ticket_mapping),

@@ -21,9 +21,7 @@ def _make_deps(redis, settings=None) -> AppDeps:
     settings = settings or get_settings()
     return AppDeps(
         settings=settings,
-        itop_client=MagicMock(),
-        ticket_repo=MagicMock(),
-        catalog_repo=MagicMock(),
+        itop=MagicMock(),
         state_manager=TicketStateManager(redis),
         config_store=RedisConfigStore(redis, settings),
         prompt_store=RedisPromptStore(FilePromptStore(_PROMPTS_DIR), redis),

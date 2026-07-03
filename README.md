@@ -115,10 +115,7 @@ Mark ticket processed
 Copy `docker-compose.yml` and `.env.dist` from this repository, then:
 
 ```bash
-cp .env.dist .env
-# open .env and fill in:
-#   LLM_MODEL    — model name as exposed by your endpoint
-#   LLM_BASE_URL — your LLM endpoint (default: http://localhost:1234/v1)
+cp .env.dist .env   # optional: pre-fill anything you already know
 docker compose up -d
 ```
 
@@ -132,9 +129,18 @@ Once running:
 | Assistant | `http://localhost:8001`     |
 | API docs  | `http://localhost:8001/docs`|
 
-> **Two-step start:** the iTop service account and its token (see [iTop configuration](#itop-configuration) step 4) can only be created after iTop is up. Start the stack first, complete the iTop configuration, then add `ITOP_TOKEN` (or `ITOP_USER` / `ITOP_PWD`) to `.env` and run `docker compose up -d` again.
+The assistant starts **unconfigured**: it is up, `/health` and the admin API work, but `/webhook` returns 503 until the LLM and iTop connections are set. Configure it either way:
 
-Open `http://localhost:8001/docs` to verify the assistant is up, then proceed to iTop configuration below.
+- **Setup API — no restart needed.** Open `http://localhost:8001/docs` and walk through `/api/setup`:
+  1. `GET /api/setup/status` — shows what is still missing;
+  2. `PUT /api/setup/llm` `{"model": "...", "base_url": "...", "api_key": "..."}` and `POST /api/setup/test-llm` to verify;
+  3. `PUT /api/setup/itop` `{"url": "...", "token": "..."}` and `POST /api/setup/test-itop` to verify;
+  4. `PUT /api/setup/security` `{"admin_token": "...", "webhook_token": "..."}` — after this the admin API requires the `X-Admin-Token` header.
+
+  This is the backend the upcoming setup-wizard UI is built on.
+- **Environment.** Fill `.env` and `docker compose up -d` again — env values act as defaults for the same settings.
+
+> The iTop service account and its token (see [iTop configuration](#itop-configuration) step 4) can only be created after iTop is up — runtime setup makes this a single flow: start the stack, create the account in iTop, then `PUT /api/setup/itop`.
 
 ---
 
@@ -218,29 +224,33 @@ Use this account's credentials for `ITOP_TOKEN` (or `ITOP_USER` / `ITOP_PWD`) in
 
 ## Configuration
 
-All variables go in `.env`. A full template with examples is in `docker/.env.dist`.
+Settings resolve in priority order: **runtime overrides (setup API, stored in Redis) → environment / `.env` → built-in defaults**. Env vars remain the IaC-friendly path; the setup API edits the same settings at runtime without a restart. Only the bootstrap values (`REDIS_URL`, host/port, `LOG_LEVEL`, `PROMPTS_DIR`) are env-only.
+
+A full `.env` template with examples is in `docker/.env.dist`.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `LLM_MODEL` | **yes** | Model name as exposed by the endpoint |
-| `ITOP_USER` + `ITOP_PWD` | one of | iTop basic auth — use this or `ITOP_TOKEN` |
-| `ITOP_TOKEN` | one of | iTop personal/app token — use this or basic auth |
+| `LLM_MODEL` | yes — env or setup API | Model name as exposed by the endpoint |
+| `ITOP_USER` + `ITOP_PWD` | one of — env or setup API | iTop basic auth — use this or `ITOP_TOKEN` |
+| `ITOP_TOKEN` | one of — env or setup API | iTop personal/app token — use this or basic auth |
 | `LLM_BASE_URL` | default `http://localhost:1234/v1` | OpenAI-compatible LLM endpoint |
 | `LLM_API_KEY` | optional | API key — omit entirely for local LM Studio |
 | `ITOP_URL` | default `http://localhost/webservices/rest.php` | iTop REST API URL |
 | `WEBHOOK_TOKEN` | recommended | Shared secret for `/webhook`; iTop must send it in the `X-Auth-Token` header. Unset = unauthenticated access |
 | `ADMIN_TOKEN` | recommended | Shared secret for the `/api` admin endpoints (`X-Admin-Token` header). Unset = unauthenticated access |
-| `REDIS_URL` | default `redis://localhost:6379` | Redis connection URL |
-| `PROMPTS_DIR` | optional | Directory with prompt overrides (see below) |
-| `LOG_LEVEL` | default `INFO` | Logging level |
+| `REDIS_URL` | default `redis://localhost:6379` | Redis connection URL (bootstrap, env-only) |
+| `PROMPTS_DIR` | optional | Directory with prompt overrides (see below; env-only) |
+| `LOG_LEVEL` | default `INFO` | Logging level (env-only) |
 
 `LLM_BASE_URL` accepts any OpenAI-compatible endpoint: [LM Studio](https://lmstudio.ai/) for local models, [LiteLLM Proxy](https://docs.litellm.ai/) to front any cloud provider or OpenAI directly.
+
+> Runtime overrides (including secrets set through the setup API) live in Redis — the bundled `docker-compose.yml` already enables Redis persistence (`appendonly yes` + volume) so they survive restarts. Keep Redis unreachable from outside the stack. To recover a lost admin token, delete the `config:security` key in Redis or set `ADMIN_TOKEN` in the environment.
 
 ### Adapting to a customized iTop datamodel
 
 If your iTop uses renamed attributes, extra ticket classes or a custom
-lifecycle, adjust the `ticket_mapping` section in `config.yaml` — no code
-changes needed:
+lifecycle, adjust the `ticket_mapping` section — in `config.yaml`, or at
+runtime via `PUT /api/setup/ticket_mapping` — no code changes needed:
 
 ```yaml
 ticket_mapping:
@@ -256,11 +266,14 @@ Unspecified fields keep their stock-iTop defaults.
 
 ### Admin API
 
-The assistant exposes a small admin API (protected by `ADMIN_TOKEN`, header `X-Admin-Token`) — the backend for the upcoming admin UI:
+The assistant exposes a small admin API (header `X-Admin-Token`) — the backend for the upcoming admin UI. Until an admin token is set (env `ADMIN_TOKEN` or `PUT /api/setup/security`), the API is **open** — first-run mode for the setup wizard; set the token before exposing the service:
 
 | Endpoint | Purpose |
 |----------|---------|
 | `GET /health` | Liveness + Redis connectivity |
+| `GET /api/setup/status` | Setup state: what is configured, what is still missing |
+| `GET/PUT/DELETE /api/setup/{section}` | Connection sections (`itop`, `llm`, `security`, `ticket_mapping`): read (secrets masked) / edit / reset to env defaults. In PUT bodies, an absent secret field keeps the stored value; an explicit `null` clears it |
+| `POST /api/setup/test-itop`, `POST /api/setup/test-llm` | Probe a connection (stored config merged with body overrides) without saving anything |
 | `GET /api/modules` | Registered business modules |
 | `GET/PUT/DELETE /api/config/{module}` | Read / edit / reset module config at runtime (validated; applies from the next ticket, no restart) |
 | `GET /api/config/{module}/schema` | JSON Schema of the module config (for form generation) |

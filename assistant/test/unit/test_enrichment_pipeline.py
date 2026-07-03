@@ -19,8 +19,10 @@ class TestHandleTicketEvent(unittest.IsolatedAsyncioTestCase):
         self.state_manager.release_lock = AsyncMock()
         self.state_manager.mark_done = AsyncMock()
 
+        self.bundle = MagicMock()
         self.fetch = AsyncMock(return_value=Ticket(obj_class="UserRequest", id="123"))
-        self.deps.ticket_repo.fetch = self.fetch
+        self.bundle.ticket_repo.fetch = self.fetch
+        self.deps.itop.get = AsyncMock(return_value=self.bundle)
         self.deps.journal = AsyncMock()
 
         run_patch = patch("graph.enrichment.pipeline._run_enrichment_graph", new_callable=AsyncMock)

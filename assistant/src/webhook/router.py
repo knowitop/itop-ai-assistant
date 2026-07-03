@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
+from config import ItopConfig, LlmConfig, SecurityConfig, missing_setup
 from deps import AppDeps
 from pipelines.registry import PipelineHandler
 from webhook.models import WebhookPayload
@@ -24,11 +25,26 @@ class WebhookResponse(BaseModel):
 
 
 async def verify_webhook_token(request: Request, x_auth_token: Annotated[str | None, Header()] = None) -> None:
-    token = request.app.state.deps.settings.webhook_token
-    if token is None:
+    deps: AppDeps = request.app.state.deps
+    security = await deps.config_store.get("security", SecurityConfig)
+    if security.webhook_token is None:
         return
-    if x_auth_token is None or not secrets.compare_digest(x_auth_token, token.get_secret_value()):
+    if x_auth_token is None or not secrets.compare_digest(x_auth_token, security.webhook_token):
         raise HTTPException(status_code=401, detail="Invalid or missing X-Auth-Token header")
+
+
+async def require_configured(request: Request) -> None:
+    """Reject webhooks until the connections are configured (env or setup API)."""
+    deps: AppDeps = request.app.state.deps
+    missing = missing_setup(
+        await deps.config_store.get("itop", ItopConfig),
+        await deps.config_store.get("llm", LlmConfig),
+    )
+    if missing:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Assistant is not configured: {'; '.join(missing)}. Complete setup via /api/setup/status.",
+        )
 
 
 async def _process_safely(
@@ -45,7 +61,7 @@ async def _process_safely(
         await deps.journal.finish(processing_id, "done")
 
 
-@router.post("/webhook", status_code=202, dependencies=[Depends(verify_webhook_token)])
+@router.post("/webhook", status_code=202, dependencies=[Depends(verify_webhook_token), Depends(require_configured)])
 async def receive_webhook(payload: WebhookPayload, request: Request) -> WebhookResponse:
     entry = request.app.state.registry.resolve_entry(payload.obj_class, payload.event)
     if entry is None:
