@@ -1,6 +1,8 @@
 import { ActionIcon, Alert, Anchor, AppShell, Badge, Button, Group, Menu, NavLink, Title, Tooltip } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { loadLanguage } from './i18n';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
 import { fetchHealth, fetchSetupStatus, Health, SetupStatus } from './api';
@@ -74,8 +76,10 @@ export default function Layout() {
   const currentLabel = LANGUAGES.find((l) => l.value === currentLang)?.label ?? currentLang;
 
   const changeLanguage = (lang: string) => {
-    void i18n.changeLanguage(lang);
-    localStorage.setItem('locale', lang);
+    void loadLanguage(lang).then(() => {
+      void i18n.changeLanguage(lang);
+      localStorage.setItem('locale', lang);
+    });
   };
 
   return (
