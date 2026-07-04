@@ -15,6 +15,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { apiGet, apiSend } from './api';
 
@@ -54,6 +55,7 @@ function fieldKind(prop: SchemaProp): { kind: FieldKind; nullable: boolean } {
 }
 
 export default function Modules() {
+  const { t } = useTranslation();
   const [modules, setModules] = useState<ModuleInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,11 +67,11 @@ export default function Modules() {
 
   if (error) return <Alert color="red">{error}</Alert>;
   if (!modules) return <Loader />;
-  if (modules.length === 0) return <Text c="dimmed">No modules registered.</Text>;
+  if (modules.length === 0) return <Text c="dimmed">{t('modules.no_modules')}</Text>;
 
   return (
     <Stack>
-      <Title order={2}>Modules</Title>
+      <Title order={2}>{t('modules.title')}</Title>
       <Tabs defaultValue={modules[0].name} keepMounted={false}>
         <Tabs.List>
           {modules.map((m) => (
@@ -87,7 +89,7 @@ export default function Modules() {
               {m.has_config ? (
                 <ModuleConfigForm module={m.name} />
               ) : (
-                <Text c="dimmed">This module has no configuration.</Text>
+                <Text c="dimmed">{t('modules.no_config')}</Text>
               )}
             </Stack>
           </Tabs.Panel>
@@ -98,6 +100,7 @@ export default function Modules() {
 }
 
 function ModuleConfigForm({ module }: { module: string }) {
+  const { t } = useTranslation();
   const [schema, setSchema] = useState<Schema | null>(null);
   // string/number/tags values live here as-is; json fields hold raw JSON text.
   const [values, setValues] = useState<Record<string, unknown>>({});
@@ -138,7 +141,7 @@ function ModuleConfigForm({ module }: { module: string }) {
         try {
           body[name] = JSON.parse(String(value));
         } catch {
-          setError(`${name}: invalid JSON`);
+          setError(t('modules.field_invalid_json', { name }));
           setSuccess(null);
           return;
         }
@@ -154,7 +157,7 @@ function ModuleConfigForm({ module }: { module: string }) {
     try {
       await apiSend('PUT', `/config/${module}`, body);
       await load();
-      setSuccess('Saved — applies from the next processed ticket');
+      setSuccess(t('modules.saved'));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -163,13 +166,13 @@ function ModuleConfigForm({ module }: { module: string }) {
   };
 
   const reset = async () => {
-    if (!window.confirm(`Reset the "${module}" config to env/yaml defaults?`)) return;
+    if (!window.confirm(t('modules.reset_confirm', { name: module }))) return;
     setError(null);
     setSuccess(null);
     try {
       await apiSend('DELETE', `/config/${module}`);
       await load();
-      setSuccess('Config reset to defaults');
+      setSuccess(t('modules.config_reset'));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -197,10 +200,10 @@ function ModuleConfigForm({ module }: { module: string }) {
       ))}
       <Group>
         <Button onClick={save} loading={busy}>
-          Save
+          {t('common.btn_save')}
         </Button>
         <Button variant="subtle" color="red" onClick={reset}>
-          Reset to defaults
+          {t('common.btn_reset_defaults')}
         </Button>
       </Group>
     </Stack>
@@ -213,6 +216,7 @@ function ConfigField(props: {
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
+  const { t } = useTranslation();
   const { name, prop, value, onChange } = props;
   const { kind, nullable } = fieldKind(prop);
   const description = prop.description;
@@ -280,7 +284,7 @@ function ConfigField(props: {
           autosize
           minRows={3}
           formatOnBlur
-          validationError="Invalid JSON"
+          validationError={t('common.invalid_json')}
         />
       );
   }

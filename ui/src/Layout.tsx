@@ -1,18 +1,45 @@
-import { ActionIcon, Alert, Anchor, AppShell, Badge, Group, NavLink, Title, Tooltip } from '@mantine/core';
+import { ActionIcon, Alert, Anchor, AppShell, Badge, Button, Group, Menu, NavLink, Title, Tooltip } from '@mantine/core';
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
 import { fetchHealth, fetchSetupStatus, Health, SetupStatus } from './api';
 
 const NAV = [
-  { to: '/setup', label: 'Setup' },
-  { to: '/connections', label: 'Connections' },
-  { to: '/modules', label: 'Modules' },
-  { to: '/prompts', label: 'Prompts' },
-  { to: '/runs', label: 'Runs' },
+  { to: '/setup', key: 'nav.setup' },
+  { to: '/connections', key: 'nav.connections' },
+  { to: '/modules', key: 'nav.modules' },
+  { to: '/prompts', key: 'nav.prompts' },
+  { to: '/runs', key: 'nav.runs' },
 ];
 
 const REPO_URL = 'https://github.com/knowitop/itop-ai-assistant';
+
+const LANGUAGES = [
+  { value: 'en', label: 'English' },
+  { value: 'ru', label: 'Русский' },
+];
+
+// Translate icon — same style as other step icons in SetupWizard (Tabler, MIT).
+const LanguageIcon = () => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width={14}
+    height={14}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M4 5h7" />
+    <path d="M9 3v2c0 4.418 -2.239 8 -5 8" />
+    <path d="M5 9c-.003 2.144 2.952 3.908 6.7 4" />
+    <path d="M12 20l4 -9l4 9" />
+    <path d="M19.1 18h-6.2" />
+  </svg>
+);
 
 // Inline SVG keeps the "minimal dependencies" rule — no icon library.
 const GithubIcon = () => (
@@ -22,6 +49,7 @@ const GithubIcon = () => (
 );
 
 export default function Layout() {
+  const { t, i18n } = useTranslation();
   const location = useLocation();
   const [health, setHealth] = useState<Health | null>(null);
   const [setup, setSetup] = useState<SetupStatus | null>(null);
@@ -32,27 +60,35 @@ export default function Layout() {
     fetchSetupStatus().then(setSetup).catch(() => setSetup(null));
   }, [location.pathname]);
 
+  const currentLang = LANGUAGES.find((l) => l.value === i18n.language)?.value ?? LANGUAGES[0].value;
+  const currentLabel = LANGUAGES.find((l) => l.value === currentLang)?.label ?? currentLang;
+
+  const changeLanguage = (lang: string) => {
+    void i18n.changeLanguage(lang);
+    localStorage.setItem('locale', lang);
+  };
+
   return (
     <AppShell header={{ height: 56 }} navbar={{ width: 220, breakpoint: 'sm' }} padding="md">
       <AppShell.Header>
         <Group h="100%" px="md" justify="space-between">
-          <Title order={4}>iTop AI Assistant</Title>
-          <Group gap="xs">
+          <Title order={4}>{t('app.title')}</Title>
+          <Group gap="sm">
             {health ? (
               <Badge color={health.redis ? 'green' : 'yellow'} variant="light">
-                {health.redis ? 'redis ok' : 'redis degraded'}
+                {health.redis ? t('layout.redis_ok') : t('layout.redis_degraded')}
               </Badge>
             ) : (
               <Badge color="red" variant="light">
-                offline
+                {t('layout.offline')}
               </Badge>
             )}
             {setup && (
               <Badge color={setup.configured ? 'green' : 'orange'} variant="light">
-                {setup.configured ? 'configured' : 'setup required'}
+                {setup.configured ? t('layout.configured') : t('layout.setup_required')}
               </Badge>
             )}
-            <Tooltip label="GitHub repository">
+            <Tooltip label={t('layout.github_tooltip')}>
               <ActionIcon
                 component="a"
                 href={REPO_URL}
@@ -60,11 +96,35 @@ export default function Layout() {
                 rel="noopener noreferrer"
                 variant="subtle"
                 color="gray"
-                aria-label="GitHub repository"
+                aria-label={t('layout.github_tooltip')}
               >
                 <GithubIcon />
               </ActionIcon>
             </Tooltip>
+            <Menu shadow="sm" position="bottom-end">
+              <Menu.Target>
+                <Button
+                    variant="subtle"
+                    color="gray"
+                    size="xs"
+                    leftSection={<LanguageIcon />}
+                    px={6}
+                >
+                  {currentLabel}
+                </Button>
+              </Menu.Target>
+              <Menu.Dropdown>
+                {LANGUAGES.map((lang) => (
+                    <Menu.Item
+                        key={lang.value}
+                        onClick={() => changeLanguage(lang.value)}
+                        fw={lang.value === currentLang ? 600 : undefined}
+                    >
+                      {lang.label}
+                    </Menu.Item>
+                ))}
+              </Menu.Dropdown>
+            </Menu>
           </Group>
         </Group>
       </AppShell.Header>
@@ -74,18 +134,17 @@ export default function Layout() {
             key={item.to}
             component={Link}
             to={item.to}
-            label={item.label}
+            label={t(item.key)}
             active={location.pathname.startsWith(item.to)}
           />
         ))}
       </AppShell.Navbar>
       <AppShell.Main>
         {setup && !setup.configured && location.pathname !== '/setup' && (
-          <Alert color="orange" mb="md" title="Setup required">
-            The assistant is not configured yet — /webhook returns 503 until the LLM and iTop
-            connections are set.{' '}
+          <Alert color="orange" mb="md" title={t('layout.alert_title')}>
+            {t('layout.alert_body')}{' '}
             <Anchor component={Link} to="/setup">
-              Run the setup wizard
+              {t('layout.alert_link')}
             </Anchor>
             .
           </Alert>

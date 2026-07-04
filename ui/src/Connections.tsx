@@ -18,6 +18,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 
 import { apiGet, apiSend, setToken } from './api';
 
@@ -28,21 +29,23 @@ interface SectionData {
   secrets: Record<string, boolean>;
 }
 
-// One placeholder style for every secret field, here and in the wizard.
-function secretPlaceholder(isSet: boolean): string {
-  return isSet ? '•••• (already set — leave empty to keep)' : 'not set';
+async function resetSection(section: string, confirmMsg: string): Promise<boolean> {
+  if (!window.confirm(confirmMsg)) return false;
+  await apiSend('DELETE', `/setup/${section}`);
+  return true;
 }
 
 export default function Connections() {
+  const { t } = useTranslation();
   return (
     <Stack>
-      <Title order={2}>Connections</Title>
+      <Title order={2}>{t('connections.title')}</Title>
       <Tabs defaultValue="itop" keepMounted={false}>
         <Tabs.List>
-          <Tabs.Tab value="itop">iTop</Tabs.Tab>
-          <Tabs.Tab value="llm">LLM</Tabs.Tab>
-          <Tabs.Tab value="security">Security</Tabs.Tab>
-          <Tabs.Tab value="ticket_mapping">Ticket mapping</Tabs.Tab>
+          <Tabs.Tab value="itop">{t('connections.tab_itop')}</Tabs.Tab>
+          <Tabs.Tab value="llm">{t('connections.tab_llm')}</Tabs.Tab>
+          <Tabs.Tab value="security">{t('connections.tab_security')}</Tabs.Tab>
+          <Tabs.Tab value="ticket_mapping">{t('connections.tab_ticket_mapping')}</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="itop" pt="md">
           <ItopForm />
@@ -78,13 +81,8 @@ function StatusAlert({ error, success }: { error: string | null; success: string
   return null;
 }
 
-async function resetSection(section: string): Promise<boolean> {
-  if (!window.confirm(`Reset the "${section}" section to env/yaml defaults?`)) return false;
-  await apiSend('DELETE', `/setup/${section}`);
-  return true;
-}
-
 function ItopForm() {
+  const { t } = useTranslation();
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -144,8 +142,9 @@ function ItopForm() {
         '/setup/test-itop',
         body(),
       );
-      if (result.ok) setSuccess(`Connection OK — AI service account: ${result.ai_person}`);
-      else setError(result.error ?? 'Connection test failed');
+      if (result.ok)
+        setSuccess(t('common.conn_test_ok', { account: result.ai_person }));
+      else setError(result.error ?? t('common.error_conn_failed'));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -160,7 +159,7 @@ function ItopForm() {
     try {
       await apiSend<SectionData>('PATCH', '/setup/itop', body());
       await load();
-      setSuccess('Saved');
+      setSuccess(t('common.saved'));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -172,9 +171,9 @@ function ItopForm() {
     setError(null);
     setSuccess(null);
     try {
-      if (!(await resetSection('itop'))) return;
+      if (!(await resetSection('itop', t('connections.reset_confirm', { section: 'itop' })))) return;
       await load();
-      setSuccess('Section reset to defaults');
+      setSuccess(t('common.section_reset'));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -186,54 +185,63 @@ function ItopForm() {
     <Stack maw={560}>
       <StatusAlert error={error} success={success} />
       <TextInput
-        label="REST API URL"
+        label={t('common.field_rest_api_url')}
         placeholder="http://itop.example.com/webservices/rest.php"
         value={url}
         onChange={(e) => setUrl(e.currentTarget.value)}
       />
       <Group grow>
         <TextInput
-          label="API version"
+          label={t('common.field_api_version')}
           value={apiVersion}
           onChange={(e) => setApiVersion(e.currentTarget.value)}
         />
-        <NumberInput label="Timeout (seconds)" min={1} value={timeout_} onChange={setTimeout_} />
+        <NumberInput
+          label={t('common.field_timeout_seconds')}
+          min={1}
+          value={timeout_}
+          onChange={setTimeout_}
+        />
       </Group>
       <SegmentedControl
         value={auth}
         onChange={(value) => setAuth(value as 'basic' | 'token')}
         data={[
-          { label: 'User + password', value: 'basic' },
-          { label: 'Token', value: 'token' },
+          { label: t('common.auth_user_password'), value: 'basic' },
+          { label: t('common.auth_token'), value: 'token' },
         ]}
       />
       {auth === 'basic' ? (
         <Group grow align="start">
-          <TextInput label="User" value={user} onChange={(e) => setUser(e.currentTarget.value)} />
+          <TextInput
+            label={t('common.field_user')}
+            value={user}
+            onChange={(e) => setUser(e.currentTarget.value)}
+          />
           <PasswordInput
-            label="Password"
-            placeholder={secretPlaceholder(secrets.pwd)}
+            label={t('common.field_password')}
+            placeholder={secrets.pwd ? t('common.secret_is_set') : t('common.secret_not_set')}
             value={pwd}
             onChange={(e) => setPwd(e.currentTarget.value)}
           />
         </Group>
       ) : (
         <PasswordInput
-          label="Token"
-          placeholder={secretPlaceholder(secrets.token)}
+          label={t('common.field_token')}
+          placeholder={secrets.token ? t('common.secret_is_set') : t('common.secret_not_set')}
           value={token}
           onChange={(e) => setTokenValue(e.currentTarget.value)}
         />
       )}
       <Group>
         <Button onClick={save} loading={busy}>
-          Save
+          {t('common.btn_save')}
         </Button>
         <Button variant="default" onClick={test} loading={busy}>
-          Test connection
+          {t('common.btn_test_connection')}
         </Button>
         <Button variant="subtle" color="red" onClick={reset}>
-          Reset to defaults
+          {t('common.btn_reset_defaults')}
         </Button>
       </Group>
     </Stack>
@@ -256,6 +264,7 @@ const PROVISION_STATUS_COLORS: Record<ProvisionItem['status'], string> = {
 // Deliberate copy of the wizard's webhooks step (same duplication pattern as
 // the connection forms) so webhooks can be (re)provisioned without the wizard.
 function ItopWebhooksForm() {
+  const { t } = useTranslation();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState<ProvisionItem[] | null>(null);
@@ -284,7 +293,7 @@ function ItopWebhooksForm() {
         body,
       );
       if (result.ok) setReport(result.report ?? []);
-      else setError(result.error ?? 'Provisioning failed');
+      else setError(result.error ?? t('common.error_provisioning_failed'));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -294,20 +303,18 @@ function ItopWebhooksForm() {
 
   return (
     <Stack maw={560}>
-      <Title order={4}>iTop webhooks</Title>
+      <Title order={4}>{t('connections.webhooks_title')}</Title>
       {error && (
         <Alert color="red" style={{ whiteSpace: 'pre-wrap' }}>
           {error}
         </Alert>
       )}
       <Text c="dimmed" size="sm">
-        Creates the triggers and webhooks in iTop that call this assistant (uses the saved webhook
-        token). Requires an iTop <b>administrator</b> account — the credentials are used once and
-        never stored. Existing objects are left untouched.
+        <Trans i18nKey="connections.webhooks_desc" components={{ b: <b /> }} />
       </Text>
       <TextInput
-        label="Backend URL"
-        description="This assistant as reachable from the iTop server"
+        label={t('common.field_backend_url')}
+        description={t('common.field_backend_url_desc')}
         value={backendUrl}
         onChange={(e) => setBackendUrl(e.currentTarget.value)}
       />
@@ -315,22 +322,26 @@ function ItopWebhooksForm() {
         value={auth}
         onChange={(value) => setAuth(value as 'basic' | 'token')}
         data={[
-          { label: 'Admin user + password', value: 'basic' },
-          { label: 'Admin token', value: 'token' },
+          { label: t('common.auth_admin_user_password'), value: 'basic' },
+          { label: t('common.auth_admin_token'), value: 'token' },
         ]}
       />
       {auth === 'basic' ? (
         <Group grow align="start">
-          <TextInput label="Admin user" value={user} onChange={(e) => setUser(e.currentTarget.value)} />
+          <TextInput
+            label={t('common.field_admin_user')}
+            value={user}
+            onChange={(e) => setUser(e.currentTarget.value)}
+          />
           <PasswordInput
-            label="Admin password"
+            label={t('common.field_admin_password')}
             value={pwd}
             onChange={(e) => setPwd(e.currentTarget.value)}
           />
         </Group>
       ) : (
         <PasswordInput
-          label="Admin token"
+          label={t('common.field_admin_token')}
           value={token}
           onChange={(e) => setTokenValue(e.currentTarget.value)}
         />
@@ -361,7 +372,7 @@ function ItopWebhooksForm() {
           loading={busy}
           disabled={!backendUrl || (auth === 'basic' ? !user || !pwd : !token)}
         >
-          Configure iTop
+          {t('common.btn_configure_itop')}
         </Button>
       </Group>
     </Stack>
@@ -369,6 +380,7 @@ function ItopWebhooksForm() {
 }
 
 function LlmForm() {
+  const { t } = useTranslation();
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -414,8 +426,8 @@ function LlmForm() {
         '/setup/test-llm',
         body(),
       );
-      if (result.ok) setSuccess(`Model responded: ${result.response}`);
-      else setError(result.error ?? 'LLM test failed');
+      if (result.ok) setSuccess(t('common.llm_test_ok', { response: result.response }));
+      else setError(result.error ?? t('common.error_llm_failed'));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -430,7 +442,7 @@ function LlmForm() {
     try {
       await apiSend<SectionData>('PATCH', '/setup/llm', body());
       await load();
-      setSuccess('Saved');
+      setSuccess(t('common.saved'));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -439,13 +451,13 @@ function LlmForm() {
   };
 
   const clearApiKey = async () => {
-    if (!window.confirm('Clear the stored API key?')) return;
+    if (!window.confirm(t('connections.api_key_clear_confirm'))) return;
     setError(null);
     setSuccess(null);
     try {
       await apiSend<SectionData>('PATCH', '/setup/llm', { api_key: null });
       await load();
-      setSuccess('API key cleared');
+      setSuccess(t('connections.api_key_cleared'));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -455,9 +467,9 @@ function LlmForm() {
     setError(null);
     setSuccess(null);
     try {
-      if (!(await resetSection('llm'))) return;
+      if (!(await resetSection('llm', t('connections.reset_confirm', { section: 'llm' })))) return;
       await load();
-      setSuccess('Section reset to defaults');
+      setSuccess(t('common.section_reset'));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -469,48 +481,48 @@ function LlmForm() {
     <Stack maw={560}>
       <StatusAlert error={error} success={success} />
       <TextInput
-        label="Base URL"
-        description="OpenAI-compatible endpoint, e.g. http://localhost:1234/v1"
+        label={t('common.field_base_url')}
+        description={t('connections.llm_base_url_desc')}
         placeholder="http://localhost:1234/v1"
         value={baseUrl}
         onChange={(e) => setBaseUrl(e.currentTarget.value)}
       />
       <TextInput
-        label="Model"
-        description="Model name as exposed by the endpoint"
+        label={t('common.field_model')}
+        description={t('connections.llm_model_desc')}
         value={model}
         onChange={(e) => setModel(e.currentTarget.value)}
       />
       <PasswordInput
-        label="API key"
-        placeholder={secretPlaceholder(secrets.api_key)}
-        description={secrets.api_key ? undefined : 'Omit for local LM Studio'}
+        label={t('common.field_api_key')}
+        placeholder={secrets.api_key ? t('common.secret_is_set') : t('common.secret_not_set')}
+        description={secrets.api_key ? undefined : t('connections.llm_api_key_desc')}
         value={apiKey}
         onChange={(e) => setApiKey(e.currentTarget.value)}
         rightSectionWidth={70}
         rightSection={
           secrets.api_key ? (
             <Button size="compact-xs" variant="subtle" color="red" onClick={clearApiKey}>
-              Clear
+              {t('common.btn_clear')}
             </Button>
           ) : null
         }
       />
       <TagsInput
-        label="Think tags"
-        description="Tag names stripped as inline reasoning blocks"
+        label={t('common.field_think_tags')}
+        description={t('connections.llm_think_tags_desc')}
         value={thinkTags}
         onChange={setThinkTags}
       />
       <Group>
         <Button onClick={save} loading={busy}>
-          Save
+          {t('common.btn_save')}
         </Button>
         <Button variant="default" onClick={test} loading={busy}>
-          Test LLM
+          {t('common.btn_test_llm')}
         </Button>
         <Button variant="subtle" color="red" onClick={reset}>
-          Reset to defaults
+          {t('common.btn_reset_defaults')}
         </Button>
       </Group>
     </Stack>
@@ -518,6 +530,7 @@ function LlmForm() {
 }
 
 function SecurityForm() {
+  const { t } = useTranslation();
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -553,7 +566,7 @@ function SecurityForm() {
       // store it right away so the very next request still passes.
       if (adminToken) setToken(adminToken);
       await load();
-      setSuccess('Saved');
+      setSuccess(t('common.saved'));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -564,15 +577,15 @@ function SecurityForm() {
   const clear = async (field: 'webhook_token' | 'admin_token') => {
     const warning =
       field === 'admin_token'
-        ? 'Clear the admin token? The admin API becomes open to anyone who can reach it.'
-        : 'Clear the webhook token? /webhook will accept unauthenticated requests.';
+        ? t('connections.clear_admin_token_confirm')
+        : t('connections.clear_webhook_token_confirm');
     if (!window.confirm(warning)) return;
     setError(null);
     setSuccess(null);
     try {
       await apiSend<SectionData>('PATCH', '/setup/security', { [field]: null });
       await load();
-      setSuccess(`${field} cleared`);
+      setSuccess(t(`connections.${field}_cleared`));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -584,20 +597,19 @@ function SecurityForm() {
     <Stack maw={560}>
       <StatusAlert error={error} success={success} />
       <Text c="dimmed" size="sm">
-        Tokens are write-only: the current values are never shown. Use the generate buttons to
-        create a strong random token, then copy it before saving.
+        {t('connections.security_desc')}
       </Text>
       <TokenField
-        label="Webhook token"
-        description="Set the same value in the iTop Remote Application Connection (X-Auth-Token header)"
+        label={t('common.field_webhook_token')}
+        description={t('connections.security_webhook_token_desc')}
         isSet={secrets.webhook_token}
         value={webhookToken}
         onChange={setWebhookToken}
         onClear={() => clear('webhook_token')}
       />
       <TokenField
-        label="Admin token"
-        description="Bearer token for this UI and the /api endpoints; saved to this browser automatically"
+        label={t('common.field_admin_token')}
+        description={t('connections.security_admin_token_desc')}
         isSet={secrets.admin_token}
         value={adminToken}
         onChange={setAdminToken}
@@ -605,7 +617,7 @@ function SecurityForm() {
       />
       <Group>
         <Button onClick={save} loading={busy} disabled={!webhookToken && !adminToken}>
-          Save
+          {t('common.btn_save')}
         </Button>
       </Group>
     </Stack>
@@ -620,6 +632,7 @@ function TokenField(props: {
   onChange: (value: string) => void;
   onClear: () => void;
 }) {
+  const { t } = useTranslation();
   // crypto.getRandomValues works on plain http too, unlike crypto.randomUUID.
   const generate = () => {
     const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -630,13 +643,13 @@ function TokenField(props: {
       <TextInput
         label={props.label}
         description={props.description}
-        placeholder={secretPlaceholder(props.isSet)}
+        placeholder={props.isSet ? t('common.secret_is_set') : t('common.secret_not_set')}
         value={props.value}
         onChange={(e) => props.onChange(e.currentTarget.value)}
       />
       <Group gap="xs">
         <Button size="compact-xs" variant="default" onClick={generate}>
-          Generate
+          {t('common.btn_generate')}
         </Button>
         {props.value && navigator.clipboard && (
           <Button
@@ -644,12 +657,12 @@ function TokenField(props: {
             variant="default"
             onClick={() => navigator.clipboard.writeText(props.value)}
           >
-            Copy
+            {t('common.btn_copy')}
           </Button>
         )}
         {props.isSet && (
           <Button size="compact-xs" variant="subtle" color="red" onClick={props.onClear}>
-            Clear
+            {t('common.btn_clear')}
           </Button>
         )}
       </Group>
@@ -658,6 +671,7 @@ function TokenField(props: {
 }
 
 function TicketMappingForm() {
+  const { t } = useTranslation();
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -679,7 +693,7 @@ function TicketMappingForm() {
     try {
       parsed = JSON.parse(text);
     } catch {
-      setError('Invalid JSON');
+      setError(t('common.invalid_json'));
       setSuccess(null);
       return;
     }
@@ -689,7 +703,7 @@ function TicketMappingForm() {
     try {
       await apiSend<SectionData>('PATCH', '/setup/ticket_mapping', parsed);
       await load();
-      setSuccess('Saved');
+      setSuccess(t('common.saved'));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -701,9 +715,15 @@ function TicketMappingForm() {
     setError(null);
     setSuccess(null);
     try {
-      if (!(await resetSection('ticket_mapping'))) return;
+      if (
+        !(await resetSection(
+          'ticket_mapping',
+          t('connections.reset_confirm', { section: 'ticket_mapping' }),
+        ))
+      )
+        return;
       await load();
-      setSuccess('Section reset to defaults');
+      setSuccess(t('common.section_reset'));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -715,9 +735,7 @@ function TicketMappingForm() {
     <Stack maw={720}>
       <StatusAlert error={error} success={success} />
       <Text c="dimmed" size="sm">
-        Maps semantic ticket fields onto the iTop datamodel: <code>fields</code> (semantic name →
-        attribute code, null = attribute absent), <code>class_overrides</code> (per-class
-        differences), <code>active_statuses</code> (when the assistant may act).
+        <Trans i18nKey="connections.ticket_mapping_desc" components={{ code: <code /> }} />
       </Text>
       <JsonInput
         value={text}
@@ -725,14 +743,14 @@ function TicketMappingForm() {
         autosize
         minRows={12}
         formatOnBlur
-        validationError="Invalid JSON"
+        validationError={t('common.invalid_json')}
       />
       <Group>
         <Button onClick={save} loading={busy}>
-          Save
+          {t('common.btn_save')}
         </Button>
         <Button variant="subtle" color="red" onClick={reset}>
-          Reset to defaults
+          {t('common.btn_reset_defaults')}
         </Button>
       </Group>
     </Stack>

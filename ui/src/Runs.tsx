@@ -13,6 +13,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { apiGet } from './api';
 
@@ -63,6 +64,7 @@ function formatDuration(run: Run): string {
 }
 
 export default function Runs() {
+  const { t } = useTranslation();
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ticket, setTicket] = useState('');
@@ -99,22 +101,22 @@ export default function Runs() {
   return (
     <Stack>
       <Group justify="space-between" align="flex-end">
-        <Title order={2}>Runs</Title>
+        <Title order={2}>{t('runs.title')}</Title>
         <Text size="xs" c="dimmed">
-          Auto-refresh every {POLL_MS / 1000}s
+          {t('runs.auto_refresh', { seconds: POLL_MS / 1000 })}
         </Text>
       </Group>
       <Group align="flex-end">
         <TextInput
-          label="Ticket"
-          placeholder="UserRequest::123 (exact match)"
+          label={t('common.field_ticket')}
+          placeholder={t('runs.ticket_placeholder')}
           value={ticket}
           onChange={(e) => setTicket(e.currentTarget.value)}
           w={260}
         />
         <Select
-          label="Status"
-          placeholder="any"
+          label={t('common.field_status')}
+          placeholder={t('runs.status_placeholder')}
           data={['running', 'done', 'failed']}
           value={status}
           onChange={setStatus}
@@ -126,19 +128,21 @@ export default function Runs() {
       {!runs ? (
         <Loader />
       ) : runs.length === 0 ? (
-        <Text c="dimmed">No runs recorded{ticket.trim() || status ? ' for this filter' : ' yet'}.</Text>
+        <Text c="dimmed">
+          {t(ticket.trim() || status ? 'runs.no_runs_filtered' : 'runs.no_runs')}
+        </Text>
       ) : (
         <Grid>
           <Grid.Col span={{ base: 12, lg: 7 }}>
             <Table highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>Started</Table.Th>
-                  <Table.Th>Ticket</Table.Th>
-                  <Table.Th>Module</Table.Th>
-                  <Table.Th>Event</Table.Th>
-                  <Table.Th>Status</Table.Th>
-                  <Table.Th>Duration</Table.Th>
+                  <Table.Th>{t('runs.col_started')}</Table.Th>
+                  <Table.Th>{t('runs.col_ticket')}</Table.Th>
+                  <Table.Th>{t('runs.col_module')}</Table.Th>
+                  <Table.Th>{t('runs.col_event')}</Table.Th>
+                  <Table.Th>{t('runs.col_status')}</Table.Th>
+                  <Table.Th>{t('runs.col_duration')}</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -168,7 +172,7 @@ export default function Runs() {
               <RunDetail key={selectedId} id={selectedId} tick={tick} />
             ) : (
               <Text c="dimmed" mt="sm">
-                Select a run to see its steps.
+                {t('runs.select_run')}
               </Text>
             )}
           </Grid.Col>
@@ -179,6 +183,7 @@ export default function Runs() {
 }
 
 function RunDetail({ id, tick }: { id: string; tick: number }) {
+  const { t } = useTranslation();
   const [run, setRun] = useState<Run | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -201,6 +206,20 @@ function RunDetail({ id, tick }: { id: string; tick: number }) {
   if (error && !run) return <Alert color="red">{error}</Alert>;
   if (!run) return <Loader />;
 
+  const detailText = run.finished_at
+    ? t('runs.detail_finished', {
+        module: run.module,
+        event: run.event,
+        started: formatWhen(run.started_at),
+        finished: formatWhen(run.finished_at),
+        duration: formatDuration(run),
+      })
+    : t('runs.detail_running', {
+        module: run.module,
+        event: run.event,
+        started: formatWhen(run.started_at),
+      });
+
   return (
     <Stack gap="sm">
       <Group>
@@ -208,16 +227,15 @@ function RunDetail({ id, tick }: { id: string; tick: number }) {
         <StatusBadge status={run.status} />
       </Group>
       <Text size="sm" c="dimmed">
-        {run.module} / {run.event} · started {formatWhen(run.started_at)}
-        {run.finished_at ? ` · finished ${formatWhen(run.finished_at)} (${formatDuration(run)})` : ''}
+        {detailText}
       </Text>
       {run.error && (
-        <Alert color="red" title="Error" style={{ whiteSpace: 'pre-wrap' }}>
+        <Alert color="red" title={t('runs.error_title')} style={{ whiteSpace: 'pre-wrap' }}>
           {run.error}
         </Alert>
       )}
       {run.steps.length === 0 ? (
-        <Text c="dimmed">No steps recorded.</Text>
+        <Text c="dimmed">{t('runs.no_steps')}</Text>
       ) : (
         <Timeline active={run.steps.length - 1} bulletSize={18} lineWidth={2}>
           {run.steps.map((step, index) => (

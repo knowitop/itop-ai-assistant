@@ -13,6 +13,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { apiGet, apiSend } from './api';
 
@@ -29,6 +30,7 @@ interface ModulePrompts {
 }
 
 export default function Prompts() {
+  const { t } = useTranslation();
   const [modules, setModules] = useState<ModuleInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,11 +42,11 @@ export default function Prompts() {
 
   if (error) return <Alert color="red">{error}</Alert>;
   if (!modules) return <Loader />;
-  if (modules.length === 0) return <Text c="dimmed">No modules with prompts.</Text>;
+  if (modules.length === 0) return <Text c="dimmed">{t('prompts.no_prompts')}</Text>;
 
   return (
     <Stack>
-      <Title order={2}>Prompts</Title>
+      <Title order={2}>{t('prompts.title')}</Title>
       <Tabs defaultValue={modules[0].name} keepMounted={false}>
         <Tabs.List>
           {modules.map((m) => (
@@ -64,6 +66,7 @@ export default function Prompts() {
 }
 
 function ModulePromptsEditor({ module }: { module: string }) {
+  const { t } = useTranslation();
   const [data, setData] = useState<ModulePrompts | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [text, setText] = useState('');
@@ -92,7 +95,7 @@ function ModulePromptsEditor({ module }: { module: string }) {
   const dirty = selected !== null && text !== data.prompts[selected];
 
   const pick = (name: string) => {
-    if (dirty && !window.confirm('Discard unsaved changes to the current prompt?')) return;
+    if (dirty && !window.confirm(t('prompts.discard_confirm'))) return;
     setSelected(name);
     setText(data.prompts[name]);
     setError(null);
@@ -107,7 +110,7 @@ function ModulePromptsEditor({ module }: { module: string }) {
     try {
       await apiSend('PUT', `/prompts/${module}/${selected}`, { text });
       await load(selected);
-      setSuccess('Saved — applies from the next processed ticket');
+      setSuccess(t('prompts.saved'));
     } catch (e) {
       // 422 carries the placeholder-validation message — show it verbatim.
       setError((e as Error).message);
@@ -118,14 +121,14 @@ function ModulePromptsEditor({ module }: { module: string }) {
 
   const reset = async () => {
     if (!selected) return;
-    if (!window.confirm(`Reset prompt "${selected}" to the built-in default?`)) return;
+    if (!window.confirm(t('prompts.reset_confirm', { name: selected }))) return;
     setBusy(true);
     setError(null);
     setSuccess(null);
     try {
       await apiSend('DELETE', `/prompts/${module}/${selected}`);
       await load(selected);
-      setSuccess('Prompt reset to default');
+      setSuccess(t('prompts.reset_done'));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -145,7 +148,7 @@ function ModulePromptsEditor({ module }: { module: string }) {
             rightSection={
               overridden.has(name) ? (
                 <Badge size="xs" color="orange" variant="light">
-                  overridden
+                  {t('prompts.badge_overridden')}
                 </Badge>
               ) : null
             }
@@ -173,16 +176,16 @@ function ModulePromptsEditor({ module }: { module: string }) {
             />
             <Group>
               <Button onClick={save} loading={busy} disabled={!dirty}>
-                Save
+                {t('common.btn_save')}
               </Button>
               {overridden.has(selected) && (
                 <Button variant="subtle" color="red" onClick={reset} loading={busy}>
-                  Reset to default
+                  {t('common.btn_reset_default')}
                 </Button>
               )}
               {dirty && (
                 <Text c="dimmed" size="sm">
-                  Unsaved changes
+                  {t('prompts.unsaved')}
                 </Text>
               )}
             </Group>

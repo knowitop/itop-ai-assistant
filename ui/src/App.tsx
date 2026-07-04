@@ -1,5 +1,6 @@
 import { Button, Center, MantineProvider, PasswordInput, Stack, Text, Title } from '@mantine/core';
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 
 import { setToken, setUnauthorizedHandler } from './api';
@@ -46,6 +47,7 @@ export default function App() {
 }
 
 function TokenGate() {
+  const { t } = useTranslation();
   const [value, setValue] = useState('');
 
   const save = () => {
@@ -57,10 +59,10 @@ function TokenGate() {
   return (
     <Center h="100vh">
       <Stack w={360}>
-        <Title order={3}>iTop AI Assistant</Title>
-        <Text c="dimmed">The admin API rejected the request. Enter the admin token to continue.</Text>
+        <Title order={3}>{t('app.title')}</Title>
+        <Text c="dimmed">{t('app.token_gate_desc')}</Text>
         <PasswordInput
-          label="Admin token"
+          label={t('app.field_admin_token')}
           value={value}
           onChange={(event) => setValue(event.currentTarget.value)}
           onKeyDown={(event) => {
@@ -69,7 +71,7 @@ function TokenGate() {
           data-autofocus
         />
         <Button onClick={save} disabled={!value.trim()}>
-          Save token
+          {t('app.btn_save_token')}
         </Button>
       </Stack>
     </Center>
