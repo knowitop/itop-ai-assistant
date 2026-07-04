@@ -16,8 +16,18 @@ const NAV = [
 const REPO_URL = 'https://github.com/knowitop/itop-ai-assistant';
 
 const LANGUAGES = [
-  { value: 'en', label: 'English' },
-  { value: 'ru', label: 'Русский' },
+  { value: 'en', label: 'English' },        // ~1.5B speakers
+  { value: 'zh', label: '中文' },            // ~1.1B
+  { value: 'es', label: 'Español' },        // ~480M
+  { value: 'fr', label: 'Français' },       // ~280M
+  { value: 'ru', label: 'Русский' },        // ~150M
+  { value: 'de', label: 'Deutsch' },        // ~130M
+  { value: 'it', label: 'Italiano' },       // ~65M
+  { value: 'pl', label: 'Polski' },         // ~45M
+  { value: 'uk', label: 'Українська' },     // ~40M
+  { value: 'kk', label: 'Қазақша' },       // ~15M
+  { value: 'cs', label: 'Čeština' },        // ~10M
+  { value: 'sk', label: 'Slovenčina' },     // ~5M
 ];
 
 // Translate icon — same style as other step icons in SetupWizard (Tabler, MIT).
