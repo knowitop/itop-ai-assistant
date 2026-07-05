@@ -130,6 +130,8 @@ Once running:
 
 Open `http://localhost:8001/ui` — the **Setup Wizard** starts automatically and walks you through all the required steps.
 
+![setup_wizard.png](docs/setup_wizard.png)
+
 ---
 
 ## Documentation

@@ -19,9 +19,9 @@ services:
 
   assistant:
     image: ghcr.io/knowitop/itop-ai-assistant:latest
-    build:
-      context: ..
-      dockerfile: assistant/Dockerfile
+#    build:
+#      context: ..
+#      dockerfile: assistant/Dockerfile
     ports:
       - "8001:8000"
     depends_on:
