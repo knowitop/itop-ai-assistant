@@ -86,7 +86,7 @@
     "step_webhooks_label": "Вебхуки iTop",
     "step_webhooks_desc": "Триггеры в iTop",
     "step_llm_label": "LLM",
-    "step_llm_desc": "Конечная точка модели",
+    "step_llm_desc": "API и модель",
     "security_copy_alert": "Скопируйте токены сейчас — они показываются только один раз. Токен администратора сохраняется в браузере автоматически; токен вебхука нужно указать в настройках iTop (заголовок <code>X-Auth-Token</code>) на следующем шаге.",
     "security_webhook_token_desc": "Общий секрет для POST /webhook",
     "security_admin_token_desc": "Bearer-токен для этого UI и эндпоинтов /api",
