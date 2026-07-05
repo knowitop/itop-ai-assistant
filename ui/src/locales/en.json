@@ -162,6 +162,8 @@
     "col_duration": "Duration",
     "error_title": "Error",
     "detail_running": "{{module}} / {{event}} · started {{started}}",
-    "detail_finished": "{{module}} / {{event}} · started {{started}} · finished {{finished}} ({{duration}})"
+    "detail_finished": "{{module}} / {{event}} · started {{started}} · finished {{finished}} ({{duration}})",
+    "field_run_id": "Run ID",
+    "run_id_placeholder": "Paste processing_id from webhook response"
   }
 }

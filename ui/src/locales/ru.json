@@ -162,6 +162,8 @@
     "col_duration": "Длительность",
     "error_title": "Ошибка",
     "detail_running": "{{module}} / {{event}} · начало {{started}}",
-    "detail_finished": "{{module}} / {{event}} · начало {{started}} · завершён {{finished}} ({{duration}})"
+    "detail_finished": "{{module}} / {{event}} · начало {{started}} · завершён {{finished}} ({{duration}})",
+    "field_run_id": "Run ID",
+    "run_id_placeholder": "Вставьте processing_id из ответа webhook"
   }
 }

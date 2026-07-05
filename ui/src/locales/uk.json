@@ -162,6 +162,8 @@
     "col_duration": "Тривалість",
     "error_title": "Помилка",
     "detail_running": "{{module}} / {{event}} · розпочато {{started}}",
-    "detail_finished": "{{module}} / {{event}} · розпочато {{started}} · завершено {{finished}} ({{duration}})"
+    "detail_finished": "{{module}} / {{event}} · розпочато {{started}} · завершено {{finished}} ({{duration}})",
+    "field_run_id": "Run ID",
+    "run_id_placeholder": "Вставте processing_id з відповіді webhook"
   }
 }

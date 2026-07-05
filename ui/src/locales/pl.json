@@ -162,6 +162,8 @@
     "col_duration": "Czas trwania",
     "error_title": "Błąd",
     "detail_running": "{{module}} / {{event}} · rozpoczęto {{started}}",
-    "detail_finished": "{{module}} / {{event}} · rozpoczęto {{started}} · zakończono {{finished}} ({{duration}})"
+    "detail_finished": "{{module}} / {{event}} · rozpoczęto {{started}} · zakończono {{finished}} ({{duration}})",
+    "field_run_id": "Run ID",
+    "run_id_placeholder": "Wklej processing_id z odpowiedzi webhooka"
   }
 }

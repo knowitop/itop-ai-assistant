@@ -14,6 +14,7 @@ import {
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router-dom';
 
 import { apiGet } from './api';
 
@@ -65,12 +66,20 @@ function formatDuration(run: Run): string {
 
 export default function Runs() {
   const { t } = useTranslation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ticket, setTicket] = useState('');
   const [status, setStatus] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [runId, setRunId] = useState(searchParams.get('run') ?? '');
+  const [selectedId, setSelectedId] = useState<string | null>(searchParams.get('run'));
   const [tick, setTick] = useState(0);
+
+  function selectRun(id: string | null) {
+    setSelectedId(id);
+    if (id) setSearchParams({ run: id }, { replace: true });
+    else setSearchParams({}, { replace: true });
+  }
 
   // Plain polling, as planned: bump a counter, effects below refetch on it.
   useEffect(() => {
@@ -108,6 +117,18 @@ export default function Runs() {
       </Group>
       <Group align="flex-end">
         <TextInput
+          label={t('runs.field_run_id')}
+          placeholder={t('runs.run_id_placeholder')}
+          value={runId}
+          onChange={(e) => {
+            const v = e.currentTarget.value;
+            setRunId(v);
+            selectRun(v.trim() || null);
+          }}
+          w={320}
+          ff="monospace"
+        />
+        <TextInput
           label={t('common.field_ticket')}
           placeholder={t('runs.ticket_placeholder')}
           value={ticket}
@@ -125,15 +146,15 @@ export default function Runs() {
         />
       </Group>
       {error && <Alert color="red">{error}</Alert>}
-      {!runs ? (
-        <Loader />
-      ) : runs.length === 0 ? (
-        <Text c="dimmed">
-          {t(ticket.trim() || status ? 'runs.no_runs_filtered' : 'runs.no_runs')}
-        </Text>
-      ) : (
-        <Grid>
-          <Grid.Col span={{ base: 12, lg: 7 }}>
+      <Grid>
+        <Grid.Col span={{ base: 12, lg: selectedId ? 7 : 12 }}>
+          {!runs ? (
+            <Loader />
+          ) : runs.length === 0 ? (
+            <Text c="dimmed">
+              {t(ticket.trim() || status ? 'runs.no_runs_filtered' : 'runs.no_runs')}
+            </Text>
+          ) : (
             <Table highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
@@ -149,7 +170,10 @@ export default function Runs() {
                 {runs.map((run) => (
                   <Table.Tr
                     key={run.processing_id}
-                    onClick={() => setSelectedId(run.processing_id)}
+                    onClick={() => {
+                      setRunId(run.processing_id);
+                      selectRun(run.processing_id);
+                    }}
                     style={{ cursor: 'pointer' }}
                     bg={run.processing_id === selectedId ? 'var(--mantine-color-blue-light)' : undefined}
                   >
@@ -165,19 +189,22 @@ export default function Runs() {
                 ))}
               </Table.Tbody>
             </Table>
-          </Grid.Col>
+          )}
+        </Grid.Col>
+        {selectedId && (
           <Grid.Col span={{ base: 12, lg: 5 }}>
-            {selectedId ? (
-              // key remounts the panel on selection change, resetting its state.
-              <RunDetail key={selectedId} id={selectedId} tick={tick} />
-            ) : (
-              <Text c="dimmed" mt="sm">
-                {t('runs.select_run')}
-              </Text>
-            )}
+            {/* key remounts the panel on selection change, resetting its state */}
+            <RunDetail key={selectedId} id={selectedId} tick={tick} />
           </Grid.Col>
-        </Grid>
-      )}
+        )}
+        {!selectedId && runs && runs.length > 0 && (
+          <Grid.Col span={12}>
+            <Text c="dimmed" mt="sm">
+              {t('runs.select_run')}
+            </Text>
+          </Grid.Col>
+        )}
+      </Grid>
     </Stack>
   );
 }

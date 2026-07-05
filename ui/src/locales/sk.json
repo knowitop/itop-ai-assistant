@@ -162,6 +162,8 @@
     "col_duration": "Trvanie",
     "error_title": "Chyba",
     "detail_running": "{{module}} / {{event}} · spustené {{started}}",
-    "detail_finished": "{{module}} / {{event}} · spustené {{started}} · dokončené {{finished}} ({{duration}})"
+    "detail_finished": "{{module}} / {{event}} · spustené {{started}} · dokončené {{finished}} ({{duration}})",
+    "field_run_id": "Run ID",
+    "run_id_placeholder": "Vložte processing_id z odpovede webhooku"
   }
 }

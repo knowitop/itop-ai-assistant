@@ -162,6 +162,8 @@
     "col_duration": "Ұзақтығы",
     "error_title": "Қате",
     "detail_running": "{{module}} / {{event}} · басталды {{started}}",
-    "detail_finished": "{{module}} / {{event}} · басталды {{started}} · аяқталды {{finished}} ({{duration}})"
+    "detail_finished": "{{module}} / {{event}} · басталды {{started}} · аяқталды {{finished}} ({{duration}})",
+    "field_run_id": "Run ID",
+    "run_id_placeholder": "Webhook жауабынан processing_id кірістіріңіз"
   }
 }

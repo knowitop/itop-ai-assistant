@@ -162,6 +162,8 @@
     "col_duration": "耗时",
     "error_title": "错误",
     "detail_running": "{{module}} / {{event}} · 开始于 {{started}}",
-    "detail_finished": "{{module}} / {{event}} · 开始于 {{started}} · 完成于 {{finished}}（{{duration}}）"
+    "detail_finished": "{{module}} / {{event}} · 开始于 {{started}} · 完成于 {{finished}}（{{duration}}）",
+    "field_run_id": "Run ID",
+    "run_id_placeholder": "粘贴 webhook 响应中的 processing_id"
   }
 }

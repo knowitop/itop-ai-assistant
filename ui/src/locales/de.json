@@ -162,6 +162,8 @@
     "col_duration": "Dauer",
     "error_title": "Fehler",
     "detail_running": "{{module}} / {{event}} · gestartet {{started}}",
-    "detail_finished": "{{module}} / {{event}} · gestartet {{started}} · beendet {{finished}} ({{duration}})"
+    "detail_finished": "{{module}} / {{event}} · gestartet {{started}} · beendet {{finished}} ({{duration}})",
+    "field_run_id": "Run ID",
+    "run_id_placeholder": "processing_id aus der Webhook-Antwort einfügen"
   }
 }
