@@ -9,7 +9,7 @@ The wizard opens automatically at `http://localhost:8001/ui` when the assistant 
 > [!IMPORTANT]
 > **Before starting the wizard**, create the AI service account in iTop manually — the wizard does not do this. See [Create a service account](#1-create-a-service-account) below.
 
-![setup_wizard.png](docs/setup_wizard.png)
+![setup_wizard.png](setup_wizard.png)
 
 ### Step 1 — Security
 
