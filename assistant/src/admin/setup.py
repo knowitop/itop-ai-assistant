@@ -16,10 +16,19 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 
-from config import ItopConfig, LlmConfig, SecurityConfig, TicketMappingConfig, missing_setup
+from config import (
+    EmbeddingsConfig,
+    ItopConfig,
+    LlmConfig,
+    SecurityConfig,
+    TicketMappingConfig,
+    VectorConfig,
+    missing_setup,
+)
 from deps import AppDeps, create_itop_client, create_llm
 from graph.enrichment.nodes.utils import strip_thinking
 from itop_provisioning import provision_itop
+from vector.embedder import EmbeddingsClient
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +39,9 @@ SETUP_SECTIONS: dict[str, type[BaseModel]] = {
     "llm": LlmConfig,
     "security": SecurityConfig,
     "ticket_mapping": TicketMappingConfig,
+    # Vector store (optional infrastructure — not part of missing_setup)
+    "embeddings": EmbeddingsConfig,
+    "vector": VectorConfig,
 }
 
 _TEST_TIMEOUT = 30.0  # seconds; keeps connection tests from hanging the wizard
@@ -74,6 +86,7 @@ async def setup_status(request: Request) -> dict:
     itop_cfg = await store.get("itop", ItopConfig)
     llm_cfg = await store.get("llm", LlmConfig)
     security_cfg = await store.get("security", SecurityConfig)
+    embeddings_cfg = await store.get("embeddings", EmbeddingsConfig)
     missing = missing_setup(itop_cfg, llm_cfg)
     return {
         "configured": not missing,
@@ -82,6 +95,7 @@ async def setup_status(request: Request) -> dict:
             "itop": _masked(itop_cfg),
             "llm": _masked(llm_cfg),
             "security": _masked(security_cfg),
+            "embeddings": _masked(embeddings_cfg),
         },
     }
 
@@ -212,3 +226,37 @@ async def test_llm(request: Request, body: dict[str, Any] | None = None) -> dict
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
     text = strip_thinking(answer.content, tuple(cfg.think_tags)).strip()
     return {"ok": True, "model": cfg.model, "response": text[:200]}
+
+
+@router.post("/test-embeddings")
+async def test_embeddings(request: Request, body: dict[str, Any] | None = None) -> dict:
+    """Probe the embeddings endpoint with one text. Nothing is saved.
+
+    Measures the endpoint's real vector dimension (`embed_raw` skips the
+    config check) so the wizard can flag a wrong `dimension` value via
+    `dimension_match` instead of failing opaquely later.
+    """
+    values = await _merged_with_current(request, "embeddings", EmbeddingsConfig, body or {})
+    try:
+        cfg = EmbeddingsConfig(**values)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    if not cfg.base_url:
+        return {"ok": False, "error": "No endpoint: set the embeddings base URL first"}
+    if not cfg.model:
+        return {"ok": False, "error": "No model: set embeddings model first"}
+
+    client = EmbeddingsClient(cfg)
+    try:
+        vectors = await asyncio.wait_for(client.embed_raw(["ping"]), timeout=_TEST_TIMEOUT)
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    finally:
+        await client.aclose()
+    dimension = len(vectors[0]) if vectors else 0
+    return {
+        "ok": True,
+        "model": cfg.model,
+        "dimension": dimension,
+        "dimension_match": dimension == cfg.dimension,
+    }

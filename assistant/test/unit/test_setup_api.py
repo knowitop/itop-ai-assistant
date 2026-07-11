@@ -13,6 +13,7 @@ from journal import RunJournal
 from main import app
 from prompt_store import FilePromptStore, RedisPromptStore
 from state.ticket_state import TicketStateManager
+from vector.db import VectorDb
 
 _PROMPTS_DIR = Path(__file__).parents[2] / "prompts"
 
@@ -28,6 +29,9 @@ _BLANK = {
     "llm_api_key": None,
     "webhook_token": None,
     "admin_token": None,
+    "embeddings_base_url": None,
+    "embeddings_model": None,
+    "embeddings_api_key": None,
 }
 
 
@@ -40,6 +44,7 @@ def _make_deps(redis, **settings_overrides) -> AppDeps:
         config_store=RedisConfigStore(redis, settings),
         prompt_store=RedisPromptStore(FilePromptStore(_PROMPTS_DIR), redis),
         journal=RunJournal(redis),
+        vector_db=VectorDb(None),
     )
 
 
@@ -132,6 +137,48 @@ class TestSetupSections(SetupApiTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["values"]["active_statuses"], ["new", "assigned"])
+
+    def test_embeddings_section_masks_api_key(self):
+        self.client.patch("/api/setup/embeddings", json={"base_url": "http://emb/v1", "api_key": "sk-emb"})
+
+        body = self.client.get("/api/setup/embeddings").json()
+
+        self.assertNotIn("api_key", body["values"])
+        self.assertNotIn("sk-emb", str(body))
+        self.assertTrue(body["secrets"]["api_key"])
+        self.assertEqual(body["values"]["base_url"], "http://emb/v1")
+
+    def test_embeddings_patch_and_reset(self):
+        self.client.patch("/api/setup/embeddings", json={"model": "bge-m3", "dimension": 768})
+        self.assertEqual(self.client.get("/api/setup/embeddings").json()["values"]["dimension"], 768)
+
+        response = self.client.delete("/api/setup/embeddings")
+
+        self.assertEqual(response.status_code, 204)
+        body = self.client.get("/api/setup/embeddings").json()
+        self.assertIsNone(body["values"]["model"])
+        self.assertEqual(body["values"]["dimension"], 1024)
+
+    def test_embeddings_invalid_dimension_rejected(self):
+        response = self.client.patch("/api/setup/embeddings", json={"dimension": 4001})
+        self.assertEqual(response.status_code, 422)
+
+    def test_vector_section_is_editable(self):
+        response = self.client.patch("/api/setup/vector", json={"enabled": True, "index_statuses": ["resolved"]})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["values"]["enabled"])
+        self.assertEqual(response.json()["values"]["index_statuses"], ["resolved"])
+        # No secrets in this section
+        self.assertEqual(response.json()["secrets"], {})
+
+    def test_status_includes_embeddings_but_missing_unchanged(self):
+        body = self.client.get("/api/setup/status").json()
+
+        self.assertIn("embeddings", body["sections"])
+        # Vector store is optional — it never blocks "configured"
+        self.assertEqual(len(body["missing"]), 4)
+        self.assertFalse(any("embed" in m.lower() for m in body["missing"]))
 
     def test_unknown_section_404(self):
         self.assertEqual(self.client.get("/api/setup/nope").status_code, 404)
@@ -255,6 +302,68 @@ class TestConnectionProbes(SetupApiTestCase):
 
         self.assertFalse(body["ok"])
         self.assertIn("TimeoutError", body["error"])
+
+
+class TestEmbeddingsProbe(SetupApiTestCase):
+    def test_probe_without_base_url(self):
+        body = self.client.post("/api/setup/test-embeddings", json={"model": "bge-m3"}).json()
+
+        self.assertFalse(body["ok"])
+        self.assertIn("endpoint", body["error"])
+
+    def test_probe_without_model(self):
+        body = self.client.post("/api/setup/test-embeddings", json={"base_url": "http://emb/v1"}).json()
+
+        self.assertFalse(body["ok"])
+        self.assertIn("model", body["error"])
+
+    def test_probe_success_reports_measured_dimension(self):
+        client = MagicMock()
+        client.embed_raw = AsyncMock(return_value=[[0.0] * 768])
+        client.aclose = AsyncMock()
+
+        with patch("admin.setup.EmbeddingsClient", return_value=client):
+            body = self.client.post(
+                "/api/setup/test-embeddings",
+                json={"base_url": "http://emb/v1", "model": "bge-m3", "dimension": 1024},
+            ).json()
+
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["model"], "bge-m3")
+        self.assertEqual(body["dimension"], 768)
+        self.assertFalse(body["dimension_match"])  # config says 1024, endpoint returned 768
+        client.aclose.assert_awaited_once()
+
+    def test_probe_dimension_match(self):
+        client = MagicMock()
+        client.embed_raw = AsyncMock(return_value=[[0.0] * 1024])
+        client.aclose = AsyncMock()
+
+        with patch("admin.setup.EmbeddingsClient", return_value=client):
+            body = self.client.post(
+                "/api/setup/test-embeddings", json={"base_url": "http://emb/v1", "model": "bge-m3"}
+            ).json()
+
+        self.assertTrue(body["ok"])
+        self.assertTrue(body["dimension_match"])
+
+    def test_probe_reports_error(self):
+        client = MagicMock()
+        client.embed_raw = AsyncMock(side_effect=TimeoutError("no answer"))
+        client.aclose = AsyncMock()
+
+        with patch("admin.setup.EmbeddingsClient", return_value=client):
+            body = self.client.post(
+                "/api/setup/test-embeddings", json={"base_url": "http://emb/v1", "model": "bge-m3"}
+            ).json()
+
+        self.assertFalse(body["ok"])
+        self.assertIn("TimeoutError", body["error"])
+        client.aclose.assert_awaited_once()
+
+    def test_probe_invalid_body_rejected(self):
+        response = self.client.post("/api/setup/test-embeddings", json={"batch_size": "many"})
+        self.assertEqual(response.status_code, 422)
 
 
 class TestProvisionItop(SetupApiTestCase):

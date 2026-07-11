@@ -19,6 +19,7 @@ from deps import AppDeps
 from journal import ProcessingRun
 from pipelines.registry import ModuleInfo
 from prompt_store import PromptStoreError
+from vector.router import router as vector_router
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ async def verify_admin_token(
 
 router = APIRouter(prefix="/api", dependencies=[Depends(verify_admin_token)])
 router.include_router(setup_router)
+router.include_router(vector_router)
 
 
 def _deps(request: Request) -> AppDeps:

@@ -11,4 +11,4 @@ repos:
     rev: v1.19.1
     hooks:
       - id: mypy
-        additional_dependencies: [types-PyYAML]
+        additional_dependencies: [types-PyYAML, sqlalchemy, alembic, pgvector]

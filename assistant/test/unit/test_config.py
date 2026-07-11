@@ -4,7 +4,16 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from config import ItopConfig, LlmConfig, Settings, TicketMappingConfig, get_settings, missing_setup
+from config import (
+    EmbeddingsConfig,
+    ItopConfig,
+    LlmConfig,
+    Settings,
+    TicketMappingConfig,
+    VectorConfig,
+    get_settings,
+    missing_setup,
+)
 
 _REQUIRED = {
     "LLM_BASE_URL": "http://localhost/v1",
@@ -103,6 +112,55 @@ class TestRuntimeSections(unittest.TestCase):
         self.assertFalse(ItopConfig(user="admin").has_auth)
         self.assertTrue(ItopConfig(user="admin", pwd="secret").has_auth)
         self.assertTrue(ItopConfig(token="tok").has_auth)
+
+    def test_embeddings_section_defaults_from_flat_env(self):
+        s = self._settings(
+            {
+                "EMBEDDINGS_BASE_URL": "http://emb/v1",
+                "EMBEDDINGS_MODEL": "bge-m3",
+                "EMBEDDINGS_API_KEY": "emb-key",
+                "EMBEDDINGS_DIMENSION": "768",
+            }
+        )
+        emb = s.embeddings
+        self.assertEqual(emb.base_url, "http://emb/v1")
+        self.assertEqual(emb.model, "bge-m3")
+        self.assertEqual(emb.api_key, "emb-key")  # plain str for storage round-trip
+        self.assertEqual(emb.dimension, 768)
+        self.assertEqual(emb.batch_size, 32)
+
+    def test_embeddings_secret_fields_and_blank_api_key(self):
+        self.assertEqual(EmbeddingsConfig.SECRET_FIELDS, frozenset({"api_key"}))
+        self.assertIsNone(EmbeddingsConfig(api_key="").api_key)
+
+    def test_embeddings_dimension_capped_at_hnsw_halfvec_limit(self):
+        with self.assertRaises(ValidationError):
+            EmbeddingsConfig(dimension=4001)
+
+    def test_embeddings_unconfigured_by_default(self):
+        s = self._settings()
+        self.assertIsNone(s.embeddings.base_url)
+        self.assertIsNone(s.embeddings.model)
+
+
+class TestVectorConfig(unittest.TestCase):
+    def test_disabled_by_default(self):
+        cfg = VectorConfig()
+        self.assertFalse(cfg.enabled)
+        self.assertEqual(cfg.env, "main")
+        self.assertEqual(cfg.classes, ["UserRequest", "Incident"])
+        self.assertEqual(cfg.index_statuses, ["resolved", "closed"])
+        self.assertIn("UserRequest", cfg.profiles)
+
+    def test_database_url_defaults_to_none(self):
+        with patch.dict(os.environ, _REQUIRED, clear=True):
+            s = Settings(_env_file=None)
+        self.assertIsNone(s.database_url)
+
+    def test_settings_expose_vector_section(self):
+        with patch.dict(os.environ, _REQUIRED, clear=True):
+            s = Settings(_env_file=None)
+        self.assertFalse(s.vector.enabled)
 
 
 class TestMissingSetup(unittest.TestCase):
