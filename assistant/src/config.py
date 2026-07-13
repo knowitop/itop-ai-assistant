@@ -42,6 +42,11 @@ class TicketFieldMap(BaseModel):
     request_type: str | None = "request_type"
     public_log: str | None = "public_log"
     private_log: str | None = "private_log"
+    solution: str | None = "solution"
+    last_update: str | None = "last_update"
+    # Stock iTop attribute for ticket creation time; custom datamodels remap
+    # via class_overrides (Incident needs none — it has start_date too)
+    created_at: str | None = "start_date"
 
 
 class TicketMappingConfig(BaseModel):
@@ -207,6 +212,9 @@ class VectorConfig(BaseModel):
     }
     sweep_interval_seconds: int = Field(default=300, gt=0)
     sweep_page_size: int = Field(default=100, gt=0)
+    # Pause between iTop pages so a backfill doesn't hammer the REST API
+    sweep_throttle_seconds: float = Field(default=0.5, ge=0)
+    reconcile_interval_days: int = Field(default=7, gt=0)
     max_chunk_tokens: int = Field(default=480, gt=0)
     log_entries_per_chunk: int = Field(default=5, gt=0)
     # Only objects in these statuses are indexed (similar-tickets searches

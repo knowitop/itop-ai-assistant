@@ -1,12 +1,13 @@
 """VectorIndex integration tests: the SQL/pgvector seam against real Postgres."""
 
+import asyncio
 from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import text
 
 from vector.db import VectorDb
-from vector.index import ChunkRecord, FingerprintMismatchError, VectorIndex
+from vector.index import RECONCILE_SENTINEL, ChunkRecord, FingerprintMismatchError, VectorIndex
 
 _MODEL = "test-model"
 _DIM = 4
@@ -210,3 +211,146 @@ class TestDeleteAndStats:
         assert stats.version == 1
         assert stats.rows == 1
         assert stats.size_bytes > 0
+
+
+class TestChunkHashes:
+    async def test_roundtrip_and_targeted_delete(self, index):
+        await index.ensure_version(_MODEL, _DIM)
+        vec = [0.0] * _DIM
+        await index.upsert_chunks(
+            [
+                _chunk(1, vec, chunk_kind="body", chunk_n=0, content_hash="h0"),
+                _chunk(1, vec, chunk_kind="body", chunk_n=1, content_hash="h1"),
+                _chunk(1, vec, chunk_kind="solution", chunk_n=0, content_hash="h2"),
+                _chunk(2, vec, content_hash="other"),
+            ],
+            model=_MODEL,
+            dim=_DIM,
+        )
+
+        hashes = await index.get_chunk_hashes("UserRequest", 1)
+        assert hashes == {("body", 0): "h0", ("body", 1): "h1", ("solution", 0): "h2"}
+
+        deleted = await index.delete_chunks("UserRequest", 1, [("body", 1), ("solution", 0)])
+        assert deleted == 2
+        assert await index.get_chunk_hashes("UserRequest", 1) == {("body", 0): "h0"}
+        assert await index.get_chunk_hashes("UserRequest", 2) == {("description", 0): "other"}
+
+    async def test_no_version_is_empty(self, index):
+        assert await index.get_chunk_hashes("UserRequest", 1) == {}
+        assert await index.delete_chunks("UserRequest", 1, []) == 0
+
+    async def test_list_object_ids_keyset(self, index):
+        await index.ensure_version(_MODEL, _DIM)
+        vec = [0.0] * _DIM
+        await index.upsert_chunks(
+            [_chunk(obj_id, vec, chunk_kind=kind) for obj_id in (5, 3, 9) for kind in ("body", "solution")],
+            model=_MODEL,
+            dim=_DIM,
+        )
+
+        assert await index.list_object_ids("UserRequest") == [3, 5, 9]  # distinct, ascending
+        assert await index.list_object_ids("UserRequest", after=3, limit=1) == [5]
+        assert await index.list_object_ids("UserRequest", after=9) == []
+        assert await index.list_object_ids("Incident") == []
+
+
+class TestCursors:
+    async def test_roundtrip_and_upsert(self, index):
+        assert await index.get_cursor("UserRequest") is None
+
+        t1 = datetime(2026, 7, 1, 10, 0, tzinfo=UTC)
+        t2 = datetime(2026, 7, 2, 10, 0, tzinfo=UTC)
+        await index.set_cursor("UserRequest", t1)
+        await index.set_cursor("UserRequest", t2)  # upsert, not a second row
+        await index.set_cursor("Incident", t1)
+
+        assert await index.get_cursor("UserRequest") == t2
+        assert await index.list_cursors() == {"UserRequest": t2, "Incident": t1}
+
+    async def test_sentinel_excluded_from_list(self, index):
+        mark = datetime(2026, 7, 1, tzinfo=UTC)
+        await index.set_cursor(RECONCILE_SENTINEL, mark)
+
+        assert await index.list_cursors() == {}
+        assert await index.get_cursor(RECONCILE_SENTINEL) == mark
+
+    async def test_env_isolation_and_reset(self, db, index):
+        other = VectorIndex(db, env="staging")
+        t = datetime(2026, 7, 1, tzinfo=UTC)
+        await index.set_cursor("UserRequest", t)
+        await index.set_cursor(RECONCILE_SENTINEL, t)
+        await other.set_cursor("UserRequest", t)
+
+        assert await other.list_cursors() == {"UserRequest": t}
+
+        await index.reset_cursors()
+
+        assert await index.list_cursors() == {}
+        assert await index.get_cursor(RECONCILE_SENTINEL) is None  # reset drops the mark too
+        assert await other.list_cursors() == {"UserRequest": t}  # other env untouched
+
+
+class TestJournal:
+    async def test_start_finish_recent(self, index):
+        first = await index.journal_start("sweep")
+        second = await index.journal_start("reconcile")
+        await index.journal_finish(first, status="ok", objects_seen=10, chunks_embedded=4, chunks_deleted=1)
+        await index.journal_finish(second, status="error", error="boom")
+
+        runs = await index.journal_recent(10)
+
+        assert [run["id"] for run in runs] == [second, first]  # newest first
+        by_id = {run["id"]: run for run in runs}
+        assert by_id[first]["kind"] == "sweep"
+        assert by_id[first]["status"] == "ok"
+        assert by_id[first]["objects_seen"] == 10
+        assert by_id[first]["chunks_embedded"] == 4
+        assert by_id[first]["chunks_deleted"] == 1
+        assert by_id[first]["finished_at"] is not None
+        assert by_id[second]["status"] == "error"
+        assert by_id[second]["error"] == "boom"
+
+    async def test_recent_respects_limit_and_env(self, db, index):
+        for _ in range(3):
+            await index.journal_start("sweep")
+        await VectorIndex(db, env="staging").journal_start("sweep")
+
+        assert len(await index.journal_recent(2)) == 2
+        assert all(run["kind"] == "sweep" for run in await index.journal_recent(10))
+        assert len(await index.journal_recent(10)) == 3  # staging entry invisible
+
+
+class TestAdvisoryLock:
+    async def test_second_holder_gets_false_until_release(self, db, index):
+        async with index.try_advisory_lock() as first:
+            assert first is True
+            async with VectorIndex(db, env="main").try_advisory_lock() as second:
+                assert second is False
+
+        async with index.try_advisory_lock() as again:
+            assert again is True
+
+    async def test_envs_do_not_contend(self, db, index):
+        async with index.try_advisory_lock() as first:
+            assert first is True
+            async with VectorIndex(db, env="staging").try_advisory_lock() as other_env:
+                assert other_env is True
+
+    async def test_concurrent_sweeps_exclude_each_other(self, db, index):
+        """Two tasks racing for the lock: exactly one wins."""
+        results: list[bool] = []
+        gate = asyncio.Event()
+
+        async def contender():
+            async with VectorIndex(db, env="main").try_advisory_lock() as locked:
+                results.append(locked)
+                await gate.wait()
+
+        tasks = [asyncio.create_task(contender()) for _ in range(2)]
+        while len(results) < 2:  # both are inside their context
+            await asyncio.sleep(0.01)
+        gate.set()
+        await asyncio.gather(*tasks)
+
+        assert sorted(results) == [False, True]

@@ -15,15 +15,22 @@ an existing table: it requires a new version (v{N+1} rebuild — Stage 2+),
 which `FingerprintMismatchError` enforces.
 """
 
+import hashlib
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import delete, desc, func, insert, select
+from sqlalchemy import delete, desc, func, insert, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from vector.db import VectorDb
-from vector.models import VectorIndexMeta, chunk_table
+from vector.models import IndexJournalEntry, VectorIndexMeta, VectorSyncState, chunk_table
+
+# vector_sync_state row that stores the last reconciliation time instead of a
+# per-class sweep cursor; filtered out of list_cursors()
+RECONCILE_SENTINEL = "__reconcile__"
 
 
 @dataclass(frozen=True)
@@ -202,6 +209,180 @@ class VectorIndex:
             rows = (await conn.execute(select(func.count()).select_from(table))).scalar_one()
             size = (await conn.execute(select(func.pg_total_relation_size(table.name)))).scalar_one()
         return IndexStats(version=meta.version, rows=rows, size_bytes=size)
+
+    async def get_chunk_hashes(self, obj_class: str, obj_id: int) -> dict[tuple[str, int], str]:
+        """Stored content hashes of one object, keyed by (chunk_kind, chunk_n)."""
+        meta = await self.active_meta()
+        if meta is None:
+            return {}
+        table = chunk_table(meta.version, meta.dim)
+        async with self._db.connect() as conn:
+            rows = (
+                await conn.execute(
+                    select(table.c.chunk_kind, table.c.chunk_n, table.c.content_hash).where(
+                        table.c.env == self._env,
+                        table.c.obj_class == obj_class,
+                        table.c.obj_id == obj_id,
+                    )
+                )
+            ).all()
+        return {(row.chunk_kind, row.chunk_n): row.content_hash for row in rows}
+
+    async def delete_chunks(self, obj_class: str, obj_id: int, keys: list[tuple[str, int]]) -> int:
+        """Delete specific chunks of one object (vanished kinds/ordinals)."""
+        if not keys:
+            return 0
+        async with self._db.engine.begin() as conn:
+            meta = self._require_active(await self._read_active(conn))
+            table = chunk_table(meta.version, meta.dim)
+            result = await conn.execute(
+                delete(table).where(
+                    table.c.env == self._env,
+                    table.c.obj_class == obj_class,
+                    table.c.obj_id == obj_id,
+                    tuple_(table.c.chunk_kind, table.c.chunk_n).in_(keys),
+                )
+            )
+            return result.rowcount
+
+    async def list_object_ids(self, obj_class: str, after: int = 0, limit: int = 1000) -> list[int]:
+        """Distinct indexed obj_ids > `after`, ascending — keyset pagination
+        for the reconciliation walk."""
+        meta = await self.active_meta()
+        if meta is None:
+            return []
+        table = chunk_table(meta.version, meta.dim)
+        stmt = (
+            select(table.c.obj_id)
+            .distinct()
+            .where(
+                table.c.env == self._env,
+                table.c.obj_class == obj_class,
+                table.c.obj_id > after,
+            )
+            .order_by(table.c.obj_id)
+            .limit(limit)
+        )
+        async with self._db.connect() as conn:
+            return list((await conn.execute(stmt)).scalars())
+
+    async def get_cursor(self, obj_class: str) -> datetime | None:
+        async with self._db.connect() as conn:
+            row = (
+                await conn.execute(
+                    select(VectorSyncState.cursor).where(
+                        VectorSyncState.env == self._env,
+                        VectorSyncState.obj_class == obj_class,
+                    )
+                )
+            ).one_or_none()
+        return row.cursor if row else None
+
+    async def set_cursor(self, obj_class: str, cursor: datetime) -> None:
+        stmt = pg_insert(VectorSyncState).values(env=self._env, obj_class=obj_class, cursor=cursor)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["env", "obj_class"],
+            set_={"cursor": stmt.excluded.cursor, "updated_at": func.now()},
+        )
+        async with self._db.engine.begin() as conn:
+            await conn.execute(stmt)
+
+    async def list_cursors(self) -> dict[str, datetime | None]:
+        """Per-class sweep cursors (the reconcile sentinel is excluded)."""
+        async with self._db.connect() as conn:
+            rows = (
+                await conn.execute(
+                    select(VectorSyncState.obj_class, VectorSyncState.cursor).where(
+                        VectorSyncState.env == self._env,
+                        VectorSyncState.obj_class != RECONCILE_SENTINEL,
+                    )
+                )
+            ).all()
+        return {row.obj_class: row.cursor for row in rows}
+
+    async def reset_cursors(self) -> None:
+        """Drop all sweep cursors (and the reconcile mark) — the next sweep
+        becomes a full backfill."""
+        async with self._db.engine.begin() as conn:
+            await conn.execute(delete(VectorSyncState).where(VectorSyncState.env == self._env))
+
+    async def journal_start(self, kind: str) -> int:
+        async with self._db.engine.begin() as conn:
+            return (
+                await conn.execute(
+                    insert(IndexJournalEntry)
+                    .values(env=self._env, kind=kind, status="running")
+                    .returning(IndexJournalEntry.id)
+                )
+            ).scalar_one()
+
+    async def journal_finish(
+        self,
+        entry_id: int,
+        *,
+        status: str,
+        objects_seen: int = 0,
+        chunks_embedded: int = 0,
+        chunks_deleted: int = 0,
+        error: str | None = None,
+    ) -> None:
+        async with self._db.engine.begin() as conn:
+            await conn.execute(
+                update(IndexJournalEntry)
+                .where(IndexJournalEntry.id == entry_id)
+                .values(
+                    status=status,
+                    finished_at=func.now(),
+                    objects_seen=objects_seen,
+                    chunks_embedded=chunks_embedded,
+                    chunks_deleted=chunks_deleted,
+                    error=error,
+                )
+            )
+
+    async def journal_recent(self, limit: int = 10) -> list[dict]:
+        async with self._db.connect() as conn:
+            rows = (
+                await conn.execute(
+                    select(
+                        IndexJournalEntry.id,
+                        IndexJournalEntry.kind,
+                        IndexJournalEntry.status,
+                        IndexJournalEntry.started_at,
+                        IndexJournalEntry.finished_at,
+                        IndexJournalEntry.objects_seen,
+                        IndexJournalEntry.chunks_embedded,
+                        IndexJournalEntry.chunks_deleted,
+                        IndexJournalEntry.error,
+                    )
+                    .where(IndexJournalEntry.env == self._env)
+                    .order_by(desc(IndexJournalEntry.id))
+                    .limit(limit)
+                )
+            ).mappings()
+            return [dict(row) for row in rows]
+
+    @asynccontextmanager
+    async def try_advisory_lock(self) -> AsyncIterator[bool]:
+        """Session-level pg advisory lock guarding the sweep across replicas.
+
+        Holds one dedicated connection for the whole context — a session lock
+        lives and dies with its connection, so the connection must not return
+        to the pool mid-tick. Yields False (without waiting) when another
+        session holds the lock.
+        """
+        key = self._advisory_lock_key()
+        async with self._db.connect() as conn:
+            locked = (await conn.execute(select(func.pg_try_advisory_lock(key)))).scalar_one()
+            try:
+                yield locked
+            finally:
+                if locked:
+                    await conn.execute(select(func.pg_advisory_unlock(key)))
+
+    def _advisory_lock_key(self) -> int:
+        digest = hashlib.sha256(f"vector_sweep:{self._env}".encode()).digest()
+        return int.from_bytes(digest[:8], "big", signed=True)
 
     async def _read_active(self, conn: AsyncConnection, for_update: bool = False) -> IndexMeta | None:
         stmt = select(VectorIndexMeta.version, VectorIndexMeta.model, VectorIndexMeta.dim).where(

@@ -44,6 +44,7 @@ class VectorStatusTestCase(unittest.TestCase):
         self.client = self.enterContext(TestClient(app))
         self.redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
         self.client.app.state.deps = _make_deps(self.redis)
+        self.client.app.state.vector_indexer = None
 
 
 class TestVectorStatus(VectorStatusTestCase):
@@ -55,6 +56,10 @@ class TestVectorStatus(VectorStatusTestCase):
         self.assertFalse(body["database"]["configured"])
         self.assertIsNone(body["database"]["ok"])
         self.assertIsNone(body["index"])
+        self.assertIsNone(body["sync"])
+        self.assertIsNone(body["last_reconcile"])
+        self.assertEqual(body["runs"], [])
+        self.assertFalse(body["indexer_running"])
 
     def test_database_down_reports_error_not_500(self):
         # Port 1 is never listening — connection fails fast
@@ -91,6 +96,35 @@ class TestVectorStatus(VectorStatusTestCase):
         self.assertEqual(self.client.get("/api/vector/status").status_code, 401)
         response = self.client.get("/api/vector/status", headers={"Authorization": "Bearer s3cret"})
         self.assertEqual(response.status_code, 200)
+
+
+class TestReindex(VectorStatusTestCase):
+    def test_409_when_indexer_not_created(self):
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+
+        response = self.client.post("/api/vector/reindex")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("database_url", response.json()["detail"])
+
+    def test_409_when_vector_disabled(self):
+        self.client.app.state.vector_indexer = MagicMock()
+
+        response = self.client.post("/api/vector/reindex")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("disabled", response.json()["detail"])
+
+    def test_202_schedules_reindex(self):
+        indexer = MagicMock()
+        self.client.app.state.vector_indexer = indexer
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+
+        response = self.client.post("/api/vector/reindex")
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json(), {"status": "scheduled"})
+        indexer.request_reindex.assert_called_once()
 
 
 if __name__ == "__main__":

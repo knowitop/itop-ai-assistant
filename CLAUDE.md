@@ -141,7 +141,8 @@ cd docker && docker-compose up -d
 | `src/graph/enrichment/nodes/evaluate.py`        | LLM completeness evaluation node                   |
 | `src/graph/enrichment/nodes/ask.py`             | Post clarifying question node                       |
 | `src/graph/enrichment/nodes/enrich.py`          | Ticket enrichment node                              |
-| `src/graph/enrichment/nodes/utils.py`           | `strip_thinking`, `bind_oql`, `html_to_markdown`    |
+| `src/graph/enrichment/nodes/utils.py`           | `strip_thinking` + re-exports from `text_utils`     |
+| `src/text_utils.py`                             | Generic `html_to_markdown`, `bind_oql` (no biz deps)|
 | `src/graph/enrichment/prompts.py`               | `EnrichmentPrompts` + placeholder registry/validation |
 | `src/prompt_store.py`                           | `PromptStore` — file-based templates with overrides |
 | `prompts/enrichment/*.md`                       | Default prompt templates (one file per prompt)      |
@@ -155,7 +156,10 @@ cd docker && docker-compose up -d
 | `src/vector/models.py`                          | Vector store schema: static tables + `chunk_table` factory |
 | `src/vector/index.py`                           | `VectorIndex` — the single SQL/pgvector seam (versioned tables, KNN) |
 | `src/vector/embedder.py`                        | `EmbeddingsClient` — OpenAI-compatible /v1/embeddings, batching |
-| `src/vector/router.py`                          | `GET /api/vector/status` diagnostics                |
+| `src/vector/chunker.py`                         | Pure chunking: profiles → chunks, token budget, log windows |
+| `src/vector/indexer.py`                         | `VectorIndexer` — background sweep, backfill, reconciliation |
+| `src/vector/reindex.py`                         | Backfill/reindex CLI (`python -m vector.reindex`)   |
+| `src/vector/router.py`                          | `GET /api/vector/status`, `POST /api/vector/reindex` |
 | `src/vector/migrations/`                        | Alembic migrations (applied automatically at startup) |
 | `src/itop_client/`                              | `Itop` — vendored iTop REST API library (itoptop fork) |
 
@@ -310,6 +314,25 @@ Diagnostics: `GET /api/vector/status`. The chunk tables store embeddings +
 ids + filter metadata only — never raw ticket text (see
 `docs/plans/vector-store.md`).
 
+The index is filled by `VectorIndexer` (`src/vector/indexer.py`) — the
+project's first background task, started in the lifespan when `database_url`
+is set (`app.state.vector_indexer`, stopped before `deps.aclose()`). Every
+`vector.sweep_interval_seconds` it re-reads the runtime config (so flipping
+`vector.enabled` needs no restart), takes a Postgres advisory lock (safe with
+replicas) and sweeps: reads tickets changed since the per-class cursor
+(`last_update`, 2×interval overlap, paged with `sweep_throttle_seconds`
+between pages), chunks them per `vector.profiles` (chunk kinds = profile
+keys; log kinds `log:public`/`log:private` are implemented but not in the
+default profiles), embeds only changed chunks (sha256 hash-guard) and deletes
+vanished ones; tickets outside `index_statuses` get their chunks removed.
+The cursor advances once per completed class pass (iTop OQL has no ORDER BY).
+Every `vector.reconcile_interval_days` a reconciliation pass deletes chunks
+of objects that disappeared from iTop. Runs are journaled in the
+`index_journal` table (visible in `/api/vector/status`). Full rebuild:
+`POST /api/vector/reindex` (resets cursors, wakes the sweep) or the CLI
+`PYTHONPATH=src uv run python -m vector.reindex --full` (reads runtime config
+from Redis, so run it next to the deployment).
+
 **Prompts are files, not code.** Defaults live in `prompts/enrichment/*.md`;
 a deployment overrides individual prompts by placing same-named files under
 `<prompts_dir>/enrichment/`. Placeholders are validated against
@@ -372,5 +395,6 @@ npm run build   # type-check (tsc --noEmit) + production build into ui/dist
   `test_config_store.py`, `test_admin_api.py`, `test_setup_api.py`,
   `test_nodes_guard.py`, `test_nodes_classify.py`, `test_nodes_evaluate.py`,
   `test_nodes_ask.py`, `test_nodes_enrich.py`, `test_nodes_utils.py`,
-  `test_embedder.py`, `test_vector_status.py`; in `test/pg/`:
-  `test_db_smoke.py`, `test_vector_index.py`
+  `test_embedder.py`, `test_vector_status.py`, `test_chunker.py`,
+  `test_indexer.py`; in `test/pg/`: `test_db_smoke.py`,
+  `test_vector_index.py`, `test_indexer_pg.py`
