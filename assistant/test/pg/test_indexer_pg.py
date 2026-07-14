@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy import text
 
-from config import EmbeddingsConfig, VectorConfig
+from config import EmbeddingsConfig, VectorClassConfig, VectorConfig
 from domain.ticket import Ticket
 from vector.db import VectorDb
 from vector.indexer import VectorIndexer
@@ -18,11 +18,9 @@ _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 
 _VECTOR_CFG = VectorConfig(
     enabled=True,
-    classes=["UserRequest"],
-    profiles={"UserRequest": {"body": ["description"]}},
+    classes={"UserRequest": VectorClassConfig(index_values=["resolved", "closed"], profile={"body": ["description"]})},
     max_chunk_tokens=10,  # 30-char budget → long descriptions split into chunks
     sweep_throttle_seconds=0,
-    index_statuses=["resolved", "closed"],
 )
 _EMB_CFG = EmbeddingsConfig(base_url="http://fake/v1", model="test-model", dimension=_DIM)
 

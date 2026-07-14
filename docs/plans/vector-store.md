@@ -68,10 +68,10 @@ quality is better when a match pinpoints "the solution looked similar" vs
 | `log:public` | public_log, windows of N entries (no overlap) | 0..n | public |
 | `log:private` | private_log, same windowing | 0..n | internal |
 
-Chunk kinds are literally the keys of the per-class `vector.profiles` config
-(Stage 2 decision): the config is the single source of truth, no mapping
-layer in between — which is why the body kind is called `body`, matching the
-profile key, not `description`.
+Chunk kinds are literally the keys of the per-class
+`vector.classes[<class>].profile` config (Stage 2 decision): the config is
+the single source of truth, no mapping layer in between — which is why the
+body kind is called `body`, matching the profile key, not `description`.
 
 Log windowing: chunk boundaries are **stable by entry index** (entries
 1–5 → chunk 0, 6–10 → chunk 1, …). Appending entries only creates/extends the
@@ -166,24 +166,30 @@ table whose recorded fingerprint ≠ current config.
 
 ### Extending to other classes
 
-The chunking profile (which semantic fields become which chunk kinds) is
-per-class config, same philosophy as `ticket_mapping`:
+The chunking profile (which semantic fields become which chunk kinds) and
+the relevance filter (which values of the class's relevance attribute keep
+an object in the index; empty = index everything) are per-class config, same
+philosophy as `ticket_mapping`:
 
 ```yaml
 vector:
-  profiles:
-    UserRequest: {profile: [title, service, subcategory], body: [description], solution: [solution]}
+  classes:
+    UserRequest: {index_values: [resolved, closed], profile: {profile: [title, service, subcategory], body: [description], solution: [solution]}}
     Incident:    {…}
-    FAQ:         {profile: [title], body: [text]}   # phase: KB matching
+    FAQ:         {index_values: [], profile: {profile: [title], body: [text]}}   # phase: KB matching
 ```
 
 Tickets reuse `TicketRepository` semantics; new classes get their own thin
 repository (as `CatalogRepository` does today). Processing code never sees
-iTop attribute names.
+iTop attribute names. The source contract (`vector/source.py`): every
+indexed class exposes a last-modification datetime and a relevance
+attribute; the config lists only the relevance *values* — which attributes
+those are is the source's own mapping concern (a KnownError source may key
+relevance off any attribute, not necessarily a status).
 
 **Stage 3 turned this from a paragraph into an enforced seam.** A new class
 of content (KB article, KnownError, …) is not "another entry in
-`vector.profiles`" alone — it needs a `VectorSource` implementation
+`vector.classes`" alone — it needs a `VectorSource` implementation
 (`vector/source.py`) registered in `vector_sources/registry.py`. See §7
 Stage 3 for the contract and rationale.
 
@@ -290,8 +296,9 @@ layer stays swappable and unit-testable in isolation.
 
 Config: `EmbeddingsConfig` (runtime-editable section like `llm`: base_url,
 model, api_key, dimension, batch_size) + `VectorConfig` (enabled=False by
-default, classes/profiles, sweep_interval, page size, max_chunk_tokens,
-log_entries_per_chunk, index_statuses) + a bootstrap `database_url` (asyncpg
+default, per-class `classes` dict (index_values + profile), sweep_interval,
+page size, max_chunk_tokens,
+log_entries_per_chunk) + a bootstrap `database_url` (asyncpg
 DSN, env-only like `redis_url` — connection settings, not runtime-editable).
 Wired through `AppDeps`; the widget's `similar` switches between keyword and
 vector retrieval by config flag — keyword mode stays as the no-embeddings /
@@ -522,7 +529,8 @@ with anonymization or accept the trade-off consciously.
 - [x] `chunker.py` (per-class profiles, html cleanup, token budget, stable
       log windows) + content hashing. Log kinds (`log:public`/`log:private`)
       are implemented and tested but not in the default profiles — enabling
-      them is a config change (add the kind to `vector.profiles`), the
+      them is a config change (add the kind to the class's profile in
+      `vector.classes`), the
       phase-2 decision from §2 stands.
 - [x] Sweep loop with cursor (`vector_sync_state`), advisory lock,
       page/throttle; delete of vanished chunks; `IndexJournal` table; weekly

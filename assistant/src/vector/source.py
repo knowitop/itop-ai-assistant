@@ -7,6 +7,14 @@ writes the resulting `Chunk`s through `VectorIndex`. Adding a new source
 (KB articles, KnownErrors, ...) means writing a new `src/vector_sources/
 <name>.py` module implementing this protocol and registering it in
 `vector_sources/registry.py` — no change needed here or in `vector/indexer.py`.
+
+The contract: every indexed class must expose (a) a last-modification
+datetime (`VectorRecord.last_update` — drives the sweep cursor) and (b) a
+"relevance" attribute whose current value (`VectorRecord.index_value`) tells
+whether the object belongs in the index. Which attributes those are is the
+source's own mapping concern (for tickets: semantic `status`/`last_update`
+via `ticket_mapping`); the per-class value lists live in
+`vector.classes[<class>].index_values`.
 """
 
 from collections.abc import Sequence
@@ -27,7 +35,9 @@ class VectorRecord:
     """
 
     obj_id: int
-    status: str
+    # Current value of the class's relevance attribute (status for tickets) —
+    # compared against `vector.classes[<class>].index_values` by the indexer
+    index_value: str
     last_update: datetime | None
     created_at: datetime | None
     org_id: str | None = None
@@ -56,8 +66,9 @@ class VectorSource(Protocol):
         """One page of objects modified at/after `since` (None = full scan).
 
         Must include objects that left the indexable scope (e.g. status
-        changed) so the indexer can delete their chunks — no status filter
-        here, `VectorConfig.index_statuses` is applied by the caller."""
+        changed) so the indexer can delete their chunks — no relevance filter
+        here, `vector.classes[<class>].index_values` is applied by the
+        caller."""
         ...
 
     async def find_existing_ids(self, obj_class: str, ids: list[int]) -> set[int]:

@@ -210,6 +210,13 @@
     "reindex_scheduled": "Úplná reindexace naplánována",
     "section_indexer": "Indexer",
     "section_source_tickets": "Zdroj: tikety (iTop)",
+    "field_index_values": "Indexované hodnoty",
+    "field_index_values_desc": "Hodnoty atributu relevance třídy (např. stavu), při kterých objekt zůstává v indexu; prázdné = indexují se všechny objekty",
+    "field_profile": "Profil chunkování",
+    "field_profile_desc": "JSON: druh chunku → seznam sémantických polí",
+    "btn_add_class": "Přidat třídu",
+    "add_class_placeholder": "Název třídy, např. Problem",
+    "invalid_profile_json": "Neplatný JSON v profilu třídy {{class}}",
     "field_enabled": "Indexace zapnuta",
     "field_enabled_desc": "Platí od dalšího průchodu, bez restartu",
     "field_env": "Prostředí",
@@ -219,12 +226,6 @@
     "field_sweep_throttle": "Pauza mezi stránkami (sekundy)",
     "field_reconcile_days": "Interval rekonciliace (dny)",
     "field_max_chunk_tokens": "Max. tokenů na chunk",
-    "field_log_entries": "Záznamů logu na chunk",
-    "field_index_statuses": "Indexované stavy",
-    "field_index_statuses_desc": "Indexují se pouze objekty v těchto stavech; chunky ostatních se odstraní",
-    "field_classes": "Třídy",
-    "field_classes_desc": "Třídy tiketů iTop k indexaci; prázdný seznam indexaci zastaví",
-    "field_profiles": "Profily chunkingu",
-    "field_profiles_desc": "Podle třídy: druh chunku → seznam sémantických polí tiketu"
+    "field_log_entries": "Záznamů logu na chunk"
   }
 }

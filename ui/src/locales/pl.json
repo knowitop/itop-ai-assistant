@@ -210,6 +210,13 @@
     "reindex_scheduled": "Zaplanowano pełną reindeksację",
     "section_indexer": "Indeksator",
     "section_source_tickets": "Źródło: zgłoszenia (iTop)",
+    "field_index_values": "Indeksowane wartości",
+    "field_index_values_desc": "Wartości atrybutu aktualności klasy (np. statusu), przy których obiekt pozostaje w indeksie; puste = indeksowane są wszystkie obiekty",
+    "field_profile": "Profil chunkingu",
+    "field_profile_desc": "JSON: rodzaj chunka → lista pól semantycznych",
+    "btn_add_class": "Dodaj klasę",
+    "add_class_placeholder": "Nazwa klasy, np. Problem",
+    "invalid_profile_json": "Nieprawidłowy JSON w profilu klasy {{class}}",
     "field_enabled": "Indeksowanie włączone",
     "field_enabled_desc": "Obowiązuje od następnego przebiegu, bez restartu",
     "field_env": "Środowisko",
@@ -219,12 +226,6 @@
     "field_sweep_throttle": "Pauza między stronami (sekundy)",
     "field_reconcile_days": "Interwał uzgadniania (dni)",
     "field_max_chunk_tokens": "Maks. tokenów na chunk",
-    "field_log_entries": "Wpisy logu na chunk",
-    "field_index_statuses": "Indeksowane statusy",
-    "field_index_statuses_desc": "Indeksowane są tylko obiekty w tych statusach; chunki pozostałych są usuwane",
-    "field_classes": "Klasy",
-    "field_classes_desc": "Klasy zgłoszeń iTop do indeksowania; pusta lista zatrzymuje indeksowanie",
-    "field_profiles": "Profile chunkingu",
-    "field_profiles_desc": "Dla każdej klasy: rodzaj chunku → lista semantycznych pól zgłoszenia"
+    "field_log_entries": "Wpisy logu na chunk"
   }
 }

@@ -210,6 +210,13 @@
     "reindex_scheduled": "Reindicizzazione completa pianificata",
     "section_indexer": "Indexer",
     "section_source_tickets": "Sorgente: ticket (iTop)",
+    "field_index_values": "Valori indicizzati",
+    "field_index_values_desc": "Valori dell'attributo di rilevanza della classe (es. stato) per cui un oggetto resta nell'indice; vuoto = vengono indicizzati tutti gli oggetti",
+    "field_profile": "Profilo di chunking",
+    "field_profile_desc": "JSON: tipo di chunk → elenco di campi semantici",
+    "btn_add_class": "Aggiungi classe",
+    "add_class_placeholder": "Nome della classe, es. Problem",
+    "invalid_profile_json": "JSON non valido nel profilo della classe {{class}}",
     "field_enabled": "Indicizzazione attiva",
     "field_enabled_desc": "Si applica dalla prossima scansione, senza riavvio",
     "field_env": "Ambiente",
@@ -219,12 +226,6 @@
     "field_sweep_throttle": "Pausa tra le pagine (secondi)",
     "field_reconcile_days": "Intervallo di riconciliazione (giorni)",
     "field_max_chunk_tokens": "Token max per chunk",
-    "field_log_entries": "Voci di log per chunk",
-    "field_index_statuses": "Stati indicizzati",
-    "field_index_statuses_desc": "Vengono indicizzati solo gli oggetti in questi stati; i chunk degli altri vengono rimossi",
-    "field_classes": "Classi",
-    "field_classes_desc": "Classi di ticket iTop da indicizzare; una lista vuota ferma l'indicizzazione",
-    "field_profiles": "Profili di chunking",
-    "field_profiles_desc": "Per classe: tipo di chunk → elenco di campi semantici del ticket"
+    "field_log_entries": "Voci di log per chunk"
   }
 }

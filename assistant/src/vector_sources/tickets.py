@@ -50,6 +50,12 @@ class TicketVectorSource:
     `classes` is taken verbatim from `vector.classes` at construction time —
     `TicketRepository` is itself generic over any class the deployment's
     `ticket_mapping` covers, so this source imposes no class list of its own.
+
+    Source contract (`vector/source.py`): the relevance attribute for tickets
+    is the semantic `status`, the modification date is the semantic
+    `last_update` — both mapped to actual iTop attributes per class by
+    `ticket_mapping` (`find_modified_since` raises if `last_update` is not
+    mapped for a class).
     """
 
     name = "tickets"
@@ -72,7 +78,7 @@ class TicketVectorSource:
         return [
             VectorRecord(
                 obj_id=int(ticket.id),
-                status=ticket.status,
+                index_value=ticket.status,
                 last_update=ticket.last_update,
                 created_at=ticket.created_at,
                 org_id=ticket.org_id,

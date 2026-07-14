@@ -321,10 +321,15 @@ is set (`app.state.vector_indexer`, stopped before `deps.aclose()`). Every
 `vector.enabled` needs no restart), takes a Postgres advisory lock (safe with
 replicas) and sweeps: reads tickets changed since the per-class cursor
 (`last_update`, 2×interval overlap, paged with `sweep_throttle_seconds`
-between pages), chunks them per `vector.profiles` (chunk kinds = profile
-keys; log kinds `log:public`/`log:private` are implemented but not in the
-default profiles), embeds only changed chunks (sha256 hash-guard) and deletes
-vanished ones; tickets outside `index_statuses` get their chunks removed.
+between pages), chunks them per `vector.classes[<class>].profile` (chunk
+kinds = profile keys; log kinds `log:public`/`log:private` are implemented
+but not in the default profiles), embeds only changed chunks (sha256
+hash-guard) and deletes vanished ones; objects whose relevance value is
+outside the per-class `index_values` get their chunks removed (empty list =
+index everything). The source contract (`vector/source.py`): every indexed
+class exposes a last-modification datetime and a relevance attribute — which
+attributes those are is the source's mapping concern (tickets: semantic
+`status`/`last_update` via `ticket_mapping`).
 The cursor advances once per completed class pass (iTop OQL has no ORDER BY).
 Every `vector.reconcile_interval_days` a reconciliation pass deletes chunks
 of objects that disappeared from iTop. Runs are journaled in the
@@ -355,9 +360,9 @@ simplicity beats elegance. These constraints are mandatory:
   No Redux, TanStack Query, axios, or CSS-in-JS libraries: state is
   `useState`, HTTP is the single fetch wrapper in `api.ts`.
 - **Flat structure**: one file per screen (`SetupWizard.tsx`,
-  `Connections.tsx`, `Modules.tsx`, `Prompts.tsx`, `Runs.tsx`) plus
-  `api.ts` and `Layout.tsx`. No hook factories, barrel files, or clever
-  abstractions.
+  `Connections.tsx`, `Modules.tsx`, `Prompts.tsx`, `Runs.tsx`,
+  `Vector.tsx`) plus `api.ts` and `Layout.tsx`. No hook factories,
+  barrel files, or clever abstractions.
 - **Pin exact versions** in `package.json` (no `^`/`~`), commit the lock
   file; upgrade dependencies only when something requires it.
 - **Prompt editor is a plain Mantine `Textarea`** — introduce CodeMirror

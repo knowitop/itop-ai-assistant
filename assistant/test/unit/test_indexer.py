@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from config import EmbeddingsConfig, VectorConfig
+from config import EmbeddingsConfig, VectorClassConfig, VectorConfig
 from vector.chunker import chunk_object
 from vector.index import RECONCILE_SENTINEL, FingerprintMismatchError, IndexMeta
 from vector.indexer import VectorIndexer
@@ -14,21 +14,19 @@ _META = IndexMeta(version=1, model="test-model", dim=4)
 
 _VECTOR_CFG = VectorConfig(
     enabled=True,
-    classes=["UserRequest"],
-    profiles={"UserRequest": {"body": ["description"]}},
+    classes={"UserRequest": VectorClassConfig(index_values=["resolved", "closed"], profile={"body": ["description"]})},
     sweep_interval_seconds=300,
     sweep_throttle_seconds=0,
-    index_statuses=["resolved", "closed"],
 )
 _EMB_CFG = EmbeddingsConfig(base_url="http://emb/v1", model="test-model", dimension=4)
 
 
 def _record(
-    obj_id: int, *, status: str = "resolved", description: str = "Broken.", last_update: datetime = _NOW
+    obj_id: int, *, index_value: str = "resolved", description: str = "Broken.", last_update: datetime = _NOW
 ) -> VectorRecord:
     return VectorRecord(
         obj_id=obj_id,
-        status=status,
+        index_value=index_value,
         last_update=last_update,
         created_at=_NOW - timedelta(days=1),
         payload={"description": description},
@@ -199,13 +197,22 @@ class TestSweep(IndexerTestCase):
         self.assertEqual(report.chunks_deleted, 1)
         self.assertEqual(report.chunks_embedded, 1)  # ("body", 0) hash mismatch → re-embedded
 
-    async def test_ticket_out_of_index_statuses_deleted(self):
+    async def test_object_out_of_index_values_deleted(self):
         index = _index_mock()
-        report = await self._run(_deps_mock(), index, FakeTicketSource([_record(1, status="new")]))
+        report = await self._run(_deps_mock(), index, FakeTicketSource([_record(1, index_value="new")]))
 
         index.delete_object.assert_awaited_once_with("UserRequest", 1)
         self.assertEqual(report.chunks_deleted, 3)
         index.upsert_chunks.assert_not_awaited()
+
+    async def test_empty_index_values_indexes_everything(self):
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.classes["UserRequest"].index_values = []
+        index = _index_mock()
+        report = await self._run(_deps_mock(vector_cfg=cfg), index, FakeTicketSource([_record(1, index_value="new")]))
+
+        self.assertEqual(report.chunks_embedded, 1)
+        index.delete_object.assert_not_awaited()
 
     async def test_cursor_set_to_max_last_update(self):
         newest = _NOW + timedelta(hours=2)

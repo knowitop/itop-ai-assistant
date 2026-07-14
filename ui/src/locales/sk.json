@@ -210,6 +210,13 @@
     "reindex_scheduled": "Úplná reindexácia naplánovaná",
     "section_indexer": "Indexer",
     "section_source_tickets": "Zdroj: tikety (iTop)",
+    "field_index_values": "Indexované hodnoty",
+    "field_index_values_desc": "Hodnoty atribútu relevancie triedy (napr. stavu), pri ktorých objekt zostáva v indexe; prázdne = indexujú sa všetky objekty",
+    "field_profile": "Profil chunkovania",
+    "field_profile_desc": "JSON: druh chunku → zoznam sémantických polí",
+    "btn_add_class": "Pridať triedu",
+    "add_class_placeholder": "Názov triedy, napr. Problem",
+    "invalid_profile_json": "Neplatný JSON v profile triedy {{class}}",
     "field_enabled": "Indexovanie zapnuté",
     "field_enabled_desc": "Platí od ďalšieho prechodu, bez reštartu",
     "field_env": "Prostredie",
@@ -219,12 +226,6 @@
     "field_sweep_throttle": "Pauza medzi stránkami (sekundy)",
     "field_reconcile_days": "Interval zosúladenia (dni)",
     "field_max_chunk_tokens": "Max. tokenov na chunk",
-    "field_log_entries": "Záznamov logu na chunk",
-    "field_index_statuses": "Indexované stavy",
-    "field_index_statuses_desc": "Indexujú sa iba objekty v týchto stavoch; chunky ostatných sa odstránia",
-    "field_classes": "Triedy",
-    "field_classes_desc": "Triedy tiketov iTop na indexovanie; prázdny zoznam indexovanie zastaví",
-    "field_profiles": "Profily chunkingu",
-    "field_profiles_desc": "Podľa triedy: druh chunku → zoznam sémantických polí tiketu"
+    "field_log_entries": "Záznamov logu na chunk"
   }
 }

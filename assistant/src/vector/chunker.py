@@ -5,7 +5,8 @@ chunk text against what is stored, so the same input must always produce
 byte-identical chunks — cosmetic HTML churn is neutralized by `clean_text`,
 and the split algorithm has no randomness.
 
-Chunk kinds are the keys of the per-class `vector.profiles` config
+Chunk kinds are the keys of the per-class `vector.classes[<class>].profile`
+config
 (`profile` / `body` / `solution`, log kinds `log:public` / `log:private`) —
 the config is the source of truth, there is no mapping layer. This module has
 no domain imports: sources (e.g. `vector_sources/tickets.py`) translate their

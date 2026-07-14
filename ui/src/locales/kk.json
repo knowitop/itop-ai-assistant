@@ -210,6 +210,13 @@
     "reindex_scheduled": "Толық қайта индекстеу жоспарланды",
     "section_indexer": "Индексатор",
     "section_source_tickets": "Дереккөз: тикеттер (iTop)",
+    "field_index_values": "Индекстелетін мәндер",
+    "field_index_values_desc": "Класс өзектілік атрибутының (мысалы, күйдің) объект индексте қалатын мәндері; бос = барлық объектілер индекстеледі",
+    "field_profile": "Чанкинг профилі",
+    "field_profile_desc": "JSON: чанк түрі → семантикалық өрістер тізімі",
+    "btn_add_class": "Класс қосу",
+    "add_class_placeholder": "Класс атауы, мысалы Problem",
+    "invalid_profile_json": "{{class}} класының профиліндегі JSON жарамсыз",
     "field_enabled": "Индекстеу қосулы",
     "field_enabled_desc": "Келесі айналымнан бастап қолданылады, қайта іске қосу қажет емес",
     "field_env": "Орта",
@@ -219,12 +226,6 @@
     "field_sweep_throttle": "Беттер арасындағы кідіріс (секунд)",
     "field_reconcile_days": "Салыстыру аралығы (күн)",
     "field_max_chunk_tokens": "Чанктағы макс. токендер",
-    "field_log_entries": "Бір чанкқа лог жазбалары",
-    "field_index_statuses": "Индекстелетін күйлер",
-    "field_index_statuses_desc": "Тек осы күйлердегі объектілер индекстеледі; басқаларының чанктары жойылады",
-    "field_classes": "Кластар",
-    "field_classes_desc": "Индекстелетін iTop тикет кластары; бос тізім индекстеуді тоқтатады",
-    "field_profiles": "Чанкинг профильдері",
-    "field_profiles_desc": "Кластар бойынша: чанк түрі → тикеттің семантикалық өрістерінің тізімі"
+    "field_log_entries": "Бір чанкқа лог жазбалары"
   }
 }

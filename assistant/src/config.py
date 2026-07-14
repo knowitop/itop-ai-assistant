@@ -189,6 +189,30 @@ class EnrichmentConfig(BaseModel):
     classify_subcategory_oql: str = _CLASSIFY_SUBCATEGORY_OQL
 
 
+class VectorClassConfig(BaseModel):
+    """Per-class vector index settings (one entry per indexed object class).
+
+    Every indexed class must expose a last-modification datetime and a
+    "relevance" attribute — the VectorSource contract (`vector/source.py`).
+    Which attributes those are is the source's concern (tickets map them via
+    `ticket_mapping`); this config holds only the relevance *values*.
+    """
+
+    # Values of the class's relevance attribute that keep an object in the
+    # index (similar-tickets searches want resolved knowledge, not open
+    # noise); [] = index every object of the class
+    index_values: list[str] = []
+    # Chunking profile: which semantic fields feed which chunk kinds
+    profile: dict[str, list[str]] = {}
+
+
+_TICKET_PROFILE = {
+    "profile": ["title", "service", "subcategory"],
+    "body": ["description"],
+    "solution": ["solution"],
+}
+
+
 class VectorConfig(BaseModel):
     """Vector index settings — infrastructure section "vector" (setup API).
 
@@ -200,15 +224,10 @@ class VectorConfig(BaseModel):
     enabled: bool = False
     # Isolates deployments sharing one Postgres (staging/prod)
     env: str = "main"
-    classes: list[str] = ["UserRequest", "Incident"]
-    # Per-class chunking profiles: which semantic fields feed which chunk kinds
-    profiles: dict[str, dict[str, list[str]]] = {
-        "UserRequest": {
-            "profile": ["title", "service", "subcategory"],
-            "body": ["description"],
-            "solution": ["solution"],
-        },
-        "Incident": {"profile": ["title", "service", "subcategory"], "body": ["description"], "solution": ["solution"]},
+    # Indexed object classes with their per-class settings
+    classes: dict[str, VectorClassConfig] = {
+        "UserRequest": VectorClassConfig(index_values=["resolved", "closed"], profile=_TICKET_PROFILE),
+        "Incident": VectorClassConfig(index_values=["resolved", "closed"], profile=_TICKET_PROFILE),
     }
     sweep_interval_seconds: int = Field(default=300, gt=0)
     sweep_page_size: int = Field(default=100, gt=0)
@@ -217,9 +236,6 @@ class VectorConfig(BaseModel):
     reconcile_interval_days: int = Field(default=7, gt=0)
     max_chunk_tokens: int = Field(default=480, gt=0)
     log_entries_per_chunk: int = Field(default=5, gt=0)
-    # Only objects in these statuses are indexed (similar-tickets searches
-    # want resolved knowledge, not open noise)
-    index_statuses: list[str] = ["resolved", "closed"]
 
 
 class Settings(BaseSettings):

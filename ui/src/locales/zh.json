@@ -210,6 +210,13 @@
     "reindex_scheduled": "已计划完整重建索引",
     "section_indexer": "索引器",
     "section_source_tickets": "来源：工单（iTop）",
+    "field_index_values": "索引值",
+    "field_index_values_desc": "类的相关性属性（如状态）的取值，对象处于这些值时保留在索引中；留空 = 索引所有对象",
+    "field_profile": "分块配置",
+    "field_profile_desc": "JSON：分块类型 → 语义字段列表",
+    "btn_add_class": "添加类",
+    "add_class_placeholder": "类名，例如 Problem",
+    "invalid_profile_json": "{{class}} 配置中的 JSON 无效",
     "field_enabled": "启用索引",
     "field_enabled_desc": "自下次扫描起生效，无需重启",
     "field_env": "环境",
@@ -219,12 +226,6 @@
     "field_sweep_throttle": "分页间暂停（秒）",
     "field_reconcile_days": "核对间隔（天）",
     "field_max_chunk_tokens": "每个分块的最大 token 数",
-    "field_log_entries": "每个分块的日志条数",
-    "field_index_statuses": "索引状态",
-    "field_index_statuses_desc": "仅索引处于这些状态的对象；其余对象的分块将被删除",
-    "field_classes": "类",
-    "field_classes_desc": "要索引的 iTop 工单类；空列表将停止索引",
-    "field_profiles": "分块配置",
-    "field_profiles_desc": "按类：分块类型 → 工单语义字段列表"
+    "field_log_entries": "每个分块的日志条数"
   }
 }

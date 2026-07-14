@@ -164,13 +164,19 @@ class TestSetupSections(SetupApiTestCase):
         self.assertEqual(response.status_code, 422)
 
     def test_vector_section_is_editable(self):
-        response = self.client.patch("/api/setup/vector", json={"enabled": True, "index_statuses": ["resolved"]})
+        classes = {"UserRequest": {"index_values": ["resolved"], "profile": {"body": ["description"]}}}
+        response = self.client.patch("/api/setup/vector", json={"enabled": True, "classes": classes})
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["values"]["enabled"])
-        self.assertEqual(response.json()["values"]["index_statuses"], ["resolved"])
+        self.assertEqual(response.json()["values"]["classes"]["UserRequest"]["index_values"], ["resolved"])
         # No secrets in this section
         self.assertEqual(response.json()["secrets"], {})
+
+    def test_vector_legacy_classes_list_rejected(self):
+        # Pre-per-class schema: classes was a plain list — must 422 now
+        response = self.client.patch("/api/setup/vector", json={"classes": ["UserRequest"]})
+        self.assertEqual(response.status_code, 422)
 
     def test_status_includes_embeddings_but_missing_unchanged(self):
         body = self.client.get("/api/setup/status").json()

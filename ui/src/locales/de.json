@@ -210,6 +210,13 @@
     "reindex_scheduled": "Vollständige Neuindexierung geplant",
     "section_indexer": "Indexer",
     "section_source_tickets": "Quelle: Tickets (iTop)",
+    "field_index_values": "Indexwerte",
+    "field_index_values_desc": "Werte des Relevanz-Attributs der Klasse (z. B. Status), bei denen ein Objekt im Index bleibt; leer = alle Objekte werden indexiert",
+    "field_profile": "Chunking-Profil",
+    "field_profile_desc": "JSON: Chunk-Art → Liste semantischer Felder",
+    "btn_add_class": "Klasse hinzufügen",
+    "add_class_placeholder": "Klassenname, z. B. Problem",
+    "invalid_profile_json": "Ungültiges JSON im Profil der Klasse {{class}}",
     "field_enabled": "Indexierung aktiviert",
     "field_enabled_desc": "Gilt ab dem nächsten Durchlauf, kein Neustart nötig",
     "field_env": "Umgebung",
@@ -219,12 +226,6 @@
     "field_sweep_throttle": "Pause zwischen Seiten (Sekunden)",
     "field_reconcile_days": "Abgleichintervall (Tage)",
     "field_max_chunk_tokens": "Max. Tokens pro Chunk",
-    "field_log_entries": "Logeinträge pro Chunk",
-    "field_index_statuses": "Indexierte Status",
-    "field_index_statuses_desc": "Nur Objekte in diesen Status werden indexiert; Chunks der übrigen werden entfernt",
-    "field_classes": "Klassen",
-    "field_classes_desc": "Zu indexierende iTop-Ticketklassen; eine leere Liste stoppt die Indexierung",
-    "field_profiles": "Chunking-Profile",
-    "field_profiles_desc": "Pro Klasse: Chunk-Art → Liste semantischer Ticketfelder"
+    "field_log_entries": "Logeinträge pro Chunk"
   }
 }

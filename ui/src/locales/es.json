@@ -210,6 +210,13 @@
     "reindex_scheduled": "Reindexación completa programada",
     "section_indexer": "Indexador",
     "section_source_tickets": "Fuente: tickets (iTop)",
+    "field_index_values": "Valores indexados",
+    "field_index_values_desc": "Valores del atributo de relevancia de la clase (p. ej. estado) con los que un objeto permanece en el índice; vacío = se indexan todos los objetos",
+    "field_profile": "Perfil de chunking",
+    "field_profile_desc": "JSON: tipo de chunk → lista de campos semánticos",
+    "btn_add_class": "Añadir clase",
+    "add_class_placeholder": "Nombre de la clase, p. ej. Problem",
+    "invalid_profile_json": "JSON no válido en el perfil de la clase {{class}}",
     "field_enabled": "Indexación activada",
     "field_enabled_desc": "Se aplica desde el próximo barrido, sin reinicio",
     "field_env": "Entorno",
@@ -219,12 +226,6 @@
     "field_sweep_throttle": "Pausa entre páginas (segundos)",
     "field_reconcile_days": "Intervalo de conciliación (días)",
     "field_max_chunk_tokens": "Máx. tokens por chunk",
-    "field_log_entries": "Entradas de log por chunk",
-    "field_index_statuses": "Estados indexados",
-    "field_index_statuses_desc": "Solo se indexan los objetos en estos estados; los chunks del resto se eliminan",
-    "field_classes": "Clases",
-    "field_classes_desc": "Clases de tickets de iTop a indexar; una lista vacía detiene la indexación",
-    "field_profiles": "Perfiles de chunking",
-    "field_profiles_desc": "Por clase: tipo de chunk → lista de campos semánticos del ticket"
+    "field_log_entries": "Entradas de log por chunk"
   }
 }

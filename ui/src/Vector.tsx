@@ -2,6 +2,8 @@ import {
   Alert,
   Badge,
   Button,
+  Card,
+  CloseButton,
   Divider,
   Group,
   JsonInput,
@@ -59,6 +61,14 @@ interface VectorStatus {
 interface SectionData {
   values: Record<string, unknown>;
   secrets: Record<string, boolean>;
+}
+
+// One entry of vector.classes: per-class relevance values + chunking profile
+// (profile kept as text — the JsonInput owns formatting until save).
+interface ClassCfg {
+  name: string;
+  indexValues: string[];
+  profileText: string;
 }
 
 async function resetSection(section: string, confirmMsg: string): Promise<boolean> {
@@ -340,11 +350,10 @@ function VectorSettingsForm() {
   const [reconcileDays, setReconcileDays] = useState<number | string>('');
   const [maxChunkTokens, setMaxChunkTokens] = useState<number | string>('');
   const [logEntries, setLogEntries] = useState<number | string>('');
-  const [indexStatuses, setIndexStatuses] = useState<string[]>([]);
   // Tickets source settings (the only source so far; the backend keys config
   // by class, so a new source will add another subsection here)
-  const [classes, setClasses] = useState<string[]>([]);
-  const [profilesText, setProfilesText] = useState('');
+  const [classCfgs, setClassCfgs] = useState<ClassCfg[]>([]);
+  const [newClass, setNewClass] = useState('');
 
   const load = async () => {
     const data = await apiGet<SectionData>('/setup/vector');
@@ -356,9 +365,15 @@ function VectorSettingsForm() {
     setReconcileDays((data.values.reconcile_interval_days as number) ?? '');
     setMaxChunkTokens((data.values.max_chunk_tokens as number) ?? '');
     setLogEntries((data.values.log_entries_per_chunk as number) ?? '');
-    setIndexStatuses((data.values.index_statuses as string[]) ?? []);
-    setClasses((data.values.classes as string[]) ?? []);
-    setProfilesText(JSON.stringify(data.values.profiles ?? {}, null, 2));
+    const classes =
+      (data.values.classes as Record<string, { index_values?: string[]; profile?: unknown }>) ?? {};
+    setClassCfgs(
+      Object.entries(classes).map(([name, cfg]) => ({
+        name,
+        indexValues: cfg.index_values ?? [],
+        profileText: JSON.stringify(cfg.profile ?? {}, null, 2),
+      })),
+    );
     setLoaded(true);
   };
 
@@ -366,23 +381,38 @@ function VectorSettingsForm() {
     load().catch((e: Error) => setError(e.message));
   }, []);
 
+  const updateClass = (i: number, patch: Partial<ClassCfg>) =>
+    setClassCfgs((prev) => prev.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+
+  const removeClass = (i: number) => setClassCfgs((prev) => prev.filter((_, j) => j !== i));
+
+  const addClass = () => {
+    const name = newClass.trim();
+    if (!name || classCfgs.some((c) => c.name === name)) return;
+    setClassCfgs((prev) => [...prev, { name, indexValues: [], profileText: '{}' }]);
+    setNewClass('');
+  };
+
   const save = async () => {
-    let profiles: unknown;
-    try {
-      profiles = JSON.parse(profilesText);
-    } catch {
-      setError(t('common.invalid_json'));
-      setSuccess(null);
-      return;
+    const classes: Record<string, unknown> = {};
+    for (const c of classCfgs) {
+      let profile: unknown;
+      try {
+        profile = JSON.parse(c.profileText);
+      } catch {
+        setError(t('vector.invalid_profile_json', { class: c.name }));
+        setSuccess(null);
+        return;
+      }
+      classes[c.name] = { index_values: c.indexValues, profile };
     }
-    // Arrays are always sent — an empty list is a meaningful value under
-    // PATCH-merge (clears the list); empty numbers keep the stored value.
+    // The classes dict is always sent — an empty dict is a meaningful value
+    // under PATCH-merge (removes all classes); empty numbers keep the stored
+    // value.
     const b: Record<string, unknown> = {
       enabled,
       env,
       classes,
-      index_statuses: indexStatuses,
-      profiles,
     };
     if (sweepInterval !== '') b.sweep_interval_seconds = Number(sweepInterval);
     if (sweepPageSize !== '') b.sweep_page_size = Number(sweepPageSize);
@@ -477,30 +507,45 @@ function VectorSettingsForm() {
           onChange={setLogEntries}
         />
       </Group>
-      <TagsInput
-        label={t('vector.field_index_statuses')}
-        description={t('vector.field_index_statuses_desc')}
-        value={indexStatuses}
-        onChange={setIndexStatuses}
-      />
       <Divider />
       <Title order={4}>{t('vector.section_source_tickets')}</Title>
-      <TagsInput
-        label={t('vector.field_classes')}
-        description={t('vector.field_classes_desc')}
-        value={classes}
-        onChange={setClasses}
-      />
-      <JsonInput
-        label={t('vector.field_profiles')}
-        description={t('vector.field_profiles_desc')}
-        value={profilesText}
-        onChange={setProfilesText}
-        autosize
-        minRows={8}
-        formatOnBlur
-        validationError={t('common.invalid_json')}
-      />
+      {classCfgs.map((c, i) => (
+        <Card withBorder key={c.name}>
+          <Stack gap="xs">
+            <Group justify="space-between">
+              <Text fw={600}>{c.name}</Text>
+              <CloseButton onClick={() => removeClass(i)} />
+            </Group>
+            <TagsInput
+              label={t('vector.field_index_values')}
+              description={t('vector.field_index_values_desc')}
+              value={c.indexValues}
+              onChange={(values) => updateClass(i, { indexValues: values })}
+            />
+            <JsonInput
+              label={t('vector.field_profile')}
+              description={t('vector.field_profile_desc')}
+              value={c.profileText}
+              onChange={(value) => updateClass(i, { profileText: value })}
+              autosize
+              minRows={6}
+              formatOnBlur
+              validationError={t('common.invalid_json')}
+            />
+          </Stack>
+        </Card>
+      ))}
+      <Group align="flex-end">
+        <TextInput
+          placeholder={t('vector.add_class_placeholder')}
+          value={newClass}
+          onChange={(e) => setNewClass(e.currentTarget.value)}
+          maw={280}
+        />
+        <Button variant="default" onClick={addClass}>
+          {t('vector.btn_add_class')}
+        </Button>
+      </Group>
       <Group>
         <Button onClick={save} loading={busy}>
           {t('common.btn_save')}

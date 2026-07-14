@@ -196,7 +196,8 @@ class VectorIndexer:
         report: SweepReport,
         started_at: datetime,
     ) -> None:
-        profile = cfg.profiles.get(obj_class)
+        class_cfg = cfg.classes[obj_class]
+        profile = class_cfg.profile
         if not profile:
             logger.warning(f"vector sweep: no chunking profile for {obj_class} — skipping the class")
             return
@@ -215,7 +216,7 @@ class VectorIndexer:
                 report.objects_seen += 1
                 if record.last_update and (max_seen is None or record.last_update > max_seen):
                     max_seen = record.last_update
-                if record.status not in cfg.index_statuses:
+                if class_cfg.index_values and record.index_value not in class_cfg.index_values:
                     # Left the indexable scope (e.g. reopened) — drop its chunks
                     report.chunks_deleted += await index.delete_object(obj_class, record.obj_id)
                     continue
@@ -243,7 +244,7 @@ class VectorIndexer:
                         chunk_kind=chunk.kind,
                         chunk_n=chunk.n,
                         visibility=chunk.visibility,
-                        status=record.status,
+                        status=record.index_value,
                         content_hash=chunk.content_hash,
                         embedding=next(vectors),
                         created_at=record.created_at or record.last_update or started_at,

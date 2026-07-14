@@ -148,9 +148,9 @@ class TestVectorConfig(unittest.TestCase):
         cfg = VectorConfig()
         self.assertFalse(cfg.enabled)
         self.assertEqual(cfg.env, "main")
-        self.assertEqual(cfg.classes, ["UserRequest", "Incident"])
-        self.assertEqual(cfg.index_statuses, ["resolved", "closed"])
-        self.assertIn("UserRequest", cfg.profiles)
+        self.assertEqual(list(cfg.classes), ["UserRequest", "Incident"])
+        self.assertEqual(cfg.classes["UserRequest"].index_values, ["resolved", "closed"])
+        self.assertIn("body", cfg.classes["UserRequest"].profile)
 
     def test_database_url_defaults_to_none(self):
         with patch.dict(os.environ, _REQUIRED, clear=True):

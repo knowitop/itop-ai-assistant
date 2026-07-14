@@ -17,4 +17,4 @@ if TYPE_CHECKING:
 def build_vector_sources(deps: "AppDeps", cfg: VectorConfig) -> list["VectorSource"]:
     from vector_sources.tickets import TicketVectorSource
 
-    return [TicketVectorSource(deps, classes=cfg.classes)]
+    return [TicketVectorSource(deps, classes=list(cfg.classes))]

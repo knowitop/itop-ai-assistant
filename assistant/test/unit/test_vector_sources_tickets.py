@@ -51,7 +51,7 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(records), 1)
         record = records[0]
         self.assertEqual(record.obj_id, 1)
-        self.assertEqual(record.status, "resolved")
+        self.assertEqual(record.index_value, "resolved")
         self.assertEqual(record.org_id, "org1")
         self.assertEqual(record.filters, {"service_id": "5"})
         self.assertEqual(record.payload.id, "1")

@@ -210,6 +210,13 @@
     "reindex_scheduled": "Повну переіндексацію заплановано",
     "section_indexer": "Індексатор",
     "section_source_tickets": "Джерело: тікети (iTop)",
+    "field_index_values": "Індексовані значення",
+    "field_index_values_desc": "Значення атрибута актуальності класу (наприклад, статусу), за яких об'єкт потрапляє до індексу; порожньо — індексуються всі об'єкти",
+    "field_profile": "Профіль чанкінгу",
+    "field_profile_desc": "JSON: вид чанка → список семантичних полів",
+    "btn_add_class": "Додати клас",
+    "add_class_placeholder": "Ім'я класу, наприклад Problem",
+    "invalid_profile_json": "Невалідний JSON у профілі класу {{class}}",
     "field_enabled": "Індексацію ввімкнено",
     "field_enabled_desc": "Застосовується з наступного обходу, без перезапуску",
     "field_env": "Середовище",
@@ -219,12 +226,6 @@
     "field_sweep_throttle": "Пауза між сторінками (секунди)",
     "field_reconcile_days": "Інтервал звірки (дні)",
     "field_max_chunk_tokens": "Макс. токенів у чанку",
-    "field_log_entries": "Записів логу на чанк",
-    "field_index_statuses": "Індексовані статуси",
-    "field_index_statuses_desc": "Індексуються лише об'єкти в цих статусах; чанки решти видаляються",
-    "field_classes": "Класи",
-    "field_classes_desc": "Класи тікетів iTop для індексації; порожній список зупиняє індексацію",
-    "field_profiles": "Профілі чанкінгу",
-    "field_profiles_desc": "За класами: тип чанка → список семантичних полів тікета"
+    "field_log_entries": "Записів логу на чанк"
   }
 }
