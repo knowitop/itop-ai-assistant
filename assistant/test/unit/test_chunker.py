@@ -1,7 +1,6 @@
 import unittest
 
-from domain.ticket import LogEntry
-from vector.chunker import CHARS_PER_TOKEN, Chunk, chunk_object, clean_text, split_text
+from vector.chunker import CHARS_PER_TOKEN, Chunk, ConversationEntry, chunk_object, clean_text, split_text
 
 _PROFILE = {
     "profile": ["title", "service", "subcategory"],
@@ -115,8 +114,8 @@ class TestLogChunks(unittest.TestCase):
     _PROFILE: dict = {"log:public": [], "log:private": []}
 
     @staticmethod
-    def _entries(n: int, login: str = "John Doe") -> list[LogEntry]:
-        return [LogEntry(user_login=login, message=f"message {i}") for i in range(n)]
+    def _entries(n: int, speaker: str = "agent") -> list[ConversationEntry]:
+        return [ConversationEntry(speaker=speaker, message=f"message {i}") for i in range(n)]
 
     def _log_chunks(self, logs, **kwargs) -> list[Chunk]:
         return _chunk({}, self._PROFILE, logs=logs, **kwargs)
@@ -137,12 +136,14 @@ class TestLogChunks(unittest.TestCase):
         self.assertEqual(before[0].text, after[0].text)  # byte-for-byte
         self.assertNotEqual(before[1].content_hash, after[1].content_hash)
 
-    def test_role_prefixes(self):
+    def test_speaker_labels_pass_through(self):
+        # Role resolution (caller vs agent) is the source's job, not the
+        # chunker's — entries arrive already labeled.
         entries = [
-            LogEntry(user_login="John Doe", message="I have a problem"),
-            LogEntry(user_login="Jane Agent", message="Looking into it"),
+            ConversationEntry(speaker="caller", message="I have a problem"),
+            ConversationEntry(speaker="agent", message="Looking into it"),
         ]
-        chunks = self._log_chunks({"log:public": entries}, caller_name="John Doe")
+        chunks = self._log_chunks({"log:public": entries})
 
         text = chunks[0].text
         self.assertIn("caller: I have a problem", text)
@@ -157,14 +158,14 @@ class TestLogChunks(unittest.TestCase):
 
     def test_entries_truncated_to_share_of_budget(self):
         # budget = 10 tokens * 3 = 30 chars; per entry = 30 // 5 = 6 chars
-        entries = [LogEntry(user_login="x", message="a" * 100)]
+        entries = [ConversationEntry(speaker="agent", message="a" * 100)]
         chunks = self._log_chunks({"log:public": entries}, max_chunk_tokens=10, log_entries_per_chunk=5)
 
         self.assertEqual(chunks[0].text, "agent: " + "a" * 6)
 
     def test_windows_never_resplit(self):
         # Oversize window is truncated per entry, never split into more chunks
-        entries = [LogEntry(user_login="x", message="b" * 500) for _ in range(5)]
+        entries = [ConversationEntry(speaker="agent", message="b" * 500) for _ in range(5)]
         chunks = self._log_chunks({"log:public": entries}, max_chunk_tokens=10, log_entries_per_chunk=5)
 
         self.assertEqual(len(chunks), 1)

@@ -4,9 +4,10 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from config import EmbeddingsConfig, VectorConfig
-from domain.ticket import Ticket
+from vector.chunker import chunk_object
 from vector.index import RECONCILE_SENTINEL, FingerprintMismatchError, IndexMeta
 from vector.indexer import VectorIndexer
+from vector.source import VectorRecord
 
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 _META = IndexMeta(version=1, model="test-model", dim=4)
@@ -22,17 +23,47 @@ _VECTOR_CFG = VectorConfig(
 _EMB_CFG = EmbeddingsConfig(base_url="http://emb/v1", model="test-model", dimension=4)
 
 
-def _ticket(
+def _record(
     obj_id: int, *, status: str = "resolved", description: str = "Broken.", last_update: datetime = _NOW
-) -> Ticket:
-    return Ticket(
-        obj_class="UserRequest",
-        id=str(obj_id),
-        description=description,
+) -> VectorRecord:
+    return VectorRecord(
+        obj_id=obj_id,
         status=status,
         last_update=last_update,
         created_at=_NOW - timedelta(days=1),
+        payload={"description": description},
     )
+
+
+class FakeTicketSource:
+    """Stand-in for TicketVectorSource: same VectorSource contract, no iTop."""
+
+    def __init__(self, records: list[VectorRecord] | None = None, *, classes: tuple[str, ...] = ("UserRequest",)):
+        self.classes = list(classes)
+        self._records = records or []
+        self.prepare_calls = 0
+        self.find_modified_since_calls: list[tuple] = []
+        self.find_modified_since_error: Exception | None = None
+        self.find_existing_ids_result: set[int] | None = None
+
+    async def prepare(self) -> None:
+        self.prepare_calls += 1
+
+    async def find_modified_since(self, obj_class, since, *, page, page_size) -> list[VectorRecord]:
+        self.find_modified_since_calls.append((obj_class, since, page, page_size))
+        if self.find_modified_since_error:
+            raise self.find_modified_since_error
+        return self._records if page == 1 else []
+
+    async def find_existing_ids(self, obj_class, ids) -> set[int]:
+        if self.find_existing_ids_result is not None:
+            return self.find_existing_ids_result
+        return set(ids)
+
+    async def chunk(self, obj_class, record, profile, *, max_chunk_tokens, log_entries_per_chunk):
+        return chunk_object(
+            record.payload, profile, max_chunk_tokens=max_chunk_tokens, log_entries_per_chunk=log_entries_per_chunk
+        )
 
 
 def _index_mock(*, locked: bool = True) -> MagicMock:
@@ -64,28 +95,18 @@ def _embedder_mock() -> MagicMock:
     return embedder
 
 
-def _deps_mock(
-    tickets: list[Ticket] | None = None, *, vector_cfg=_VECTOR_CFG, emb_cfg=_EMB_CFG, configured=True
-) -> MagicMock:
+def _deps_mock(*, vector_cfg=_VECTOR_CFG, emb_cfg=_EMB_CFG, configured=True) -> MagicMock:
     deps = MagicMock()
     deps.vector_db.configured = configured
     deps.config_store.get = AsyncMock(
         side_effect=lambda name, model: {"vector": vector_cfg, "embeddings": emb_cfg}[name]
     )
-    bundle = MagicMock()
-    pages = [tickets or []]
-    bundle.ticket_repo.find_modified_since = AsyncMock(
-        side_effect=lambda *a, page, page_size: pages[0] if page == 1 else []
-    )
-    bundle.ticket_repo.find_existing_ids = AsyncMock(side_effect=lambda cls, ids: set(ids))
-    deps.itop.get = AsyncMock(return_value=bundle)
-    deps._bundle = bundle
     return deps
 
 
 class IndexerTestCase(unittest.IsolatedAsyncioTestCase):
-    async def _run(self, deps, index, embedder=None):
-        indexer = VectorIndexer(deps)
+    async def _run(self, deps, index, source, embedder=None):
+        indexer = VectorIndexer(deps, sources=[source])
         self.indexer = indexer
         embedder = embedder or _embedder_mock()
         self.embedder = embedder
@@ -98,43 +119,56 @@ class IndexerTestCase(unittest.IsolatedAsyncioTestCase):
 
 class TestSkips(IndexerTestCase):
     async def test_skip_when_db_not_configured(self):
-        report = await self._run(_deps_mock(configured=False), _index_mock())
+        report = await self._run(_deps_mock(configured=False), _index_mock(), FakeTicketSource())
 
         self.assertEqual(report.status, "skipped")
         self.assertIn("database_url", report.skip_reason)
 
     async def test_skip_when_disabled(self):
         deps = _deps_mock(vector_cfg=VectorConfig(enabled=False))
-        report = await self._run(deps, _index_mock())
+        report = await self._run(deps, _index_mock(), FakeTicketSource())
 
         self.assertEqual(report.status, "skipped")
         self.assertIn("disabled", report.skip_reason)
 
     async def test_skip_when_embeddings_missing(self):
         deps = _deps_mock(emb_cfg=EmbeddingsConfig(base_url=None, model=None))
-        report = await self._run(deps, _index_mock())
+        report = await self._run(deps, _index_mock(), FakeTicketSource())
 
         self.assertEqual(report.status, "skipped")
         self.assertIn("embeddings", report.skip_reason)
 
     async def test_skip_when_lock_not_acquired(self):
         index = _index_mock(locked=False)
-        report = await self._run(_deps_mock([_ticket(1)]), index)
+        report = await self._run(_deps_mock(), index, FakeTicketSource([_record(1)]))
 
         self.assertEqual(report.status, "skipped")
         self.assertIn("lock", report.skip_reason)
         index.journal_start.assert_not_awaited()
 
+    async def test_no_source_registered_for_class_is_reported_as_ok(self):
+        # A class in cfg.classes that no registered source claims — logged
+        # and skipped, same tolerance as "no chunking profile".
+        source = FakeTicketSource([_record(1)], classes=("SomeOtherClass",))
+        index = _index_mock()
+        report = await self._run(_deps_mock(), index, source)
+
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(report.objects_seen, 0)
+        self.assertEqual(source.prepare_calls, 0)
+
 
 class TestSweep(IndexerTestCase):
     async def test_embeds_and_upserts_new_ticket(self):
         index = _index_mock()
-        report = await self._run(_deps_mock([_ticket(1)]), index)
+        source = FakeTicketSource([_record(1)])
+        report = await self._run(_deps_mock(), index, source)
 
         self.assertEqual(report.status, "ok")
         self.assertEqual(report.kind, "sweep")
         self.assertEqual(report.objects_seen, 1)
         self.assertEqual(report.chunks_embedded, 1)
+        self.assertEqual(source.prepare_calls, 1)
         records = index.upsert_chunks.await_args.args[0]
         self.assertEqual(records[0].obj_id, 1)
         self.assertEqual(records[0].chunk_kind, "body")
@@ -142,14 +176,14 @@ class TestSweep(IndexerTestCase):
 
     async def test_hash_guard_skips_unchanged(self):
         index = _index_mock()
-        deps = _deps_mock([_ticket(1)])
-        await self._run(deps, index)
+        source = FakeTicketSource([_record(1)])
+        await self._run(_deps_mock(), index, source)
         stored = {(r.chunk_kind, r.chunk_n): r.content_hash for r in index.upsert_chunks.await_args.args[0]}
 
         index2 = _index_mock()
         index2.get_chunk_hashes = AsyncMock(return_value=stored)
         embedder2 = _embedder_mock()
-        report = await self._run(deps, index2, embedder2)
+        report = await self._run(_deps_mock(), index2, FakeTicketSource([_record(1)]), embedder2)
 
         self.assertEqual(report.status, "ok")
         self.assertEqual(report.chunks_embedded, 0)
@@ -159,7 +193,7 @@ class TestSweep(IndexerTestCase):
     async def test_vanished_chunks_deleted(self):
         index = _index_mock()
         index.get_chunk_hashes = AsyncMock(return_value={("body", 0): "stale", ("body", 5): "gone"})
-        report = await self._run(_deps_mock([_ticket(1)]), index)
+        report = await self._run(_deps_mock(), index, FakeTicketSource([_record(1)]))
 
         index.delete_chunks.assert_awaited_once_with("UserRequest", 1, [("body", 5)])
         self.assertEqual(report.chunks_deleted, 1)
@@ -167,7 +201,7 @@ class TestSweep(IndexerTestCase):
 
     async def test_ticket_out_of_index_statuses_deleted(self):
         index = _index_mock()
-        report = await self._run(_deps_mock([_ticket(1, status="new")]), index)
+        report = await self._run(_deps_mock(), index, FakeTicketSource([_record(1, status="new")]))
 
         index.delete_object.assert_awaited_once_with("UserRequest", 1)
         self.assertEqual(report.chunks_deleted, 3)
@@ -176,7 +210,8 @@ class TestSweep(IndexerTestCase):
     async def test_cursor_set_to_max_last_update(self):
         newest = _NOW + timedelta(hours=2)
         index = _index_mock()
-        await self._run(_deps_mock([_ticket(1, last_update=_NOW), _ticket(2, last_update=newest)]), index)
+        source = FakeTicketSource([_record(1, last_update=_NOW), _record(2, last_update=newest)])
+        await self._run(_deps_mock(), index, source)
 
         class_calls = [c for c in index.set_cursor.await_args_list if c.args[0] == "UserRequest"]
         self.assertEqual(class_calls, [unittest.mock.call("UserRequest", newest)])
@@ -189,17 +224,17 @@ class TestSweep(IndexerTestCase):
 
         index = _index_mock()
         index.get_cursor = AsyncMock(side_effect=get_cursor)
-        deps = _deps_mock([])
-        await self._run(deps, index)
+        source = FakeTicketSource([])
+        await self._run(_deps_mock(), index, source)
 
-        since = deps._bundle.ticket_repo.find_modified_since.await_args.args[1]
+        since = source.find_modified_since_calls[-1][1]
         self.assertEqual(since, cursor - timedelta(seconds=2 * _VECTOR_CFG.sweep_interval_seconds))
 
     async def test_class_error_keeps_cursor_and_reports(self):
         index = _index_mock()
-        deps = _deps_mock()
-        deps._bundle.ticket_repo.find_modified_since = AsyncMock(side_effect=RuntimeError("itop down"))
-        report = await self._run(deps, index)
+        source = FakeTicketSource([])
+        source.find_modified_since_error = RuntimeError("itop down")
+        report = await self._run(_deps_mock(), index, source)
 
         self.assertEqual(report.status, "error")
         self.assertIn("itop down", report.errors[0])
@@ -210,7 +245,7 @@ class TestSweep(IndexerTestCase):
     async def test_fingerprint_mismatch_is_journaled_error(self):
         index = _index_mock()
         index.ensure_version = AsyncMock(side_effect=FingerprintMismatchError("dim changed"))
-        report = await self._run(_deps_mock([_ticket(1)]), index)
+        report = await self._run(_deps_mock(), index, FakeTicketSource([_record(1)]))
 
         self.assertEqual(report.status, "error")
         self.assertIn("rebuild required", report.errors[0])
@@ -219,7 +254,7 @@ class TestSweep(IndexerTestCase):
     async def test_journal_failure_is_non_fatal(self):
         index = _index_mock()
         index.journal_start = AsyncMock(side_effect=RuntimeError("pg hiccup"))
-        report = await self._run(_deps_mock([_ticket(1)]), index)
+        report = await self._run(_deps_mock(), index, FakeTicketSource([_record(1)]))
 
         self.assertEqual(report.status, "ok")
         self.assertEqual(report.chunks_embedded, 1)
@@ -229,8 +264,8 @@ class TestSweep(IndexerTestCase):
 class TestReindex(IndexerTestCase):
     async def test_request_reindex_resets_cursors_and_runs_backfill(self):
         index = _index_mock()
-        deps = _deps_mock([_ticket(1)])
-        indexer = VectorIndexer(deps)
+        deps = _deps_mock()
+        indexer = VectorIndexer(deps, sources=[FakeTicketSource([_record(1)])])
         indexer.request_reindex()
         self.assertTrue(indexer._wake.is_set())
 
@@ -248,8 +283,8 @@ class TestReindex(IndexerTestCase):
     async def test_full_flag_survives_failed_attempt(self):
         index = _index_mock()
         index.ensure_version = AsyncMock(side_effect=RuntimeError("pg down"))
-        deps = _deps_mock([_ticket(1)])
-        indexer = VectorIndexer(deps)
+        deps = _deps_mock()
+        indexer = VectorIndexer(deps, sources=[FakeTicketSource([_record(1)])])
         indexer.request_reindex()
 
         with (
@@ -266,9 +301,9 @@ class TestReconciliation(IndexerTestCase):
     async def test_due_when_never_ran_and_deletes_orphans(self):
         index = _index_mock()
         index.list_object_ids = AsyncMock(side_effect=lambda cls, after, limit: [1, 2] if after == 0 else [])
-        deps = _deps_mock([])
-        deps._bundle.ticket_repo.find_existing_ids = AsyncMock(return_value={1})
-        report = await self._run(deps, index)
+        source = FakeTicketSource([])
+        source.find_existing_ids_result = {1}
+        report = await self._run(_deps_mock(), index, source)
 
         self.assertEqual(report.status, "ok")
         index.delete_object.assert_awaited_once_with("UserRequest", 2)
@@ -282,7 +317,7 @@ class TestReconciliation(IndexerTestCase):
 
         index = _index_mock()
         index.get_cursor = AsyncMock(side_effect=get_cursor)
-        report = await self._run(_deps_mock([]), index)
+        report = await self._run(_deps_mock(), index, FakeTicketSource([]))
 
         self.assertEqual(report.status, "ok")
         index.list_object_ids.assert_not_awaited()
@@ -291,9 +326,9 @@ class TestReconciliation(IndexerTestCase):
 
     async def test_skipped_after_class_errors(self):
         index = _index_mock()
-        deps = _deps_mock()
-        deps._bundle.ticket_repo.find_modified_since = AsyncMock(side_effect=RuntimeError("boom"))
-        await self._run(deps, index)
+        source = FakeTicketSource([])
+        source.find_modified_since_error = RuntimeError("boom")
+        await self._run(_deps_mock(), index, source)
 
         index.list_object_ids.assert_not_awaited()
 

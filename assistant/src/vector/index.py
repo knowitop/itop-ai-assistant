@@ -63,7 +63,7 @@ class ChunkRecord:
     embedding: list[float]
     created_at: datetime  # object creation time (time-window KNN later)
     org_id: str | None = None
-    service_id: str | None = None
+    filters: dict[str, str] | None = None  # source-defined pre-filter keys, see vector/models.py
 
 
 @dataclass(frozen=True)
@@ -121,7 +121,7 @@ class VectorIndex:
                         "visibility": c.visibility,
                         "status": c.status,
                         "org_id": c.org_id,
-                        "service_id": c.service_id,
+                        "filters": c.filters,
                         "content_hash": c.content_hash,
                         "embedding": c.embedding,
                         "created_at": c.created_at,
@@ -135,7 +135,7 @@ class VectorIndex:
                     "visibility": stmt.excluded.visibility,
                     "status": stmt.excluded.status,
                     "org_id": stmt.excluded.org_id,
-                    "service_id": stmt.excluded.service_id,
+                    "filters": stmt.excluded.filters,
                     "content_hash": stmt.excluded.content_hash,
                     "embedding": stmt.excluded.embedding,
                     "created_at": stmt.excluded.created_at,

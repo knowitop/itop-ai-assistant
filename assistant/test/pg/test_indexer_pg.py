@@ -65,6 +65,9 @@ def _ticket(obj_id: int, description: str, *, status: str = "resolved") -> Ticke
 
 
 def _deps(db: VectorDb, tickets: list[Ticket]) -> MagicMock:
+    """`itop.get()` is mocked, but the sweep still goes through the real
+    `TicketVectorSource` (via `build_vector_sources`) — this test exercises
+    the source seam, not just `VectorIndex`."""
     deps = MagicMock()
     deps.vector_db = db
     deps.config_store.get = AsyncMock(

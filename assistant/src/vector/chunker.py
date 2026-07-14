@@ -1,4 +1,4 @@
-"""Object → chunks: pure, deterministic functions (no I/O).
+"""Object → chunks: pure, deterministic functions (no I/O), source-agnostic.
 
 Determinism matters: the sweep's hash-guard compares sha256 of the *final*
 chunk text against what is stored, so the same input must always produce
@@ -7,7 +7,9 @@ and the split algorithm has no randomness.
 
 Chunk kinds are the keys of the per-class `vector.profiles` config
 (`profile` / `body` / `solution`, log kinds `log:public` / `log:private`) —
-the config is the source of truth, there is no mapping layer.
+the config is the source of truth, there is no mapping layer. This module has
+no domain imports: sources (e.g. `vector_sources/tickets.py`) translate their
+own field/log shapes into the `fields`/`logs` dicts consumed here.
 """
 
 import hashlib
@@ -15,7 +17,6 @@ import logging
 import re
 from dataclasses import dataclass
 
-from domain.ticket import LogEntry
 from text_utils import html_to_markdown
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,16 @@ class Chunk:
     text: str
     visibility: str  # public / internal
     content_hash: str
+
+
+@dataclass(frozen=True)
+class ConversationEntry:
+    """One turn of a log/conversation-shaped source, already resolved to a
+    generic role by the caller (e.g. ticket "caller"/"agent" — this module
+    doesn't know what a caller is)."""
+
+    speaker: str
+    message: str
 
 
 def clean_text(raw: str | None) -> str:
@@ -95,24 +106,21 @@ def chunk_object(
     *,
     max_chunk_tokens: int,
     log_entries_per_chunk: int,
-    logs: dict[str, list[LogEntry]] | None = None,
-    caller_name: str = "",
+    logs: dict[str, list[ConversationEntry]] | None = None,
 ) -> list[Chunk]:
     """Chunk one object according to its class profile.
 
     `fields` holds cleaned-or-raw semantic field texts (values are passed
     through `clean_text`); `logs` maps log kinds ("log:public"/"log:private")
-    to their entries. An empty source (e.g. solution of an unresolved ticket)
-    yields zero chunks of that kind.
+    to their entries, already role-labeled by the caller. An empty source
+    (e.g. solution of an unresolved ticket) yields zero chunks of that kind.
     """
     budget = max_chunk_tokens * CHARS_PER_TOKEN
     chunks: list[Chunk] = []
     for kind, sources in profile.items():
         if kind.startswith("log:"):
             entries = (logs or {}).get(kind, [])
-            chunks.extend(
-                _log_chunks(kind, entries, budget=budget, per_chunk=log_entries_per_chunk, caller_name=caller_name)
-            )
+            chunks.extend(_log_chunks(kind, entries, budget=budget, per_chunk=log_entries_per_chunk))
             continue
         parts = []
         for name in sources:
@@ -127,7 +135,7 @@ def chunk_object(
     return chunks
 
 
-def _log_chunks(kind: str, entries: list[LogEntry], *, budget: int, per_chunk: int, caller_name: str) -> list[Chunk]:
+def _log_chunks(kind: str, entries: list[ConversationEntry], *, budget: int, per_chunk: int) -> list[Chunk]:
     """Windows of `per_chunk` entries with boundaries fixed by entry index:
     appending entries only changes the last window, so earlier chunks' hashes
     never move (no re-embedding of old history). Windows are never re-split —
@@ -138,8 +146,7 @@ def _log_chunks(kind: str, entries: list[LogEntry], *, budget: int, per_chunk: i
     for start in range(0, len(entries), per_chunk):
         lines = []
         for entry in entries[start : start + per_chunk]:
-            role = "caller" if entry.user_login == caller_name else "agent"
-            lines.append(f"{role}: {clean_text(entry.message)[:entry_budget]}")
+            lines.append(f"{entry.speaker}: {clean_text(entry.message)[:entry_budget]}")
         text = "\n".join(lines)
         chunks.append(
             Chunk(kind=kind, n=start // per_chunk, text=text, visibility=visibility, content_hash=_hash(text))

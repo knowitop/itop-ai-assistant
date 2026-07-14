@@ -38,6 +38,7 @@ def _chunk(
     status: str = "resolved",
     org_id: str | None = "org-1",
     content_hash: str = "hash-0",
+    filters: dict[str, str] | None = None,
 ) -> ChunkRecord:
     return ChunkRecord(
         obj_class=obj_class,
@@ -47,10 +48,10 @@ def _chunk(
         visibility=visibility,
         status=status,
         org_id=org_id,
-        service_id=None,
         content_hash=content_hash,
         embedding=embedding,
         created_at=_CREATED,
+        filters=filters,
     )
 
 
@@ -69,6 +70,7 @@ class TestEnsureVersion:
         assert "vector_chunk_v1_filter" in index_names
         assert "vector_chunk_v1_org" in index_names
         assert "vector_chunk_v1_obj" in index_names
+        assert "vector_chunk_v1_filters" in index_names
 
     async def test_second_call_is_noop(self, index):
         first = await index.ensure_version(_MODEL, _DIM)
@@ -116,6 +118,16 @@ class TestUpsert:
 
     async def test_empty_upsert_is_noop(self, index):
         assert await index.upsert_chunks([], model=_MODEL, dim=_DIM) == 0
+
+    async def test_filters_roundtrip_as_jsonb(self, index, db):
+        await index.ensure_version(_MODEL, _DIM)
+        chunk = _chunk(1, [0.0] * _DIM, filters={"service_id": "5"})
+
+        await index.upsert_chunks([chunk], model=_MODEL, dim=_DIM)
+
+        async with db.connect() as conn:
+            row = (await conn.execute(text("SELECT filters FROM vector_chunk_v1 WHERE obj_id = 1"))).one()
+        assert row.filters == {"service_id": "5"}
 
 
 class TestSearch:

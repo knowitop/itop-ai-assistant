@@ -23,6 +23,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -99,7 +100,13 @@ def chunk_table(version: int, dim: int) -> Table:
         Column("visibility", Text, nullable=False),  # public / internal
         Column("org_id", Text),  # rights pre-filter; NULL = global
         Column("status", Text, nullable=False),
-        Column("service_id", Text),
+        # Source-defined pre-filter keys, e.g. {"service_id": "5"} for
+        # tickets or {"category": "..."} for a future KB source — short
+        # scalar values only, never free text. Unlike `status`/`org_id`
+        # (one concept, per-class vocabulary), these are genuinely different
+        # concepts per source (Service vs. KB category vs. CI type), so they
+        # don't share a single typed column identity.
+        Column("filters", JSONB),
         Column("content_hash", Text, nullable=False),  # sha256 of the chunk's cleaned source text
         Column("embedding", HALFVEC(dim), nullable=False),
         Column("created_at", DateTime(timezone=True), nullable=False),  # object creation time
@@ -115,4 +122,13 @@ def chunk_table(version: int, dim: int) -> Table:
         Index(f"{name}_filter", "env", "obj_class", "status", "visibility"),
         Index(f"{name}_org", "org_id"),
         Index(f"{name}_obj", "env", "obj_class", "obj_id"),
+        # jsonb_path_ops (not the default jsonb_ops): smaller and faster for
+        # `@>` containment, which is the only operator this column is ever
+        # queried with — no key-existence (`?`) lookups.
+        Index(
+            f"{name}_filters",
+            "filters",
+            postgresql_using="gin",
+            postgresql_ops={"filters": "jsonb_path_ops"},
+        ),
     )

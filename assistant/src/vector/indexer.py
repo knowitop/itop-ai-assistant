@@ -1,15 +1,19 @@
-"""Vector index sweep: periodic incremental sync iTop → Postgres.
+"""Vector index sweep: periodic incremental sync from registered VectorSource
+instances (see `vector/source.py`, `vector_sources/registry.py`) into Postgres.
 
-The sweep reads tickets modified since the per-class cursor (with a
+The sweep reads objects modified since the per-class cursor (with a
 2×interval overlap), chunks them, embeds only changed chunks (hash-guard)
 and upserts into the active `vector_chunk_v{N}` table. Cursor semantics:
-iTop OQL has no ORDER BY, so pages arrive in internal order — the cursor
+sources page independently and may not guarantee ordering, so the cursor
 advances once per *completed class pass* (max last_update seen), never per
 page; a crashed pass simply re-reads, which the hash-guard makes cheap.
 
 Backfill is the same code path with cursors reset. A weekly reconciliation
-pass deletes chunks of objects that vanished from iTop. Cross-replica
+pass deletes chunks of objects that vanished from their source. Cross-replica
 exclusion is a Postgres session-level advisory lock.
+
+This module is source-agnostic: it knows `VectorSource`/`VectorRecord`, never
+`Ticket` or `ItopBundle` — those live in `vector_sources/tickets.py`.
 
 `vector.enabled` and the embeddings section are re-read from the ConfigStore
 snapshot on every tick, so enabling the feature at runtime needs no restart.
@@ -17,17 +21,18 @@ snapshot on every tick, so enabling the feature at runtime needs no restart.
 
 import asyncio
 import logging
+from collections.abc import Iterable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from catalog_repository import CatalogRepository
 from config import EmbeddingsConfig, VectorConfig
-from deps import AppDeps, ItopBundle
-from domain.ticket import Ticket
-from vector.chunker import Chunk, chunk_object
+from deps import AppDeps
+from vector.chunker import Chunk
 from vector.embedder import EmbeddingsClient
 from vector.index import RECONCILE_SENTINEL, ChunkRecord, FingerprintMismatchError, IndexMeta, VectorIndex
+from vector.source import VectorRecord, VectorSource
+from vector_sources.registry import build_vector_sources
 
 logger = logging.getLogger(__name__)
 
@@ -45,38 +50,19 @@ class SweepReport:
     errors: list[str] = field(default_factory=list)
 
 
-class _CatalogNames:
-    """Per-sweep memo of service/subcategory id → name (profile chunk text)."""
-
-    def __init__(self, catalog: CatalogRepository):
-        self._catalog = catalog
-        self._services: dict[str, str] = {}
-        self._subcategories: dict[str, str] = {}
-
-    async def service(self, ticket: Ticket) -> str:
-        if not ticket.has_service:
-            return ""
-        if ticket.service_id not in self._services:
-            service = await self._catalog.get_service(ticket.service_id)
-            self._services[ticket.service_id] = service.name if service else ""
-        return self._services[ticket.service_id]
-
-    async def subcategory(self, ticket: Ticket) -> str:
-        if not ticket.has_subcategory:
-            return ""
-        if ticket.subcategory_id not in self._subcategories:
-            subcategory = await self._catalog.get_subcategory(ticket.subcategory_id)
-            self._subcategories[ticket.subcategory_id] = subcategory.name if subcategory else ""
-        return self._subcategories[ticket.subcategory_id]
-
-
 class VectorIndexer:
     """The background sweep task (started from the FastAPI lifespan when
     `database_url` is set). `sweep_once` is the testable core; `run_forever`
-    just paces it and reacts to `request_reindex` wake-ups."""
+    just paces it and reacts to `request_reindex` wake-ups.
 
-    def __init__(self, deps: AppDeps) -> None:
+    `sources` overrides the registered `VectorSource`s (built by
+    `build_vector_sources` when omitted) — tests inject fakes here instead of
+    mocking iTop/repository internals.
+    """
+
+    def __init__(self, deps: AppDeps, sources: Sequence[VectorSource] | None = None) -> None:
         self._deps = deps
+        self._sources = list(sources) if sources is not None else None
         self._wake = asyncio.Event()
         self._full_requested = False
         self._task: asyncio.Task | None = None
@@ -150,17 +136,23 @@ class VectorIndexer:
             if full:
                 await index.reset_cursors()
                 self._full_requested = False
-            bundle = await self._deps.itop.get()
-            names = _CatalogNames(bundle.catalog_repo)
+            sources = self._sources if self._sources is not None else build_vector_sources(self._deps, cfg)
+            class_to_source = {obj_class: source for source in sources for obj_class in source.classes}
+            active_sources = _dedupe(s for c in cfg.classes if (s := class_to_source.get(c)) is not None)
+            for source in active_sources:
+                await source.prepare()
             for obj_class in cfg.classes:
+                source = class_to_source.get(obj_class)
+                if source is None:
+                    logger.warning(f"vector sweep: no source registered for class {obj_class!r} — skipping the class")
+                    continue
                 try:
                     await self._sweep_class(
                         obj_class,
+                        source=source,
                         index=index,
                         meta=meta,
                         embedder=embedder,
-                        bundle=bundle,
-                        names=names,
                         cfg=cfg,
                         report=report,
                         started_at=started_at,
@@ -170,7 +162,7 @@ class VectorIndexer:
                     logger.exception(f"vector sweep: class {obj_class} failed")
                     report.errors.append(f"{obj_class}: {e}")
             if not report.errors and await self._reconcile_due(index, cfg):
-                await self._reconcile(index, bundle, cfg, report)
+                await self._reconcile(index, class_to_source, cfg, report)
         except FingerprintMismatchError as e:
             logger.error(f"vector sweep: index rebuild required: {e}")
             report.errors.append(f"rebuild required: {e}")
@@ -196,11 +188,10 @@ class VectorIndexer:
         self,
         obj_class: str,
         *,
+        source: VectorSource,
         index: VectorIndex,
         meta: IndexMeta,
         embedder: EmbeddingsClient,
-        bundle: ItopBundle,
-        names: _CatalogNames,
         cfg: VectorConfig,
         report: SweepReport,
         started_at: datetime,
@@ -216,64 +207,55 @@ class VectorIndexer:
         max_seen = cursor
         page = 1
         while True:
-            tickets = await bundle.ticket_repo.find_modified_since(
-                obj_class, since, page=page, page_size=cfg.sweep_page_size
-            )
-            # (ticket, chunks to embed, vanished chunk keys) — embedding is
+            records = await source.find_modified_since(obj_class, since, page=page, page_size=cfg.sweep_page_size)
+            # (record, chunks to embed, vanished chunk keys) — embedding is
             # batched per page: one embed() call for every changed chunk
-            pending: list[tuple[Ticket, list[Chunk], list[tuple[str, int]]]] = []
-            for ticket in tickets:
+            pending: list[tuple[VectorRecord, list[Chunk], list[tuple[str, int]]]] = []
+            for record in records:
                 report.objects_seen += 1
-                if ticket.last_update and (max_seen is None or ticket.last_update > max_seen):
-                    max_seen = ticket.last_update
-                if ticket.status not in cfg.index_statuses:
+                if record.last_update and (max_seen is None or record.last_update > max_seen):
+                    max_seen = record.last_update
+                if record.status not in cfg.index_statuses:
                     # Left the indexable scope (e.g. reopened) — drop its chunks
-                    report.chunks_deleted += await index.delete_object(obj_class, int(ticket.id))
+                    report.chunks_deleted += await index.delete_object(obj_class, record.obj_id)
                     continue
-                chunks = chunk_object(
-                    {
-                        "title": ticket.title,
-                        "description": ticket.description,
-                        "solution": ticket.solution,
-                        "service": await names.service(ticket),
-                        "subcategory": await names.subcategory(ticket),
-                    },
+                chunks = await source.chunk(
+                    obj_class,
+                    record,
                     profile,
                     max_chunk_tokens=cfg.max_chunk_tokens,
                     log_entries_per_chunk=cfg.log_entries_per_chunk,
-                    logs={"log:public": ticket.public_log},
-                    caller_name=ticket.caller_name,
                 )
-                stored = await index.get_chunk_hashes(obj_class, int(ticket.id))
+                stored = await index.get_chunk_hashes(obj_class, record.obj_id)
                 changed = [c for c in chunks if stored.get((c.kind, c.n)) != c.content_hash]
                 current_keys = {(c.kind, c.n) for c in chunks}
                 vanished = [key for key in stored if key not in current_keys]
                 if changed or vanished:
-                    pending.append((ticket, changed, vanished))
+                    pending.append((record, changed, vanished))
 
             texts = [chunk.text for _, changed, _ in pending for chunk in changed]
             vectors = iter(await embedder.embed(texts) if texts else [])
-            for ticket, changed, vanished in pending:
-                records = [
+            for record, changed, vanished in pending:
+                chunk_records = [
                     ChunkRecord(
                         obj_class=obj_class,
-                        obj_id=int(ticket.id),
+                        obj_id=record.obj_id,
                         chunk_kind=chunk.kind,
                         chunk_n=chunk.n,
                         visibility=chunk.visibility,
-                        status=ticket.status,
+                        status=record.status,
                         content_hash=chunk.content_hash,
                         embedding=next(vectors),
-                        created_at=ticket.created_at or ticket.last_update or started_at,
-                        org_id=ticket.org_id,
-                        service_id=ticket.service_id if ticket.has_service else None,
+                        created_at=record.created_at or record.last_update or started_at,
+                        org_id=record.org_id,
+                        filters=record.filters,
                     )
                     for chunk in changed
                 ]
-                report.chunks_embedded += await index.upsert_chunks(records, model=meta.model, dim=meta.dim)
-                report.chunks_deleted += await index.delete_chunks(obj_class, int(ticket.id), vanished)
+                report.chunks_embedded += await index.upsert_chunks(chunk_records, model=meta.model, dim=meta.dim)
+                report.chunks_deleted += await index.delete_chunks(obj_class, record.obj_id, vanished)
 
-            if len(tickets) < cfg.sweep_page_size:
+            if len(records) < cfg.sweep_page_size:
                 break
             page += 1
             await asyncio.sleep(cfg.sweep_throttle_seconds)
@@ -285,22 +267,27 @@ class VectorIndexer:
         last = await index.get_cursor(RECONCILE_SENTINEL)
         return last is None or datetime.now(UTC) - last >= timedelta(days=cfg.reconcile_interval_days)
 
-    async def _reconcile(self, index: VectorIndex, bundle: ItopBundle, cfg: VectorConfig, report: SweepReport) -> None:
-        """Delete chunks of objects that no longer exist in iTop (deleted or
-        archived — invisible to the incremental sweep)."""
+    async def _reconcile(
+        self, index: VectorIndex, class_to_source: dict[str, VectorSource], cfg: VectorConfig, report: SweepReport
+    ) -> None:
+        """Delete chunks of objects that no longer exist at their source
+        (deleted or archived — invisible to the incremental sweep)."""
         journal_id = await self._journal_start(index, "reconcile")
         seen = deleted = 0
         status = "ok"
         error: str | None = None
         try:
             for obj_class in cfg.classes:
+                source = class_to_source.get(obj_class)
+                if source is None:
+                    continue
                 after = 0
                 while True:
                     ids = await index.list_object_ids(obj_class, after=after, limit=_RECONCILE_BATCH)
                     if not ids:
                         break
                     seen += len(ids)
-                    existing = await bundle.ticket_repo.find_existing_ids(obj_class, ids)
+                    existing = await source.find_existing_ids(obj_class, ids)
                     for orphan in sorted(set(ids) - existing):
                         deleted += await index.delete_object(obj_class, orphan)
                     after = ids[-1]
@@ -332,3 +319,12 @@ class VectorIndexer:
             await index.journal_finish(journal_id, **kwargs)
         except Exception as e:
             logger.warning(f"index journal finish failed (non-fatal): {e}")
+
+
+def _dedupe(sources: Iterable[VectorSource]) -> list[VectorSource]:
+    """Unique sources by identity, order-preserving (a class→source map can
+    map several classes onto the same source instance)."""
+    seen: dict[int, VectorSource] = {}
+    for source in sources:
+        seen.setdefault(id(source), source)
+    return list(seen.values())
