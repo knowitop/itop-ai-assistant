@@ -13,6 +13,7 @@ const NAV = [
   { to: '/modules', key: 'nav.modules' },
   { to: '/prompts', key: 'nav.prompts' },
   { to: '/runs', key: 'nav.runs' },
+  { to: '/vector', key: 'nav.vector' },
 ];
 
 const REPO_URL = 'https://github.com/knowitop/itop-ai-assistant';

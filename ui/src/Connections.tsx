@@ -44,6 +44,7 @@ export default function Connections() {
         <Tabs.List>
           <Tabs.Tab value="itop">{t('connections.tab_itop')}</Tabs.Tab>
           <Tabs.Tab value="llm">{t('connections.tab_llm')}</Tabs.Tab>
+          <Tabs.Tab value="embeddings">{t('connections.tab_embeddings')}</Tabs.Tab>
           <Tabs.Tab value="security">{t('connections.tab_security')}</Tabs.Tab>
           <Tabs.Tab value="ticket_mapping">{t('connections.tab_ticket_mapping')}</Tabs.Tab>
         </Tabs.List>
@@ -54,6 +55,9 @@ export default function Connections() {
         </Tabs.Panel>
         <Tabs.Panel value="llm" pt="md">
           <LlmForm />
+        </Tabs.Panel>
+        <Tabs.Panel value="embeddings" pt="md">
+          <EmbeddingsForm />
         </Tabs.Panel>
         <Tabs.Panel value="security" pt="md">
           <SecurityForm />
@@ -520,6 +524,195 @@ function LlmForm() {
         </Button>
         <Button variant="default" onClick={test} loading={busy}>
           {t('common.btn_test_llm')}
+        </Button>
+        <Button variant="subtle" color="red" onClick={reset}>
+          {t('common.btn_reset_defaults')}
+        </Button>
+      </Group>
+    </Stack>
+  );
+}
+
+// Deliberate clone of LlmForm for the embeddings endpoint (same section
+// shape: base_url/model/api_key plus numeric tuning fields).
+function EmbeddingsForm() {
+  const { t } = useTranslation();
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const [baseUrl, setBaseUrl] = useState('');
+  const [model, setModel] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [dimension, setDimension] = useState<number | string>('');
+  const [batchSize, setBatchSize] = useState<number | string>('');
+  const [timeout_, setTimeout_] = useState<number | string>('');
+  const [secrets, setSecrets] = useState<Record<string, boolean>>({});
+
+  const load = async () => {
+    const data = await apiGet<SectionData>('/setup/embeddings');
+    setBaseUrl(String(data.values.base_url ?? ''));
+    setModel(String(data.values.model ?? ''));
+    setApiKey('');
+    setDimension((data.values.dimension as number) ?? '');
+    setBatchSize((data.values.batch_size as number) ?? '');
+    setTimeout_((data.values.timeout as number) ?? '');
+    setSecrets(data.secrets);
+    setLoaded(true);
+  };
+
+  useEffect(() => {
+    load().catch((e: Error) => setError(e.message));
+  }, []);
+
+  // Empty numeric fields are omitted: PATCH-merge keeps the stored value.
+  const body = () => {
+    const b: Record<string, unknown> = { base_url: baseUrl, model: model || null };
+    if (apiKey) b.api_key = apiKey;
+    if (dimension !== '') b.dimension = Number(dimension);
+    if (batchSize !== '') b.batch_size = Number(batchSize);
+    if (timeout_ !== '') b.timeout = Number(timeout_);
+    return b;
+  };
+
+  const test = async () => {
+    setBusy(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const result = await apiSend<{
+        ok: boolean;
+        model?: string;
+        dimension?: number;
+        dimension_match?: boolean;
+        error?: string;
+      }>('POST', '/setup/test-embeddings', body());
+      if (result.ok && result.dimension_match)
+        setSuccess(
+          t('connections.embeddings_test_ok', { model: result.model, dimension: result.dimension }),
+        );
+      else if (result.ok)
+        // A mismatched dimension is a config error, not a success: the index
+        // would reject these vectors at write time.
+        setError(
+          t('connections.embeddings_dimension_mismatch', {
+            actual: result.dimension,
+            expected: dimension,
+          }),
+        );
+      else setError(result.error ?? t('common.error_embeddings_failed'));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await apiSend<SectionData>('PATCH', '/setup/embeddings', body());
+      await load();
+      setSuccess(t('common.saved'));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clearApiKey = async () => {
+    if (!window.confirm(t('connections.api_key_clear_confirm'))) return;
+    setError(null);
+    setSuccess(null);
+    try {
+      await apiSend<SectionData>('PATCH', '/setup/embeddings', { api_key: null });
+      await load();
+      setSuccess(t('connections.api_key_cleared'));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const reset = async () => {
+    setError(null);
+    setSuccess(null);
+    try {
+      if (
+        !(await resetSection('embeddings', t('connections.reset_confirm', { section: 'embeddings' })))
+      )
+        return;
+      await load();
+      setSuccess(t('common.section_reset'));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  if (!loaded) return error ? <Alert color="red">{error}</Alert> : <Loader />;
+
+  return (
+    <Stack maw={560}>
+      <StatusAlert error={error} success={success} />
+      <TextInput
+        label={t('common.field_base_url')}
+        description={t('connections.embeddings_base_url_desc')}
+        placeholder="http://localhost:1234/v1"
+        value={baseUrl}
+        onChange={(e) => setBaseUrl(e.currentTarget.value)}
+      />
+      <TextInput
+        label={t('common.field_model')}
+        description={t('connections.embeddings_model_desc')}
+        placeholder="bge-m3"
+        value={model}
+        onChange={(e) => setModel(e.currentTarget.value)}
+      />
+      <PasswordInput
+        label={t('common.field_api_key')}
+        placeholder={secrets.api_key ? t('common.secret_is_set') : t('common.secret_not_set')}
+        description={secrets.api_key ? undefined : t('connections.llm_api_key_desc')}
+        value={apiKey}
+        onChange={(e) => setApiKey(e.currentTarget.value)}
+        rightSectionWidth={70}
+        rightSection={
+          secrets.api_key ? (
+            <Button size="compact-xs" variant="subtle" color="red" onClick={clearApiKey}>
+              {t('common.btn_clear')}
+            </Button>
+          ) : null
+        }
+      />
+      <Group grow>
+        <NumberInput
+          label={t('common.field_dimension')}
+          min={1}
+          max={4000}
+          value={dimension}
+          onChange={setDimension}
+        />
+        <NumberInput
+          label={t('common.field_batch_size')}
+          min={1}
+          value={batchSize}
+          onChange={setBatchSize}
+        />
+        <NumberInput
+          label={t('common.field_timeout_seconds')}
+          min={1}
+          value={timeout_}
+          onChange={setTimeout_}
+        />
+      </Group>
+      <Group>
+        <Button onClick={save} loading={busy}>
+          {t('common.btn_save')}
+        </Button>
+        <Button variant="default" onClick={test} loading={busy}>
+          {t('common.btn_test_embeddings')}
         </Button>
         <Button variant="subtle" color="red" onClick={reset}>
           {t('common.btn_reset_defaults')}
