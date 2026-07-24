@@ -14,6 +14,7 @@ from journal import RunJournal
 from prompt_store import FilePromptStore, PromptStore, RedisPromptStore
 from state.ticket_state import TicketStateManager
 from ticket_repository import TicketRepository
+from vector.db import VectorDb
 
 _DEFAULT_PROMPTS_DIR = Path(__file__).parent.parent / "prompts"  # assistant/prompts
 
@@ -77,10 +78,12 @@ class AppDeps:
     config_store: ConfigStore
     prompt_store: PromptStore
     journal: RunJournal
+    vector_db: VectorDb
 
     async def aclose(self) -> None:
         await self.itop.aclose()
         await self.state_manager.aclose()
+        await self.vector_db.aclose()
 
 
 def create_itop_client(cfg: ItopConfig) -> Itop:
@@ -116,4 +119,6 @@ def build_deps(settings: Settings) -> AppDeps:
         config_store=config_store,
         prompt_store=RedisPromptStore(FilePromptStore(_DEFAULT_PROMPTS_DIR, settings.prompts_dir), redis),
         journal=RunJournal(redis, ttl_seconds=settings.run_ttl_days * 24 * 60 * 60),
+        # Lazy: no engine (and no connection) until the vector store is used
+        vector_db=VectorDb(settings.database_url),
     )

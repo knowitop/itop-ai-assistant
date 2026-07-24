@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -11,6 +12,8 @@ from config import ItopConfig, LlmConfig, SecurityConfig, get_settings, missing_
 from deps import build_deps
 from graph.enrichment.prompts import build_enrichment_prompts
 from pipelines.registry import build_registry
+from vector.db import run_migrations
+from vector.indexer import VectorIndexer
 from webhook.router import router
 
 settings = get_settings()
@@ -30,6 +33,14 @@ async def lifespan(app: FastAPI):
     # Fail fast on missing or broken prompt templates instead of on a live ticket
     build_enrichment_prompts(await deps.prompt_store.get("enrichment"))
 
+    # Vector store is optional: no DATABASE_URL = Redis-only deployment, and a
+    # failed migration degrades to "vector unavailable", never a boot failure
+    if settings.database_url:
+        try:
+            await asyncio.to_thread(run_migrations, settings.database_url)
+        except Exception as e:
+            logger.warning(f"Postgres migrations failed — vector store unavailable until fixed: {e}")
+
     # Setup diagnostics against the *effective* config (Redis overrides > env)
     security = await deps.config_store.get("security", SecurityConfig)
     if security.webhook_token is None:
@@ -46,11 +57,21 @@ async def lifespan(app: FastAPI):
             "/webhook is disabled until configured via the admin API (/api/setup)"
         )
 
+    # Background sweep exists only alongside Postgres; whether it actually
+    # indexes is re-checked every tick from the runtime config (vector.enabled)
+    indexer: VectorIndexer | None = None
+    if settings.database_url:
+        indexer = VectorIndexer(deps)
+        indexer.start()
+
     app.state.deps = deps
     app.state.registry = build_registry(settings)
+    app.state.vector_indexer = indexer
     try:
         yield
     finally:
+        if indexer is not None:
+            await indexer.stop()
         await deps.aclose()
 
 

@@ -1,11 +1,12 @@
 import re
 from functools import lru_cache
 
-from bs4 import BeautifulSoup
 from langchain_core.messages import AIMessage, HumanMessage
-from markdownify import markdownify
 
 from domain.ticket import LogEntry
+
+# Re-exported from text_utils (their new home) — existing imports keep working.
+from text_utils import bind_oql, html_to_markdown  # noqa: F401
 
 # <think> is the de-facto standard for open-weight reasoning models
 # (DeepSeek-R1, Qwen3, QwQ); <thinking> and <reasoning> appear in fine-tunes.
@@ -26,33 +27,6 @@ def _think_patterns(tags: tuple[str, ...]) -> tuple[re.Pattern, re.Pattern, re.P
         # Unclosed opening tag (truncated output): reasoning must not leak.
         re.compile(rf"<({alt})>.*$", re.DOTALL | re.IGNORECASE),
     )
-
-
-_NUMERIC_RE = re.compile(r"-?\d+(\.\d+)?")
-
-
-def bind_oql(oql: str, this: dict) -> str:
-    """Substitute :this->field placeholders in an OQL template string.
-
-    Non-numeric values are quoted and escaped to prevent OQL injection.
-    """
-    # Longest keys first so :this->org never matches inside :this->org_id.
-    for key in sorted(this, key=len, reverse=True):
-        placeholder = f":this->{key}"
-        if placeholder not in oql:
-            continue
-        value = this[key]
-        if value is None:
-            replacement = "NULL"
-        else:
-            text = str(value)
-            if _NUMERIC_RE.fullmatch(text):
-                replacement = text
-            else:
-                escaped = text.replace("\\", "\\\\").replace('"', '\\"')
-                replacement = f'"{escaped}"'
-        oql = oql.replace(placeholder, replacement)
-    return oql
 
 
 def strip_thinking(content: str | list | None, tags: tuple[str, ...] = DEFAULT_THINK_TAGS) -> str:
@@ -91,16 +65,6 @@ def extract_xml_field(text: str, tag: str) -> str | None:
 def drop_xml_field(text: str, tag: str) -> str:
     """Remove all <tag>…</tag> blocks from the text."""
     return re.sub(rf"<{tag}>.*?</{tag}>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
-
-
-def html_to_markdown(text: str | None) -> str:
-    """Convert HTML to Markdown, preserving structure for LLM consumption."""
-    if not text:
-        return ""
-    soup = BeautifulSoup(text, "html.parser")
-    for tag in soup(["script", "style"]):
-        tag.decompose()
-    return markdownify(str(soup)).strip()
 
 
 def build_conversation(entries: list[LogEntry], ai_name: str, caller_name: str) -> list:

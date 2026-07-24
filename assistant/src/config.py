@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar
 
-from pydantic import BaseModel, SecretStr, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -42,6 +42,11 @@ class TicketFieldMap(BaseModel):
     request_type: str | None = "request_type"
     public_log: str | None = "public_log"
     private_log: str | None = "private_log"
+    solution: str | None = "solution"
+    last_update: str | None = "last_update"
+    # Stock iTop attribute for ticket creation time; custom datamodels remap
+    # via class_overrides (Incident needs none — it has start_date too)
+    created_at: str | None = "start_date"
 
 
 class TicketMappingConfig(BaseModel):
@@ -123,6 +128,25 @@ class LlmConfig(RuntimeSectionConfig):
     think_tags: list[str] = ["think", "thinking", "reasoning"]
 
 
+class EmbeddingsConfig(RuntimeSectionConfig):
+    """Embedding endpoint settings — runtime-editable section "embeddings".
+
+    Optional: the vector store stays off without it. The model must be
+    multilingual (tickets are ru/en mixed) and `dimension` must match what
+    the model actually returns — verified by POST /api/setup/test-embeddings.
+    """
+
+    SECRET_FIELDS: ClassVar[frozenset[str]] = frozenset({"api_key"})
+
+    base_url: str | None = None  # OpenAI-compatible, includes /v1 (like llm.base_url)
+    model: str | None = None
+    api_key: str | None = None
+    # pgvector HNSW indexes support halfvec up to 4000 dims
+    dimension: int = Field(default=1024, gt=0, le=4000)
+    batch_size: int = Field(default=32, gt=0)
+    timeout: float = 30.0
+
+
 class SecurityConfig(RuntimeSectionConfig):
     """Shared secrets for the public endpoints — runtime-editable section "security".
 
@@ -165,6 +189,53 @@ class EnrichmentConfig(BaseModel):
     classify_subcategory_oql: str = _CLASSIFY_SUBCATEGORY_OQL
 
 
+class VectorClassConfig(BaseModel):
+    """Per-class vector index settings (one entry per indexed object class).
+
+    Every indexed class must expose a last-modification datetime and a
+    "relevance" attribute — the VectorSource contract (`vector/source.py`).
+    Which attributes those are is the source's concern (tickets map them via
+    `ticket_mapping`); this config holds only the relevance *values*.
+    """
+
+    # Values of the class's relevance attribute that keep an object in the
+    # index (similar-tickets searches want resolved knowledge, not open
+    # noise); [] = index every object of the class
+    index_values: list[str] = []
+    # Chunking profile: which semantic fields feed which chunk kinds
+    profile: dict[str, list[str]] = {}
+
+
+_TICKET_PROFILE = {
+    "profile": ["title", "service", "subcategory"],
+    "body": ["description"],
+    "solution": ["solution"],
+}
+
+
+class VectorConfig(BaseModel):
+    """Vector index settings — infrastructure section "vector" (setup API).
+
+    Off by default: the base deployment stays Redis-only. The chunking
+    profiles and sweep settings are consumed by the indexer (Stage 2);
+    they live here from the start so the section schema is stable.
+    """
+
+    enabled: bool = False
+    # Indexed object classes with their per-class settings
+    classes: dict[str, VectorClassConfig] = {
+        "UserRequest": VectorClassConfig(index_values=["resolved", "closed"], profile=_TICKET_PROFILE),
+        "Incident": VectorClassConfig(index_values=["resolved", "closed"], profile=_TICKET_PROFILE),
+    }
+    sweep_interval_seconds: int = Field(default=300, gt=0)
+    sweep_page_size: int = Field(default=100, gt=0)
+    # Pause between iTop pages so a backfill doesn't hammer the REST API
+    sweep_throttle_seconds: float = Field(default=0.5, ge=0)
+    reconcile_interval_days: int = Field(default=7, gt=0)
+    max_chunk_tokens: int = Field(default=480, gt=0)
+    log_entries_per_chunk: int = Field(default=5, gt=0)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         yaml_file=str(_ROOT / "config.yaml"),
@@ -197,17 +268,33 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr | None = None
     llm_think_tags: list[str] = ["think", "thinking", "reasoning"]
 
+    # Embeddings (vector store)
+    embeddings_base_url: str | None = None
+    embeddings_model: str | None = None
+    embeddings_api_key: SecretStr | None = None
+    embeddings_dimension: int = 1024
+    embeddings_batch_size: int = 32
+    embeddings_timeout: float = 30.0
+
     # Redis
     redis_url: str = "redis://localhost:6379"
     state_ttl_days: int = 30
     # How long processing-run journal entries are kept
     run_ttl_days: int = 7
 
+    # Postgres (vector store) — bootstrap, env-only like redis_url.
+    # None = vector features unavailable; the app runs Redis-only.
+    # Format: postgresql+asyncpg://user:pass@host:5432/dbname
+    database_url: str | None = None
+
     # iTop datamodel mapping
     ticket_mapping: TicketMappingConfig = TicketMappingConfig()
 
     # Business modules
     enrichment: EnrichmentConfig = EnrichmentConfig()
+
+    # Vector store (infrastructure; editable via /api/setup/vector)
+    vector: VectorConfig = VectorConfig()
 
     # Env/yaml values act as *defaults* for the runtime-editable sections
     # below: RedisConfigStore resolves a section via getattr(settings, name),
@@ -231,6 +318,17 @@ class Settings(BaseSettings):
             model=self.llm_model,
             api_key=self.llm_api_key.get_secret_value() if self.llm_api_key else None,
             think_tags=self.llm_think_tags,
+        )
+
+    @property
+    def embeddings(self) -> EmbeddingsConfig:
+        return EmbeddingsConfig(
+            base_url=self.embeddings_base_url,
+            model=self.embeddings_model,
+            api_key=self.embeddings_api_key.get_secret_value() if self.embeddings_api_key else None,
+            dimension=self.embeddings_dimension,
+            batch_size=self.embeddings_batch_size,
+            timeout=self.embeddings_timeout,
         )
 
     @property

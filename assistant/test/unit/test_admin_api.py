@@ -13,6 +13,7 @@ from journal import RunJournal
 from main import app
 from prompt_store import FilePromptStore, RedisPromptStore
 from state.ticket_state import TicketStateManager
+from vector.db import VectorDb
 
 _PROMPTS_DIR = Path(__file__).parents[2] / "prompts"
 
@@ -26,6 +27,7 @@ def _make_deps(redis, settings=None) -> AppDeps:
         config_store=RedisConfigStore(redis, settings),
         prompt_store=RedisPromptStore(FilePromptStore(_PROMPTS_DIR), redis),
         journal=RunJournal(redis),
+        vector_db=VectorDb(None),
     )
 
 

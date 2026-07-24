@@ -10,6 +10,7 @@ import Modules from './Modules';
 import Prompts from './Prompts';
 import Runs from './Runs';
 import SetupWizard from './SetupWizard';
+import Vector from './Vector';
 
 // HashRouter keeps all routes under /ui/#/... so FastAPI StaticFiles can serve
 // the SPA without a server-side fallback for deep links.
@@ -39,6 +40,7 @@ export default function App() {
             <Route path="/modules" element={<Modules />} />
             <Route path="/prompts" element={<Prompts />} />
             <Route path="/runs" element={<Runs />} />
+            <Route path="/vector" element={<Vector />} />
           </Route>
         </Routes>
       </HashRouter>

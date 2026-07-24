@@ -17,6 +17,19 @@ services:
       - redis-data:/data
     command: redis-server --appendonly yes
 
+  # Vector store backend (optional): the assistant runs Redis-only until
+  # DATABASE_URL is set, so `assistant` deliberately has no depends_on here.
+  postgres:
+    image: pgvector/pgvector:pg17
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: assistant
+      POSTGRES_USER: assistant
+      POSTGRES_PASSWORD: assistant
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
   assistant:
     image: ghcr.io/knowitop/itop-ai-assistant:latest
 #    build:
@@ -32,3 +45,4 @@ services:
 volumes:
   itop-db:
   redis-data:
+  postgres-data:

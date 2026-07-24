@@ -141,7 +141,8 @@ cd docker && docker-compose up -d
 | `src/graph/enrichment/nodes/evaluate.py`        | LLM completeness evaluation node                   |
 | `src/graph/enrichment/nodes/ask.py`             | Post clarifying question node                       |
 | `src/graph/enrichment/nodes/enrich.py`          | Ticket enrichment node                              |
-| `src/graph/enrichment/nodes/utils.py`           | `strip_thinking`, `bind_oql`, `html_to_markdown`    |
+| `src/graph/enrichment/nodes/utils.py`           | `strip_thinking` + re-exports from `text_utils`     |
+| `src/text_utils.py`                             | Generic `html_to_markdown`, `bind_oql` (no biz deps)|
 | `src/graph/enrichment/prompts.py`               | `EnrichmentPrompts` + placeholder registry/validation |
 | `src/prompt_store.py`                           | `PromptStore` — file-based templates with overrides |
 | `prompts/enrichment/*.md`                       | Default prompt templates (one file per prompt)      |
@@ -151,6 +152,15 @@ cd docker && docker-compose up -d
 | `src/catalog_repository.py`                     | `CatalogRepository` — service catalog reads         |
 | `src/domain/catalog.py`                         | `Service` / `ServiceSubcategory` semantic models    |
 | `src/state/ticket_state.py`                     | Redis-backed `TicketState` and `TicketStateManager` |
+| `src/vector/db.py`                              | `VectorDb` — lazy async Postgres engine + migrations runner |
+| `src/vector/models.py`                          | Vector store schema: static tables + `chunk_table` factory |
+| `src/vector/index.py`                           | `VectorIndex` — the single SQL/pgvector seam (versioned tables, KNN) |
+| `src/vector/embedder.py`                        | `EmbeddingsClient` — OpenAI-compatible /v1/embeddings, batching |
+| `src/vector/chunker.py`                         | Pure chunking: profiles → chunks, token budget, log windows |
+| `src/vector/indexer.py`                         | `VectorIndexer` — background sweep, backfill, reconciliation |
+| `src/vector/reindex.py`                         | Backfill/reindex CLI (`python -m vector.reindex`)   |
+| `src/vector/router.py`                          | `GET /api/vector/status`, `POST /api/vector/reindex` |
+| `src/vector/migrations/`                        | Alembic migrations (applied automatically at startup) |
 | `src/itop_client/`                              | `Itop` — vendored iTop REST API library (itoptop fork) |
 
 **`src/itop_client/` is a vendored external library** (fork of itoptop,
@@ -243,6 +253,12 @@ None (`RuntimeSectionConfig`). Webhook/admin token checks read the effective
 | `llm_api_key` | optional | API key (omit for local LM Studio) |
 | `llm_think_tags` | default `[think, thinking, reasoning]` | Tag names stripped as inline reasoning blocks |
 | `redis_url` | default (env-only, bootstrap) | Redis connection URL |
+| `database_url` | optional (env-only, bootstrap) | Postgres DSN for the vector store (`postgresql+asyncpg://…`); unset = Redis-only deployment |
+| `embeddings_base_url` | optional (env or setup API) | OpenAI-compatible /v1 endpoint for embeddings |
+| `embeddings_model` | optional (env or setup API) | Embedding model (must be multilingual, e.g. `bge-m3`) |
+| `embeddings_api_key` | optional | API key for the embeddings endpoint |
+| `embeddings_dimension` | default `1024` (max 4000) | Vector dimension; must match the model — verified by `test-embeddings` |
+| `embeddings_batch_size` | default `32` | Texts per /embeddings request |
 | `state_ttl_days` | default `30` | TTL for per-ticket state in Redis |
 | `run_ttl_days` | default `7` | TTL for processing-run journal entries |
 | `log_level` | default `INFO` (env-only) | Logging level |
@@ -265,8 +281,10 @@ steps, error) — journal writes are non-fatal by design. Inspect via
 
 **Setup API (wizard backend).** Connection sections are managed via
 `/api/setup`: `GET /status` (what's missing), `GET/PATCH/DELETE /{section}`
-for `itop` / `llm` / `security` / `ticket_mapping`, `POST /test-itop` and
-`POST /test-llm` probes (nothing saved). PATCH is a partial update merged
+for `itop` / `llm` / `security` / `ticket_mapping` / `embeddings` / `vector`,
+`POST /test-itop`, `POST /test-llm` and `POST /test-embeddings` probes
+(nothing saved; `test-embeddings` measures the endpoint's real vector
+dimension and reports `dimension_match`). PATCH is a partial update merged
 over the current effective config; GET responses mask secrets
 (`secrets: {field: is_set}`); in PATCH bodies an absent field keeps the
 stored value, explicit `null` clears it. Until an admin token is set the
@@ -279,6 +297,46 @@ stored; the same logic runs standalone as a CLI
 (`PYTHONPATH=src uv run python -m itop_provisioning`). The wizard step
 order is Security → iTop → LLM → iTop webhooks: provisioning needs the
 saved webhook token.
+
+**Vector store (optional infrastructure, `src/vector/`).** Postgres +
+pgvector behind the env-only `database_url`; unset = the whole subsystem is
+off and the deployment stays Redis-only. `src/vector/` is an infrastructure
+layer like `state/` or `journal.py` — it is NOT a business module: it does
+not register in `PipelineRegistry`, has no prompts or webhook routes; future
+business modules consume it through `AppDeps.vector_db`. Alembic migrations
+(static tables: `vector_index_meta`, `vector_sync_state`, `index_journal`)
+run automatically at startup when `database_url` is set — failures degrade
+to a warning, never a boot failure. The versioned chunk tables
+(`vector_chunk_v{N}`, dimension from the `embeddings` section) are created
+at runtime by `VectorIndex.ensure_version()`; a model/dimension change
+raises `FingerprintMismatchError` instead of mixing incomparable vectors.
+Diagnostics: `GET /api/vector/status`. The chunk tables store embeddings +
+ids + filter metadata only — never raw ticket text (see
+`docs/plans/vector-store.md`).
+
+The index is filled by `VectorIndexer` (`src/vector/indexer.py`) — the
+project's first background task, started in the lifespan when `database_url`
+is set (`app.state.vector_indexer`, stopped before `deps.aclose()`). Every
+`vector.sweep_interval_seconds` it re-reads the runtime config (so flipping
+`vector.enabled` needs no restart), takes a Postgres advisory lock (safe with
+replicas) and sweeps: reads tickets changed since the per-class cursor
+(`last_update`, 2×interval overlap, paged with `sweep_throttle_seconds`
+between pages), chunks them per `vector.classes[<class>].profile` (chunk
+kinds = profile keys; log kinds `log:public`/`log:private` are implemented
+but not in the default profiles), embeds only changed chunks (sha256
+hash-guard) and deletes vanished ones; objects whose relevance value is
+outside the per-class `index_values` get their chunks removed (empty list =
+index everything). The source contract (`vector/source.py`): every indexed
+class exposes a last-modification datetime and a relevance attribute — which
+attributes those are is the source's mapping concern (tickets: semantic
+`status`/`last_update` via `ticket_mapping`).
+The cursor advances once per completed class pass (iTop OQL has no ORDER BY).
+Every `vector.reconcile_interval_days` a reconciliation pass deletes chunks
+of objects that disappeared from iTop. Runs are journaled in the
+`index_journal` table (visible in `/api/vector/status`). Full rebuild:
+`POST /api/vector/reindex` (resets cursors, wakes the sweep) or the CLI
+`PYTHONPATH=src uv run python -m vector.reindex --full` (reads runtime config
+from Redis, so run it next to the deployment).
 
 **Prompts are files, not code.** Defaults live in `prompts/enrichment/*.md`;
 a deployment overrides individual prompts by placing same-named files under
@@ -302,9 +360,9 @@ simplicity beats elegance. These constraints are mandatory:
   No Redux, TanStack Query, axios, or CSS-in-JS libraries: state is
   `useState`, HTTP is the single fetch wrapper in `api.ts`.
 - **Flat structure**: one file per screen (`SetupWizard.tsx`,
-  `Connections.tsx`, `Modules.tsx`, `Prompts.tsx`, `Runs.tsx`) plus
-  `api.ts` and `Layout.tsx`. No hook factories, barrel files, or clever
-  abstractions.
+  `Connections.tsx`, `Modules.tsx`, `Prompts.tsx`, `Runs.tsx`,
+  `Vector.tsx`) plus `api.ts` and `Layout.tsx`. No hook factories,
+  barrel files, or clever abstractions.
 - **Pin exact versions** in `package.json` (no `^`/`~`), commit the lock
   file; upgrade dependencies only when something requires it.
 - **Prompt editor is a plain Mantine `Textarea`** — introduce CodeMirror
@@ -331,10 +389,17 @@ npm run build   # type-check (tsc --noEmit) + production build into ui/dist
 - Redis is mocked with `fakeredis`
 - `get_settings()` is cached via `lru_cache`; call `get_settings.cache_clear()`
   in `setUp`/`tearDown` when tests need to control env vars
+- Postgres/pgvector integration tests live in `assistant/test/pg/` — NOT
+  collected by default; run explicitly with `uv run pytest test/pg` (needs
+  Docker: Testcontainers spins up `pgvector/pgvector:pg17`, skips when
+  Docker is unavailable)
 - Current test files: `test_config.py`, `test_router.py`, `test_deps.py`,
   `test_enrichment_pipeline.py`, `test_pipelines_registry.py`,
   `test_ticket_state.py`, `test_prompt_store.py`, `test_ticket_repository.py`,
   `test_catalog_repository.py`, `test_itop_schema.py`, `test_journal.py`,
   `test_config_store.py`, `test_admin_api.py`, `test_setup_api.py`,
   `test_nodes_guard.py`, `test_nodes_classify.py`, `test_nodes_evaluate.py`,
-  `test_nodes_ask.py`, `test_nodes_enrich.py`, `test_nodes_utils.py`
+  `test_nodes_ask.py`, `test_nodes_enrich.py`, `test_nodes_utils.py`,
+  `test_embedder.py`, `test_vector_status.py`, `test_chunker.py`,
+  `test_indexer.py`; in `test/pg/`: `test_db_smoke.py`,
+  `test_vector_index.py`, `test_indexer_pg.py`
