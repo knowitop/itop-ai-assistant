@@ -57,7 +57,6 @@ class VectorSyncState(Base):
 
     __tablename__ = "vector_sync_state"
 
-    env: Mapped[str] = mapped_column(Text, primary_key=True)
     obj_class: Mapped[str] = mapped_column(Text, primary_key=True)
     cursor: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -69,7 +68,6 @@ class IndexJournalEntry(Base):
     __tablename__ = "index_journal"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    env: Mapped[str] = mapped_column(Text, nullable=False)
     kind: Mapped[str] = mapped_column(Text, nullable=False)  # sweep / backfill / reconcile
     status: Mapped[str] = mapped_column(Text, nullable=False)  # running / ok / error
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -92,7 +90,6 @@ def chunk_table(version: int, dim: int) -> Table:
         name,
         MetaData(),
         Column("id", BigInteger, primary_key=True),
-        Column("env", Text, nullable=False),
         Column("obj_class", Text, nullable=False),
         Column("obj_id", BigInteger, nullable=False),
         Column("chunk_kind", Text, nullable=False),  # profile / description / solution / log:public …
@@ -111,7 +108,7 @@ def chunk_table(version: int, dim: int) -> Table:
         Column("embedding", HALFVEC(dim), nullable=False),
         Column("created_at", DateTime(timezone=True), nullable=False),  # object creation time
         Column("indexed_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
-        UniqueConstraint("env", "obj_class", "obj_id", "chunk_kind", "chunk_n", name=f"{name}_chunk_key"),
+        UniqueConstraint("obj_class", "obj_id", "chunk_kind", "chunk_n", name=f"{name}_chunk_key"),
         Index(
             f"{name}_emb_hnsw",
             "embedding",
@@ -119,9 +116,9 @@ def chunk_table(version: int, dim: int) -> Table:
             postgresql_with={"m": 16, "ef_construction": 64},
             postgresql_ops={"embedding": "halfvec_cosine_ops"},
         ),
-        Index(f"{name}_filter", "env", "obj_class", "status", "visibility"),
+        Index(f"{name}_filter", "obj_class", "status", "visibility"),
         Index(f"{name}_org", "org_id"),
-        Index(f"{name}_obj", "env", "obj_class", "obj_id"),
+        Index(f"{name}_obj", "obj_class", "obj_id"),
         # jsonb_path_ops (not the default jsonb_ops): smaller and faster for
         # `@>` containment, which is the only operator this column is ever
         # queried with — no key-existence (`?`) lookups.

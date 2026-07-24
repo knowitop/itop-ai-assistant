@@ -44,7 +44,6 @@ def upgrade() -> None:
 
     op.create_table(
         "vector_sync_state",
-        sa.Column("env", sa.Text(), primary_key=True),
         sa.Column("obj_class", sa.Text(), primary_key=True),
         sa.Column("cursor", sa.DateTime(timezone=True), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
@@ -53,7 +52,6 @@ def upgrade() -> None:
     op.create_table(
         "index_journal",
         sa.Column("id", sa.BigInteger(), primary_key=True),
-        sa.Column("env", sa.Text(), nullable=False),
         sa.Column("kind", sa.Text(), nullable=False),
         sa.Column("status", sa.Text(), nullable=False),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),

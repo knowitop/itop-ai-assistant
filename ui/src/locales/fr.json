@@ -219,8 +219,6 @@
     "invalid_profile_json": "JSON invalide dans le profil de la classe {{class}}",
     "field_enabled": "Indexation activée",
     "field_enabled_desc": "S'applique au prochain balayage, sans redémarrage",
-    "field_env": "Environnement",
-    "field_env_desc": "Isole les déploiements partageant un même Postgres (p. ex. staging/prod)",
     "field_sweep_interval": "Intervalle de balayage (secondes)",
     "field_sweep_page_size": "Taille de page du balayage",
     "field_sweep_throttle": "Pause entre les pages (secondes)",

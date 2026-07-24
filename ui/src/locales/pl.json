@@ -219,8 +219,6 @@
     "invalid_profile_json": "Nieprawidłowy JSON w profilu klasy {{class}}",
     "field_enabled": "Indeksowanie włączone",
     "field_enabled_desc": "Obowiązuje od następnego przebiegu, bez restartu",
-    "field_env": "Środowisko",
-    "field_env_desc": "Izoluje wdrożenia współdzielące jednego Postgresa (np. staging/prod)",
     "field_sweep_interval": "Interwał przebiegu (sekundy)",
     "field_sweep_page_size": "Rozmiar strony przebiegu",
     "field_sweep_throttle": "Pauza między stronami (sekundy)",

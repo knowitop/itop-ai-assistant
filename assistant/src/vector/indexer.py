@@ -117,7 +117,7 @@ class VectorIndexer:
         if not emb_cfg.base_url or not model:
             return SweepReport(kind="sweep", status="skipped", skip_reason="embeddings endpoint is not configured")
 
-        index = VectorIndex(deps.vector_db, env=vector_cfg.env)
+        index = VectorIndex(deps.vector_db)
         async with index.try_advisory_lock() as locked:
             if not locked:
                 return SweepReport(kind="sweep", status="skipped", skip_reason="another sweep holds the lock")

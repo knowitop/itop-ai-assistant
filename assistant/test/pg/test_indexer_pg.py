@@ -122,7 +122,7 @@ class TestSweepEndToEnd:
         # cursor advanced, journal has ok runs (sweep + first reconcile)
         from vector.index import VectorIndex
 
-        index = VectorIndex(db, env="main")
+        index = VectorIndex(db)
         assert await index.get_cursor("UserRequest") == _NOW
         runs = await index.journal_recent(10)
         assert {run["kind"] for run in runs} == {"sweep", "reconcile"}

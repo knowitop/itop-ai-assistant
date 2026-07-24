@@ -219,8 +219,6 @@
     "invalid_profile_json": "{{class}} класының профиліндегі JSON жарамсыз",
     "field_enabled": "Индекстеу қосулы",
     "field_enabled_desc": "Келесі айналымнан бастап қолданылады, қайта іске қосу қажет емес",
-    "field_env": "Орта",
-    "field_env_desc": "Бір Postgres-ті ортақ пайдаланатын орналастыруларды оқшаулайды (мысалы, staging/prod)",
     "field_sweep_interval": "Айналым аралығы (секунд)",
     "field_sweep_page_size": "Айналым бетінің өлшемі",
     "field_sweep_throttle": "Беттер арасындағы кідіріс (секунд)",

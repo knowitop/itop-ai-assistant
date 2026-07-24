@@ -147,7 +147,6 @@ class TestVectorConfig(unittest.TestCase):
     def test_disabled_by_default(self):
         cfg = VectorConfig()
         self.assertFalse(cfg.enabled)
-        self.assertEqual(cfg.env, "main")
         self.assertEqual(list(cfg.classes), ["UserRequest", "Incident"])
         self.assertEqual(cfg.classes["UserRequest"].index_values, ["resolved", "closed"])
         self.assertIn("body", cfg.classes["UserRequest"].profile)

@@ -24,7 +24,7 @@ async def db(migrated: str, engine):
 
 @pytest.fixture
 def index(db) -> VectorIndex:
-    return VectorIndex(db, env="main")
+    return VectorIndex(db)
 
 
 def _chunk(
@@ -181,16 +181,6 @@ class TestSearch:
         assert await ids(allowed_orgs=["org-1"]) == {1}
         assert await ids(exclude_obj_id=1) == {4}
 
-    async def test_env_isolation(self, db, index):
-        await index.ensure_version(_MODEL, _DIM)
-        vec = [1.0, 0.0, 0.0, 0.0]
-        await index.upsert_chunks([_chunk(1, vec)], model=_MODEL, dim=_DIM)
-
-        other_env = VectorIndex(db, env="staging")
-        hits = await other_env.search(vec, classes=["UserRequest"], statuses=["resolved"], visibilities=["public"])
-
-        assert hits == []
-
 
 class TestDeleteAndStats:
     async def test_delete_object_removes_only_its_chunks(self, index):
@@ -287,20 +277,15 @@ class TestCursors:
         assert await index.list_cursors() == {}
         assert await index.get_cursor(RECONCILE_SENTINEL) == mark
 
-    async def test_env_isolation_and_reset(self, db, index):
-        other = VectorIndex(db, env="staging")
+    async def test_reset(self, index):
         t = datetime(2026, 7, 1, tzinfo=UTC)
         await index.set_cursor("UserRequest", t)
         await index.set_cursor(RECONCILE_SENTINEL, t)
-        await other.set_cursor("UserRequest", t)
-
-        assert await other.list_cursors() == {"UserRequest": t}
 
         await index.reset_cursors()
 
         assert await index.list_cursors() == {}
         assert await index.get_cursor(RECONCILE_SENTINEL) is None  # reset drops the mark too
-        assert await other.list_cursors() == {"UserRequest": t}  # other env untouched
 
 
 class TestJournal:
@@ -323,31 +308,23 @@ class TestJournal:
         assert by_id[second]["status"] == "error"
         assert by_id[second]["error"] == "boom"
 
-    async def test_recent_respects_limit_and_env(self, db, index):
+    async def test_recent_respects_limit(self, index):
         for _ in range(3):
             await index.journal_start("sweep")
-        await VectorIndex(db, env="staging").journal_start("sweep")
 
         assert len(await index.journal_recent(2)) == 2
-        assert all(run["kind"] == "sweep" for run in await index.journal_recent(10))
-        assert len(await index.journal_recent(10)) == 3  # staging entry invisible
+        assert len(await index.journal_recent(10)) == 3
 
 
 class TestAdvisoryLock:
     async def test_second_holder_gets_false_until_release(self, db, index):
         async with index.try_advisory_lock() as first:
             assert first is True
-            async with VectorIndex(db, env="main").try_advisory_lock() as second:
+            async with VectorIndex(db).try_advisory_lock() as second:
                 assert second is False
 
         async with index.try_advisory_lock() as again:
             assert again is True
-
-    async def test_envs_do_not_contend(self, db, index):
-        async with index.try_advisory_lock() as first:
-            assert first is True
-            async with VectorIndex(db, env="staging").try_advisory_lock() as other_env:
-                assert other_env is True
 
     async def test_concurrent_sweeps_exclude_each_other(self, db, index):
         """Two tasks racing for the lock: exactly one wins."""
@@ -355,7 +332,7 @@ class TestAdvisoryLock:
         gate = asyncio.Event()
 
         async def contender():
-            async with VectorIndex(db, env="main").try_advisory_lock() as locked:
+            async with VectorIndex(db).try_advisory_lock() as locked:
                 results.append(locked)
                 await gate.wait()
 

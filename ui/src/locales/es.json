@@ -219,8 +219,6 @@
     "invalid_profile_json": "JSON no válido en el perfil de la clase {{class}}",
     "field_enabled": "Indexación activada",
     "field_enabled_desc": "Se aplica desde el próximo barrido, sin reinicio",
-    "field_env": "Entorno",
-    "field_env_desc": "Aísla despliegues que comparten un mismo Postgres (p. ej. staging/prod)",
     "field_sweep_interval": "Intervalo de barrido (segundos)",
     "field_sweep_page_size": "Tamaño de página del barrido",
     "field_sweep_throttle": "Pausa entre páginas (segundos)",

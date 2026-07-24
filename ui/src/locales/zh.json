@@ -219,8 +219,6 @@
     "invalid_profile_json": "{{class}} 配置中的 JSON 无效",
     "field_enabled": "启用索引",
     "field_enabled_desc": "自下次扫描起生效，无需重启",
-    "field_env": "环境",
-    "field_env_desc": "隔离共享同一 Postgres 的部署（例如 staging/prod）",
     "field_sweep_interval": "扫描间隔（秒）",
     "field_sweep_page_size": "扫描分页大小",
     "field_sweep_throttle": "分页间暂停（秒）",

@@ -219,8 +219,6 @@
     "invalid_profile_json": "Невалідний JSON у профілі класу {{class}}",
     "field_enabled": "Індексацію ввімкнено",
     "field_enabled_desc": "Застосовується з наступного обходу, без перезапуску",
-    "field_env": "Середовище",
-    "field_env_desc": "Ізолює розгортання, що використовують один Postgres (наприклад, staging/prod)",
     "field_sweep_interval": "Інтервал обходу (секунди)",
     "field_sweep_page_size": "Розмір сторінки обходу",
     "field_sweep_throttle": "Пауза між сторінками (секунди)",

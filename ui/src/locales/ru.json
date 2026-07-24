@@ -219,8 +219,6 @@
     "invalid_profile_json": "Невалидный JSON в профиле класса {{class}}",
     "field_enabled": "Индексация включена",
     "field_enabled_desc": "Применяется со следующего обхода, перезапуск не нужен",
-    "field_env": "Окружение",
-    "field_env_desc": "Изолирует развёртывания, использующие один Postgres (например, staging/prod)",
     "field_sweep_interval": "Интервал обхода (секунды)",
     "field_sweep_page_size": "Размер страницы обхода",
     "field_sweep_throttle": "Пауза между страницами (секунды)",

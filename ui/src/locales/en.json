@@ -219,8 +219,6 @@
     "invalid_profile_json": "Invalid JSON in the {{class}} profile",
     "field_enabled": "Indexing enabled",
     "field_enabled_desc": "Applies from the next sweep, no restart needed",
-    "field_env": "Environment",
-    "field_env_desc": "Isolates deployments sharing one Postgres (e.g. staging/prod)",
     "field_sweep_interval": "Sweep interval (seconds)",
     "field_sweep_page_size": "Sweep page size",
     "field_sweep_throttle": "Pause between pages (seconds)",

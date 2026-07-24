@@ -219,8 +219,6 @@
     "invalid_profile_json": "Ungültiges JSON im Profil der Klasse {{class}}",
     "field_enabled": "Indexierung aktiviert",
     "field_enabled_desc": "Gilt ab dem nächsten Durchlauf, kein Neustart nötig",
-    "field_env": "Umgebung",
-    "field_env_desc": "Isoliert Deployments, die sich eine Postgres-Instanz teilen (z. B. Staging/Prod)",
     "field_sweep_interval": "Durchlaufintervall (Sekunden)",
     "field_sweep_page_size": "Seitengröße pro Durchlauf",
     "field_sweep_throttle": "Pause zwischen Seiten (Sekunden)",

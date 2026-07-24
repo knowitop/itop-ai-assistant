@@ -222,8 +222,6 @@ class VectorConfig(BaseModel):
     """
 
     enabled: bool = False
-    # Isolates deployments sharing one Postgres (staging/prod)
-    env: str = "main"
     # Indexed object classes with their per-class settings
     classes: dict[str, VectorClassConfig] = {
         "UserRequest": VectorClassConfig(index_values=["resolved", "closed"], profile=_TICKET_PROFILE),

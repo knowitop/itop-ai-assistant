@@ -219,8 +219,6 @@
     "invalid_profile_json": "Neplatný JSON v profile triedy {{class}}",
     "field_enabled": "Indexovanie zapnuté",
     "field_enabled_desc": "Platí od ďalšieho prechodu, bez reštartu",
-    "field_env": "Prostredie",
-    "field_env_desc": "Izoluje nasadenia zdieľajúce jeden Postgres (napr. staging/prod)",
     "field_sweep_interval": "Interval prechodu (sekundy)",
     "field_sweep_page_size": "Veľkosť stránky prechodu",
     "field_sweep_throttle": "Pauza medzi stránkami (sekundy)",

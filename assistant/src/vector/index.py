@@ -77,9 +77,8 @@ class FingerprintMismatchError(Exception):
 
 
 class VectorIndex:
-    def __init__(self, db: VectorDb, env: str = "main") -> None:
+    def __init__(self, db: VectorDb) -> None:
         self._db = db
-        self._env = env
 
     async def active_meta(self) -> IndexMeta | None:
         async with self._db.connect() as conn:
@@ -103,7 +102,7 @@ class VectorIndex:
             return IndexMeta(version=version, model=model, dim=dim)
 
     async def upsert_chunks(self, chunks: list[ChunkRecord], *, model: str, dim: int) -> int:
-        """Idempotent insert-or-update by (env, obj_class, obj_id, chunk_kind, chunk_n)."""
+        """Idempotent insert-or-update by (obj_class, obj_id, chunk_kind, chunk_n)."""
         if not chunks:
             return 0
         async with self._db.engine.begin() as conn:
@@ -113,7 +112,6 @@ class VectorIndex:
             stmt = pg_insert(table).values(
                 [
                     {
-                        "env": self._env,
                         "obj_class": c.obj_class,
                         "obj_id": c.obj_id,
                         "chunk_kind": c.chunk_kind,
@@ -130,7 +128,7 @@ class VectorIndex:
                 ]
             )
             stmt = stmt.on_conflict_do_update(
-                index_elements=["env", "obj_class", "obj_id", "chunk_kind", "chunk_n"],
+                index_elements=["obj_class", "obj_id", "chunk_kind", "chunk_n"],
                 set_={
                     "visibility": stmt.excluded.visibility,
                     "status": stmt.excluded.status,
@@ -146,13 +144,12 @@ class VectorIndex:
             return result.rowcount
 
     async def delete_object(self, obj_class: str, obj_id: int) -> int:
-        """Delete every chunk of one object (env-scoped). Returns rows deleted."""
+        """Delete every chunk of one object. Returns rows deleted."""
         async with self._db.engine.begin() as conn:
             meta = self._require_active(await self._read_active(conn))
             table = chunk_table(meta.version, meta.dim)
             result = await conn.execute(
                 delete(table).where(
-                    table.c.env == self._env,
                     table.c.obj_class == obj_class,
                     table.c.obj_id == obj_id,
                 )
@@ -183,7 +180,6 @@ class VectorIndex:
         stmt = (
             select(table.c.obj_id, score)
             .where(
-                table.c.env == self._env,
                 table.c.obj_class.in_(classes),
                 table.c.status.in_(statuses),
                 table.c.visibility.in_(visibilities),
@@ -220,7 +216,6 @@ class VectorIndex:
             rows = (
                 await conn.execute(
                     select(table.c.chunk_kind, table.c.chunk_n, table.c.content_hash).where(
-                        table.c.env == self._env,
                         table.c.obj_class == obj_class,
                         table.c.obj_id == obj_id,
                     )
@@ -237,7 +232,6 @@ class VectorIndex:
             table = chunk_table(meta.version, meta.dim)
             result = await conn.execute(
                 delete(table).where(
-                    table.c.env == self._env,
                     table.c.obj_class == obj_class,
                     table.c.obj_id == obj_id,
                     tuple_(table.c.chunk_kind, table.c.chunk_n).in_(keys),
@@ -256,7 +250,6 @@ class VectorIndex:
             select(table.c.obj_id)
             .distinct()
             .where(
-                table.c.env == self._env,
                 table.c.obj_class == obj_class,
                 table.c.obj_id > after,
             )
@@ -271,7 +264,6 @@ class VectorIndex:
             row = (
                 await conn.execute(
                     select(VectorSyncState.cursor).where(
-                        VectorSyncState.env == self._env,
                         VectorSyncState.obj_class == obj_class,
                     )
                 )
@@ -279,9 +271,9 @@ class VectorIndex:
         return row.cursor if row else None
 
     async def set_cursor(self, obj_class: str, cursor: datetime) -> None:
-        stmt = pg_insert(VectorSyncState).values(env=self._env, obj_class=obj_class, cursor=cursor)
+        stmt = pg_insert(VectorSyncState).values(obj_class=obj_class, cursor=cursor)
         stmt = stmt.on_conflict_do_update(
-            index_elements=["env", "obj_class"],
+            index_elements=["obj_class"],
             set_={"cursor": stmt.excluded.cursor, "updated_at": func.now()},
         )
         async with self._db.engine.begin() as conn:
@@ -293,7 +285,6 @@ class VectorIndex:
             rows = (
                 await conn.execute(
                     select(VectorSyncState.obj_class, VectorSyncState.cursor).where(
-                        VectorSyncState.env == self._env,
                         VectorSyncState.obj_class != RECONCILE_SENTINEL,
                     )
                 )
@@ -304,15 +295,13 @@ class VectorIndex:
         """Drop all sweep cursors (and the reconcile mark) — the next sweep
         becomes a full backfill."""
         async with self._db.engine.begin() as conn:
-            await conn.execute(delete(VectorSyncState).where(VectorSyncState.env == self._env))
+            await conn.execute(delete(VectorSyncState))
 
     async def journal_start(self, kind: str) -> int:
         async with self._db.engine.begin() as conn:
             return (
                 await conn.execute(
-                    insert(IndexJournalEntry)
-                    .values(env=self._env, kind=kind, status="running")
-                    .returning(IndexJournalEntry.id)
+                    insert(IndexJournalEntry).values(kind=kind, status="running").returning(IndexJournalEntry.id)
                 )
             ).scalar_one()
 
@@ -355,7 +344,6 @@ class VectorIndex:
                         IndexJournalEntry.chunks_deleted,
                         IndexJournalEntry.error,
                     )
-                    .where(IndexJournalEntry.env == self._env)
                     .order_by(desc(IndexJournalEntry.id))
                     .limit(limit)
                 )
@@ -381,7 +369,7 @@ class VectorIndex:
                     await conn.execute(select(func.pg_advisory_unlock(key)))
 
     def _advisory_lock_key(self) -> int:
-        digest = hashlib.sha256(f"vector_sweep:{self._env}".encode()).digest()
+        digest = hashlib.sha256(b"vector_sweep").digest()
         return int.from_bytes(digest[:8], "big", signed=True)
 
     async def _read_active(self, conn: AsyncConnection, for_update: bool = False) -> IndexMeta | None:

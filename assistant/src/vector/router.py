@@ -30,7 +30,7 @@ async def vector_status(request: Request) -> dict:
     last_reconcile = None
     runs: list[dict] = []
     if deps.vector_db.configured:
-        index = VectorIndex(deps.vector_db, env=vector_cfg.env)
+        index = VectorIndex(deps.vector_db)
         try:
             meta = await index.active_meta()
             database["ok"] = True

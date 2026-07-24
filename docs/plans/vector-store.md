@@ -88,7 +88,6 @@ distinct use case from "find similar problems".
 ```sql
 CREATE TABLE vector_chunk (
     id            bigserial PRIMARY KEY,
-    env           text        NOT NULL,          -- staging/prod isolation
     obj_class     text        NOT NULL,          -- UserRequest / Incident / FAQ …
     obj_id        bigint      NOT NULL,
     chunk_kind    text        NOT NULL,          -- profile / description / solution / log:public …
@@ -101,7 +100,7 @@ CREATE TABLE vector_chunk (
     embedding     halfvec(:dim) NOT NULL,        -- dim from config, baked into the table version
     created_at    timestamptz NOT NULL,          -- object creation — time-window KNN (storm detector)
     indexed_at    timestamptz NOT NULL default now(),
-    UNIQUE (env, obj_class, obj_id, chunk_kind, chunk_n)
+    UNIQUE (obj_class, obj_id, chunk_kind, chunk_n)
 );
 
 -- ANN index (cosine). Build params tuned in §6.
@@ -111,9 +110,9 @@ CREATE INDEX vector_chunk_emb_hnsw
 
 -- Metadata pre-filters ride alongside the ANN scan.
 CREATE INDEX vector_chunk_filter
-    ON vector_chunk (env, obj_class, status, visibility);
+    ON vector_chunk (obj_class, status, visibility);
 CREATE INDEX vector_chunk_org ON vector_chunk (org_id);
-CREATE INDEX vector_chunk_obj ON vector_chunk (env, obj_class, obj_id);
+CREATE INDEX vector_chunk_obj ON vector_chunk (obj_class, obj_id);
 -- jsonb_path_ops, not the default jsonb_ops: smaller/faster for `@>`
 -- containment, the only operator this column is ever queried with.
 CREATE INDEX vector_chunk_filters ON vector_chunk USING gin (filters jsonb_path_ops);
@@ -236,7 +235,7 @@ Why sweep-first:
 - iTop's `last_update` moves on any modification **including case-log
   appends**, so one cheap OQL predicate covers field edits and new comments.
 
-Idempotency: upserts are `INSERT … ON CONFLICT (env, obj_class, obj_id,
+Idempotency: upserts are `INSERT … ON CONFLICT (obj_class, obj_id,
 chunk_kind, chunk_n) DO UPDATE`, hash-guarded (skip embedding when the stored
 `content_hash` matches), and the cursor overlaps backwards (default 2×
 interval), so re-processing an object is a cheap no-op.
@@ -406,8 +405,7 @@ sensitive), and `/api/vector/*` is admin-token only.
    ```sql
    SELECT obj_id, max(1 - (embedding <=> :q)) AS score
    FROM   vector_chunk_v{active}
-   WHERE  env = :env
-     AND  obj_class = ANY(:classes)
+   WHERE  obj_class = ANY(:classes)
      AND  status IN ('resolved','closed')
      AND  visibility IN ('public','internal')
      AND  (:allowed_orgs IS NULL OR org_id = ANY(:allowed_orgs))
@@ -494,9 +492,10 @@ with anonymization or accept the trade-off consciously.
 14. **Cold-start cost** — backfilling 100k tickets on a local embedding model
     takes hours: resumable cursor, progress in status endpoint, and the
     widget keeps working in keyword mode until `vector.enabled` flips.
-15. **Env/key hygiene** — `env` column (config, default `main`) filters every
-    query so a shared Postgres between staging/prod assistants can't
-    cross-pollute; consider separate schemas or databases per env in prod.
+15. **Env/key hygiene** — one Postgres database per deployment; staging/prod
+    isolation is a separate database (or schema) per environment, not a
+    discriminator column. (An earlier draft had an `env` column filtering
+    every query — dropped as speculative complexity.)
 
 ---
 

@@ -343,7 +343,6 @@ function VectorSettingsForm() {
 
   // Indexer (shared) settings
   const [enabled, setEnabled] = useState(false);
-  const [env, setEnv] = useState('');
   const [sweepInterval, setSweepInterval] = useState<number | string>('');
   const [sweepPageSize, setSweepPageSize] = useState<number | string>('');
   const [sweepThrottle, setSweepThrottle] = useState<number | string>('');
@@ -358,7 +357,6 @@ function VectorSettingsForm() {
   const load = async () => {
     const data = await apiGet<SectionData>('/setup/vector');
     setEnabled(Boolean(data.values.enabled));
-    setEnv(String(data.values.env ?? ''));
     setSweepInterval((data.values.sweep_interval_seconds as number) ?? '');
     setSweepPageSize((data.values.sweep_page_size as number) ?? '');
     setSweepThrottle((data.values.sweep_throttle_seconds as number) ?? '');
@@ -411,7 +409,6 @@ function VectorSettingsForm() {
     // value.
     const b: Record<string, unknown> = {
       enabled,
-      env,
       classes,
     };
     if (sweepInterval !== '') b.sweep_interval_seconds = Number(sweepInterval);
@@ -458,13 +455,6 @@ function VectorSettingsForm() {
         description={t('vector.field_enabled_desc')}
         checked={enabled}
         onChange={(e) => setEnabled(e.currentTarget.checked)}
-      />
-      <TextInput
-        label={t('vector.field_env')}
-        description={t('vector.field_env_desc')}
-        value={env}
-        onChange={(e) => setEnv(e.currentTarget.value)}
-        maw={280}
       />
       <Group grow>
         <NumberInput

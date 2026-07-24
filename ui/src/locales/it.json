@@ -219,8 +219,6 @@
     "invalid_profile_json": "JSON non valido nel profilo della classe {{class}}",
     "field_enabled": "Indicizzazione attiva",
     "field_enabled_desc": "Si applica dalla prossima scansione, senza riavvio",
-    "field_env": "Ambiente",
-    "field_env_desc": "Isola i deployment che condividono lo stesso Postgres (ad es. staging/prod)",
     "field_sweep_interval": "Intervallo di scansione (secondi)",
     "field_sweep_page_size": "Dimensione pagina di scansione",
     "field_sweep_throttle": "Pausa tra le pagine (secondi)",
