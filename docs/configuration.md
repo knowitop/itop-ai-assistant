@@ -45,6 +45,45 @@ These are set in the [Admin UI → Modules](admin-ui.md#modules) or via `PUT /ap
 
 ---
 
+## Intake module settings (experimental)
+
+`intake` does the same job as `enrichment` — classify, ask, hand off — but as a single tool-calling agent instead of a fixed graph. It exists to be compared against `enrichment` on real tickets; see [A/B: enrichment vs intake](#ab-enrichment-vs-intake) below. Off by default.
+
+Set in the [Admin UI → Modules](admin-ui.md#modules) or via `PUT /api/config/intake`.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enabled` | `false` | Enable or disable the intake module |
+| `classes` | `["Incident"]` | Ticket classes to process — must not overlap with `enrichment.classes` |
+| `max_rounds` | `2` | Max completeness clarifying questions per ticket |
+| `max_classify_rounds` | `2` | Max classification clarifying questions per ticket |
+| `max_iterations` | `8` | Budget of model calls per ticket; on exhaustion the run is closed with the fallback note |
+| `model` | _(global LLM model)_ | Override model for the whole module — the agent needs reliable tool calling |
+| `classify_fallback_note` | _(same text as enrichment)_ | Internal note when the ticket stays unclassified |
+| `handoff_fallback_note` | … | Internal note when the agent ends without a question or a handoff |
+
+> [!IMPORTANT]
+> `enabled` and `classes` are read at **startup**, not per ticket: changing them in the admin UI does not re-route webhooks until the service restarts (the same is true for `enrichment`). Every other setting applies from the next ticket.
+>
+> If both modules claim the same class, the routes stay with `enrichment` and intake logs a warning — the service still boots.
+
+### A/B: enrichment vs intake
+
+1. Split the classes so nothing overlaps, e.g. in `config.yaml`:
+   ```yaml
+   enrichment: { classes: ["UserRequest"] }
+   intake:     { enabled: true, classes: ["Incident"] }
+   ```
+2. Restart the service. `/api/modules` (Admin UI → Modules) must list both.
+3. Create two equivalent tickets in iTop — one `UserRequest`, one `Incident` — with the same text.
+4. Compare the two runs in [Admin UI → Runs](admin-ui.md#runs) (`GET /api/runs`):
+   - `module` tells which pipeline handled the ticket;
+   - intake runs log one `agent` step per model turn (the tools it called and with which arguments), one `tool:<name>` step per result (`[success]` / `[error]` plus the text), and a final `usage` step with model calls, tokens in/out and wall time;
+   - enrichment runs log one step per graph node.
+5. Compare the outcome in iTop as well: the classification set, and the note in the private log or the question in the public log.
+
+---
+
 ## Supported LLM providers
 
 The assistant works with any **OpenAI-compatible endpoint**. Set `LLM_BASE_URL` and `LLM_MODEL` to connect:

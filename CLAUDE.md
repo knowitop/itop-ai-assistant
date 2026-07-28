@@ -147,6 +147,13 @@ cd docker && docker-compose up -d
 | `src/prompt_store.py`                           | `PromptStore` — file-based templates with overrides |
 | `prompts/enrichment/*.md`                       | Default prompt templates (one file per prompt)      |
 | `src/graph/enrichment/context.py`               | `GraphContext` — per-run dependencies for nodes     |
+| `src/agents/intake/pipeline.py`                 | Intake module: registration, guard, agent run, epilogue, journal |
+| `src/agents/intake/agent.py`                    | `create_agent` + tool-gate / terminal-exit / call-limit middleware |
+| `src/agents/intake/tools.py`                    | Five tools, one invariant each; `ToolRejection`     |
+| `src/agents/intake/prompt.py`                   | Initial messages: catalog, ticket, conversation as XML |
+| `src/agents/intake/prompts.py`                  | `IntakePrompts` + placeholder registry/validation   |
+| `src/agents/intake/context.py`                  | `IntakeContext` — per-run dependencies for tools    |
+| `prompts/intake/*.md`                           | Default intake prompts (system, catalog, ticket)    |
 | `src/domain/ticket.py`                          | `Ticket` — semantic domain model (no iTop names)    |
 | `src/ticket_repository.py`                      | `TicketRepository` — semantic ↔ iTop attribute adapter |
 | `src/catalog_repository.py`                     | `CatalogRepository` — service catalog reads         |
@@ -189,6 +196,34 @@ the future admin UI) and its routes, add one call in
 The enrichment module is enabled/scoped via `enrichment.enabled` and
 `enrichment.classes` (default `[UserRequest, Incident]`).
 
+**`src/agents/intake/` — the agentic alternative to enrichment (experiment).**
+Same job (classify Service/ServiceSubcategory, ask one clarifying question,
+post the handoff note, set `ai_done`), built as a single tool-calling agent
+(`langchain.agents.create_agent`) instead of a LangGraph node graph. It lives
+under `src/agents/` and not `src/graph/` on purpose: `graph/` means "explicit
+deterministic flow", and the whole point of the experiment is that this one
+is not. Deterministic shell, agentic core — the per-ticket lock, the guard
+(three checks duplicated from `nodes/guard.py`) and the epilogue are plain
+code in `pipeline.py`; everything between them is the agent's decision. Five
+tools (`tools.py`), each enforcing one invariant and rejecting bad calls with
+a `ToolRejection` that says what to do instead; the round counters are picked
+by code, never by the model. Two middleware: `_tool_gate` turns
+`ToolRejection` into an error `ToolMessage` (real failures propagate and fail
+the run), `_stop_after_terminal` ends the run once `post_public_question` or
+`finish_handoff` succeeded. Note that returning `Command(goto="__end__")`
+from `wrap_tool_call` does *not* end the run — the conditional edge
+`create_agent` puts on the tools node fires anyway.
+
+The two modules run side by side by **splitting object classes**
+(`enrichment.classes` vs `intake.classes`) and are compared by eye in
+`/api/runs`; intake logs every model turn, every tool result and a final
+`usage` step (model calls, tokens, wall time). **Do not refactor the two into
+shared code** — duplication is deliberate, the loser gets deleted whole
+(`rm -rf` one directory). `intake.enabled` defaults to `false`: its default
+`classes` overlaps enrichment's, and overlapping routes would be a startup
+conflict (mitigated by a `registry.resolve` check that downgrades a collision
+to a warning). See `docs/configuration.md` for the A/B runbook.
+
 **Domain model, not raw dicts:** processing code works with the semantic
 `Ticket` model (`domain/ticket.py`) — fields like `subcategory_id`,
 `caller_name`, `ticket.label`, `ticket.has_service`. Translation to actual
@@ -215,6 +250,11 @@ reasoning models (DeepSeek-R1, Qwen3, etc.).
 
 **LangGraph** for all agent logic with branching or multi-step flow. Avoid
 plain LangChain chains for anything beyond a single LLM call.
+
+**langchain** (v1 `create_agent` API) is used by the intake module only —
+tool-calling agents, `@tool` + `ToolRuntime`, `wrap_tool_call` /
+`before_model` middleware. It is a dependency of the enrichment-vs-intake
+experiment: if the graph wins, the package goes away with `src/agents/`.
 
 ### Configuration
 
@@ -267,7 +307,12 @@ Per-module limits live in `EnrichmentConfig` (`enrichment.*`): `max_rounds`
 and `max_classify_rounds` (both default 2) cap clarifying-question rounds;
 `classify_model` / `evaluate_model` / `enrich_model` optionally override the
 global `llm_model` per node (set via `config.yaml`, e.g. `enrichment:
-classify_model: ...`).
+classify_model: ...`). `IntakeConfig` (`intake.*`) mirrors them with one
+`model` override for the whole module plus `max_iterations` (model-call
+budget per run). `enabled` and `classes` of both modules are read at startup
+(`build_registry` takes `Settings`, not `ConfigStore`) — editing them in the
+admin UI does not re-route webhooks until a restart; every other field is
+read per run.
 
 **Runtime-editable config and prompts.** Business config (module sections
 like `enrichment.*`) and prompts can be edited at runtime through the
@@ -338,13 +383,15 @@ of objects that disappeared from iTop. Runs are journaled in the
 `PYTHONPATH=src uv run python -m vector.reindex --full` (reads runtime config
 from Redis, so run it next to the deployment).
 
-**Prompts are files, not code.** Defaults live in `prompts/enrichment/*.md`;
-a deployment overrides individual prompts by placing same-named files under
-`<prompts_dir>/enrichment/`. Placeholders are validated against
-`PROMPT_VARIABLES` (in `graph/enrichment/prompts.py`) at startup — adding a
-new placeholder to a prompt requires adding it there and passing the value at
-invoke time in the node. Prompt files are re-read on every run, so edits apply
-without restart.
+**Prompts are files, not code.** Defaults live in `prompts/<module>/*.md`
+(`enrichment/`, `intake/`); a deployment overrides individual prompts by
+placing same-named files under `<prompts_dir>/<module>/`. Placeholders are
+validated against `PROMPT_VARIABLES` (in the module's `prompts.py`) at
+startup — adding a new placeholder to a prompt requires adding it there and
+passing the value at invoke time in the node. Prompt files are re-read on
+every run, so edits apply without restart. Exception: **intake tool
+docstrings are code**, not prompts — they must stay in sync with the
+signatures and with the invariants enforced inside the tools.
 
 See `docker/.env.dist` for a full template.
 
@@ -401,5 +448,11 @@ npm run build   # type-check (tsc --noEmit) + production build into ui/dist
   `test_nodes_guard.py`, `test_nodes_classify.py`, `test_nodes_evaluate.py`,
   `test_nodes_ask.py`, `test_nodes_enrich.py`, `test_nodes_utils.py`,
   `test_embedder.py`, `test_vector_status.py`, `test_chunker.py`,
-  `test_indexer.py`; in `test/pg/`: `test_db_smoke.py`,
-  `test_vector_index.py`, `test_indexer_pg.py`
+  `test_indexer.py`, `test_intake_pipeline.py`, `test_intake_prompt.py`,
+  `test_intake_tools.py`, `test_intake_agent.py`; in `test/pg/`:
+  `test_db_smoke.py`, `test_vector_index.py`, `test_indexer_pg.py`
+- The intake agent loop is tested without an LLM through a scripted
+  `FakeToolCallingModel(BaseChatModel)` (`test_intake_agent.py`) —
+  `create_agent` calls `bind_tools`, which `BaseChatModel` leaves
+  unimplemented, so the ready-made langchain-core fakes do not fit. Tools are
+  called directly as `tools.<name>.coroutine(...)`, bypassing pydantic.

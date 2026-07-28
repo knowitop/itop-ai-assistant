@@ -74,8 +74,10 @@ class PipelineRegistry:
 
 def build_registry(settings) -> "PipelineRegistry":
     """Assemble the registry from all known modules. New module = one line here."""
+    from agents.intake import pipeline as intake_pipeline
     from graph.enrichment import pipeline as enrichment_pipeline
 
     registry = PipelineRegistry()
     enrichment_pipeline.register(registry, settings)
+    intake_pipeline.register(registry, settings)
     return registry

@@ -189,6 +189,35 @@ class EnrichmentConfig(BaseModel):
     classify_subcategory_oql: str = _CLASSIFY_SUBCATEGORY_OQL
 
 
+class IntakeConfig(BaseModel):
+    """Agentic (tool-calling) alternative to the enrichment module.
+
+    Runs the same job — classify, ask, hand off — as a single agent with
+    tools instead of a fixed graph. Off by default: the two modules are
+    compared by splitting object classes between them (`enrichment.classes`
+    vs `classes`), and overlapping routes would be a startup conflict.
+    """
+
+    enabled: bool = False
+    classes: list[str] = ["Incident"]
+    max_rounds: int = 2
+    max_classify_rounds: int = 2
+    # Budget of model calls per run; without it a looping agent burns tokens
+    # until the ticket is abandoned. Catalog + subcategories + classify +
+    # question/handoff + slack.
+    max_iterations: int = 8
+    # One override for the whole module (the agent has a single loop);
+    # None falls back to the global llm_model. Reliable tool-calling often
+    # means a different model than the graph nodes use.
+    model: str | None = None
+    # Same default text as EnrichmentConfig — a different wording would
+    # pollute the A/B comparison
+    classify_fallback_note: str = "Could not determine the request category. Manual classification required."
+    handoff_fallback_note: str = "AI intake finished without a summary. Manual review required."
+    classify_service_oql: str = _CLASSIFY_SERVICE_OQL
+    classify_subcategory_oql: str = _CLASSIFY_SUBCATEGORY_OQL
+
+
 class VectorClassConfig(BaseModel):
     """Per-class vector index settings (one entry per indexed object class).
 
@@ -292,6 +321,7 @@ class Settings(BaseSettings):
 
     # Business modules
     enrichment: EnrichmentConfig = EnrichmentConfig()
+    intake: IntakeConfig = IntakeConfig()
 
     # Vector store (infrastructure; editable via /api/setup/vector)
     vector: VectorConfig = VectorConfig()

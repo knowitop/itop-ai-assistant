@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from config import EnrichmentConfig
+from config import EnrichmentConfig, IntakeConfig
 from pipelines.registry import ModuleInfo, PipelineRegistry, build_registry
 
 
@@ -10,8 +10,11 @@ def _module(name: str = "test-module") -> ModuleInfo:
     return ModuleInfo(name=name, description="Test module")
 
 
-def _settings(**enrichment_overrides) -> SimpleNamespace:
-    return SimpleNamespace(enrichment=EnrichmentConfig(**enrichment_overrides))
+def _settings(intake: dict | None = None, **enrichment_overrides) -> SimpleNamespace:
+    return SimpleNamespace(
+        enrichment=EnrichmentConfig(**enrichment_overrides),
+        intake=IntakeConfig(**(intake or {})),
+    )
 
 
 class TestPipelineRegistry(unittest.TestCase):
@@ -77,8 +80,8 @@ class TestBuildRegistry(unittest.TestCase):
             for event in ("created", "user_commented", "assigned"):
                 self.assertIsNotNone(registry.resolve(obj_class, event), f"{obj_class}/{event}")
 
-        module = registry.modules[0]
-        self.assertEqual(module.name, "enrichment")
+        self.assertEqual([m.name for m in registry.modules], ["enrichment"])
+        module = registry.get_module("enrichment")
         self.assertIs(module.config_model, EnrichmentConfig)
         self.assertIn("evaluate_system", module.prompt_names)
         self.assertIsNotNone(module.validate_prompts)
@@ -94,6 +97,32 @@ class TestBuildRegistry(unittest.TestCase):
 
         self.assertIsNotNone(registry.resolve("UserRequest", "created"))
         self.assertIsNone(registry.resolve("Incident", "created"))
+
+    def test_enabled_intake_claims_its_own_classes(self):
+        registry = build_registry(_settings(classes=["UserRequest"], intake={"enabled": True}))
+
+        self.assertEqual([m.name for m in registry.modules], ["enrichment", "intake"])
+        for event in ("created", "user_commented", "assigned"):
+            self.assertEqual(registry.resolve_entry("Incident", event)[0], "intake")
+            self.assertEqual(registry.resolve_entry("UserRequest", event)[0], "enrichment")
+
+        module = registry.get_module("intake")
+        self.assertIs(module.config_model, IntakeConfig)
+        self.assertIn("system", module.prompt_names)
+        self.assertIsNotNone(module.validate_prompts)
+
+    def test_overlapping_classes_leave_routes_with_the_first_module(self):
+        # Both modules claim Incident: intake skips the taken routes instead of
+        # raising, so a misconfiguration cannot stop the app from booting.
+        registry = build_registry(_settings(intake={"enabled": True}))
+
+        self.assertEqual([m.name for m in registry.modules], ["enrichment", "intake"])
+        self.assertEqual(registry.resolve_entry("Incident", "created")[0], "enrichment")
+
+    def test_intake_disabled_by_default(self):
+        registry = build_registry(_settings())
+
+        self.assertIsNone(registry.get_module("intake"))
 
 
 if __name__ == "__main__":

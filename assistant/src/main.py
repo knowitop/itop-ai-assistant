@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from admin.router import router as admin_router
+from agents.intake.prompts import build_intake_prompts
 from config import ItopConfig, LlmConfig, SecurityConfig, get_settings, missing_setup
 from deps import build_deps
 from graph.enrichment.prompts import build_enrichment_prompts
@@ -32,6 +33,8 @@ async def lifespan(app: FastAPI):
     deps = build_deps(settings)
     # Fail fast on missing or broken prompt templates instead of on a live ticket
     build_enrichment_prompts(await deps.prompt_store.get("enrichment"))
+    if settings.intake.enabled:
+        build_intake_prompts(await deps.prompt_store.get("intake"))
 
     # Vector store is optional: no DATABASE_URL = Redis-only deployment, and a
     # failed migration degrades to "vector unavailable", never a boot failure
