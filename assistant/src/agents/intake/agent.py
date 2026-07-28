@@ -1,4 +1,4 @@
-"""The intake agent: `create_agent` plus two middleware.
+"""The intake agent: `create_agent` plus three middleware.
 
 `system_prompt` is not passed to `create_agent` — the initial messages are
 assembled by `prompt.py` and already start with a `SystemMessage`.
@@ -11,9 +11,15 @@ import logging
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import ModelCallLimitMiddleware, before_model, wrap_tool_call
+from langchain.agents.middleware import (
+    ModelCallLimitMiddleware,
+    ModelResponse,
+    before_model,
+    wrap_model_call,
+    wrap_tool_call,
+)
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.graph.state import CompiledStateGraph
 
 from config import IntakeConfig
@@ -30,6 +36,16 @@ logger = logging.getLogger(__name__)
 # A successful call to one of these ends the session: one question or one
 # handoff per run, never both.
 TERMINAL_TOOLS = frozenset({"post_public_question", "finish_handoff"})
+
+# Handed to the model when a turn produced prose instead of a tool call.
+# Deliberately concrete: the text it just wrote is usually the right content
+# for one of the two terminal tools, so the retry only has to route it.
+_NUDGE = (
+    "Your last reply was plain text, and plain text goes nowhere: the requester only ever sees messages sent "
+    "with post_public_question, and the engineer only ever sees notes written with finish_handoff. Nobody read "
+    "what you just wrote. Act now with a tool — if that text was meant for the requester, pass it as the "
+    "`question` argument; if it was your summary of the ticket, pass it as the `note` argument."
+)
 
 
 @wrap_tool_call
@@ -51,6 +67,35 @@ async def _tool_gate(request, handler):
             tool_call_id=request.tool_call["id"],
             status="error",
         )
+
+
+@wrap_model_call
+async def _require_tool_call(request, handler):
+    """Give a prose-only turn exactly one more chance to act.
+
+    Observed in production on round 2: with a real conversation in the
+    prompt, the model continues the *dialogue* — it writes the clarifying
+    question as its answer instead of passing it to `post_public_question`.
+    The text is then thrown away and the epilogue closes the ticket with a
+    generic note, spending a round for nothing. The graph never has this
+    failure mode: its nodes post the question themselves.
+
+    The failed turn and the nudge stay in the message history on purpose —
+    the model sees its own correction, and the journal shows the retry
+    happened, which is exactly the kind of thing the A/B is measuring.
+    """
+    response = await handler(request)
+    message = response.result[-1] if response.result else None
+    if not isinstance(message, AIMessage) or message.tool_calls:
+        return response
+
+    logger.info("intake: model answered with plain text instead of a tool call, retrying once")
+    nudge = HumanMessage(content=_NUDGE)
+    retried = await handler(request.override(messages=[*request.messages, message, nudge]))
+    return ModelResponse(
+        result=[message, nudge, *retried.result],
+        structured_response=retried.structured_response,
+    )
 
 
 @before_model(can_jump_to=["end"])
@@ -77,6 +122,7 @@ def build_intake_agent(llm: BaseChatModel, cfg: IntakeConfig) -> CompiledStateGr
         context_schema=IntakeContext,
         middleware=[
             _tool_gate,
+            _require_tool_call,
             _stop_after_terminal,
             ModelCallLimitMiddleware(run_limit=cfg.max_iterations, exit_behavior="end"),
         ],

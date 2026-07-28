@@ -147,7 +147,7 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
         model = await self.run_agent(
             [
                 ai([call("get_subcategories", {"service_id": 99})]),
-                ai(content="giving up"),
+                ai([call("finish_handoff", {"note": "Cannot classify."}, "h1")]),
             ]
         )
 
@@ -160,7 +160,7 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
         model = await self.run_agent(
             [
                 ai([call("get_subcategories", {"wrong_arg": 1})]),
-                ai(content="ok"),
+                ai([call("finish_handoff", {"note": "Handing over."}, "h1")]),
             ]
         )
 
@@ -183,7 +183,10 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
                     [call("get_service_catalog", {})],
                     usage_metadata={"input_tokens": 1200, "output_tokens": 40, "total_tokens": 1240},
                 ),
-                ai(content="done", usage_metadata={"input_tokens": 1500, "output_tokens": 60, "total_tokens": 1560}),
+                ai(
+                    [call("finish_handoff", {"note": "Done."}, "h1")],
+                    usage_metadata={"input_tokens": 1500, "output_tokens": 60, "total_tokens": 1560},
+                ),
             ]
         )
 
@@ -217,6 +220,47 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
         self.bundle.ticket_repo.append_private_log.assert_not_called()
         self.deps.state_manager.mark_done.assert_not_called()
         self.assertEqual(self.journal_steps()[-2], ("epilogue", "ticket already finished — nothing to close"))
+
+
+class TestProseInsteadOfToolCall(IntakeAgentTestCase):
+    """Observed in production: on round 2 the model answers the requester in
+    prose instead of calling `post_public_question`."""
+
+    async def test_prose_turn_is_retried_and_the_question_still_goes_out(self):
+        model = await self.run_agent(
+            [
+                ai(content="Отлично, спасибо! Какая версия OpenVPN у вас установлена?"),
+                ai([call("post_public_question", {"question": "Какая версия OpenVPN у вас установлена?"}, "q1")]),
+            ]
+        )
+
+        self.assertEqual(model.calls, 2)
+        self.bundle.ticket_repo.append_public_log.assert_awaited_once()
+        # The round was not wasted and the ticket was not closed behind the requester
+        self.deps.state_manager.mark_done.assert_not_called()
+        self.bundle.ticket_repo.append_private_log.assert_not_called()
+        self.assertNotIn("epilogue", [node for node, _ in self.journal_steps()])
+
+    async def test_the_failed_turn_and_the_retry_are_both_journalled(self):
+        await self.run_agent(
+            [
+                ai(content="I think we have everything we need."),
+                ai([call("finish_handoff", {"note": "VPN error 868 on a home PC."}, "h1")]),
+            ]
+        )
+
+        steps = self.journal_steps()
+        self.assertTrue(any(node == "agent" and detail.startswith("no tool call:") for node, detail in steps))
+        self.assertTrue(any(node == "agent" and "finish_handoff" in detail for node, detail in steps))
+        self.assertIn("model calls: 2", steps[-1][1])
+
+    async def test_second_prose_turn_in_a_row_falls_through_to_the_epilogue(self):
+        # One retry, not a loop: a model that cannot use tools must not burn
+        # the whole budget two calls at a time
+        model = await self.run_agent([ai(content="still just talking")])
+
+        self.assertEqual(model.calls, 2)
+        self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
 
 
 class TestTerminalTools(IntakeAgentTestCase):
