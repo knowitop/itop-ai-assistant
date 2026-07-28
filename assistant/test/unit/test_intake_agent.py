@@ -263,6 +263,38 @@ class TestProseInsteadOfToolCall(IntakeAgentTestCase):
         self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
 
 
+class TestClassifiedTicket(IntakeAgentTestCase):
+    """Round 2+: the ticket is already classified, so the run is about the
+    ticket's completeness only."""
+
+    def setUp(self):
+        super().setUp()
+        self.ticket.service_id = "8"
+        self.ticket.subcategory_id = "43"
+
+    async def test_classification_is_not_redone(self):
+        model = await self.run_agent([ai([call("finish_handoff", {"note": "VPN error 868."}, "h1")])])
+
+        self.assertEqual(model.calls, 1)
+        self.bundle.catalog_repo.find_services.assert_not_called()
+        self.bundle.catalog_repo.find_subcategories.assert_not_called()
+        self.bundle.ticket_repo.set_fields.assert_not_called()
+
+    async def test_the_model_is_not_even_offered_the_classification_tools(self):
+        captured: list[list] = []
+
+        class Recording(FakeToolCallingModel):
+            def bind_tools(self, tools, **kwargs):
+                captured.append([t.name for t in tools])
+                return self
+
+        model = Recording(responses=[ai([call("finish_handoff", {"note": "n"}, "h1")])])
+        with patch("agents.intake.pipeline.create_llm", return_value=model):
+            await _run_intake_agent(self.ticket, "ai-assistant", self.bundle, uuid4(), self.deps)
+
+        self.assertEqual(captured[0], ["post_public_question", "finish_handoff"])
+
+
 class TestTerminalTools(IntakeAgentTestCase):
     async def test_happy_path_classify_then_hand_off(self):
         model = await self.run_agent(

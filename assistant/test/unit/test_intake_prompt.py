@@ -154,6 +154,17 @@ class TestInitialMessages(unittest.IsolatedAsyncioTestCase):
         self.assertIn('role="requester"', messages[2].text)
         self.assertIn("Not classified yet", messages[2].text)
 
+    async def test_classified_ticket_gets_no_catalog(self):
+        # The catalog rides in the message history and is paid for on every
+        # model call of the run; a classified ticket cannot use it anyway
+        ticket = _ticket(service_id="10", subcategory_id="101")
+
+        messages = await build_initial_messages(self._context(ticket), _PROMPTS)
+
+        self.assertEqual([m.type for m in messages], ["system", "human"])
+        self.catalog.find_services.assert_not_called()
+        self.assertNotIn("Service catalog", messages[1].text)
+
     async def test_service_oql_is_bound_to_the_ticket(self):
         await build_initial_messages(self._context(_ticket(org_id="42")), _PROMPTS)
 

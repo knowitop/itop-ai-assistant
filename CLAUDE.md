@@ -207,7 +207,13 @@ is not. Deterministic shell, agentic core — the per-ticket lock, the guard
 code in `pipeline.py`; everything between them is the agent's decision. Five
 tools (`tools.py`), each enforcing one invariant and rejecting bad calls with
 a `ToolRejection` that says what to do instead; the round counters are picked
-by code, never by the model. Two middleware: `_tool_gate` turns
+by code, never by the model. The tool set is **per run**, not fixed:
+`tools_for(ticket)` withholds the three classification tools once the ticket
+has both a service and a subcategory, and `build_initial_messages` then omits
+the catalog — the agent otherwise re-classifies on every webhook, and once
+proposed a different subcategory over a correct one. This is the enrichment
+graph's skipped classify node, enforced rather than requested. Three
+middleware: `_tool_gate` turns
 `ToolRejection` into an error `ToolMessage` (real failures propagate and fail
 the run), `_stop_after_terminal` ends the run once `post_public_question` or
 `finish_handoff` succeeded, `_require_tool_call` retries a prose-only turn

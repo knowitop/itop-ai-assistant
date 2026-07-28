@@ -17,6 +17,7 @@ from langchain.tools import ToolRuntime
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import BaseTool, tool
 
+from domain.ticket import Ticket
 from text_utils import bind_oql
 
 from .context import IntakeContext
@@ -229,10 +230,27 @@ async def finish_handoff(note: str, runtime: IntakeToolRuntime) -> str:
     return "The handoff note has been posted and the ticket is ready for the engineer. Your session is over."
 
 
-TOOLS: list[BaseTool] = [
-    get_service_catalog,
-    get_subcategories,
-    set_classification,
-    post_public_question,
-    finish_handoff,
-]
+_CLASSIFICATION_TOOLS: list[BaseTool] = [get_service_catalog, get_subcategories, set_classification]
+_HANDOFF_TOOLS: list[BaseTool] = [post_public_question, finish_handoff]
+
+TOOLS: list[BaseTool] = [*_CLASSIFICATION_TOOLS, *_HANDOFF_TOOLS]
+
+
+def tools_for(ticket: Ticket) -> list[BaseTool]:
+    """The tools this run may use — classification ones only while it is needed.
+
+    An already classified ticket must not be classified again. Left to its
+    own judgement the agent re-runs the whole first stage on every webhook:
+    it re-reads the subcategory list and re-sets the same values, paying two
+    model calls and two iTop round trips for nothing — and occasionally
+    proposing a *different* subcategory, which would overwrite a correct
+    classification with a guess made from a longer conversation.
+
+    Taking the tools away is the same decision the enrichment graph makes by
+    skipping its classify node, only enforced rather than requested: the
+    model cannot call what it was never given. The subcategory description —
+    the checklist the ticket is judged against — is in the prompt either way.
+    """
+    if ticket.has_service and ticket.has_subcategory:
+        return _HANDOFF_TOOLS
+    return TOOLS

@@ -88,10 +88,17 @@ async def build_service_context(ticket: Ticket, catalog: CatalogRepository) -> s
 
 async def build_initial_messages(ctx: IntakeContext, prompts: IntakePrompts) -> list[BaseMessage]:
     ticket = ctx.ticket
-    services = await ctx.catalog_repo.find_services(bind_oql(ctx.intake.classify_service_oql, ticket.model_dump()))
     service_context = await build_service_context(ticket, ctx.catalog_repo)
 
-    catalog_text = PromptTemplate.from_template(prompts.catalog_human).format(services=format_options(services))
+    # An already classified ticket gets no catalog: it cannot be reclassified
+    # (`tools_for` withholds the tools), and the list would otherwise ride
+    # along in the message history, paid for on every model call of the run.
+    messages: list[BaseMessage] = [SystemMessage(content=prompts.system)]
+    if not (ticket.has_service and ticket.has_subcategory):
+        services = await ctx.catalog_repo.find_services(bind_oql(ctx.intake.classify_service_oql, ticket.model_dump()))
+        catalog_text = PromptTemplate.from_template(prompts.catalog_human).format(services=format_options(services))
+        messages.append(HumanMessage(content=catalog_text))
+
     ticket_text = PromptTemplate.from_template(prompts.ticket_human).format(
         caller_name=ticket.caller_name,
         title=ticket.title,
@@ -99,8 +106,5 @@ async def build_initial_messages(ctx: IntakeContext, prompts: IntakePrompts) -> 
         conversation=build_conversation_xml(ticket.public_log, ctx.ai_name, ticket.caller_name),
         service_context=service_context,
     )
-    return [
-        SystemMessage(content=prompts.system),
-        HumanMessage(content=catalog_text),
-        HumanMessage(content=ticket_text),
-    ]
+    messages.append(HumanMessage(content=ticket_text))
+    return messages

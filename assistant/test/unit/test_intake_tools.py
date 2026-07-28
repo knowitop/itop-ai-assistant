@@ -75,6 +75,20 @@ class TestToolSchemas(unittest.TestCase):
         self.assertEqual(props["service_id"]["type"], "integer")
         self.assertEqual(props["subcategory_id"]["type"], "integer")
 
+    def test_classified_ticket_loses_the_classification_tools(self):
+        # Enforced, not requested: on every webhook the agent otherwise
+        # re-reads the subcategory list and re-sets the same values — and
+        # once proposed a different subcategory over a correct one
+        offered = [t.name for t in tools.tools_for(_ticket(service_id="10", subcategory_id="101"))]
+
+        self.assertEqual(offered, ["post_public_question", "finish_handoff"])
+
+    def test_unclassified_ticket_gets_everything(self):
+        self.assertEqual(tools.tools_for(_ticket()), tools.TOOLS)
+
+    def test_half_classified_ticket_still_gets_everything(self):
+        self.assertEqual(tools.tools_for(_ticket(service_id="10")), tools.TOOLS)
+
     def test_every_tool_is_registered(self):
         self.assertEqual(
             [t.name for t in tools.TOOLS],

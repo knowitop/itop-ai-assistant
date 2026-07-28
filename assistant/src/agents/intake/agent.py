@@ -20,6 +20,7 @@ from langchain.agents.middleware import (
 )
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
 from config import IntakeConfig
@@ -29,7 +30,7 @@ from config import IntakeConfig
 from graph.enrichment.nodes.utils import strip_thinking
 
 from .context import IntakeContext
-from .tools import TOOLS, ToolRejection
+from .tools import ToolRejection
 
 logger = logging.getLogger(__name__)
 
@@ -133,10 +134,11 @@ def _stop_after_terminal(state, runtime) -> dict[str, Any] | None:
     return None
 
 
-def build_intake_agent(llm: BaseChatModel, cfg: IntakeConfig) -> CompiledStateGraph:
+def build_intake_agent(llm: BaseChatModel, cfg: IntakeConfig, tools: list[BaseTool]) -> CompiledStateGraph:
+    """Build the agent for one run. `tools` is the run's set — see `tools_for`."""
     return create_agent(
         model=llm,
-        tools=TOOLS,
+        tools=tools,
         context_schema=IntakeContext,
         middleware=[
             _tool_gate,

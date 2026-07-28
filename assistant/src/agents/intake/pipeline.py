@@ -26,6 +26,7 @@ from .agent import build_intake_agent, describe_ai_message, is_terminal_result
 from .context import IntakeContext
 from .prompt import build_initial_messages
 from .prompts import PROMPT_VARIABLES, build_intake_prompts
+from .tools import tools_for
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,7 @@ async def _run_intake_agent(
         ai_name=ai_name,
         think_tags=tuple(llm_cfg.think_tags),
     )
-    agent = build_intake_agent(create_llm(llm_cfg, cfg.model), cfg)
+    agent = build_intake_agent(create_llm(llm_cfg, cfg.model), cfg, tools_for(ticket))
     messages = await build_initial_messages(context, prompts)
 
     usage = _Usage()
