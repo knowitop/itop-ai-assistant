@@ -210,7 +210,12 @@ a `ToolRejection` that says what to do instead; the round counters are picked
 by code, never by the model. Two middleware: `_tool_gate` turns
 `ToolRejection` into an error `ToolMessage` (real failures propagate and fail
 the run), `_stop_after_terminal` ends the run once `post_public_question` or
-`finish_handoff` succeeded. Note that returning `Command(goto="__end__")`
+`finish_handoff` succeeded, `_require_tool_call` retries a prose-only turn
+once (observed in production: with a conversation in the prompt the model
+continues the *dialogue* instead of calling the tool, and the text reaches
+nobody). **Open lever, decide from the journal:** forcing
+`tool_choice="any"` would make prose impossible instead of correctable — see
+the `_require_tool_call` docstring for the trade-off and the trigger. Note that returning `Command(goto="__end__")`
 from `wrap_tool_call` does *not* end the run — the conditional edge
 `create_agent` puts on the tools node fires anyway.
 

@@ -83,6 +83,24 @@ async def _require_tool_call(request, handler):
     The failed turn and the nudge stay in the message history on purpose —
     the model sees its own correction, and the journal shows the retry
     happened, which is exactly the kind of thing the A/B is measuring.
+
+    **The stronger lever, deliberately not pulled yet:
+    `request.override(tool_choice="any")`.** `ModelRequest` carries a
+    `tool_choice` field, and forcing it would make prose impossible rather
+    than merely correctable — semantically right, since this agent has no
+    channel through which plain text could reach anyone. Two reasons it is
+    not the default: an endpoint may not honour a forced choice (DeepSeek's
+    API does, LM Studio / Ollama builds vary, and `llm.base_url` is
+    runtime-editable), and a rejected `tool_choice` fails the whole run
+    instead of degrading. If the journal shows nudges on a noticeable share
+    of runs — grep the steps for `agent` details starting with
+    `no tool call:` — force it, either on every turn or only on the retry
+    with a fallback to this nudge when the endpoint errors.
+
+    Retries are invisible to `ModelCallLimitMiddleware`: it counts model
+    *node* executions (`after_model`), while this retry happens inside one.
+    Hence exactly one — the worst case stays at 2 × `max_iterations` real
+    requests, and the `usage` step counts them honestly.
     """
     response = await handler(request)
     message = response.result[-1] if response.result else None
