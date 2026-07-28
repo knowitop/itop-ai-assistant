@@ -195,6 +195,11 @@ class TestSetClassification(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runtime.context.ticket.subcategory_id, "101")
         # The subcategory requirements come back with the confirmation
         self.assertIn("Provide the printer model", result)
+        # …and the closing line names the two ways out without addressing the
+        # model: an instruction here gets answered in prose (see `_REMAINS`)
+        self.assertIn("post_public_question or finish_handoff", result)
+        for conversational in ("Now ", "you ", "your "):
+            self.assertNotIn(conversational, result)
 
     async def test_unknown_service_is_rejected_with_valid_ids_and_a_way_out(self):
         runtime = _make_runtime()
@@ -227,7 +232,8 @@ class TestSetClassification(unittest.IsolatedAsyncioTestCase):
         result = await tools.set_classification.coroutine(service_id=10, subcategory_id=101, runtime=runtime)
 
         runtime.context.ticket_repo.set_fields.assert_not_called()
-        self.assertIn("already has this classification", result)
+        self.assertIn("No change", result)
+        self.assertIn("post_public_question or finish_handoff", result)
 
 
 class TestPostPublicQuestion(unittest.IsolatedAsyncioTestCase):

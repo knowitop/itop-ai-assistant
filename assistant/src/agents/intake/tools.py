@@ -35,6 +35,15 @@ class ToolRejection(Exception):
     """A tool refused the call. Becomes an error ToolMessage for the model."""
 
 
+# Closing line of a successful `set_classification`. Deliberately a statement
+# about the process, not an instruction to the reader: the earlier wording
+# ("Now check the ticket… ask the requester… or write the note") read as a
+# conversational turn, and in three of the four observed prose-instead-of-a-
+# tool-call slips the model answered it in prose. Keep it impersonal — no
+# second person, no imperative verbs, no question.
+_REMAINS = "Remaining for this session: exactly one call, post_public_question or finish_handoff."
+
+
 def _reject_if_repeated(runtime: IntakeToolRuntime, name: str, args: dict) -> None:
     """Refuse an exact repeat of an earlier call, echoing its result.
 
@@ -134,7 +143,10 @@ async def set_classification(service_id: int, subcategory_id: int, runtime: Inta
         )
 
     if ticket.service_id == str(service_id) and ticket.subcategory_id == str(subcategory_id):
-        return "The ticket already has this classification. Move on: ask the requester or write the handoff note."
+        return (
+            f"No change: the ticket is already classified as service {service_id}, "
+            f"subcategory {subcategory_id}.\n{_REMAINS}"
+        )
 
     fields = {"service_id": str(service_id), "subcategory_id": str(subcategory_id)}
     await ctx.ticket_repo.set_fields(ticket, fields)
@@ -146,10 +158,8 @@ async def set_classification(service_id: int, subcategory_id: int, runtime: Inta
     subcategory = next(item for item in subcategories if item.id == str(subcategory_id))
     description = subcategory.description.strip() or "(no requirements described)"
     return (
-        f"Classification saved: service {service_id}, subcategory {subcategory_id} ({subcategory.name}).\n"
-        f"What this subcategory requires:\n{description}\n"
-        "Now check the ticket against those requirements: ask the requester for what is missing, "
-        "or write the handoff note if nothing is."
+        f"Saved: service {service_id}, subcategory {subcategory_id} ({subcategory.name}).\n"
+        f"Requirements recorded for this subcategory:\n{description}\n{_REMAINS}"
     )
 
 
