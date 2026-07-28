@@ -219,9 +219,11 @@ the run), `_stop_after_terminal` ends the run once `post_public_question` or
 `finish_handoff` succeeded, `_require_tool_call` retries a prose-only turn
 once (observed in production: with a conversation in the prompt the model
 continues the *dialogue* instead of calling the tool, and the text reaches
-nobody). **Open lever, decide from the journal:** forcing
-`tool_choice="any"` would make prose impossible instead of correctable — see
-the `_require_tool_call` docstring for the trade-off and the trigger. Note that returning `Command(goto="__end__")`
+nobody). Forcing `tool_choice="any"` would make prose impossible instead of
+correctable, but **DeepSeek V4 rejects it outright** (thinking mode, HTTP
+400) while OpenAI/Google/vLLM accept it — the retry is the portable
+mitigation. See the `_require_tool_call` docstring for the per-provider
+picture before reaching for the lever. Note that returning `Command(goto="__end__")`
 from `wrap_tool_call` does *not* end the run — the conditional edge
 `create_agent` puts on the tools node fires anyway.
 

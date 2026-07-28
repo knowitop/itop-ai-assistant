@@ -85,18 +85,31 @@ async def _require_tool_call(request, handler):
     the model sees its own correction, and the journal shows the retry
     happened, which is exactly the kind of thing the A/B is measuring.
 
-    **The stronger lever, deliberately not pulled yet:
-    `request.override(tool_choice="any")`.** `ModelRequest` carries a
-    `tool_choice` field, and forcing it would make prose impossible rather
-    than merely correctable — semantically right, since this agent has no
-    channel through which plain text could reach anyone. Two reasons it is
-    not the default: an endpoint may not honour a forced choice (DeepSeek's
-    API does, LM Studio / Ollama builds vary, and `llm.base_url` is
-    runtime-editable), and a rejected `tool_choice` fails the whole run
-    instead of degrading. If the journal shows nudges on a noticeable share
-    of runs — grep the steps for `agent` details starting with
-    `no tool call:` — force it, either on every turn or only on the retry
-    with a fallback to this nudge when the endpoint errors.
+    **The stronger lever, `request.override(tool_choice="any")`, is not
+    available on every endpoint — check before reaching for it.**
+    `ModelRequest` carries a `tool_choice` field that `create_agent` passes
+    straight to `bind_tools` (factory.py), and forcing it would make prose
+    impossible rather than merely correctable. Where it works:
+
+    - OpenAI, and `vLLM` — `tool_choice: "required"` is a standard Chat
+      Completions parameter;
+    - Google — `ChatGoogleGenerativeAI.bind_tools` documents `"any"` and
+      `"required"` as equivalent (native `function_calling_config` mode ANY);
+    - **not** DeepSeek V4 (`deepseek-v4-pro`, `deepseek-v4-flash`): both are
+      always in thinking mode, which rejects `"required"` and named-function
+      choices with HTTP 400 "Thinking mode does not support this
+      tool_choice" (deepseek-ai/DeepSeek-V3#1376, open). DeepSeek's own
+      guidance is to omit the parameter and accept that the model sometimes
+      answers in prose instead — which is exactly the slip this retry
+      catches, and why the retry is the mitigation here rather than a crutch;
+    - **not** Ollama, whose OpenAI-compatible layer drops `tool_choice`.
+
+    Write it as `"any"`, never `"required"`: LangChain normalizes per
+    provider (`langchain_openai` maps `"any"` → `"required"` because OpenAI
+    has no `"any"`), so the portable spelling survives a provider switch.
+
+    To decide, count the nudges: grep the journal for `agent` steps starting
+    with `no tool call:`.
 
     Retries are invisible to `ModelCallLimitMiddleware`: it counts model
     *node* executions (`after_model`), while this retry happens inside one.
