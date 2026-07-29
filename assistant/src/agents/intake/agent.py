@@ -80,36 +80,20 @@ async def _require_tool_call(request, handler):
     the model sees its own correction, and the journal shows the retry
     happened.
 
-    **The stronger lever, `request.override(tool_choice="any")`, is not
-    available on every endpoint — check before reaching for it.**
-    `ModelRequest` carries a `tool_choice` field that `create_agent` passes
-    straight to `bind_tools` (factory.py), and forcing it would make prose
-    impossible rather than merely correctable. Where it works:
-
-    - OpenAI, and `vLLM` — `tool_choice: "required"` is a standard Chat
-      Completions parameter;
-    - Google — `ChatGoogleGenerativeAI.bind_tools` documents `"any"` and
-      `"required"` as equivalent (native `function_calling_config` mode ANY);
-    - **not** DeepSeek V4 (`deepseek-v4-pro`, `deepseek-v4-flash`): both are
-      always in thinking mode, which rejects `"required"` and named-function
-      choices with HTTP 400 "Thinking mode does not support this
-      tool_choice" (deepseek-ai/DeepSeek-V3#1376, open). DeepSeek's own
-      guidance is to omit the parameter and accept that the model sometimes
-      answers in prose instead — which is exactly the slip this retry
-      catches, and why the retry is the mitigation here rather than a crutch;
-    - **not** Ollama, whose OpenAI-compatible layer drops `tool_choice`.
-
-    Write it as `"any"`, never `"required"`: LangChain normalizes per
-    provider (`langchain_openai` maps `"any"` → `"required"` because OpenAI
-    has no `"any"`), so the portable spelling survives a provider switch.
-
-    To decide, count the nudges: grep the journal for `agent` steps starting
-    with `no tool call:`.
+    This runs **even when `_force_tool_choice` is active**, and is not
+    redundant there: forcing only helps where the endpoint honours it, and
+    the ones that do not (Ollama, some OpenAI-compatible gateways) drop the
+    field silently rather than erroring — the model still answers in prose,
+    and this retry is the only thing that catches it. Which endpoints accept
+    the forced choice is recorded in `llm_providers`.
 
     Retries are invisible to `ModelCallLimitMiddleware`: it counts model
     *node* executions (`after_model`), while this retry happens inside one.
     Hence exactly one — the worst case stays at 2 × `max_iterations` real
     requests, and the `usage` step counts them honestly.
+
+    To see how often this fires, grep the journal for `agent` steps starting
+    with `no tool call:`.
     """
     response = await handler(request)
     message = response.result[-1] if response.result else None
@@ -123,6 +107,32 @@ async def _require_tool_call(request, handler):
         result=[message, nudge, *retried.result],
         structured_response=retried.structured_response,
     )
+
+
+def _force_tool_choice():
+    """Leave the model no way to answer in prose: `tool_choice="any"` on every turn.
+
+    Only for endpoints that accept it (`llm_providers`), and only for agents
+    that want it. Intake does: its model's plain text reaches nobody, so a
+    prose turn is always a mistake. An agent that answers the user directly
+    must not add this middleware.
+
+    Forcing on *every* turn — rather than only after a slip — is safe here
+    because nothing in this agent needs a closing prose message:
+    `_stop_after_terminal` ends the run before the next model call and
+    `ModelCallLimitMiddleware` caps the rest. In an agent that must produce a
+    final answer, the same middleware would loop until the budget runs out.
+
+    Written as `"any"`, never `"required"`: LangChain normalizes per provider
+    (`langchain_openai` maps `"any"` → `"required"` because OpenAI has no
+    `"any"`), so the spelling survives a provider switch.
+    """
+
+    @wrap_model_call
+    async def middleware(request, handler):
+        return await handler(request.override(tool_choice="any"))
+
+    return middleware
 
 
 @before_model(can_jump_to=["end"])
@@ -142,19 +152,27 @@ def _stop_after_terminal(state, runtime) -> dict[str, Any] | None:
     return None
 
 
-def build_intake_agent(llm: BaseChatModel, cfg: IntakeConfig, tools: list[BaseTool]) -> CompiledStateGraph:
-    """Build the agent for one run. `tools` is the run's set — see `tools_for`."""
-    return create_agent(
-        model=llm,
-        tools=tools,
-        context_schema=IntakeContext,
-        middleware=[
-            _tool_gate,
-            _require_tool_call,
-            _stop_after_terminal,
-            ModelCallLimitMiddleware(run_limit=cfg.max_iterations, exit_behavior="end"),
-        ],
-    )
+def build_intake_agent(
+    llm: BaseChatModel,
+    cfg: IntakeConfig,
+    tools: list[BaseTool],
+    force_tool_choice: bool = False,
+) -> CompiledStateGraph:
+    """Build the agent for one run. `tools` is the run's set — see `tools_for`.
+
+    `force_tool_choice` says the endpoint accepts `tool_choice="any"` (the
+    caller asks `LlmConfig.endpoint_forces_tool_choice`). Default off, so
+    forcing is always a deliberate choice by the module building the agent.
+    """
+    middleware: list[Any] = [_tool_gate, _require_tool_call]
+    if force_tool_choice:
+        # Innermost of the two model wrappers: applies to the retry as well
+        middleware.append(_force_tool_choice())
+    middleware += [
+        _stop_after_terminal,
+        ModelCallLimitMiddleware(run_limit=cfg.max_iterations, exit_behavior="end"),
+    ]
+    return create_agent(model=llm, tools=tools, context_schema=IntakeContext, middleware=middleware)
 
 
 def is_terminal_result(message: ToolMessage) -> bool:

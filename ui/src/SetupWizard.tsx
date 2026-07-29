@@ -8,6 +8,7 @@ import {
   Loader,
   PasswordInput,
   SegmentedControl,
+  Select,
   Stack,
   Stepper,
   Table,
@@ -20,6 +21,7 @@ import { Trans, useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 
 import { apiGet, apiSend, fetchSetupStatus, SetupStatus, setToken } from './api';
+import { loadLlmProviders, LlmProvider } from './Connections';
 
 // GET /api/setup/{section} shape (same as in Connections): non-secret values
 // plus is-set flags for secrets.
@@ -193,14 +195,20 @@ function LlmStep({ onBack, onDone }: { onBack: () => void; onDone: () => void })
   const [testResult, setTestResult] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [providers, setProviders] = useState<LlmProvider[]>([]);
+  const [provider, setProvider] = useState('openai_compatible');
   const [baseUrl, setBaseUrl] = useState('');
   const [model, setModel] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [keySet, setKeySet] = useState(false);
 
+  const current = providers.find((p) => p.id === provider);
+
   useEffect(() => {
-    apiGet<SectionData>('/setup/llm')
-      .then((data) => {
+    Promise.all([loadLlmProviders(), apiGet<SectionData>('/setup/llm')])
+      .then(([list, data]) => {
+        setProviders(list);
+        setProvider(String(data.values.provider ?? 'openai_compatible'));
         setBaseUrl(String(data.values.base_url ?? ''));
         setModel(String(data.values.model ?? ''));
         setKeySet(data.secrets.api_key);
@@ -209,8 +217,10 @@ function LlmStep({ onBack, onDone }: { onBack: () => void; onDone: () => void })
       .catch((e: Error) => setError(e.message));
   }, []);
 
+  // The wizard only gets a working connection going; params and the
+  // tool_choice toggle live in Connections, like think_tags
   const body = () => {
-    const b: Record<string, unknown> = { base_url: baseUrl, model: model || null };
+    const b: Record<string, unknown> = { provider, base_url: baseUrl, model: model || null };
     if (apiKey) b.api_key = apiKey;
     return b;
   };
@@ -257,26 +267,38 @@ function LlmStep({ onBack, onDone }: { onBack: () => void; onDone: () => void })
         </Alert>
       )}
       {testResult && <Alert color="green">{testResult}</Alert>}
-      <TextInput
-        label={t('common.field_base_url')}
-        description={t('setup.llm_base_url_desc')}
-        placeholder="http://localhost:1234/v1"
-        value={baseUrl}
-        onChange={(e) => setBaseUrl(e.currentTarget.value)}
+      <Select
+        label={t('common.field_provider')}
+        description={current?.notes || t('setup.llm_provider_desc')}
+        data={providers.map((p) => ({ value: p.id, label: p.label }))}
+        value={provider}
+        onChange={(value) => setProvider(value ?? 'openai_compatible')}
+        allowDeselect={false}
       />
+      {current?.base_url_mode !== 'unused' && (
+        <TextInput
+          label={t('common.field_base_url')}
+          description={t('setup.llm_base_url_desc')}
+          placeholder={current?.base_url_placeholder ?? ''}
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.currentTarget.value)}
+        />
+      )}
       <TextInput
         label={t('common.field_model')}
         description={t('setup.llm_model_desc')}
         value={model}
         onChange={(e) => setModel(e.currentTarget.value)}
       />
-      <PasswordInput
-        label={t('common.field_api_key')}
-        placeholder={keySet ? t('common.secret_is_set') : t('common.secret_not_set')}
-        description={keySet ? undefined : t('setup.llm_api_key_desc')}
-        value={apiKey}
-        onChange={(e) => setApiKey(e.currentTarget.value)}
-      />
+      {current?.api_key_mode !== 'unused' && (
+        <PasswordInput
+          label={t('common.field_api_key')}
+          placeholder={keySet ? t('common.secret_is_set') : t('common.secret_not_set')}
+          description={keySet ? undefined : t('setup.llm_api_key_desc')}
+          value={apiKey}
+          onChange={(e) => setApiKey(e.currentTarget.value)}
+        />
+      )}
       <Group>
         <Button variant="subtle" onClick={onBack}>
           {t('common.btn_back')}

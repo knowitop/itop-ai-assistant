@@ -1,16 +1,18 @@
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import redis.asyncio as aioredis
-from langchain_openai import ChatOpenAI
-from pydantic import SecretStr
+from langchain.chat_models import init_chat_model
+from langchain_core.language_models.chat_models import BaseChatModel
 
 from catalog_repository import CatalogRepository
 from config import ItopConfig, LlmConfig, Settings, TicketMappingConfig
 from config_store import ConfigStore, RedisConfigStore
 from itop_client import Itop
 from journal import RunJournal
+from llm_providers import get_provider
 from prompt_store import FilePromptStore, PromptStore, RedisPromptStore
 from state.ticket_state import TicketStateManager
 from ticket_repository import TicketRepository
@@ -97,14 +99,22 @@ def create_itop_client(cfg: ItopConfig) -> Itop:
     )
 
 
-def create_llm(llm: LlmConfig, model: str | None = None) -> ChatOpenAI:
-    """Create an LLM client. `model` overrides the default `llm.model`."""
-    # Local endpoints (LM Studio) accept any key; ChatOpenAI just requires one
-    return ChatOpenAI(
-        model=model or llm.model or "",
-        api_key=SecretStr(llm.api_key or "unused"),
-        base_url=llm.base_url,
-    )
+def create_llm(llm: LlmConfig, model: str | None = None) -> BaseChatModel:
+    """Create an LLM client for the configured provider.
+
+    `model` overrides the default `llm.model`; `llm.params` is forwarded
+    verbatim to the provider's client (temperature, max_tokens, …).
+    """
+    provider = get_provider(llm.provider)
+    kwargs: dict[str, Any] = dict(llm.params)
+    if provider.base_url_mode != "unused" and llm.base_url:
+        kwargs["base_url"] = llm.base_url
+    if provider.api_key_mode == "required":
+        kwargs["api_key"] = llm.api_key
+    elif provider.api_key_mode == "optional":
+        # Local endpoints (LM Studio) accept any key; the client requires one
+        kwargs["api_key"] = llm.api_key or "unused"
+    return init_chat_model(model or llm.model or "", model_provider=provider.langchain_provider, **kwargs)
 
 
 def build_deps(settings: Settings) -> AppDeps:

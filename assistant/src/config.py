@@ -1,14 +1,16 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     YamlConfigSettingsSource,
 )
+
+from llm_providers import DEFAULT_PROVIDER, PROVIDERS, get_provider
 
 _ROOT = Path(__file__).parent.parent  # assistant/
 
@@ -119,6 +121,9 @@ class LlmConfig(RuntimeSectionConfig):
 
     SECRET_FIELDS: ClassVar[frozenset[str]] = frozenset({"api_key"})
 
+    # Which kind of endpoint this is — see llm_providers.PROVIDERS. The default
+    # is the historical behaviour: any OpenAI-compatible URL.
+    provider: str = DEFAULT_PROVIDER
     base_url: str | None = None
     model: str | None = None
     api_key: str | None = None
@@ -126,6 +131,37 @@ class LlmConfig(RuntimeSectionConfig):
     # before parsing/posting (as <tag>…</tag> pairs or orphan halves).
     # Asymmetric markers (e.g. Gemma's <context|>…<|context>) are not supported.
     think_tags: list[str] = ["think", "thinking", "reasoning"]
+    # Passed verbatim to the provider's client: temperature, max_tokens,
+    # timeout, max_retries, reasoning_effort — whatever it accepts.
+    params: dict[str, Any] = {}
+    # Does *this* server accept tool_choice="any"? None = take the provider's
+    # answer; only asked where the provider has none (openai_compatible fronts
+    # both vLLM, which accepts, and DeepSeek, which returns HTTP 400).
+    supports_forced_tool_choice: bool | None = None
+
+    # Reserved by create_llm — allowing them in `params` would silently
+    # override the section's own fields.
+    _RESERVED_PARAMS: ClassVar[frozenset[str]] = frozenset({"model", "model_provider", "base_url", "api_key"})
+
+    @model_validator(mode="after")
+    def check_provider_and_params(self) -> "LlmConfig":
+        get_provider(self.provider)  # raises ValueError listing the known ones
+        clashing = self._RESERVED_PARAMS & set(self.params)
+        if clashing:
+            raise ValueError(
+                f"llm.params may not contain {sorted(clashing)} — those come from the section's own fields"
+            )
+        return self
+
+    @property
+    def endpoint_forces_tool_choice(self) -> bool:
+        """Does the endpoint accept tool_choice="any"? Explicit answer wins over the registry.
+
+        Whether to *use* it is up to the agent — see llm_providers.
+        """
+        if self.supports_forced_tool_choice is not None:
+            return self.supports_forced_tool_choice
+        return bool(PROVIDERS[self.provider].supports_forced_tool_choice)
 
 
 class EmbeddingsConfig(RuntimeSectionConfig):
@@ -161,14 +197,21 @@ class SecurityConfig(RuntimeSectionConfig):
 
 
 def missing_setup(itop: ItopConfig, llm: LlmConfig) -> list[str]:
-    """Setup steps still required before the assistant may process tickets."""
+    """Setup steps still required before the assistant may process tickets.
+
+    Which LLM fields count as required depends on the provider: a local
+    OpenAI-compatible server needs a URL and no key, Gemini the opposite.
+    """
     missing = []
     if not itop.url:
         missing.append("iTop REST API URL (itop: url)")
     if not itop.has_auth:
         missing.append("iTop credentials (itop: user+pwd or token)")
-    if not llm.base_url:
+    provider = PROVIDERS[llm.provider]  # validated by LlmConfig
+    if provider.base_url_mode == "required" and not llm.base_url:
         missing.append("LLM endpoint (llm: base_url)")
+    if provider.api_key_mode == "required" and not llm.api_key:
+        missing.append("LLM API key (llm: api_key)")
     if not llm.model:
         missing.append("LLM model (llm: model)")
     return missing
@@ -274,10 +317,14 @@ class Settings(BaseSettings):
     itop_token: SecretStr | None = None
 
     # LLM
+    llm_provider: str = DEFAULT_PROVIDER
     llm_base_url: str | None = None
     llm_model: str | None = None
     llm_api_key: SecretStr | None = None
     llm_think_tags: list[str] = ["think", "thinking", "reasoning"]
+    # JSON in env (LLM_PARAMS='{"temperature": 0.2}'); config.yaml is nicer
+    llm_params: dict[str, Any] | None = {}
+    llm_supports_forced_tool_choice: bool | None = None
 
     # Embeddings (vector store)
     embeddings_base_url: str | None = None
@@ -307,6 +354,16 @@ class Settings(BaseSettings):
     # Vector store (infrastructure; editable via /api/setup/vector)
     vector: VectorConfig = VectorConfig()
 
+    @field_validator("llm_params", "llm_supports_forced_tool_choice", mode="before")
+    @classmethod
+    def blank_env_means_unset(cls, value: Any) -> Any:
+        """A blank line in .env (LLM_PARAMS=) means "not set", not a parse error.
+
+        Without this the app would refuse to boot on a freshly copied
+        .env.dist, and no field here is supposed to be required at startup.
+        """
+        return None if value == "" else value
+
     # Env/yaml values act as *defaults* for the runtime-editable sections
     # below: RedisConfigStore resolves a section via getattr(settings, name),
     # so overrides stored through the setup API take priority over these.
@@ -325,10 +382,13 @@ class Settings(BaseSettings):
     @property
     def llm(self) -> LlmConfig:
         return LlmConfig(
+            provider=self.llm_provider,
             base_url=self.llm_base_url,
             model=self.llm_model,
             api_key=self.llm_api_key.get_secret_value() if self.llm_api_key else None,
             think_tags=self.llm_think_tags,
+            params=self.llm_params or {},
+            supports_forced_tool_choice=self.llm_supports_forced_tool_choice,
         )
 
     @property

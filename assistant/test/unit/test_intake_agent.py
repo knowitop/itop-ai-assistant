@@ -30,12 +30,15 @@ class FakeToolCallingModel(BaseChatModel):
 
     responses: list[AIMessage] = []
     calls: int = 0
+    # kwargs of every bind_tools call — where tool_choice shows up
+    bindings: list[dict] = []
 
     @property
     def _llm_type(self) -> str:
         return "fake-tool-calling"
 
     def bind_tools(self, tools, **kwargs) -> Any:
+        self.bindings.append(kwargs)
         return self
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
@@ -86,8 +89,10 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
         self.deps.state_manager.increment_classify_rounds = AsyncMock(side_effect=increment_classify_rounds)
         self.deps.prompt_store.get = AsyncMock(return_value=_PROMPT_FILES)
 
+        self.llm_cfg = LlmConfig(base_url="http://x", model="m")
+
         async def config_get(module, model):
-            return self.intake_cfg if module == "intake" else LlmConfig(base_url="http://x", model="m")
+            return self.intake_cfg if module == "intake" else self.llm_cfg
 
         self.deps.config_store.get = AsyncMock(side_effect=config_get)
 
@@ -261,6 +266,41 @@ class TestProseInsteadOfToolCall(IntakeAgentTestCase):
 
         self.assertEqual(model.calls, 2)
         self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
+
+
+class TestForcedToolChoice(IntakeAgentTestCase):
+    """`tool_choice="any"` goes out only where the endpoint accepts it."""
+
+    async def test_not_forced_on_an_endpoint_that_does_not_accept_it(self):
+        # openai_compatible with no explicit answer — could be DeepSeek
+        model = await self.run_agent([ai([call("finish_handoff", {"note": "n"}, "h1")])])
+
+        # create_agent always passes the kwarg; unset means None
+        self.assertTrue(model.bindings)
+        self.assertTrue(all(binding.get("tool_choice") is None for binding in model.bindings))
+
+    async def test_forced_when_the_endpoint_accepts_it(self):
+        self.llm_cfg = LlmConfig(base_url="http://x", model="m", supports_forced_tool_choice=True)
+
+        model = await self.run_agent([ai([call("finish_handoff", {"note": "n"}, "h1")])])
+
+        self.assertTrue(model.bindings)
+        self.assertTrue(all(binding.get("tool_choice") == "any" for binding in model.bindings))
+
+    async def test_prose_is_still_retried_when_the_endpoint_drops_the_field(self):
+        # Ollama-shaped failure: the forced choice is accepted and ignored, so
+        # the model answers in prose anyway and only the retry catches it
+        self.llm_cfg = LlmConfig(base_url="http://x", model="m", supports_forced_tool_choice=True)
+
+        model = await self.run_agent(
+            [
+                ai(content="Which OpenVPN version do you have?"),
+                ai([call("post_public_question", {"question": "Which OpenVPN version do you have?"}, "q1")]),
+            ]
+        )
+
+        self.assertEqual(model.calls, 2)
+        self.bundle.ticket_repo.append_public_log.assert_awaited_once()
 
 
 class TestClassifiedTicket(IntakeAgentTestCase):

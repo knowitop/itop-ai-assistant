@@ -32,7 +32,29 @@ _BLANK = {
     "embeddings_base_url": None,
     "embeddings_model": None,
     "embeddings_api_key": None,
+    "llm_provider": "openai_compatible",
+    "llm_supports_forced_tool_choice": None,
 }
+
+
+def _fake_llm(content: str, tool_calls: list | None = None, tool_error: Exception | None = None) -> MagicMock:
+    """An LLM stand-in for the two-step probe, recording how tools were bound."""
+    llm = MagicMock()
+    llm.ainvoke = AsyncMock(return_value=MagicMock(content=content))
+    llm.bind_kwargs = []
+    bound = MagicMock()
+    if tool_error is not None:
+        bound.ainvoke = AsyncMock(side_effect=tool_error)
+    else:
+        calls = [{"name": "_probe_tool", "args": {"text": "ping"}, "id": "1"}] if tool_calls is None else tool_calls
+        bound.ainvoke = AsyncMock(return_value=MagicMock(tool_calls=calls))
+
+    def bind_tools(_tools, **kwargs):
+        llm.bind_kwargs.append(kwargs)
+        return bound
+
+    llm.bind_tools = bind_tools
+    return llm
 
 
 def _make_deps(redis, **settings_overrides) -> AppDeps:
@@ -90,6 +112,23 @@ class TestSetupStatus(SetupApiTestCase):
 
         self.assertTrue(body["configured"])
         self.assertEqual(body["sections"]["llm"]["values"]["model"], "from-env")
+
+
+class TestLlmProviders(SetupApiTestCase):
+    def test_registry_is_served_for_the_ui(self):
+        providers = {p["id"]: p for p in self.client.get("/api/setup/llm-providers").json()["providers"]}
+
+        self.assertIn("openai_compatible", providers)
+        self.assertEqual(providers["google_genai"]["base_url_mode"], "unused")
+        self.assertEqual(providers["google_genai"]["api_key_mode"], "required")
+
+    def test_only_openai_compatible_leaves_the_tool_choice_question_open(self):
+        # null is the UI's signal to show the toggle — everywhere else the
+        # answer is known and asking would invite the user to contradict it
+        providers = self.client.get("/api/setup/llm-providers").json()["providers"]
+        open_question = [p["id"] for p in providers if p["supports_forced_tool_choice"] is None]
+
+        self.assertEqual(open_question, ["openai_compatible"])
 
 
 class TestSetupSections(SetupApiTestCase):
@@ -284,9 +323,15 @@ class TestConnectionProbes(SetupApiTestCase):
         self.assertFalse(body["ok"])
         self.assertIn("model", body["error"])
 
+    def test_llm_probe_without_api_key_where_the_provider_needs_one(self):
+        body = self.client.post("/api/setup/test-llm", json={"provider": "openai", "model": "gpt-test"}).json()
+
+        self.assertFalse(body["ok"])
+        # The complaint is about the key, not the base URL openai does not use
+        self.assertIn("API key", body["error"])
+
     def test_llm_probe_success_strips_thinking(self):
-        llm = MagicMock()
-        llm.ainvoke = AsyncMock(return_value=MagicMock(content="<think>hmm</think>OK"))
+        llm = _fake_llm(content="<think>hmm</think>OK")
 
         with patch("admin.setup.create_llm", return_value=llm):
             body = self.client.post(
@@ -295,7 +340,59 @@ class TestConnectionProbes(SetupApiTestCase):
 
         self.assertTrue(body["ok"])
         self.assertEqual(body["model"], "gpt-test")
+        self.assertEqual(body["provider"], "openai_compatible")
         self.assertEqual(body["response"], "OK")
+        self.assertTrue(body["tool_calling"])
+
+    def test_llm_probe_reports_a_model_that_cannot_call_tools(self):
+        llm = _fake_llm(content="OK", tool_calls=[])
+
+        with patch("admin.setup.create_llm", return_value=llm):
+            body = self.client.post(
+                "/api/setup/test-llm", json={"base_url": "http://llm/v1", "model": "gpt-test"}
+            ).json()
+
+        # The endpoint answers, but the module cannot use it
+        self.assertTrue(body["ok"])
+        self.assertFalse(body["tool_calling"])
+
+    def test_llm_probe_does_not_force_tool_choice_unless_the_endpoint_accepts_it(self):
+        llm = _fake_llm(content="OK")
+
+        with patch("admin.setup.create_llm", return_value=llm):
+            body = self.client.post(
+                "/api/setup/test-llm", json={"base_url": "http://llm/v1", "model": "gpt-test"}
+            ).json()
+
+        self.assertNotIn("forced_tool_choice_ok", body)
+        self.assertEqual(llm.bind_kwargs, [{}])
+
+    def test_llm_probe_verifies_a_forced_tool_choice(self):
+        llm = _fake_llm(content="OK")
+
+        with patch("admin.setup.create_llm", return_value=llm):
+            body = self.client.post(
+                "/api/setup/test-llm",
+                json={"base_url": "http://llm/v1", "model": "gpt-test", "supports_forced_tool_choice": True},
+            ).json()
+
+        self.assertTrue(body["forced_tool_choice_ok"])
+        self.assertEqual(llm.bind_kwargs, [{"tool_choice": "any"}])
+
+    def test_llm_probe_reports_a_rejected_tool_choice_without_failing_the_endpoint(self):
+        # DeepSeek's HTTP 400 on a forced choice: the endpoint is alive, the
+        # user's answer about it is wrong
+        llm = _fake_llm(content="OK", tool_error=RuntimeError("Thinking mode does not support this tool_choice"))
+
+        with patch("admin.setup.create_llm", return_value=llm):
+            body = self.client.post(
+                "/api/setup/test-llm",
+                json={"base_url": "http://llm/v1", "model": "gpt-test", "supports_forced_tool_choice": True},
+            ).json()
+
+        self.assertTrue(body["ok"])
+        self.assertFalse(body["forced_tool_choice_ok"])
+        self.assertIn("Thinking mode", body["tool_error"])
 
     def test_llm_probe_reports_error(self):
         llm = MagicMock()

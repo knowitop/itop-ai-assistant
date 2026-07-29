@@ -11,9 +11,11 @@ served by dedicated endpoints because secrets need special treatment:
 
 import asyncio
 import logging
+from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from langchain_core.tools import tool
 from pydantic import BaseModel, ValidationError
 
 from config import (
@@ -27,6 +29,7 @@ from config import (
 )
 from deps import AppDeps, create_itop_client, create_llm
 from itop_provisioning import provision_itop
+from llm_providers import PROVIDERS, get_provider
 from text_utils import strip_thinking
 from vector.embedder import EmbeddingsClient
 
@@ -98,6 +101,18 @@ async def setup_status(request: Request) -> dict:
             "embeddings": _masked(embeddings_cfg),
         },
     }
+
+
+@router.get("/llm-providers")
+async def llm_providers() -> dict:
+    """The LLM endpoints this build can talk to — the UI renders its form from this.
+
+    `supports_forced_tool_choice: null` means the answer depends on the server
+    behind the URL, and the UI must ask (see `llm_providers`).
+
+    Declared before `/{section}`, which would otherwise swallow the path.
+    """
+    return {"providers": [asdict(provider) for provider in PROVIDERS.values()]}
 
 
 @router.get("/{section}")
@@ -206,16 +221,33 @@ async def provision_itop_endpoint(request: Request, body: dict[str, Any]) -> dic
     return {"ok": True, "report": report}
 
 
+@tool
+def _probe_tool(text: str) -> str:
+    """Echo the given text back. Used only to check that the model can call tools."""
+    return text
+
+
 @router.post("/test-llm")
 async def test_llm(request: Request, body: dict[str, Any] | None = None) -> dict:
-    """Probe the LLM endpoint with a one-word completion. Nothing is saved."""
+    """Probe the LLM endpoint. Nothing is saved.
+
+    Two questions, because the intake module needs both answers: does the
+    endpoint respond at all, and can the model call a tool? Tool calling is a
+    hard requirement — a model that answers in prose wastes every run — and
+    finding that out in the wizard beats finding it out on a live ticket.
+    Where the endpoint claims to accept a forced `tool_choice`, the second
+    probe forces it, so the claim is verified rather than trusted.
+    """
     values = await _merged_with_current(request, "llm", LlmConfig, body or {})
     try:
         cfg = LlmConfig(**values)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
-    if not cfg.base_url:
+    provider = get_provider(cfg.provider)
+    if provider.base_url_mode == "required" and not cfg.base_url:
         return {"ok": False, "error": "No endpoint: set the LLM base URL first"}
+    if provider.api_key_mode == "required" and not cfg.api_key:
+        return {"ok": False, "error": f"No API key: {provider.label} requires one"}
     if not cfg.model:
         return {"ok": False, "error": "No model: set llm model first"}
 
@@ -225,7 +257,25 @@ async def test_llm(request: Request, body: dict[str, Any] | None = None) -> dict
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
     text = strip_thinking(answer.content, tuple(cfg.think_tags)).strip()
-    return {"ok": True, "model": cfg.model, "response": text[:200]}
+
+    result: dict[str, Any] = {"ok": True, "provider": cfg.provider, "model": cfg.model, "response": text[:200]}
+    forced = cfg.endpoint_forces_tool_choice
+    bound = llm.bind_tools([_probe_tool], tool_choice="any") if forced else llm.bind_tools([_probe_tool])
+    try:
+        reply = await asyncio.wait_for(
+            bound.ainvoke("Call the _probe_tool tool with the text: ping"), timeout=_TEST_TIMEOUT
+        )
+        result["tool_calling"] = bool(getattr(reply, "tool_calls", None))
+        if forced:
+            result["forced_tool_choice_ok"] = True
+    except Exception as e:
+        # A rejected tool_choice is the expected failure here (DeepSeek answers
+        # HTTP 400) — report it as its own verdict, not as a dead endpoint
+        result["tool_calling"] = False
+        result["tool_error"] = f"{type(e).__name__}: {e}"[:500]
+        if forced:
+            result["forced_tool_choice_ok"] = False
+    return result
 
 
 @router.post("/test-embeddings")

@@ -139,6 +139,7 @@ cd docker && docker-compose up -d
 | `src/webhook/router.py`                         | Webhook endpoint: auth, configured-gate, dispatch   |
 | `src/pipelines/registry.py`                     | `PipelineRegistry` — (class, event) → module handler |
 | `src/text_utils.py`                             | Generic `html_to_markdown`, `bind_oql`, `strip_thinking` (no biz deps) |
+| `src/llm_providers.py`                          | Provider registry: connection shape + forced-`tool_choice` support |
 | `src/prompt_store.py`                           | `PromptStore` — file-based templates with overrides |
 | `src/agents/intake/pipeline.py`                 | Intake module: registration, guard, agent run, epilogue, journal |
 | `src/agents/intake/agent.py`                    | `create_agent` + tool-gate / terminal-exit / call-limit middleware |
@@ -204,18 +205,23 @@ picked by code, never by the model. The tool set is **per run**, not fixed:
 has both a service and a subcategory, and `build_initial_messages` then omits
 the catalog — the agent otherwise re-classifies on every webhook, and once
 proposed a different subcategory over a correct one. Enforcing the rule by
-taking the tools away beats asking for it in the prompt. Three
+taking the tools away beats asking for it in the prompt. Four
 middleware: `_tool_gate` turns
 `ToolRejection` into an error `ToolMessage` (real failures propagate and fail
 the run), `_stop_after_terminal` ends the run once `post_public_question` or
 `finish_handoff` succeeded, `_require_tool_call` retries a prose-only turn
 once (observed in production: with a conversation in the prompt the model
 continues the *dialogue* instead of calling the tool, and the text reaches
-nobody). Forcing `tool_choice="any"` would make prose impossible instead of
-correctable, but **DeepSeek V4 rejects it outright** (thinking mode, HTTP
-400) while OpenAI/Google/vLLM accept it — the retry is the portable
-mitigation. See the `_require_tool_call` docstring for the per-provider
-picture before reaching for the lever. Note that returning `Command(goto="__end__")`
+nobody), and `_force_tool_choice` makes prose impossible instead of merely
+correctable — added only when the endpoint accepts `tool_choice="any"`
+(`LlmConfig.endpoint_forces_tool_choice`, answered by `llm_providers` or by
+the deployment owner for `openai_compatible`). **Which endpoint accepts what
+is a fact about the connection (`llm_providers`); whether to use it is the
+agent's call** — intake forces it everywhere it can because its plain text
+reaches nobody, while an agent that must answer in prose simply passes
+`force_tool_choice=False` (the default). `_require_tool_call` stays on
+regardless: Ollama and some gateways drop the field silently rather than
+erroring. Note that returning `Command(goto="__end__")`
 from `wrap_tool_call` does *not* end the run — the conditional edge
 `create_agent` puts on the tools node fires anyway.
 
@@ -247,9 +253,17 @@ templates use semantic `:this->field` placeholders bound from
 
 ### LLM Stack
 
-**langchain-openai** (`ChatOpenAI`) as the LLM client — routes to any
-OpenAI-compatible endpoint via `LLM_BASE_URL` (LM Studio locally, LiteLLM
-Proxy or direct cloud API in production). Plain text responses, no structured
+**`init_chat_model`** (langchain) builds the client, one provider per entry in
+`src/llm_providers.py` — `openai_compatible` (default, any `/chat/completions`
+URL: LM Studio, vLLM, LiteLLM, DeepSeek, Azure, OpenRouter), `openai`,
+`google_genai`, `ollama`. `create_llm` (`deps.py`) is the only construction
+site and returns `BaseChatModel`; every consumer types it that way, so adding
+a provider is a registry entry plus its `langchain-*` package, never a change
+in the agent. The registry also records which connection fields matter
+(`base_url_mode` / `api_key_mode` — the setup API and the UI form are
+generated from it) and whether the endpoint accepts a forced `tool_choice`.
+`llm.params` is forwarded verbatim to the client (temperature, max_tokens, …);
+connection fields are rejected there. Plain text responses, no structured
 output. `strip_thinking` removes `<think>…</think>` blocks emitted by
 reasoning models (DeepSeek-R1, Qwen3, etc.).
 
@@ -295,9 +309,12 @@ None (`RuntimeSectionConfig`). Webhook/admin token checks read the effective
 | `webhook_token` | recommended | Shared secret for `/webhook` (`X-Auth-Token` header); unset = no auth |
 | `admin_token` | recommended | Bearer token for `/api` admin endpoints (`Authorization: Bearer`); unset = no auth (first-run mode) |
 | `prompts_dir` | optional (env-only) | Directory with per-deployment prompt overrides |
-| `llm_base_url` | required (env or setup API) | OpenAI-compatible endpoint (no default) |
+| `llm_provider` | default `openai_compatible` | Which entry of `llm_providers.PROVIDERS` to build the client from |
+| `llm_base_url` | required by the provider's `base_url_mode` | Endpoint URL; unused by `openai` / `google_genai` |
 | `llm_model` | required (env or setup API) | Model name as exposed by the endpoint |
-| `llm_api_key` | optional | API key (omit for local LM Studio) |
+| `llm_api_key` | required by the provider's `api_key_mode` | API key (local endpoints ignore it) |
+| `llm_params` | optional | JSON of extra client kwargs (temperature, max_tokens, …) |
+| `llm_supports_forced_tool_choice` | optional | Endpoint accepts `tool_choice="any"`; `None` = ask the registry. Only meaningful for `openai_compatible` |
 | `llm_think_tags` | default `[think, thinking, reasoning]` | Tag names stripped as inline reasoning blocks |
 | `redis_url` | default (env-only, bootstrap) | Redis connection URL |
 | `database_url` | optional (env-only, bootstrap) | Postgres DSN for the vector store (`postgresql+asyncpg://…`); unset = Redis-only deployment |
@@ -457,7 +474,7 @@ npm run build   # type-check (tsc --noEmit) + production build into ui/dist
   `test_ticket_repository.py`, `test_catalog_repository.py`,
   `test_itop_schema.py`, `test_itop_provisioning.py`, `test_journal.py`,
   `test_config_store.py`, `test_admin_api.py`, `test_setup_api.py`,
-  `test_text_utils.py`, `test_embedder.py`, `test_vector_status.py`,
+  `test_text_utils.py`, `test_llm_providers.py`, `test_embedder.py`, `test_vector_status.py`,
   `test_chunker.py`, `test_indexer.py`, `test_vector_sources_tickets.py`,
   `test_intake_pipeline.py`, `test_intake_prompt.py`, `test_intake_tools.py`,
   `test_intake_agent.py`; in `test/pg/`: `test_db_smoke.py`,
