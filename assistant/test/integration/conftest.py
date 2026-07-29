@@ -17,12 +17,11 @@ import pytest
 
 logger = logging.getLogger(__name__)
 
+from agents.intake.context import IntakeContext
+from agents.intake.prompts import build_intake_prompts
 from catalog_repository import CatalogRepository
 from config import get_settings
-from deps import create_llm
 from domain.ticket import Ticket
-from graph.enrichment.context import GraphContext
-from graph.enrichment.prompts import build_enrichment_prompts
 from itop_client import Itop
 from prompt_store import read_prompt_dir
 from state.ticket_state import TicketStateManager
@@ -30,7 +29,7 @@ from ticket_repository import TicketRepository
 
 ITOP_URL = "http://mock-itop/webservices/rest.php"
 
-_PROMPTS = build_enrichment_prompts(read_prompt_dir(Path(__file__).parents[2] / "prompts" / "enrichment"))
+_PROMPTS = build_intake_prompts(read_prompt_dir(Path(__file__).parents[2] / "prompts" / "intake"))
 
 _SERVICE_FIELDS = {"name": "IT Support", "description": "General IT support services"}
 # service_id is a mandatory external key in iTop — always present in real responses
@@ -93,25 +92,23 @@ class ItopMockTransport(httpx.AsyncBaseTransport):
 
 
 def make_ctx(
-    state_manager: TicketStateManager, subcategory_fields: dict | None = None
-) -> tuple[GraphContext, ItopMockTransport]:
-    """Create a GraphContext with a fresh ItopMockTransport. Returns both for assertions."""
+    state_manager: TicketStateManager,
+    ticket: Ticket,
+    subcategory_fields: dict | None = None,
+) -> tuple[IntakeContext, ItopMockTransport]:
+    """Create an IntakeContext with a fresh ItopMockTransport. Returns both for assertions."""
     transport = ItopMockTransport(subcategory_fields=subcategory_fields)
     itop = Itop(url=ITOP_URL, version="1.3", auth_user="dummy", auth_pwd="dummy", transport=transport)
     settings = get_settings()
-    enrichment = settings.enrichment
-    llm = create_llm(settings.llm)
-    ctx = GraphContext(
+    ctx = IntakeContext(
         processing_id=uuid4(),
+        ticket=ticket,
         ticket_repo=TicketRepository(itop, settings.ticket_mapping),
         catalog_repo=CatalogRepository(itop),
-        ticket_mapping=settings.ticket_mapping,
         state_manager=state_manager,
-        enrichment=enrichment,
-        prompts=_PROMPTS,
-        llm_classify=llm,
-        llm_evaluate=llm,
-        llm_enrich=llm,
+        intake=settings.intake,
+        # Matches _AI_PERSON_FIELDS, i.e. what get_ai_person_name() would return
+        ai_name="ai-assistant",
     )
     return ctx, transport
 
@@ -136,24 +133,6 @@ def itop(itop_transport: ItopMockTransport) -> Itop:
 async def state_manager() -> TicketStateManager:
     redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
     return TicketStateManager(redis)
-
-
-@pytest.fixture
-def ctx(itop: Itop, state_manager: TicketStateManager) -> GraphContext:
-    settings = get_settings()
-    llm = create_llm(settings.llm)
-    return GraphContext(
-        processing_id=uuid4(),
-        ticket_repo=TicketRepository(itop, settings.ticket_mapping),
-        catalog_repo=CatalogRepository(itop),
-        ticket_mapping=settings.ticket_mapping,
-        state_manager=state_manager,
-        enrichment=settings.enrichment,
-        prompts=_PROMPTS,
-        llm_classify=llm,
-        llm_evaluate=llm,
-        llm_enrich=llm,
-    )
 
 
 def make_ticket(**overrides: object) -> Ticket:

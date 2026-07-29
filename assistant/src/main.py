@@ -10,7 +10,6 @@ from fastapi.staticfiles import StaticFiles
 from admin.router import router as admin_router
 from config import ItopConfig, LlmConfig, SecurityConfig, get_settings, missing_setup
 from deps import build_deps
-from graph.enrichment.prompts import build_enrichment_prompts
 from pipelines.registry import build_registry
 from vector.db import run_migrations
 from vector.indexer import VectorIndexer
@@ -30,8 +29,11 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     settings = get_settings()
     deps = build_deps(settings)
+    registry = build_registry(settings)
     # Fail fast on missing or broken prompt templates instead of on a live ticket
-    build_enrichment_prompts(await deps.prompt_store.get("enrichment"))
+    for module in registry.modules:
+        if module.validate_prompts:
+            module.validate_prompts(await deps.prompt_store.get(module.name))
 
     # Vector store is optional: no DATABASE_URL = Redis-only deployment, and a
     # failed migration degrades to "vector unavailable", never a boot failure
@@ -65,7 +67,7 @@ async def lifespan(app: FastAPI):
         indexer.start()
 
     app.state.deps = deps
-    app.state.registry = build_registry(settings)
+    app.state.registry = registry
     app.state.vector_indexer = indexer
     try:
         yield

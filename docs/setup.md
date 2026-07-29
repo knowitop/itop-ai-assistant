@@ -75,7 +75,7 @@ All comments posted by the assistant will appear under this account name, making
 
 ### 2. Configure service subcategories
 
-The assistant uses the **description** field of each service subcategory as its completeness criteria — it checks whether the ticket contains everything listed there before deciding to ask a question or proceed to enrichment.
+The assistant uses the **description** field of each service subcategory as its completeness criteria — it checks whether the ticket contains everything listed there before deciding to ask a question or hand the ticket to an engineer.
 
 Go to each subcategory you want the assistant to handle and write a short description of what information is required:
 

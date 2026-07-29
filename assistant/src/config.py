@@ -174,17 +174,28 @@ def missing_setup(itop: ItopConfig, llm: LlmConfig) -> list[str]:
     return missing
 
 
-class EnrichmentConfig(BaseModel):
+class IntakeConfig(BaseModel):
+    """The ticket-processing module: classify, ask, hand off.
+
+    One tool-calling agent per ticket rather than a fixed sequence of steps —
+    the model decides which tool to call next, the tools enforce the
+    invariants.
+    """
+
     enabled: bool = True
     classes: list[str] = ["UserRequest", "Incident"]
-    classification_enabled: bool = True
     max_rounds: int = 2
     max_classify_rounds: int = 2
-    # Per-node model overrides; None falls back to the global llm_model
-    classify_model: str | None = None
-    evaluate_model: str | None = None
-    enrich_model: str | None = None
+    # Budget of model calls per run; without it a looping agent burns tokens
+    # until the ticket is abandoned. Catalog + subcategories + classify +
+    # question/handoff + slack.
+    max_iterations: int = 8
+    # One override for the whole module (the agent has a single loop); None
+    # falls back to the global llm_model. It must be a reliable tool-caller —
+    # a model that answers in prose instead of calling a tool burns the run.
+    model: str | None = None
     classify_fallback_note: str = "Could not determine the request category. Manual classification required."
+    handoff_fallback_note: str = "AI intake finished without a summary. Manual review required."
     classify_service_oql: str = _CLASSIFY_SERVICE_OQL
     classify_subcategory_oql: str = _CLASSIFY_SUBCATEGORY_OQL
 
@@ -291,7 +302,7 @@ class Settings(BaseSettings):
     ticket_mapping: TicketMappingConfig = TicketMappingConfig()
 
     # Business modules
-    enrichment: EnrichmentConfig = EnrichmentConfig()
+    intake: IntakeConfig = IntakeConfig()
 
     # Vector store (infrastructure; editable via /api/setup/vector)
     vector: VectorConfig = VectorConfig()

@@ -26,8 +26,8 @@ from config import (
     missing_setup,
 )
 from deps import AppDeps, create_itop_client, create_llm
-from graph.enrichment.nodes.utils import strip_thinking
 from itop_provisioning import provision_itop
+from text_utils import strip_thinking
 from vector.embedder import EmbeddingsClient
 
 logger = logging.getLogger(__name__)

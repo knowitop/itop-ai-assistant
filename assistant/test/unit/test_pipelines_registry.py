@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from config import EnrichmentConfig
+from config import IntakeConfig
 from pipelines.registry import ModuleInfo, PipelineRegistry, build_registry
 
 
@@ -10,8 +10,8 @@ def _module(name: str = "test-module") -> ModuleInfo:
     return ModuleInfo(name=name, description="Test module")
 
 
-def _settings(**enrichment_overrides) -> SimpleNamespace:
-    return SimpleNamespace(enrichment=EnrichmentConfig(**enrichment_overrides))
+def _settings(**intake_overrides) -> SimpleNamespace:
+    return SimpleNamespace(intake=IntakeConfig(**intake_overrides))
 
 
 class TestPipelineRegistry(unittest.TestCase):
@@ -70,20 +70,20 @@ class TestPipelineRegistry(unittest.TestCase):
 
 
 class TestBuildRegistry(unittest.TestCase):
-    def test_default_settings_register_enrichment(self):
+    def test_default_settings_register_intake(self):
         registry = build_registry(_settings())
 
         for obj_class in ("UserRequest", "Incident"):
             for event in ("created", "user_commented", "assigned"):
                 self.assertIsNotNone(registry.resolve(obj_class, event), f"{obj_class}/{event}")
 
-        module = registry.modules[0]
-        self.assertEqual(module.name, "enrichment")
-        self.assertIs(module.config_model, EnrichmentConfig)
-        self.assertIn("evaluate_system", module.prompt_names)
+        self.assertEqual([m.name for m in registry.modules], ["intake"])
+        module = registry.get_module("intake")
+        self.assertIs(module.config_model, IntakeConfig)
+        self.assertIn("system", module.prompt_names)
         self.assertIsNotNone(module.validate_prompts)
 
-    def test_disabled_enrichment_registers_nothing(self):
+    def test_disabled_intake_registers_nothing(self):
         registry = build_registry(_settings(enabled=False))
 
         self.assertEqual(registry.modules, [])
@@ -94,6 +94,15 @@ class TestBuildRegistry(unittest.TestCase):
 
         self.assertIsNotNone(registry.resolve("UserRequest", "created"))
         self.assertIsNone(registry.resolve("Incident", "created"))
+
+    def test_a_second_module_extends_the_map(self):
+        registry = build_registry(_settings())
+
+        registry.register(_module("other"), {("Change", "created"): AsyncMock()})
+
+        self.assertEqual([m.name for m in registry.modules], ["intake", "other"])
+        self.assertEqual(registry.resolve_entry("UserRequest", "created")[0], "intake")
+        self.assertEqual(registry.resolve_entry("Change", "created")[0], "other")
 
 
 if __name__ == "__main__":

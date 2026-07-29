@@ -48,8 +48,8 @@ class TestSettings(unittest.TestCase):
         self.assertEqual(s.itop_api_version, "1.3")
         self.assertEqual(s.itop_timeout, 30.0)
         self.assertEqual(s.state_ttl_days, 30)
-        self.assertEqual(s.enrichment.max_rounds, 2)
-        self.assertEqual(s.enrichment.max_classify_rounds, 2)
+        self.assertEqual(s.intake.max_rounds, 2)
+        self.assertEqual(s.intake.max_classify_rounds, 2)
         self.assertEqual(s.llm_think_tags, ["think", "thinking", "reasoning"])
 
     def test_webhook_token_is_secret(self):

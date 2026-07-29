@@ -1,6 +1,6 @@
 # Customizing prompts
 
-All LLM prompts are plain Markdown templates. The packaged defaults live in [`assistant/prompts/enrichment/`](../assistant/prompts/enrichment). You can override any of them without touching the code.
+All LLM prompts are plain Markdown templates. The packaged defaults live in [`assistant/prompts/intake/`](../assistant/prompts/intake). You can override any of them without touching the code.
 
 ---
 
@@ -15,12 +15,12 @@ The quickest way: open **Admin UI → Prompts**, click a prompt name in the side
 For version-controlled overrides or deployment automation, use the `PROMPTS_DIR` environment variable:
 
 1. Set `PROMPTS_DIR` to a directory on the host, e.g. `/etc/itop-ai/prompts`
-2. Place override files under `<PROMPTS_DIR>/enrichment/` with the same names as the defaults:
+2. Place override files under `<PROMPTS_DIR>/intake/` with the same names as the defaults:
 
 ```
 /etc/itop-ai/prompts/
-└── enrichment/
-    └── evaluate_system.md   # overrides only this one prompt
+└── intake/
+    └── system.md   # overrides only this one prompt
 ```
 
 Files you place here shadow the packaged defaults. Files you do not place keep their defaults. Prompt files are re-read on every processing run — no restart needed after editing.
@@ -29,32 +29,34 @@ Files you place here shadow the packaged defaults. Files you do not place keep t
 
 ## Prompt files
 
-Each LLM call uses a pair of files — a system message and a human message:
+The intake module runs as one agent session, so its prompts are not per-LLM-call pairs but the three messages that open the session:
 
-| Pair | Files | Purpose |
-|------|-------|---------|
-| `classify_service` | `classify_service_system.md` / `classify_service_human.md` | Pick the best matching Service from the iTop catalog |
-| `classify_subcategory` | `classify_subcategory_system.md` / `classify_subcategory_human.md` | Pick the best matching ServiceSubcategory |
-| `classify_ask` | `classify_ask_system.md` / `classify_ask_human.md` | Generate a clarifying question when the category cannot be determined confidently |
-| `evaluate` | `evaluate_system.md` / `evaluate_human.md` | Decide whether the ticket description is sufficient; if not, generate the clarifying question text |
-| `enrich` | `enrich_system.md` / `enrich_human.md` | Generate a structured internal note for the engineer |
+| File | Role in the session | Sent when |
+|------|--------------------|-----------|
+| `system.md` | The system message: who the agent is, the rules it works under, when to ask versus when to hand off | Always |
+| `catalog_human.md` | The service catalog available to the requester's organization | Only for an unclassified ticket — a ticket that already has a service and a subcategory cannot be reclassified, so the list is omitted |
+| `ticket_human.md` | This ticket: title, description, current classification, conversation so far | Always |
+
+Everything after these three messages is the agent's own doing — which tool it calls, and what it writes. Note that **tool descriptions are code, not prompts**: they live in the docstrings in `assistant/src/agents/intake/tools.py` and are not overridable through the admin UI.
 
 ---
 
 ## Placeholders
 
-Prompts use `{placeholder}` variables substituted at runtime.
+Prompts use `{placeholder}` variables substituted at runtime. Each template has its own allowed set — a placeholder valid in one file is rejected in another.
 
 | Placeholder | Available in | Value |
 |-------------|-------------|-------|
-| `{title}` | all prompts | Ticket title |
-| `{description}` | all prompts | Ticket description (HTML stripped to plain text) |
-| `{caller_name}` | all prompts | Display name of the ticket creator |
-| `{service_context}` | `evaluate` | Service and subcategory details, including the subcategory description used as completeness criteria |
-| `{services}` | `classify_service` | Formatted list of Services available in the iTop catalog |
-| `{subcategories}` | `classify_subcategory` | Formatted list of ServiceSubcategories for the selected Service |
+| `{services}` | `catalog_human` | Formatted list of Services available to the requester's organization |
+| `{caller_name}` | `ticket_human` | Display name of the ticket creator |
+| `{title}` | `ticket_human` | Ticket title |
+| `{description}` | `ticket_human` | Ticket description (HTML converted to Markdown) |
+| `{service_context}` | `ticket_human` | Current Service and ServiceSubcategory, including the subcategory description used as completeness criteria |
+| `{conversation}` | `ticket_human` | Public log history rendered as an XML block, with a `role` per entry (`requester` / `self` / `agent`) |
 
-> [!NOTE]
-> The `evaluate` prompt also receives the conversation history (previous exchanges between the user and the assistant), but it is injected as a sequence of chat messages, not a text placeholder — you cannot reference it as `{conversation}` in the template.
+`system.md` takes no placeholders.
 
-Placeholder names are validated on save. If a template references an unknown name, the save is rejected with an error showing which placeholder is unrecognized.
+Placeholder names are validated on save. If a template references an unknown name, the save is rejected with an error showing which placeholder is unrecognized. The same validation runs at startup, so a broken override file fails the boot rather than a live ticket.
+
+> [!TIP]
+> After editing a prompt, run the real-LLM test suite — it is the only thing that checks the prompts against an actual model: `cd assistant && uv run pytest test/integration` (needs `.env.test`, see `.env.test.dist`).

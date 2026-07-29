@@ -90,7 +90,7 @@ hard to debug and impossible to improve empirically. The `RunJournal` records
 - Wire it as a LangChain callback in `create_llm`; gate by config (off by
   default, no egress unless enabled).
 - Payoff: prompt iteration by data, token/cost visibility, latency
-  attribution — directly accelerates every prompt-heavy plan (enrichment,
+  attribution — directly accelerates every prompt-heavy plan (intake,
   widget, insights).
 
 ---
@@ -190,7 +190,7 @@ until those features are switched on.
 ## 4. Suggested sequencing
 
 1. **CI (§1.1)** — 1 hour, unblocks safe iteration on everything else.
-2. **Structured output (§1.2)** — refactor existing enrichment nodes; sets the
+2. **Structured output (§1.2)** — refactor the intake tools and prompts; sets the
    contract style all new LLM code will copy.
 3. **Datastore fork (§2) — decided: Postgres + `pgvector`.** Stand up the
    Postgres service, `asyncpg`/SQLAlchemy, and the first Alembic migration as

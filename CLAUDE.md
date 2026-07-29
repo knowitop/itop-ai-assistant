@@ -55,9 +55,9 @@ even calling iTop.
 
 **Never react to our own comments.** Two lines of defense against webhook
 loops: iTop trigger contexts must exclude `REST/JSON` (documented in README),
-and the guard node stops if the last public log entry was posted by the AI
-service account — a misconfigured trigger degrades to a no-op instead of an
-infinite question loop.
+and the guard (`pipeline._stop_reason`) stops if the last public log entry was
+posted by the AI service account — a misconfigured trigger degrades to a no-op
+instead of an infinite question loop.
 
 ## iTop Domain Knowledge
 
@@ -111,14 +111,18 @@ cd docker && docker-compose up -d
 4. Fetch full ticket from iTop API; for `UserRequest`/`Incident` also fetch
    related `Service` and `ServiceSubcategory`; fetch `Person` of caller
 5. If ticket status is not "New" (engineer already working), stop silently
-6. **Classify:** if Service/ServiceSubcategory are not set, LLM queries iTop
-   for available options and selects the best match; if it cannot determine
-   confidently, posts one clarifying question, increments `classify_rounds`
-7. LLM evaluates whether ticket description is sufficient for the engineer
-8. **If incomplete:** post one clarifying question as a public log entry via
-   iTop API, increment `rounds` in Redis
-9. **If complete (or rounds exhausted):** post structured internal note for 
-   the engineer, set `ai_done: true` in Redis
+   (steps 3-5 are the guard — plain code in `pipeline._stop_reason`)
+6. Run one tool-calling agent session with the run's tool set: an unclassified
+   ticket gets the classification tools and the service catalog in the prompt,
+   an already classified one gets neither
+7. The agent decides, the tools enforce. `set_classification` writes Service +
+   ServiceSubcategory (validating both IDs against the catalog);
+   `post_public_question` posts one clarifying question and increments `rounds`
+   or `classify_rounds`; `finish_handoff` writes the internal note and sets
+   `ai_done`. A round budget spent means a fallback note instead of a question
+8. The epilogue closes a run the agent did not close itself (prose-only
+   answer, `max_iterations` burnt, loop): fallback note + `ai_done`, so the
+   next webhook does not replay the whole cycle
 
 ### Key Source Files
 
@@ -134,19 +138,15 @@ cd docker && docker-compose up -d
 | `src/itop_provisioning.py`                      | iTop-side triggers/webhooks: find-or-create + CLI   |
 | `src/webhook/router.py`                         | Webhook endpoint: auth, configured-gate, dispatch   |
 | `src/pipelines/registry.py`                     | `PipelineRegistry` — (class, event) → module handler |
-| `src/graph/enrichment/pipeline.py`              | Enrichment module: registration + event handlers    |
-| `src/graph/enrichment/graph.py`                 | LangGraph graph definition and compilation          |
-| `src/graph/enrichment/nodes/guard.py`           | Pre-check node (ai_done, status, last-entry-not-AI) |
-| `src/graph/enrichment/nodes/classify.py`        | LLM classification node (Service/ServiceSubcategory)|
-| `src/graph/enrichment/nodes/evaluate.py`        | LLM completeness evaluation node                   |
-| `src/graph/enrichment/nodes/ask.py`             | Post clarifying question node                       |
-| `src/graph/enrichment/nodes/enrich.py`          | Ticket enrichment node                              |
-| `src/graph/enrichment/nodes/utils.py`           | `strip_thinking` + re-exports from `text_utils`     |
-| `src/text_utils.py`                             | Generic `html_to_markdown`, `bind_oql` (no biz deps)|
-| `src/graph/enrichment/prompts.py`               | `EnrichmentPrompts` + placeholder registry/validation |
+| `src/text_utils.py`                             | Generic `html_to_markdown`, `bind_oql`, `strip_thinking` (no biz deps) |
 | `src/prompt_store.py`                           | `PromptStore` — file-based templates with overrides |
-| `prompts/enrichment/*.md`                       | Default prompt templates (one file per prompt)      |
-| `src/graph/enrichment/context.py`               | `GraphContext` — per-run dependencies for nodes     |
+| `src/agents/intake/pipeline.py`                 | Intake module: registration, guard, agent run, epilogue, journal |
+| `src/agents/intake/agent.py`                    | `create_agent` + tool-gate / terminal-exit / call-limit middleware |
+| `src/agents/intake/tools.py`                    | Five tools, one invariant each; `ToolRejection`     |
+| `src/agents/intake/prompt.py`                   | Initial messages: catalog, ticket, conversation as XML |
+| `src/agents/intake/prompts.py`                  | `IntakePrompts` + placeholder registry/validation   |
+| `src/agents/intake/context.py`                  | `IntakeContext` — per-run dependencies for tools    |
+| `prompts/intake/*.md`                           | Default intake prompts (system, catalog, ticket)    |
 | `src/domain/ticket.py`                          | `Ticket` — semantic domain model (no iTop names)    |
 | `src/ticket_repository.py`                      | `TicketRepository` — semantic ↔ iTop attribute adapter |
 | `src/catalog_repository.py`                     | `CatalogRepository` — service catalog reads         |
@@ -170,8 +170,8 @@ not to use. Application-specific logic belongs in `ticket_repository.py`.
 
 **Dependency injection:** no module-level singletons. `build_deps()` in
 `src/deps.py` assembles all shared dependencies at startup (FastAPI lifespan,
-stored in `app.state.deps`). Each processing run builds a `GraphContext` with
-a config snapshot from `ConfigStore` and per-run LLM clients — nodes take
+stored in `app.state.deps`). Each processing run builds an `IntakeContext` with
+a config snapshot from `ConfigStore` and a per-run LLM client — tools take
 everything from `runtime.context`, never from globals or `get_settings()`.
 The iTop client and repositories come from `ItopProvider` (`deps.itop.get()`
 → `ItopBundle`): the bundle is cached by a fingerprint of the `itop` +
@@ -182,12 +182,52 @@ next ticket without a restart.
 **Pipeline registry:** webhook events reach business modules through
 `PipelineRegistry` — a startup-built map of `(object class, event)` → handler.
 The router accepts only registered combinations. Adding a new module: create
-`src/graph/<module>/pipeline.py` with `register(registry, settings)` exposing
+`src/agents/<module>/pipeline.py` with `register(registry, settings)` exposing
 a `ModuleInfo` (name, description, config model, prompt names — consumed by
-the future admin UI) and its routes, add one call in
+the admin UI) and its routes, add one call in
 `pipelines/registry.py::build_registry`, add a config section in `config.py`.
-The enrichment module is enabled/scoped via `enrichment.enabled` and
-`enrichment.classes` (default `[UserRequest, Incident]`).
+`ModuleInfo.validate_prompts` is called for every registered module at startup,
+so a broken template fails the boot instead of a live ticket. The intake module
+is enabled/scoped via `intake.enabled` (default `true`) and `intake.classes`
+(default `[UserRequest, Incident]`).
+
+**`src/agents/intake/` — the ticket-processing module.** Classify
+Service/ServiceSubcategory, ask one clarifying question, post the handoff
+note, set `ai_done` — as a single tool-calling agent
+(`langchain.agents.create_agent`). Deterministic shell, agentic core: the
+per-ticket lock, the guard (`_stop_reason` — three checks) and the epilogue are
+plain code in `pipeline.py`; everything between them is the agent's decision.
+Five tools (`tools.py`), each enforcing one invariant and rejecting bad calls
+with a `ToolRejection` that says what to do instead; the round counters are
+picked by code, never by the model. The tool set is **per run**, not fixed:
+`tools_for(ticket)` withholds the three classification tools once the ticket
+has both a service and a subcategory, and `build_initial_messages` then omits
+the catalog — the agent otherwise re-classifies on every webhook, and once
+proposed a different subcategory over a correct one. Enforcing the rule by
+taking the tools away beats asking for it in the prompt. Three
+middleware: `_tool_gate` turns
+`ToolRejection` into an error `ToolMessage` (real failures propagate and fail
+the run), `_stop_after_terminal` ends the run once `post_public_question` or
+`finish_handoff` succeeded, `_require_tool_call` retries a prose-only turn
+once (observed in production: with a conversation in the prompt the model
+continues the *dialogue* instead of calling the tool, and the text reaches
+nobody). Forcing `tool_choice="any"` would make prose impossible instead of
+correctable, but **DeepSeek V4 rejects it outright** (thinking mode, HTTP
+400) while OpenAI/Google/vLLM accept it — the retry is the portable
+mitigation. See the `_require_tool_call` docstring for the per-provider
+picture before reaching for the lever. Note that returning `Command(goto="__end__")`
+from `wrap_tool_call` does *not* end the run — the conditional edge
+`create_agent` puts on the tools node fires anyway.
+
+Every run leaves a full trace in `/api/runs`: every model turn, every tool
+result and a final `usage` step (model calls, tokens, wall time).
+
+The module lives under `src/agents/` rather than `src/graph/` because its flow
+is not an explicit graph — keep that convention for future modules: `agents/`
+for "the model decides the order", `graph/` for "the code does". It won an A/B
+against a deterministic LangGraph module (`src/graph/enrichment/`, five nodes
+doing the same job) which was deleted whole once intake proved itself; if you
+need the comparison, `git log --diff-filter=D -- assistant/src/graph` has it.
 
 **Domain model, not raw dicts:** processing code works with the semantic
 `Ticket` model (`domain/ticket.py`) — fields like `subcategory_id`,
@@ -199,8 +239,8 @@ iTop attribute names happens only in `TicketRepository`, driven by the
 a customized iTop datamodel is a config change, not a code change. Service
 catalog reads go through `CatalogRepository` (fixed `Service`/
 `ServiceSubcategory` classes — those are practically never customized),
-nodes see the `Service`/`ServiceSubcategory` models only (distinct iTop
-classes get distinct models). Nodes never touch the raw iTop client or
+tools see the `Service`/`ServiceSubcategory` models only (distinct iTop
+classes get distinct models). Tools never touch the raw iTop client or
 attribute names — all iTop access goes through the repositories; OQL
 templates use semantic `:this->field` placeholders bound from
 `ticket.model_dump()`.
@@ -213,8 +253,15 @@ Proxy or direct cloud API in production). Plain text responses, no structured
 output. `strip_thinking` removes `<think>…</think>` blocks emitted by
 reasoning models (DeepSeek-R1, Qwen3, etc.).
 
-**LangGraph** for all agent logic with branching or multi-step flow. Avoid
-plain LangChain chains for anything beyond a single LLM call.
+**langchain** (v1 `create_agent` API) is the agent framework — tool-calling
+agents, `@tool` + `ToolRuntime`, `wrap_tool_call` / `before_model` middleware.
+Avoid plain LangChain chains for anything beyond a single LLM call.
+
+**langgraph** is a required dependency of `langchain` (`create_agent` is built
+on it) and is imported directly in one place only, for the
+`CompiledStateGraph` return type in `agents/intake/agent.py`. Reach for it
+explicitly if a future module needs a genuinely deterministic multi-step flow —
+that is what `src/graph/` is reserved for.
 
 ### Configuration
 
@@ -263,20 +310,24 @@ None (`RuntimeSectionConfig`). Webhook/admin token checks read the effective
 | `run_ttl_days` | default `7` | TTL for processing-run journal entries |
 | `log_level` | default `INFO` (env-only) | Logging level |
 
-Per-module limits live in `EnrichmentConfig` (`enrichment.*`): `max_rounds`
-and `max_classify_rounds` (both default 2) cap clarifying-question rounds;
-`classify_model` / `evaluate_model` / `enrich_model` optionally override the
-global `llm_model` per node (set via `config.yaml`, e.g. `enrichment:
-classify_model: ...`).
+Per-module limits live in `IntakeConfig` (`intake.*`): `max_rounds` and
+`max_classify_rounds` (both default 2) cap clarifying-question rounds,
+`max_iterations` (default 8) caps model calls per run, and `model` optionally
+overrides the global `llm_model` for the module (set via `config.yaml`, e.g.
+`intake: model: ...`). There is one model for the whole module — the agent is a
+single loop — and it must be a reliable tool-caller. `enabled` and `classes`
+are read at startup (`build_registry` takes `Settings`, not `ConfigStore`) —
+editing them in the admin UI does not re-route webhooks until a restart; every
+other field is read per run.
 
 **Runtime-editable config and prompts.** Business config (module sections
-like `enrichment.*`) and prompts can be edited at runtime through the
+like `intake.*`) and prompts can be edited at runtime through the
 admin API (`/api/config/...`, `/api/prompts/...`): overrides live in Redis
 on top of env/yaml/file defaults and apply from the next processed ticket.
 Reads degrade to defaults when Redis is unavailable; writes are validated
 (pydantic for config, placeholder registry for prompts) before storing.
-Every processing run leaves a trace in the `RunJournal` (status, node
-steps, error) — journal writes are non-fatal by design. Inspect via
+Every processing run leaves a trace in the `RunJournal` (status, steps,
+error) — journal writes are non-fatal by design. Inspect via
 `GET /api/runs`.
 
 **Setup API (wizard backend).** Connection sections are managed via
@@ -338,13 +389,15 @@ of objects that disappeared from iTop. Runs are journaled in the
 `PYTHONPATH=src uv run python -m vector.reindex --full` (reads runtime config
 from Redis, so run it next to the deployment).
 
-**Prompts are files, not code.** Defaults live in `prompts/enrichment/*.md`;
-a deployment overrides individual prompts by placing same-named files under
-`<prompts_dir>/enrichment/`. Placeholders are validated against
-`PROMPT_VARIABLES` (in `graph/enrichment/prompts.py`) at startup — adding a
-new placeholder to a prompt requires adding it there and passing the value at
-invoke time in the node. Prompt files are re-read on every run, so edits apply
-without restart.
+**Prompts are files, not code.** Defaults live in `prompts/<module>/*.md`
+(`intake/`); a deployment overrides individual prompts by
+placing same-named files under `<prompts_dir>/<module>/`. Placeholders are
+validated against `PROMPT_VARIABLES` (in the module's `prompts.py`) at
+startup — adding a new placeholder to a prompt requires adding it there and
+passing the value where the messages are built (`prompt.py`). Prompt files are re-read on
+every run, so edits apply without restart. Exception: **intake tool
+docstrings are code**, not prompts — they must stay in sync with the
+signatures and with the invariants enforced inside the tools.
 
 See `docker/.env.dist` for a full template.
 
@@ -393,13 +446,25 @@ npm run build   # type-check (tsc --noEmit) + production build into ui/dist
   collected by default; run explicitly with `uv run pytest test/pg` (needs
   Docker: Testcontainers spins up `pgvector/pgvector:pg17`, skips when
   Docker is unavailable)
+- `assistant/test/integration/` holds the only tests that call a **real LLM**
+  (iTop is still mocked via `ItopMockTransport`, Redis via `fakeredis`). Also
+  not collected by default (`testpaths = ["test/unit"]`); needs `.env.test`
+  (see `.env.test.dist`) and a reachable endpoint. This is where prompt and
+  tool-calling regressions show up — run `uv run pytest test/integration`
+  after touching `prompts/intake/*.md` or a tool signature.
 - Current test files: `test_config.py`, `test_router.py`, `test_deps.py`,
-  `test_enrichment_pipeline.py`, `test_pipelines_registry.py`,
-  `test_ticket_state.py`, `test_prompt_store.py`, `test_ticket_repository.py`,
-  `test_catalog_repository.py`, `test_itop_schema.py`, `test_journal.py`,
+  `test_pipelines_registry.py`, `test_ticket_state.py`, `test_prompt_store.py`,
+  `test_ticket_repository.py`, `test_catalog_repository.py`,
+  `test_itop_schema.py`, `test_itop_provisioning.py`, `test_journal.py`,
   `test_config_store.py`, `test_admin_api.py`, `test_setup_api.py`,
-  `test_nodes_guard.py`, `test_nodes_classify.py`, `test_nodes_evaluate.py`,
-  `test_nodes_ask.py`, `test_nodes_enrich.py`, `test_nodes_utils.py`,
-  `test_embedder.py`, `test_vector_status.py`, `test_chunker.py`,
-  `test_indexer.py`; in `test/pg/`: `test_db_smoke.py`,
-  `test_vector_index.py`, `test_indexer_pg.py`
+  `test_text_utils.py`, `test_embedder.py`, `test_vector_status.py`,
+  `test_chunker.py`, `test_indexer.py`, `test_vector_sources_tickets.py`,
+  `test_intake_pipeline.py`, `test_intake_prompt.py`, `test_intake_tools.py`,
+  `test_intake_agent.py`; in `test/pg/`: `test_db_smoke.py`,
+  `test_vector_index.py`, `test_indexer_pg.py`; in `test/integration/`:
+  `test_intake_agent_live.py`
+- The intake agent loop is tested without an LLM through a scripted
+  `FakeToolCallingModel(BaseChatModel)` (`test_intake_agent.py`) —
+  `create_agent` calls `bind_tools`, which `BaseChatModel` leaves
+  unimplemented, so the ready-made langchain-core fakes do not fit. Tools are
+  called directly as `tools.<name>.coroutine(...)`, bypassing pydantic.

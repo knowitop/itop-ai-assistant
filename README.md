@@ -21,7 +21,7 @@ When a new ticket arrives, the assistant intercepts it via webhook — no change
 2. **Evaluate** — once the category is known, the assistant uses the subcategory's description as the completeness criteria. This means the questions it asks are specific to the service context, not generic prompts.
 
 - If the description is **complete** — it generates a structured internal note for the engineer and marks the ticket ready.
-- If the description is **incomplete** — it posts one focused clarifying question in the iTop public log. The user replies through the portal as usual, the assistant re-evaluates and either asks one follow-up or proceeds to enrich. Maximum two rounds per stage.
+- If the description is **incomplete** — it posts one focused clarifying question in the iTop public log. The user replies through the portal as usual, the assistant re-evaluates and either asks one follow-up or hands the ticket to an engineer. Maximum two rounds per stage.
 
 All AI actions are performed under a dedicated iTop service account, so every comment is clearly attributed and auditable.
 
@@ -145,7 +145,7 @@ Open `http://localhost:8001/ui` — the **Setup Wizard** starts automatically an
 
 ## Roadmap
 
-The current release covers the first-contact enrichment loop — intercepting new tickets, asking clarifying questions and preparing them for the engineer. Planned next phases:
+The current release covers the first-contact intake loop — intercepting new tickets, asking clarifying questions and preparing them for the engineer. Planned next phases:
 
 - **Pattern analysis** — background jobs that surface recurring issues and trends across tickets.
 - **Knowledge base maintenance** — automatically flag outdated KB articles and suggest updates based on resolved tickets.
