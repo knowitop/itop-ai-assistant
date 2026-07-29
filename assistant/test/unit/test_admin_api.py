@@ -47,47 +47,47 @@ class TestHealth(AdminApiTestCase):
 
 
 class TestModules(AdminApiTestCase):
-    def test_lists_enrichment_module(self):
+    def test_lists_intake_module(self):
         response = self.client.get("/api/modules")
 
         self.assertEqual(response.status_code, 200)
         modules = response.json()
-        self.assertEqual(modules[0]["name"], "enrichment")
+        self.assertEqual(modules[0]["name"], "intake")
         self.assertTrue(modules[0]["has_config"])
-        self.assertIn("evaluate_system", modules[0]["prompts"])
+        self.assertIn("system", modules[0]["prompts"])
 
 
 class TestConfigEndpoints(AdminApiTestCase):
     def test_get_config_returns_defaults(self):
-        response = self.client.get("/api/config/enrichment")
+        response = self.client.get("/api/config/intake")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["max_rounds"], 2)
 
     def test_put_config_applies_from_next_read(self):
-        response = self.client.put("/api/config/enrichment", json={"max_rounds": 5})
+        response = self.client.put("/api/config/intake", json={"max_rounds": 5})
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["max_rounds"], 5)
-        self.assertEqual(self.client.get("/api/config/enrichment").json()["max_rounds"], 5)
+        self.assertEqual(self.client.get("/api/config/intake").json()["max_rounds"], 5)
 
     def test_put_invalid_config_rejected(self):
-        response = self.client.put("/api/config/enrichment", json={"max_rounds": "many"})
+        response = self.client.put("/api/config/intake", json={"max_rounds": "many"})
 
         self.assertEqual(response.status_code, 422)
         # Nothing stored
-        self.assertEqual(self.client.get("/api/config/enrichment").json()["max_rounds"], 2)
+        self.assertEqual(self.client.get("/api/config/intake").json()["max_rounds"], 2)
 
     def test_delete_resets_to_defaults(self):
-        self.client.put("/api/config/enrichment", json={"max_rounds": 5})
+        self.client.put("/api/config/intake", json={"max_rounds": 5})
 
-        response = self.client.delete("/api/config/enrichment")
+        response = self.client.delete("/api/config/intake")
 
         self.assertEqual(response.status_code, 204)
-        self.assertEqual(self.client.get("/api/config/enrichment").json()["max_rounds"], 2)
+        self.assertEqual(self.client.get("/api/config/intake").json()["max_rounds"], 2)
 
     def test_schema_returned(self):
-        response = self.client.get("/api/config/enrichment/schema")
+        response = self.client.get("/api/config/intake/schema")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("max_rounds", response.json()["properties"])
@@ -98,46 +98,46 @@ class TestConfigEndpoints(AdminApiTestCase):
 
 class TestPromptEndpoints(AdminApiTestCase):
     def test_get_prompts(self):
-        response = self.client.get("/api/prompts/enrichment")
+        response = self.client.get("/api/prompts/intake")
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertIn("evaluate_system", body["prompts"])
+        self.assertIn("system", body["prompts"])
         self.assertEqual(body["overridden"], [])
 
     def test_put_prompt_and_reset(self):
         new_text = "You are an intake assistant. Requester: {caller_name}."
-        response = self.client.put("/api/prompts/enrichment/enrich_system", json={"text": new_text})
+        response = self.client.put("/api/prompts/intake/ticket_human", json={"text": new_text})
         self.assertEqual(response.status_code, 200)
 
-        body = self.client.get("/api/prompts/enrichment").json()
-        self.assertEqual(body["prompts"]["enrich_system"], new_text)
-        self.assertEqual(body["overridden"], ["enrich_system"])
+        body = self.client.get("/api/prompts/intake").json()
+        self.assertEqual(body["prompts"]["ticket_human"], new_text)
+        self.assertEqual(body["overridden"], ["ticket_human"])
 
-        self.assertEqual(self.client.delete("/api/prompts/enrichment/enrich_system").status_code, 204)
-        body = self.client.get("/api/prompts/enrichment").json()
+        self.assertEqual(self.client.delete("/api/prompts/intake/ticket_human").status_code, 204)
+        body = self.client.get("/api/prompts/intake").json()
         self.assertEqual(body["overridden"], [])
 
     def test_put_prompt_with_unknown_placeholder_rejected(self):
-        response = self.client.put("/api/prompts/enrichment/enrich_system", json={"text": "Hello {caler_name}"})
+        response = self.client.put("/api/prompts/intake/ticket_human", json={"text": "Hello {caler_name}"})
 
         self.assertEqual(response.status_code, 422)
         self.assertIn("caler_name", response.json()["detail"])
         # Nothing stored
-        self.assertEqual(self.client.get("/api/prompts/enrichment").json()["overridden"], [])
+        self.assertEqual(self.client.get("/api/prompts/intake").json()["overridden"], [])
 
     def test_put_unknown_prompt_404(self):
-        response = self.client.put("/api/prompts/enrichment/no_such", json={"text": "x"})
+        response = self.client.put("/api/prompts/intake/no_such", json={"text": "x"})
         self.assertEqual(response.status_code, 404)
 
 
 class TestRunEndpoints(AdminApiTestCase):
     def _seed_runs(self):
         async def seed():
-            await self.deps.journal.start("run-1", ticket="UserRequest::1", event="created", module="enrichment")
+            await self.deps.journal.start("run-1", ticket="UserRequest::1", event="created", module="intake")
             await self.deps.journal.add_step("run-1", "guard", "")
             await self.deps.journal.finish("run-1", "done")
-            await self.deps.journal.start("run-2", ticket="UserRequest::2", event="created", module="enrichment")
+            await self.deps.journal.start("run-2", ticket="UserRequest::2", event="created", module="intake")
 
         self.client.portal.call(seed)  # run inside the TestClient event loop
 

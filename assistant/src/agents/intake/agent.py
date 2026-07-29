@@ -24,10 +24,7 @@ from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
 from config import IntakeConfig
-
-# Imported as-is from the enrichment module: a single generic helper is not
-# worth a shared package while the two modules are competing.
-from graph.enrichment.nodes.utils import strip_thinking
+from text_utils import strip_thinking
 
 from .context import IntakeContext
 from .tools import ToolRejection
@@ -54,9 +51,8 @@ async def _tool_gate(request, handler):
     """Turn a tool's refusal into feedback for the model.
 
     Only `ToolRejection` is caught. Real failures (iTop down, Redis down)
-    propagate and fail the run — same contract as the enrichment graph.
-    Invalid arguments never reach here: `ToolNode` converts them into an
-    error `ToolMessage` on its own.
+    propagate and fail the run. Invalid arguments never reach here: `ToolNode`
+    converts them into an error `ToolMessage` on its own.
     """
     try:
         return await handler(request)
@@ -78,12 +74,11 @@ async def _require_tool_call(request, handler):
     prompt, the model continues the *dialogue* — it writes the clarifying
     question as its answer instead of passing it to `post_public_question`.
     The text is then thrown away and the epilogue closes the ticket with a
-    generic note, spending a round for nothing. The graph never has this
-    failure mode: its nodes post the question themselves.
+    generic note, spending a round for nothing.
 
     The failed turn and the nudge stay in the message history on purpose —
     the model sees its own correction, and the journal shows the retry
-    happened, which is exactly the kind of thing the A/B is measuring.
+    happened.
 
     **The stronger lever, `request.override(tool_choice="any")`, is not
     available on every endpoint — check before reaching for it.**

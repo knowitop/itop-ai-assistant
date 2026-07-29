@@ -18,19 +18,19 @@ class TestJournalLifecycle(unittest.IsolatedAsyncioTestCase):
         journal, _ = _make_journal()
         pid = uuid4()
 
-        await journal.start(pid, ticket="UserRequest::42", event="created", module="enrichment")
+        await journal.start(pid, ticket="UserRequest::42", event="created", module="intake")
 
         run = await journal.get(pid)
         self.assertIsNotNone(run)
         self.assertEqual(run.status, "running")
         self.assertEqual(run.ticket, "UserRequest::42")
-        self.assertEqual(run.module, "enrichment")
+        self.assertEqual(run.module, "intake")
         self.assertIsNone(run.finished_at)
 
     async def test_steps_recorded_in_order(self):
         journal, _ = _make_journal()
         pid = uuid4()
-        await journal.start(pid, ticket="UserRequest::42", event="created", module="enrichment")
+        await journal.start(pid, ticket="UserRequest::42", event="created", module="intake")
 
         await journal.add_step(pid, "guard", "")
         await journal.add_step(pid, "classify", "action=ask; question=What broke?")
@@ -42,7 +42,7 @@ class TestJournalLifecycle(unittest.IsolatedAsyncioTestCase):
     async def test_finish_done(self):
         journal, _ = _make_journal()
         pid = uuid4()
-        await journal.start(pid, ticket="UserRequest::42", event="created", module="enrichment")
+        await journal.start(pid, ticket="UserRequest::42", event="created", module="intake")
 
         await journal.finish(pid, "done")
 
@@ -54,7 +54,7 @@ class TestJournalLifecycle(unittest.IsolatedAsyncioTestCase):
     async def test_finish_failed_records_error(self):
         journal, _ = _make_journal()
         pid = uuid4()
-        await journal.start(pid, ticket="UserRequest::42", event="created", module="enrichment")
+        await journal.start(pid, ticket="UserRequest::42", event="created", module="intake")
 
         await journal.finish(pid, "failed", error="RuntimeError: LLM down")
 
@@ -69,7 +69,7 @@ class TestJournalLifecycle(unittest.IsolatedAsyncioTestCase):
     async def test_run_keys_have_ttl(self):
         journal, redis = _make_journal()
         pid = uuid4()
-        await journal.start(pid, ticket="UserRequest::42", event="created", module="enrichment")
+        await journal.start(pid, ticket="UserRequest::42", event="created", module="intake")
         await journal.add_step(pid, "guard")
 
         self.assertGreater(await redis.ttl(f"run:{pid}"), 0)
@@ -80,7 +80,7 @@ class TestJournalList(unittest.IsolatedAsyncioTestCase):
     async def test_list_returns_most_recent_first(self):
         journal, _ = _make_journal()
         for i in range(3):
-            await journal.start(f"run-{i}", ticket=f"UserRequest::{i}", event="created", module="enrichment")
+            await journal.start(f"run-{i}", ticket=f"UserRequest::{i}", event="created", module="intake")
 
         runs = await journal.list()
 
@@ -89,7 +89,7 @@ class TestJournalList(unittest.IsolatedAsyncioTestCase):
     async def test_list_respects_limit(self):
         journal, _ = _make_journal()
         for i in range(5):
-            await journal.start(f"run-{i}", ticket="UserRequest::1", event="created", module="enrichment")
+            await journal.start(f"run-{i}", ticket="UserRequest::1", event="created", module="intake")
 
         runs = await journal.list(limit=2)
 
@@ -97,8 +97,8 @@ class TestJournalList(unittest.IsolatedAsyncioTestCase):
 
     async def test_list_filters_by_ticket_and_status(self):
         journal, _ = _make_journal()
-        await journal.start("run-a", ticket="UserRequest::1", event="created", module="enrichment")
-        await journal.start("run-b", ticket="UserRequest::2", event="created", module="enrichment")
+        await journal.start("run-a", ticket="UserRequest::1", event="created", module="intake")
+        await journal.start("run-b", ticket="UserRequest::2", event="created", module="intake")
         await journal.finish("run-b", "done")
 
         by_ticket = await journal.list(ticket="UserRequest::2")
@@ -109,7 +109,7 @@ class TestJournalList(unittest.IsolatedAsyncioTestCase):
 
     async def test_list_cleans_up_expired_runs(self):
         journal, redis = _make_journal()
-        await journal.start("run-old", ticket="UserRequest::1", event="created", module="enrichment")
+        await journal.start("run-old", ticket="UserRequest::1", event="created", module="intake")
         await redis.delete("run:run-old")  # simulate TTL expiry; index entry remains
 
         runs = await journal.list()
@@ -126,7 +126,7 @@ class TestJournalNonFatalWrites(unittest.IsolatedAsyncioTestCase):
             patch.object(redis, "hset", AsyncMock(side_effect=RedisError("down"))),
         ):
             # must not raise — journal failures never break processing
-            await journal.start("run-x", ticket="UserRequest::1", event="created", module="enrichment")
+            await journal.start("run-x", ticket="UserRequest::1", event="created", module="intake")
             await journal.add_step("run-x", "guard")
             await journal.finish("run-x", "done")
 

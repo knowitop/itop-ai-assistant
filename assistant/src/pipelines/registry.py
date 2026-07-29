@@ -1,7 +1,7 @@
 """Pipeline registry: routes webhook events to business-module handlers.
 
 Adding a new module:
-1. Create a package (e.g. `src/graph/<module>/`) with a `pipeline.py` exposing
+1. Create a package (e.g. `src/agents/<module>/`) with a `pipeline.py` exposing
    `register(registry, settings)`.
 2. Call it from `build_registry()` below — one line.
 3. Add the module's config section to `config.py`.
@@ -75,9 +75,7 @@ class PipelineRegistry:
 def build_registry(settings) -> "PipelineRegistry":
     """Assemble the registry from all known modules. New module = one line here."""
     from agents.intake import pipeline as intake_pipeline
-    from graph.enrichment import pipeline as enrichment_pipeline
 
     registry = PipelineRegistry()
-    enrichment_pipeline.register(registry, settings)
     intake_pipeline.register(registry, settings)
     return registry

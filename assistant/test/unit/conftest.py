@@ -2,8 +2,8 @@
 
 `Settings` reads `assistant/config.yaml` and `assistant/.env`, and the tests
 that build the app (`TestClient(app)` → lifespan → `build_registry`) inherit
-whatever is configured there. A local A/B experiment — `enrichment` off,
-`intake` on — then fails a dozen tests that have nothing to do with it.
+whatever is configured there. A local tweak — a module switched off, a
+narrowed class list — then fails a dozen tests that have nothing to do with it.
 
 Both file sources are pointed at a path that does not exist. Environment
 variables keep working, so tests that set them on purpose (`test_config.py`)

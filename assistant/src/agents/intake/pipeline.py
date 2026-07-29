@@ -1,12 +1,7 @@
 """Intake module: webhook events → one tool-calling agent.
 
-The agentic counterpart of `graph/enrichment` — same job (classify, ask,
-hand off), different machinery. Deterministic shell, agentic core: the lock,
-the guard and the epilogue are plain code here; everything between them is
-the agent's decision.
-
-Deliberately duplicates the enrichment shell instead of sharing it: the two
-modules are an A/B experiment and the loser gets deleted whole.
+Deterministic shell, agentic core: the per-ticket lock, the guard and the
+epilogue are plain code here; everything between them is the agent's decision.
 """
 
 import logging
@@ -47,11 +42,6 @@ def register(registry: PipelineRegistry, settings: Settings) -> None:
     routes = {}
     for obj_class in cfg.classes:
         for event in (TicketEvent.CREATED, TicketEvent.USER_COMMENTED, TicketEvent.ASSIGNED):
-            # A/B runs split classes between the modules; an overlap is a
-            # misconfiguration, not a reason to refuse to boot
-            if registry.resolve(obj_class, str(event)) is not None:
-                logger.warning(f"intake: {obj_class}/{event} is already claimed by another module, skipping")
-                continue
             routes[(obj_class, str(event))] = handle_assigned if event is TicketEvent.ASSIGNED else handle_ticket_event
     registry.register(info, routes)
 
@@ -141,8 +131,8 @@ async def _run_intake_agent(
         if not terminal_done:
             await _epilogue(context, deps, processing_id)
     finally:
-        # The point of the whole A/B: what this run actually cost. Recorded
-        # even when the run failed — a burnt budget is data too.
+        # What this run actually cost. Recorded even when the run failed — a
+        # burnt budget is data too.
         await deps.journal.add_step(processing_id, "usage", usage.describe(perf_counter() - started))
 
 
@@ -173,11 +163,11 @@ async def _journal_update(
 ) -> bool:
     """Turn one stream update into journal steps; report a terminal tool result.
 
-    Journalling happens here rather than inside the tools: the A/B comparison
-    is about the model's *decisions* — which tool it picked, with which
-    arguments, what it wrote as plain text — and that lives in the AIMessage,
-    which a tool cannot see. Journal writes are non-fatal by contract; from
-    inside a tool a failure would surface to the model as a tool error.
+    Journalling happens here rather than inside the tools: what needs recording
+    is the model's *decisions* — which tool it picked, with which arguments,
+    what it wrote as plain text — and that lives in the AIMessage, which a tool
+    cannot see. Journal writes are non-fatal by contract; from inside a tool a
+    failure would surface to the model as a tool error.
     """
     terminal = False
     for output in update.values():

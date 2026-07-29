@@ -129,7 +129,7 @@ assistant/src/widget/
 ├── __init__.py
 ├── router.py      # FastAPI router /api/widget/*, X-Auth-Token check
 ├── service.py     # WidgetService: ticket fetch, LLM calls, caching
-└── prompts.py     # WidgetPrompts + PROMPT_VARIABLES registry (mirrors enrichment)
+└── prompts.py     # WidgetPrompts + PROMPT_VARIABLES registry (mirrors agents/intake/prompts.py)
 assistant/prompts/widget/
 ├── summary_system.md / summary_human.md
 ├── similar_keywords_system.md / similar_keywords_human.md
@@ -238,7 +238,7 @@ Plus `SecurityConfig.widget_token: str | None` (added to `SECRET_FIELDS`;
 editable through the existing `/api/setup/security` endpoint and the
 Connections UI with zero extra backend work).
 
-Runtime-editable like enrichment: `widget.*` via `/api/config/widget`,
+Runtime-editable like the intake module: `widget.*` via `/api/config/widget`,
 prompts via `/api/prompts/widget` — both come free from the `ModuleInfo`
 registration.
 
@@ -258,7 +258,7 @@ MVP order — value vs. effort for a service desk engineer:
 
 1. **AI activity panel** (`context`) — zero LLM cost, instant trust-builder:
    shows what the assistant already did (classification, questions asked,
-   enrichment note) without digging through logs.
+   the handoff note) without digging through logs.
 2. **Similar past tickets + how they were resolved** — the single biggest
    time-to-resolution lever: reuses the team's institutional memory that
    today lives only in closed tickets.
@@ -308,9 +308,11 @@ through the proxy. Everything after this is incremental.
 
 ### Stage 2 — summary
 - [ ] `prompts/widget/summary_*.md`, `src/widget/prompts.py` with placeholder
-      registry; startup validation like enrichment.
+      registry; startup validation via the module's `ModuleInfo.validate_prompts`.
 - [ ] `WidgetService.summary()`: fetch ticket, html→markdown (reuse
-      `nodes/utils.py` helpers — consider promoting them out of enrichment),
+      `text_utils.html_to_markdown` / `strip_thinking` — promoted out of
+      enrichment when it was deleted; `extract_xml_field` / `drop_xml_field`
+      went with it, see git history if XML-field parsing is needed again),
       LLM call, `strip_thinking`, Redis cache.
 - [ ] UI: Summary section with "Generate" button, loading state, error state.
 - [ ] Tests: caching behavior (hash invalidation), prompt validation.

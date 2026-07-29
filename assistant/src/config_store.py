@@ -34,7 +34,7 @@ class RedisConfigStore:
     """Serves module config with Redis overrides on top of settings defaults.
 
     The module name must match the settings attribute holding its defaults
-    (e.g. module "enrichment" → `settings.enrichment`).
+    (e.g. module "intake" → `settings.intake`).
     """
 
     def __init__(self, redis: Redis, settings: Settings):

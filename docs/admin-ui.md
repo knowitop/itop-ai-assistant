@@ -38,7 +38,7 @@ Fine-grained editing of the iTop, LLM and security settings after initial setup.
 
 ## Modules
 
-Per-module business settings. Currently the **Enrichment** module exposes:
+Per-module business settings. Currently the **Intake** module exposes:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -46,11 +46,12 @@ Per-module business settings. Currently the **Enrichment** module exposes:
 | Classes | `UserRequest`, `Incident` | Ticket classes the module handles |
 | Max rounds | `2` | Maximum completeness clarifying questions per ticket |
 | Max classify rounds | `2` | Maximum classification clarifying questions per ticket |
-| Classify model | _(global)_ | Override LLM model for the classification node |
-| Evaluate model | _(global)_ | Override LLM model for the evaluation node |
-| Enrich model | _(global)_ | Override LLM model for the enrichment node |
+| Max iterations | `8` | Budget of model calls per ticket; on exhaustion the run is closed with the fallback note |
+| Model | _(global)_ | Override LLM model for the module — it must call tools reliably |
+| Classify fallback note | _(see [Configuration](configuration.md#intake-module-settings))_ | Internal note when the ticket stays unclassified |
+| Handoff fallback note | _(see Configuration)_ | Internal note when the agent ends without a question or a handoff |
 
-Changes apply from the next processed ticket — no restart needed. Each module can be reset to its defaults.
+Changes apply from the next processed ticket — no restart needed, **except Enabled and Classes**, which are read at startup. Each module can be reset to its defaults.
 
 ---
 
@@ -58,16 +59,14 @@ Changes apply from the next processed ticket — no restart needed. Each module 
 
 View and edit the LLM prompts used by each module. Overridden prompts are flagged in the sidebar.
 
-The **Enrichment** module has the following prompts:
+The **Intake** module has the following prompts — the three messages that open
+the agent's session:
 
 | Prompt | Purpose |
 |--------|---------|
-| `classify_service` | Select the best matching Service from the iTop catalog |
-| `classify_subcategory` | Select the best matching ServiceSubcategory |
-| `classify_ask` | Post a clarifying question if the category cannot be determined confidently |
-| `evaluate` | Decide whether the ticket description is sufficient |
-| `ask` | Post a clarifying question if the description is incomplete |
-| `enrich` | Generate a structured internal note for the engineer |
+| `system` | Who the agent is, the rules it works under, when to ask versus when to hand off |
+| `catalog_human` | The service catalog available to the requester's organization (sent only for an unclassified ticket) |
+| `ticket_human` | This ticket: title, description, current classification, conversation so far |
 
 Edit a prompt in the textarea and click **Save** — the change takes effect from the next processed ticket, no restart needed. Any prompt can be reset to its packaged default with **Reset to default**.
 

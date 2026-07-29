@@ -12,10 +12,10 @@ from ticket_repository import TicketRepository
 class IntakeContext:
     """Everything a single intake run needs — the agent's `context_schema`.
 
-    Mirror of the enrichment `GraphContext`, with two differences: the ticket
-    itself lives here (tools read and mutate it — `set_classification` updates
-    the snapshot after writing to iTop), and there is no LLM field: the model
-    sits inside the agent.
+    The ticket itself lives here: tools read and mutate it, and
+    `set_classification` updates the snapshot after writing to iTop, so later
+    tools in the same run see the new values. No LLM field — the model sits
+    inside the agent.
     """
 
     processing_id: UUID

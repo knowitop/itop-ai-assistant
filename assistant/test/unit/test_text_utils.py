@@ -1,16 +1,6 @@
 import unittest
 
-from langchain_core.messages import AIMessage, HumanMessage
-
-from domain.ticket import LogEntry
-from graph.enrichment.nodes.utils import (
-    bind_oql,
-    build_conversation,
-    drop_xml_field,
-    extract_xml_field,
-    html_to_markdown,
-    strip_thinking,
-)
+from text_utils import bind_oql, html_to_markdown, strip_thinking
 
 
 class TestBindOql(unittest.TestCase):
@@ -116,34 +106,6 @@ class TestStripThinking(unittest.TestCase):
         self.assertEqual(strip_thinking(blocks), "answer")
 
 
-class TestExtractXmlField(unittest.TestCase):
-    def test_extracts_value(self):
-        self.assertEqual(extract_xml_field("<result>SUFFICIENT</result>", "result"), "SUFFICIENT")
-
-    def test_case_insensitive_tag(self):
-        self.assertEqual(extract_xml_field("<Result>ok</Result>", "result"), "ok")
-
-    def test_missing_tag_returns_none(self):
-        self.assertIsNone(extract_xml_field("no tags here", "result"))
-
-    def test_empty_tag_returns_none(self):
-        self.assertIsNone(extract_xml_field("<result>  </result>", "result"))
-
-    def test_multiline_value_trimmed(self):
-        self.assertEqual(extract_xml_field("<result>\n  42\n</result>", "result"), "42")
-
-
-class TestDropXmlField(unittest.TestCase):
-    def test_removes_tag_block(self):
-        self.assertEqual(drop_xml_field("<result>X</result>\nQuestion?", "result"), "Question?")
-
-    def test_removes_all_occurrences(self):
-        self.assertEqual(drop_xml_field("<r>1</r>text<r>2</r>", "r"), "text")
-
-    def test_no_tag_returns_trimmed_text(self):
-        self.assertEqual(drop_xml_field("  plain  ", "result"), "plain")
-
-
 class TestHtmlToMarkdown(unittest.TestCase):
     def test_none_returns_empty(self):
         self.assertEqual(html_to_markdown(None), "")
@@ -195,53 +157,6 @@ class TestHtmlToMarkdown(unittest.TestCase):
         result = html_to_markdown("<p>Hello <strong>world</strong></p>")
         self.assertIn("Hello", result)
         self.assertIn("**world**", result)
-
-
-class TestBuildConversation(unittest.TestCase):
-    def test_empty_entries_returns_empty_list(self):
-        result = build_conversation([], "ai-assistant", "John Doe")
-        self.assertEqual(result, [])
-
-    def test_ai_entry_becomes_ai_message(self):
-        entries = [LogEntry(user_login="ai-assistant", message="What is your laptop model?")]
-        result = build_conversation(entries, "ai-assistant", "John Doe")
-        self.assertEqual(len(result), 1)
-        self.assertIsInstance(result[0], AIMessage)
-        self.assertEqual(result[0].content, "What is your laptop model?")
-
-    def test_caller_entry_becomes_human_message_with_requester_label(self):
-        entries = [LogEntry(user_login="John Doe", message="It does not turn on.")]
-        result = build_conversation(entries, "ai-assistant", "John Doe")
-        self.assertEqual(len(result), 1)
-        self.assertIsInstance(result[0], HumanMessage)
-        self.assertIn("[Requester]", result[0].content)
-        self.assertIn("It does not turn on.", result[0].content)
-
-    def test_third_party_entry_has_no_requester_label(self):
-        entries = [LogEntry(user_login="engineer", message="Checked the device.")]
-        result = build_conversation(entries, "ai-assistant", "John Doe")
-        self.assertEqual(len(result), 1)
-        self.assertIsInstance(result[0], HumanMessage)
-        self.assertNotIn("[Requester]", result[0].content)
-        self.assertIn("engineer", result[0].content)
-        self.assertIn("Checked the device.", result[0].content)
-
-    def test_mixed_entries_preserve_order(self):
-        entries = [
-            LogEntry(user_login="John Doe", message="Help!"),
-            LogEntry(user_login="ai-assistant", message="What model?"),
-            LogEntry(user_login="John Doe", message="Dell XPS 13."),
-        ]
-        result = build_conversation(entries, "ai-assistant", "John Doe")
-        self.assertEqual(len(result), 3)
-        self.assertIsInstance(result[0], HumanMessage)
-        self.assertIsInstance(result[1], AIMessage)
-        self.assertIsInstance(result[2], HumanMessage)
-
-    def test_human_message_name_set_to_user_login(self):
-        entries = [LogEntry(user_login="John Doe", message="Hello.")]
-        result = build_conversation(entries, "ai-assistant", "John Doe")
-        self.assertEqual(result[0].name, "John Doe")
 
 
 if __name__ == "__main__":

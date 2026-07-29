@@ -1,16 +1,22 @@
 """Generic text and OQL helpers shared across the application.
 
 Deliberately dependency-light and business-agnostic: infrastructure code
-(vector indexer, repositories) uses these without importing business modules.
-`graph/enrichment/nodes/utils.py` re-exports them for its callers.
+(vector indexer, repositories) and business modules alike use these without
+importing each other.
 """
 
 import re
+from functools import lru_cache
 
 from bs4 import BeautifulSoup
 from markdownify import markdownify
 
 _NUMERIC_RE = re.compile(r"-?\d+(\.\d+)?")
+
+# <think> is the de-facto standard for open-weight reasoning models
+# (DeepSeek-R1, Qwen3, QwQ); <thinking> and <reasoning> appear in fine-tunes.
+# Overridable via the llm_think_tags setting.
+DEFAULT_THINK_TAGS: tuple[str, ...] = ("think", "thinking", "reasoning")
 
 
 def bind_oql(oql: str, this: dict) -> str:
@@ -45,3 +51,42 @@ def html_to_markdown(text: str | None) -> str:
     for tag in soup(["script", "style"]):
         tag.decompose()
     return markdownify(str(soup)).strip()
+
+
+@lru_cache
+def _think_patterns(tags: tuple[str, ...]) -> tuple[re.Pattern, re.Pattern, re.Pattern]:
+    alt = "|".join(re.escape(tag) for tag in tags)
+    return (
+        # Balanced <tag>…</tag> blocks
+        re.compile(rf"<({alt})>.*?</\1>", re.DOTALL | re.IGNORECASE),
+        # Orphan closing tag: some chat templates emit the opening <think> as
+        # part of the prompt, so the completion starts mid-reasoning and ends
+        # with </think>.
+        re.compile(rf"^.*?</({alt})>", re.DOTALL | re.IGNORECASE),
+        # Unclosed opening tag (truncated output): reasoning must not leak.
+        re.compile(rf"<({alt})>.*$", re.DOTALL | re.IGNORECASE),
+    )
+
+
+def strip_thinking(content: str | list | None, tags: tuple[str, ...] = DEFAULT_THINK_TAGS) -> str:
+    """Remove <think>…</think> reasoning blocks emitted by reasoning models.
+
+    Accepts message content as returned by LangChain: a plain string or a
+    list of content blocks (strings or {"type": "text", "text": ...} dicts).
+    `tags` lists the tag names to strip (incl. orphan halves); an empty tuple
+    disables stripping.
+    """
+    if not content:
+        return ""
+    if isinstance(content, list):
+        content = "".join(
+            block if isinstance(block, str) else str(block.get("text", "")) if isinstance(block, dict) else ""
+            for block in content
+        )
+    if not tags:
+        return content.strip()
+    pair_re, orphan_close_re, orphan_open_re = _think_patterns(tags)
+    text = pair_re.sub("", content)
+    text = orphan_close_re.sub("", text)
+    text = orphan_open_re.sub("", text)
+    return text.strip()

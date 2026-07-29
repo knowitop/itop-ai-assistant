@@ -2,17 +2,14 @@
 
 Default templates live in `prompts/intake/*.md` (app root) and can be
 overridden per deployment — see `prompt_store.FilePromptStore`.
-
-Deliberately a copy of the enrichment equivalent rather than a shared base:
-the two modules are an A/B experiment, and the loser is deleted whole.
 """
 
 from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel
 
 # Allowed placeholders per template — everything `prompt.py` passes when it
-# builds the agent's initial messages. Unlike enrichment, `conversation` is a
-# rendered XML block, not a MessagesPlaceholder.
+# builds the agent's initial messages. `conversation` is a rendered XML block,
+# not a MessagesPlaceholder.
 PROMPT_VARIABLES: dict[str, set[str]] = {
     "system": set(),
     "catalog_human": {"services"},

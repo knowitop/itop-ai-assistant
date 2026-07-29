@@ -4,20 +4,20 @@ from pathlib import Path
 
 import fakeredis.aioredis
 
-from graph.enrichment.prompts import PROMPT_VARIABLES, build_enrichment_prompts
+from agents.intake.prompts import PROMPT_VARIABLES, build_intake_prompts
 from prompt_store import FilePromptStore, PromptStoreError, RedisPromptStore, read_prompt_dir
 
 _DEFAULTS_DIR = Path(__file__).parents[2] / "prompts"
 
 
 def _default_prompts() -> dict[str, str]:
-    return read_prompt_dir(_DEFAULTS_DIR / "enrichment")
+    return read_prompt_dir(_DEFAULTS_DIR / "intake")
 
 
 class TestFilePromptStore(unittest.IsolatedAsyncioTestCase):
     async def test_loads_packaged_defaults(self):
         store = FilePromptStore(_DEFAULTS_DIR)
-        prompts = await store.get("enrichment")
+        prompts = await store.get("intake")
         self.assertEqual(prompts.keys(), PROMPT_VARIABLES.keys())
 
     async def test_missing_module_raises(self):
@@ -27,32 +27,32 @@ class TestFilePromptStore(unittest.IsolatedAsyncioTestCase):
 
     async def test_override_shadows_default(self):
         with tempfile.TemporaryDirectory() as tmp:
-            override_dir = Path(tmp) / "enrichment"
+            override_dir = Path(tmp) / "intake"
             override_dir.mkdir()
-            (override_dir / "enrich_system.md").write_text("Custom system prompt", encoding="utf-8")
+            (override_dir / "system.md").write_text("Custom system prompt", encoding="utf-8")
 
             store = FilePromptStore(_DEFAULTS_DIR, Path(tmp))
-            prompts = await store.get("enrichment")
+            prompts = await store.get("intake")
 
-        self.assertEqual(prompts["enrich_system"], "Custom system prompt")
+        self.assertEqual(prompts["system"], "Custom system prompt")
         # Non-overridden prompts keep their defaults
-        self.assertEqual(prompts["evaluate_system"], _default_prompts()["evaluate_system"])
+        self.assertEqual(prompts["ticket_human"], _default_prompts()["ticket_human"])
 
     async def test_unknown_override_name_raises(self):
         with tempfile.TemporaryDirectory() as tmp:
-            override_dir = Path(tmp) / "enrichment"
+            override_dir = Path(tmp) / "intake"
             override_dir.mkdir()
-            (override_dir / "enirch_system.md").write_text("typo in filename", encoding="utf-8")
+            (override_dir / "sytem.md").write_text("typo in filename", encoding="utf-8")
 
             store = FilePromptStore(_DEFAULTS_DIR, Path(tmp))
             with self.assertRaises(PromptStoreError) as ctx:
-                await store.get("enrichment")
+                await store.get("intake")
 
-        self.assertIn("enirch_system", str(ctx.exception))
+        self.assertIn("sytem", str(ctx.exception))
 
     async def test_missing_overrides_dir_is_fine(self):
         store = FilePromptStore(_DEFAULTS_DIR, Path("/nonexistent"))
-        prompts = await store.get("enrichment")
+        prompts = await store.get("intake")
         self.assertEqual(prompts.keys(), PROMPT_VARIABLES.keys())
 
 
@@ -62,61 +62,61 @@ class TestRedisPromptStore(unittest.IsolatedAsyncioTestCase):
         self.store = RedisPromptStore(FilePromptStore(_DEFAULTS_DIR), self.redis)
 
     async def test_get_without_overrides_returns_files(self):
-        prompts = await self.store.get("enrichment")
+        prompts = await self.store.get("intake")
         self.assertEqual(prompts, _default_prompts())
-        self.assertEqual(await self.store.overrides("enrichment"), frozenset())
+        self.assertEqual(await self.store.overrides("intake"), frozenset())
 
     async def test_set_overrides_single_prompt(self):
-        await self.store.set("enrichment", "enrich_system", "Runtime override")
+        await self.store.set("intake", "system", "Runtime override")
 
-        prompts = await self.store.get("enrichment")
-        self.assertEqual(prompts["enrich_system"], "Runtime override")
-        self.assertEqual(prompts["evaluate_system"], _default_prompts()["evaluate_system"])
-        self.assertEqual(await self.store.overrides("enrichment"), frozenset({"enrich_system"}))
+        prompts = await self.store.get("intake")
+        self.assertEqual(prompts["system"], "Runtime override")
+        self.assertEqual(prompts["ticket_human"], _default_prompts()["ticket_human"])
+        self.assertEqual(await self.store.overrides("intake"), frozenset({"system"}))
 
     async def test_set_unknown_name_raises(self):
         with self.assertRaises(PromptStoreError):
-            await self.store.set("enrichment", "no_such_prompt", "text")
+            await self.store.set("intake", "no_such_prompt", "text")
 
     async def test_reset_restores_file_value(self):
-        await self.store.set("enrichment", "enrich_system", "Runtime override")
+        await self.store.set("intake", "system", "Runtime override")
 
-        await self.store.reset("enrichment", "enrich_system")
+        await self.store.reset("intake", "system")
 
-        prompts = await self.store.get("enrichment")
-        self.assertEqual(prompts["enrich_system"], _default_prompts()["enrich_system"])
+        prompts = await self.store.get("intake")
+        self.assertEqual(prompts["system"], _default_prompts()["system"])
 
     async def test_stale_override_for_removed_prompt_ignored(self):
-        await self.redis.hset("prompts:enrichment", "removed_prompt", "stale")
+        await self.redis.hset("prompts:intake", "removed_prompt", "stale")
 
-        prompts = await self.store.get("enrichment")
+        prompts = await self.store.get("intake")
 
         self.assertNotIn("removed_prompt", prompts)
 
 
-class TestBuildEnrichmentPrompts(unittest.TestCase):
+class TestBuildIntakePrompts(unittest.TestCase):
     def test_defaults_are_valid(self):
-        prompts = build_enrichment_prompts(_default_prompts())
-        self.assertIn("{service_context}", prompts.evaluate_system)
+        prompts = build_intake_prompts(_default_prompts())
+        self.assertIn("{service_context}", prompts.ticket_human)
 
     def test_missing_template_raises(self):
         raw = _default_prompts()
-        del raw["evaluate_system"]
+        del raw["ticket_human"]
         with self.assertRaises(ValueError) as ctx:
-            build_enrichment_prompts(raw)
-        self.assertIn("evaluate_system", str(ctx.exception))
+            build_intake_prompts(raw)
+        self.assertIn("ticket_human", str(ctx.exception))
 
     def test_unknown_placeholder_raises(self):
         raw = _default_prompts()
-        raw["evaluate_human"] = "Requester: {caler_name}"  # typo
+        raw["ticket_human"] = "Requester: {caler_name}"  # typo
         with self.assertRaises(ValueError) as ctx:
-            build_enrichment_prompts(raw)
+            build_intake_prompts(raw)
         self.assertIn("caler_name", str(ctx.exception))
-        self.assertIn("evaluate_human", str(ctx.exception))
+        self.assertIn("ticket_human", str(ctx.exception))
 
     def test_extra_key_in_raw_is_ignored(self):
         raw = {**_default_prompts(), "future_prompt": "text"}
-        prompts = build_enrichment_prompts(raw)
+        prompts = build_intake_prompts(raw)
         self.assertFalse(hasattr(prompts, "future_prompt"))
 
     def test_all_registry_prompts_have_files(self):

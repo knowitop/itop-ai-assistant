@@ -7,7 +7,7 @@ the tool and what to do afterwards.
 Every refusal is a `ToolRejection` carrying an explicit "do this instead" —
 without it a model repeats the same call until the budget runs out. Real
 failures (iTop down, Redis down) are not caught here: they propagate and fail
-the run, exactly as in enrichment.
+the run.
 """
 
 import logging
@@ -189,8 +189,8 @@ async def post_public_question(question: str, runtime: IntakeToolRuntime) -> str
     cfg = ctx.intake
 
     if classifying and state.classify_rounds >= cfg.max_classify_rounds:
-        # Parity with the enrichment `_ask_or_fallback` branch: hand an
-        # unclassifiable ticket to a human instead of asking again.
+        # Rounds spent: hand an unclassifiable ticket to a human instead of
+        # asking again.
         # Returned as success, not as a rejection: the ticket *is* finished,
         # and a rejection would leave the loop running — free to call
         # finish_handoff and write a second note over this one.
@@ -256,8 +256,7 @@ def tools_for(ticket: Ticket) -> list[BaseTool]:
     proposing a *different* subcategory, which would overwrite a correct
     classification with a guess made from a longer conversation.
 
-    Taking the tools away is the same decision the enrichment graph makes by
-    skipping its classify node, only enforced rather than requested: the
+    Taking the tools away enforces the rule rather than requesting it: the
     model cannot call what it was never given. The subcategory description —
     the checklist the ticket is judged against — is in the prompt either way.
     """
