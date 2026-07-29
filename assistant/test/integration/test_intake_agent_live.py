@@ -23,7 +23,13 @@ from .conftest import _PROMPTS, _SUBCATEGORY_WITH_REQUIREMENTS, ItopMockTranspor
 
 
 async def _run(ctx):
-    agent = build_intake_agent(create_llm(get_settings().llm), ctx.intake, tools_for(ctx.ticket))
+    llm_cfg = get_settings().llm
+    agent = build_intake_agent(
+        create_llm(llm_cfg),
+        ctx.intake,
+        tools_for(ctx.ticket),
+        force_tool_choice=llm_cfg.endpoint_forces_tool_choice,
+    )
     messages = await build_initial_messages(ctx, _PROMPTS)
     return await agent.ainvoke({"messages": messages}, context=ctx)
 

@@ -89,6 +89,27 @@ class TestRuntimeSections(unittest.TestCase):
         self.assertEqual(llm.model, "test-model")
         self.assertEqual(llm.api_key, "test-key")
         self.assertEqual(llm.think_tags, ["think", "thinking", "reasoning"])
+        # Unset provider keeps the pre-registry behaviour
+        self.assertEqual(llm.provider, "openai_compatible")
+
+    def test_llm_provider_and_params_from_flat_env(self):
+        s = self._settings(
+            {
+                "LLM_PROVIDER": "google_genai",
+                "LLM_PARAMS": '{"temperature": 0.2}',
+                "LLM_SUPPORTS_FORCED_TOOL_CHOICE": "true",
+            }
+        )
+        self.assertEqual(s.llm.provider, "google_genai")
+        self.assertEqual(s.llm.params, {"temperature": 0.2})
+        self.assertTrue(s.llm.supports_forced_tool_choice)
+
+    def test_blank_params_line_still_boots(self):
+        # docker/.env.dist ships these blank; a parse error there would stop
+        # the app from starting at all
+        s = self._settings({"LLM_PARAMS": "", "LLM_SUPPORTS_FORCED_TOOL_CHOICE": ""})
+        self.assertEqual(s.llm.params, {})
+        self.assertIsNone(s.llm.supports_forced_tool_choice)
 
     def test_security_section_defaults_from_flat_env(self):
         s = self._settings({"WEBHOOK_TOKEN": "wh", "ADMIN_TOKEN": "adm"})
@@ -182,6 +203,42 @@ class TestMissingSetup(unittest.TestCase):
         itop = ItopConfig(url="http://itop/rest.php", token="tok")
         llm = LlmConfig(base_url="http://llm/v1", model="m")
         self.assertEqual(missing_setup(itop, llm), [])
+
+    def test_required_llm_fields_follow_the_provider(self):
+        itop = ItopConfig(url="http://x", token="tok")
+        # Gemini has no endpoint to configure but does need a key
+        self.assertEqual(
+            missing_setup(itop, LlmConfig(provider="google_genai", model="m")),
+            ["LLM API key (llm: api_key)"],
+        )
+        self.assertEqual(missing_setup(itop, LlmConfig(provider="google_genai", model="m", api_key="k")), [])
+        # Ollama needs neither: the base URL has a working default
+        self.assertEqual(missing_setup(itop, LlmConfig(provider="ollama", model="m")), [])
+
+
+class TestLlmSection(unittest.TestCase):
+    def test_unknown_provider_is_rejected(self):
+        with self.assertRaises(ValidationError) as ctx:
+            LlmConfig(provider="gpt5-please")
+
+        self.assertIn("openai_compatible", str(ctx.exception))
+
+    def test_params_may_not_shadow_the_sections_own_fields(self):
+        # Otherwise a stray "model" in params would quietly beat llm.model
+        with self.assertRaises(ValidationError):
+            LlmConfig(params={"model": "something-else"})
+
+    def test_forced_tool_choice_falls_back_to_the_provider(self):
+        self.assertFalse(LlmConfig(provider="openai_compatible").endpoint_forces_tool_choice)
+        self.assertTrue(LlmConfig(provider="openai").endpoint_forces_tool_choice)
+        self.assertFalse(LlmConfig(provider="ollama").endpoint_forces_tool_choice)
+
+    def test_an_explicit_answer_wins(self):
+        # The deployment owner knows what sits behind their URL
+        self.assertTrue(
+            LlmConfig(provider="openai_compatible", supports_forced_tool_choice=True).endpoint_forces_tool_choice
+        )
+        self.assertFalse(LlmConfig(provider="openai", supports_forced_tool_choice=False).endpoint_forces_tool_choice)
 
 
 class TestTicketMapping(unittest.TestCase):

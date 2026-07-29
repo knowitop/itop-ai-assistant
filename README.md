@@ -104,7 +104,7 @@ Mark ticket processed
 
 - **iTop 3.x** with REST API enabled
 - **Redis** (included in the Docker Compose stack)
-- **OpenAI-compatible LLM endpoint** — local (LM Studio, Ollama) or cloud (OpenAI, Azure, LiteLLM Proxy)
+- **An LLM that calls tools reliably** — OpenAI, Google Gemini, Ollama, or any OpenAI-compatible endpoint (LM Studio, vLLM, LiteLLM Proxy, DeepSeek, Azure); see [supported providers](docs/configuration.md#supported-llm-providers)
 - **Docker and Docker Compose** for the quick start; [uv](https://docs.astral.sh/uv/) for local development
 
 ---

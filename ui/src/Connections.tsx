@@ -9,7 +9,9 @@ import {
   NumberInput,
   PasswordInput,
   SegmentedControl,
+  Select,
   Stack,
+  Switch,
   Table,
   Tabs,
   TagsInput,
@@ -27,6 +29,24 @@ import { apiGet, apiSend, setToken } from './api';
 interface SectionData {
   values: Record<string, unknown>;
   secrets: Record<string, boolean>;
+}
+
+// GET /api/setup/llm-providers — what each kind of endpoint needs. The form
+// is rendered from this instead of hardcoding the provider list here.
+export interface LlmProvider {
+  id: string;
+  label: string;
+  base_url_mode: 'required' | 'optional' | 'unused';
+  base_url_placeholder: string | null;
+  api_key_mode: 'required' | 'optional' | 'unused';
+  // null = depends on the server behind the URL, so ask the user
+  supports_forced_tool_choice: boolean | null;
+  notes: string;
+}
+
+export async function loadLlmProviders(): Promise<LlmProvider[]> {
+  const data = await apiGet<{ providers: LlmProvider[] }>('/setup/llm-providers');
+  return data.providers;
 }
 
 async function resetSection(section: string, confirmMsg: string): Promise<boolean> {
@@ -390,18 +410,28 @@ function LlmForm() {
   const [success, setSuccess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [providers, setProviders] = useState<LlmProvider[]>([]);
+  const [provider, setProvider] = useState('openai_compatible');
   const [baseUrl, setBaseUrl] = useState('');
   const [model, setModel] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [thinkTags, setThinkTags] = useState<string[]>([]);
+  const [params, setParams] = useState('{}');
+  const [forceToolChoice, setForceToolChoice] = useState(false);
   const [secrets, setSecrets] = useState<Record<string, boolean>>({});
 
+  const current = providers.find((p) => p.id === provider);
+
   const load = async () => {
-    const data = await apiGet<SectionData>('/setup/llm');
+    const [list, data] = await Promise.all([loadLlmProviders(), apiGet<SectionData>('/setup/llm')]);
+    setProviders(list);
+    setProvider(String(data.values.provider ?? 'openai_compatible'));
     setBaseUrl(String(data.values.base_url ?? ''));
     setModel(String(data.values.model ?? ''));
     setApiKey('');
     setThinkTags((data.values.think_tags as string[]) ?? []);
+    setParams(JSON.stringify(data.values.params ?? {}, null, 2));
+    setForceToolChoice(data.values.supports_forced_tool_choice === true);
     setSecrets(data.secrets);
     setLoaded(true);
   };
@@ -410,11 +440,19 @@ function LlmForm() {
     load().catch((e: Error) => setError(e.message));
   }, []);
 
+  // Throws on malformed JSON so save/test surface it instead of silently
+  // dropping what the user typed
   const body = () => {
     const b: Record<string, unknown> = {
+      provider,
       base_url: baseUrl,
       model: model || null,
       think_tags: thinkTags,
+      params: JSON.parse(params || '{}'),
+      // Only asked where the provider has no answer of its own; null there
+      // means "use the provider's"
+      supports_forced_tool_choice:
+        current && current.supports_forced_tool_choice === null ? forceToolChoice : null,
     };
     if (apiKey) b.api_key = apiKey;
     return b;
@@ -425,13 +463,20 @@ function LlmForm() {
     setError(null);
     setSuccess(null);
     try {
-      const result = await apiSend<{ ok: boolean; response?: string; error?: string }>(
-        'POST',
-        '/setup/test-llm',
-        body(),
-      );
-      if (result.ok) setSuccess(t('common.llm_test_ok', { response: result.response }));
-      else setError(result.error ?? t('common.error_llm_failed'));
+      const result = await apiSend<{
+        ok: boolean;
+        response?: string;
+        error?: string;
+        tool_calling?: boolean;
+        tool_error?: string;
+        forced_tool_choice_ok?: boolean;
+      }>('POST', '/setup/test-llm', body());
+      if (!result.ok) setError(result.error ?? t('common.error_llm_failed'));
+      else if (result.forced_tool_choice_ok === false)
+        setError(t('connections.llm_tool_choice_rejected', { error: result.tool_error }));
+      else if (!result.tool_calling)
+        setError(t('connections.llm_no_tool_calling', { error: result.tool_error ?? '' }));
+      else setSuccess(t('common.llm_test_ok', { response: result.response }));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -484,40 +529,72 @@ function LlmForm() {
   return (
     <Stack maw={560}>
       <StatusAlert error={error} success={success} />
-      <TextInput
-        label={t('common.field_base_url')}
-        description={t('connections.llm_base_url_desc')}
-        placeholder="http://localhost:1234/v1"
-        value={baseUrl}
-        onChange={(e) => setBaseUrl(e.currentTarget.value)}
+      <Select
+        label={t('common.field_provider')}
+        description={current?.notes || t('connections.llm_provider_desc')}
+        data={providers.map((p) => ({ value: p.id, label: p.label }))}
+        value={provider}
+        onChange={(value) => setProvider(value ?? 'openai_compatible')}
+        allowDeselect={false}
       />
+      {current?.base_url_mode !== 'unused' && (
+        <TextInput
+          label={t('common.field_base_url')}
+          description={t('connections.llm_base_url_desc')}
+          placeholder={current?.base_url_placeholder ?? ''}
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.currentTarget.value)}
+        />
+      )}
       <TextInput
         label={t('common.field_model')}
         description={t('connections.llm_model_desc')}
         value={model}
         onChange={(e) => setModel(e.currentTarget.value)}
       />
-      <PasswordInput
-        label={t('common.field_api_key')}
-        placeholder={secrets.api_key ? t('common.secret_is_set') : t('common.secret_not_set')}
-        description={secrets.api_key ? undefined : t('connections.llm_api_key_desc')}
-        value={apiKey}
-        onChange={(e) => setApiKey(e.currentTarget.value)}
-        rightSectionWidth={70}
-        rightSection={
-          secrets.api_key ? (
-            <Button size="compact-xs" variant="subtle" color="red" onClick={clearApiKey}>
-              {t('common.btn_clear')}
-            </Button>
-          ) : null
-        }
-      />
+      {current?.api_key_mode !== 'unused' && (
+        <PasswordInput
+          label={t('common.field_api_key')}
+          placeholder={secrets.api_key ? t('common.secret_is_set') : t('common.secret_not_set')}
+          description={secrets.api_key ? undefined : t('connections.llm_api_key_desc')}
+          value={apiKey}
+          onChange={(e) => setApiKey(e.currentTarget.value)}
+          rightSectionWidth={70}
+          rightSection={
+            secrets.api_key ? (
+              <Button size="compact-xs" variant="subtle" color="red" onClick={clearApiKey}>
+                {t('common.btn_clear')}
+              </Button>
+            ) : null
+          }
+        />
+      )}
       <TagsInput
         label={t('common.field_think_tags')}
         description={t('connections.llm_think_tags_desc')}
         value={thinkTags}
         onChange={setThinkTags}
       />
+      <JsonInput
+        label={t('common.field_llm_params')}
+        description={t('connections.llm_params_desc')}
+        placeholder='{"temperature": 0.2}'
+        validationError={t('connections.llm_params_invalid')}
+        formatOnBlur
+        autosize
+        minRows={2}
+        value={params}
+        onChange={setParams}
+      />
+      {/* Only where the provider itself cannot answer — see llm_providers */}
+      {current?.supports_forced_tool_choice === null && (
+        <Switch
+          label={t('connections.llm_tool_choice_label')}
+          description={t('connections.llm_tool_choice_desc')}
+          checked={forceToolChoice}
+          onChange={(e) => setForceToolChoice(e.currentTarget.checked)}
+        />
+      )}
       <Group>
         <Button onClick={save} loading={busy}>
           {t('common.btn_save')}

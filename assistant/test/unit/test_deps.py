@@ -71,6 +71,32 @@ class TestCreateLlm(unittest.TestCase):
         llm = create_llm(LlmConfig(model="m"))
         self.assertIsNotNone(llm.openai_api_key)
 
+    def test_each_provider_builds_its_own_client(self):
+        cases = {
+            "openai_compatible": (dict(base_url="http://llm/v1"), "ChatOpenAI"),
+            "openai": (dict(api_key="k"), "ChatOpenAI"),
+            "google_genai": (dict(api_key="k"), "ChatGoogleGenerativeAI"),
+            "ollama": (dict(base_url="http://localhost:11434"), "ChatOllama"),
+        }
+        for provider, (fields, expected) in cases.items():
+            with self.subTest(provider=provider):
+                llm = create_llm(LlmConfig(provider=provider, model="m", **fields))
+                self.assertEqual(type(llm).__name__, expected)
+
+    def test_base_url_is_not_sent_to_a_provider_that_has_none(self):
+        # A stale base_url left over from another provider must not leak into
+        # the client and silently redirect the requests
+        llm = create_llm(LlmConfig(provider="openai", model="m", api_key="k", base_url="http://stale/v1"))
+        self.assertIsNone(llm.openai_api_base)
+
+    def test_the_key_reaches_a_native_provider(self):
+        llm = create_llm(LlmConfig(provider="google_genai", model="gemini-2.5-flash", api_key="secret"))
+        self.assertEqual(llm.google_api_key.get_secret_value(), "secret")
+
+    def test_params_are_forwarded(self):
+        llm = create_llm(LlmConfig(model="m", base_url="http://llm/v1", params={"temperature": 0.4}))
+        self.assertEqual(llm.temperature, 0.4)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -118,7 +118,14 @@ async def _run_intake_agent(
         ai_name=ai_name,
         think_tags=tuple(llm_cfg.think_tags),
     )
-    agent = build_intake_agent(create_llm(llm_cfg, cfg.model), cfg, tools_for(ticket))
+    agent = build_intake_agent(
+        create_llm(llm_cfg, cfg.model),
+        cfg,
+        tools_for(ticket),
+        # Nothing here can deliver prose, so force a tool call wherever the
+        # endpoint accepts being forced
+        force_tool_choice=llm_cfg.endpoint_forces_tool_choice,
+    )
     messages = await build_initial_messages(context, prompts)
 
     usage = _Usage()
