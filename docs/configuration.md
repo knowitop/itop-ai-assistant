@@ -35,13 +35,26 @@ A full `.env` template with examples is in [`docker/.env.dist`](../docker/.env.d
 | `EMBEDDINGS_BATCH_SIZE` | default `32` | Texts per embeddings request |
 | `PROMPTS_DIR` | optional | Directory with prompt file overrides (env-only) — see [Customizing prompts](prompts.md) |
 | `UI_DIST_DIR` | optional | Directory with the built admin SPA (env-only). The Docker image sets it; running from a source checkout finds `ui/dist` on its own |
-| `APP_VERSION` + `BUILD_COMMIT` | set by the image build | Build stamp, passed by CI from the git tag being built. Served by `GET /version` and shown at the bottom of the admin sidebar; any other build reports `dev` |
 | `LOG_LEVEL` | default `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR` (env-only) |
 
 > [!NOTE]
 > Runtime overrides (including secrets set through the setup API) live in Redis. The bundled `docker-compose.yml` enables Redis persistence (`appendonly yes` + volume) so they survive restarts. To recover a lost admin token, set `ADMIN_TOKEN` in `.env` and restart, or delete the `config:security` key in Redis.
 
 ---
+
+## Build version
+
+The running build identifies itself at `GET /version` (public, like `/health`),
+in the first line of the startup log, and at the bottom of the admin sidebar.
+
+Nothing needs to be configured: the version is derived from the git tag when
+the image is built (`hatch-vcs`) and baked into the package together with the
+commit and the build date, so the artifact describes itself and the value
+cannot be changed by a deployment. A build from the `v0.3.0` tag reports
+`0.3.0` — the same string as the published image tag — and a build from a
+later commit reports something like `0.3.1.dev7`.
+
+Running from a checkout that was never built reports `dev`.
 
 ## Intake module settings
 

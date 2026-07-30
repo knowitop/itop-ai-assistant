@@ -1,10 +1,12 @@
 import unittest
+from importlib.metadata import version as metadata_version
 from unittest.mock import MagicMock
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from itop_ai_assistant.build_info import get_build_info
 from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.config_store import RedisConfigStore
 from itop_ai_assistant.deps import AppDeps
@@ -44,11 +46,15 @@ class TestHealth(AdminApiTestCase):
 
 
 class TestVersion(AdminApiTestCase):
-    def test_reports_the_build_stamp(self):
+    def test_serves_the_baked_build_stamp(self):
         response = self.client.get("/version")
         self.assertEqual(response.status_code, 200)
-        # Nothing was baked in by a build, so the stamp is honest about it.
-        self.assertEqual(response.json(), {"version": "dev", "commit": None})
+        body = response.json()
+        self.assertEqual(set(body), {"version", "commit", "built_at"})
+        # Whatever the build baked in — asserting a literal would pin the test
+        # to one release. It must agree with the distribution metadata.
+        self.assertEqual(body["version"], get_build_info().version)
+        self.assertEqual(body["version"], metadata_version("itop-ai-assistant"))
 
 
 class TestModules(AdminApiTestCase):

@@ -139,6 +139,7 @@ and `uv run pytest`.
 |-------------------------------------------------|----------------------------------------------------------------------------------------------|
 | `main.py`                                       | FastAPI app init, lifespan (builds `AppDeps`)                                                |
 | `config.py`                                     | `Settings` — centralized config (pydantic-settings)                                          |
+| `build_info.py`                                 | Build stamp baked at build time: version, commit, build date                                 |
 | `deps.py`                                       | Composition root: `AppDeps`, `build_deps`, `create_llm`                                      |
 | `config_store.py`                               | `RedisConfigStore` — runtime-editable module config                                          |
 | `journal.py`                                    | `RunJournal` — per-run status/steps in Redis                                                 |
@@ -322,7 +323,6 @@ None (`RuntimeSectionConfig`). Webhook/admin token checks read the effective
 | `admin_token` | recommended | Bearer token for `/api` admin endpoints (`Authorization: Bearer`); unset = no auth (first-run mode) |
 | `prompts_dir` | optional (env-only) | Directory with per-deployment prompt overrides |
 | `ui_dist_dir` | optional (env-only) | Where the built admin SPA lives; the image sets `/app/ui/dist`, a source checkout is auto-detected |
-| `app_version` + `build_commit` | set by the image build | Build stamp served by the public `GET /version` and shown at the bottom of the admin sidebar; any non-CI build reports `dev` |
 | `llm_provider` | default `openai_compatible` | Which entry of `llm_providers.PROVIDERS` to build the client from |
 | `llm_base_url` | required by the provider's `base_url_mode` | Endpoint URL; unused by `openai` / `google_genai` |
 | `llm_model` | required (env or setup API) | Model name as exposed by the endpoint |

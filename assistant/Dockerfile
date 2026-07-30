@@ -15,15 +15,28 @@ RUN npm run build
 # ---- python dependencies + the project itself ----
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
-WORKDIR /app
+# hatch-vcs shells out to git to derive the version from the tag
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Mirrors the repository layout: the build reads ../.git relative to pyproject.
+# The venv is pinned to its runtime location — entry point shebangs are
+# absolute, so it cannot be relocated after the fact.
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv
+WORKDIR /src/assistant
 
 # Install dependencies into a separate venv — this layer is cached unless lockfile changes
 COPY assistant/pyproject.toml assistant/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project --no-editable
 
+# The whole repository, not just assistant/: the version and the commit are
+# derived from git at build time (hatch_build.py), and a partial work tree
+# reads as dirty, which would turn a tagged release into a .devN version.
+COPY . /src/
+
 # Install the application itself. --no-editable puts the package inside the
-# venv, so the runtime image needs nothing but /app/.venv.
-COPY assistant/ ./
+# venv, so the runtime image needs nothing but the venv.
 RUN uv sync --frozen --no-dev --no-editable
 
 # ---- runtime image ----
@@ -34,7 +47,8 @@ LABEL org.opencontainers.image.licenses="AGPL-3.0"
 
 WORKDIR /app
 
-# The venv already contains the application, its default prompts and config.yaml
+# The venv already contains the application, its build stamp, default prompts
+# and config.yaml — no source, and no .git, reaches the runtime image
 COPY --from=builder /app/.venv /app/.venv
 
 # The admin SPA is not a Python artifact — it is copied alongside
@@ -42,14 +56,6 @@ COPY --from=ui-builder /ui/dist ./ui/dist
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV UI_DIST_DIR=/app/ui/dist
-
-# Build stamp. .git is excluded from the build context, so the version cannot
-# be derived here — CI passes it from the tag it is building. Declared last so
-# a changed stamp does not invalidate the layers above. A local build without
-# these arguments honestly reports "dev".
-ARG APP_VERSION=dev
-ARG BUILD_COMMIT=""
-ENV APP_VERSION=${APP_VERSION} BUILD_COMMIT=${BUILD_COMMIT}
 
 EXPOSE 8000
 

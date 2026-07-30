@@ -166,9 +166,12 @@ export default function Layout() {
             {/* Links to the commit rather than a release: valid for tagged and
                 untagged builds alike, and no guessing at the tag's v-prefix. */}
             <Anchor
-              href={build.commit ? `${REPO_URL}/commit/${build.commit}` : REPO_URL}
+              // A local build reports "<sha>-dirty"; the link needs the sha alone.
+              href={build.commit ? `${REPO_URL}/commit/${build.commit.split('-')[0]}` : REPO_URL}
               target="_blank"
               rel="noopener noreferrer"
+              // Native tooltip: a build date needs no translation and no component.
+              title={build.built_at ?? undefined}
               size="xs"
               c="dimmed"
             >

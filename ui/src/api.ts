@@ -97,6 +97,7 @@ export function fetchHealth(): Promise<Health> {
 export interface BuildInfo {
   version: string;
   commit: string | null;
+  built_at: string | null;
 }
 
 export function fetchVersion(): Promise<BuildInfo> {
