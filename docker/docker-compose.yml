@@ -5,6 +5,7 @@ services:
     ports:
       - "8000:80"
     volumes:
+      - ./itop/conf:/var/www/html/conf/production
       - itop-db:/var/lib/mysql
     environment:
       MYSQL_PASS: 123456

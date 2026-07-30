@@ -1,0 +1,5 @@
+# iTop writes its production config here (mounted in docker-compose.yml) so it
+# survives container recreation. Never commit it: the generated file carries an
+# install-specific `encryption_key`, which is what iTop uses to encrypt the
+# secrets it stores in its database — the assistant's webhook token among them.
+itop/
