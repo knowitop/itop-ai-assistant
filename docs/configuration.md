@@ -47,14 +47,27 @@ A full `.env` template with examples is in [`docker/.env.dist`](../docker/.env.d
 The running build identifies itself at `GET /version` (public, like `/health`),
 in the first line of the startup log, and at the bottom of the admin sidebar.
 
-Nothing needs to be configured: the version is derived from the git tag when
-the image is built (`hatch-vcs`) and baked into the package together with the
-commit and the build date, so the artifact describes itself and the value
-cannot be changed by a deployment. A build from the `v0.3.0` tag reports
-`0.3.0` — the same string as the published image tag — and a build from a
-later commit reports something like `0.3.1.dev7`.
+Nothing needs to be configured. The stamp is baked into the package when it is
+built and read back through the distribution metadata, so the artifact
+describes itself and no deployment setting can change what it reports.
 
-Running from a checkout that was never built reports `dev`.
+Where the value comes from depends on who is building:
+
+| build | version | commit |
+|-------|---------|--------|
+| the release workflow, from tag `v0.3.0` | `0.3.0` — the same string as the published image tag | the released commit |
+| a checkout (`uv sync`, `uv build`) | derived from git, e.g. `0.3.1.dev8` | current `HEAD` |
+| `docker build` without arguments | `0.0.0` | none |
+
+The image build has no repository to read — `.git` is not in the build context
+— so the release workflow hands the values over as build arguments. To get the
+same from a local image build, pass them yourself:
+
+```bash
+docker build -f assistant/Dockerfile \
+  --build-arg APP_VERSION="$(git describe --tags --abbrev=0 | sed 's/^v//')" \
+  --build-arg BUILD_COMMIT="$(git rev-parse HEAD)" .
+```
 
 ## Intake module settings
 

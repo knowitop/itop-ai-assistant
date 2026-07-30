@@ -1,6 +1,4 @@
-# .git is deliberately included: hatch-vcs derives the version from the tag
-# during the build (see assistant/hatch_build.py). It never reaches the
-# runtime image — only the builder stage sees it.
+.git
 **/node_modules
 **/__pycache__
 **/.venv
@@ -8,6 +6,4 @@
 **/.mypy_cache
 **/.ruff_cache
 ui/dist
-# assistant/test stays in the context on purpose: it is tracked in git, and
-# leaving it out makes the work tree read as dirty during the build, which
-# turns a tagged release into a .devN version. It never leaves the builder stage.
+assistant/test

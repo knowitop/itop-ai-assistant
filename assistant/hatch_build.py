@@ -9,6 +9,7 @@ be re-supplied through the environment at run time.
 Regenerated on every build, including editable installs; gitignored.
 """
 
+import os
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,12 +43,14 @@ def _git(root: Path, *args: str) -> str | None:
 
 
 def _commit(root: Path) -> str | None:
-    """Short commit hash.
+    """Short commit hash: handed over by the image build, or read from git.
 
-    Deliberately no dirty marker: the image build copies `.git` next to
-    `assistant/` alone, so git sees the rest of the repository as deleted and
-    every build would claim to be dirty.
+    The image build has no repository — CI passes `BUILD_COMMIT` instead.
+    Building from a checkout (`uv build`, `uv sync`) asks git directly.
     """
+    passed = os.environ.get("BUILD_COMMIT")
+    if passed:
+        return passed[:7]
     return _git(root, "rev-parse", "--short=7", "HEAD") or None
 
 
