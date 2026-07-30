@@ -13,11 +13,11 @@ unit-tested there.
 Run: uv run pytest test/integration/ -v
 """
 
-from agents.intake.agent import build_intake_agent
-from agents.intake.prompt import build_initial_messages
-from agents.intake.tools import tools_for
-from config import get_settings
-from deps import create_llm
+from itop_ai_assistant.agents.intake.agent import build_intake_agent
+from itop_ai_assistant.agents.intake.prompt import build_initial_messages
+from itop_ai_assistant.agents.intake.tools import tools_for
+from itop_ai_assistant.config import get_settings
+from itop_ai_assistant.deps import create_llm
 
 from .conftest import _PROMPTS, _SUBCATEGORY_WITH_REQUIREMENTS, ItopMockTransport, make_ctx, make_ticket
 

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 import fakeredis.aioredis
 from redis.exceptions import RedisError
 
-from state.ticket_state import StateUnavailableError, TicketState, TicketStateManager
+from itop_ai_assistant.state.ticket_state import StateUnavailableError, TicketState, TicketStateManager
 
 TTL_30_DAYS = 30 * 24 * 60 * 60
 

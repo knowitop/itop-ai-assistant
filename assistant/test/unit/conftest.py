@@ -12,7 +12,7 @@ are unaffected.
 
 import pytest
 
-from config import Settings, get_settings
+from itop_ai_assistant.config import Settings, get_settings
 
 
 @pytest.fixture(autouse=True)

@@ -1,7 +1,7 @@
 import unittest
 
-from itop_client.exceptions import ItopError
-from itop_provisioning import (
+from itop_ai_assistant.itop_client.exceptions import ItopError
+from itop_ai_assistant.itop_provisioning import (
     APP_NAME,
     CREATED_TRIGGER_DESC,
     CREATED_WEBHOOK_NAME,

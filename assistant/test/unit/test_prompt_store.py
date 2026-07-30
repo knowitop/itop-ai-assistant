@@ -4,10 +4,16 @@ from pathlib import Path
 
 import fakeredis.aioredis
 
-from agents.intake.prompts import PROMPT_VARIABLES, build_intake_prompts
-from prompt_store import FilePromptStore, PromptStoreError, RedisPromptStore, read_prompt_dir
+from itop_ai_assistant.agents.intake.prompts import PROMPT_VARIABLES, build_intake_prompts
+from itop_ai_assistant.prompt_store import (
+    PACKAGED_PROMPTS_DIR,
+    FilePromptStore,
+    PromptStoreError,
+    RedisPromptStore,
+    read_prompt_dir,
+)
 
-_DEFAULTS_DIR = Path(__file__).parents[2] / "prompts"
+_DEFAULTS_DIR = PACKAGED_PROMPTS_DIR
 
 
 def _default_prompts() -> dict[str, str]:

@@ -1,21 +1,18 @@
 import unittest
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from config import get_settings
-from config_store import RedisConfigStore
-from deps import AppDeps
-from journal import RunJournal
-from main import app
-from prompt_store import FilePromptStore, RedisPromptStore
-from state.ticket_state import TicketStateManager
-from vector.db import VectorDb
-
-_PROMPTS_DIR = Path(__file__).parents[2] / "prompts"
+from itop_ai_assistant.config import get_settings
+from itop_ai_assistant.config_store import RedisConfigStore
+from itop_ai_assistant.deps import AppDeps
+from itop_ai_assistant.journal import RunJournal
+from itop_ai_assistant.main import app
+from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore, RedisPromptStore
+from itop_ai_assistant.state.ticket_state import TicketStateManager
+from itop_ai_assistant.vector.db import VectorDb
 
 _BLANK = {
     "admin_token": None,
@@ -33,7 +30,7 @@ def _make_deps(redis, database_url: str | None = None, **settings_overrides) -> 
         itop=MagicMock(),
         state_manager=TicketStateManager(redis),
         config_store=RedisConfigStore(redis, settings),
-        prompt_store=RedisPromptStore(FilePromptStore(_PROMPTS_DIR), redis),
+        prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR), redis),
         journal=RunJournal(redis),
         vector_db=VectorDb(database_url),
     )

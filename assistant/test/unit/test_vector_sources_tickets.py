@@ -2,9 +2,9 @@ import unittest
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
-from domain.catalog import Service, ServiceSubcategory
-from domain.ticket import LogEntry, Ticket
-from vector_sources.tickets import TicketVectorSource, _to_conversation
+from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
+from itop_ai_assistant.domain.ticket import LogEntry, Ticket
+from itop_ai_assistant.vector_sources.tickets import TicketVectorSource, _to_conversation
 
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 _PROFILE = {"profile": ["title", "service", "subcategory"], "body": ["description"], "log:public": []}

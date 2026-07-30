@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import text
 
-from vector.db import VectorDb
-from vector.index import RECONCILE_SENTINEL, ChunkRecord, FingerprintMismatchError, VectorIndex
+from itop_ai_assistant.vector.db import VectorDb
+from itop_ai_assistant.vector.index import RECONCILE_SENTINEL, ChunkRecord, FingerprintMismatchError, VectorIndex
 
 _MODEL = "test-model"
 _DIM = 4

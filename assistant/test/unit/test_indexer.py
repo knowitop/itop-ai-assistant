@@ -3,11 +3,11 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from config import EmbeddingsConfig, VectorClassConfig, VectorConfig
-from vector.chunker import chunk_object
-from vector.index import RECONCILE_SENTINEL, FingerprintMismatchError, IndexMeta
-from vector.indexer import VectorIndexer
-from vector.source import VectorRecord
+from itop_ai_assistant.config import EmbeddingsConfig, VectorClassConfig, VectorConfig
+from itop_ai_assistant.vector.chunker import chunk_object
+from itop_ai_assistant.vector.index import RECONCILE_SENTINEL, FingerprintMismatchError, IndexMeta
+from itop_ai_assistant.vector.indexer import VectorIndexer
+from itop_ai_assistant.vector.source import VectorRecord
 
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 _META = IndexMeta(version=1, model="test-model", dim=4)
@@ -109,8 +109,8 @@ class IndexerTestCase(unittest.IsolatedAsyncioTestCase):
         embedder = embedder or _embedder_mock()
         self.embedder = embedder
         with (
-            patch("vector.indexer.VectorIndex", return_value=index),
-            patch("vector.indexer.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.indexer.VectorIndex", return_value=index),
+            patch("itop_ai_assistant.vector.indexer.EmbeddingsClient", return_value=embedder),
         ):
             return await indexer.sweep_once()
 
@@ -277,8 +277,8 @@ class TestReindex(IndexerTestCase):
         self.assertTrue(indexer._wake.is_set())
 
         with (
-            patch("vector.indexer.VectorIndex", return_value=index),
-            patch("vector.indexer.EmbeddingsClient", return_value=_embedder_mock()),
+            patch("itop_ai_assistant.vector.indexer.VectorIndex", return_value=index),
+            patch("itop_ai_assistant.vector.indexer.EmbeddingsClient", return_value=_embedder_mock()),
         ):
             report = await indexer.sweep_once()
 
@@ -295,8 +295,8 @@ class TestReindex(IndexerTestCase):
         indexer.request_reindex()
 
         with (
-            patch("vector.indexer.VectorIndex", return_value=index),
-            patch("vector.indexer.EmbeddingsClient", return_value=_embedder_mock()),
+            patch("itop_ai_assistant.vector.indexer.VectorIndex", return_value=index),
+            patch("itop_ai_assistant.vector.indexer.EmbeddingsClient", return_value=_embedder_mock()),
         ):
             await indexer.sweep_once()
 

@@ -5,6 +5,11 @@ line-length = 120
 # Enable the isort rules
 extend-select = ["I"]
 
+[lint.isort]
+# The package is installed into the venv, so without this ruff sorts it with
+# the third-party imports.
+known-first-party = ["itop_ai_assistant"]
+
 [lint.per-file-ignores]
 # conftest must load .env.test before any project import touches get_settings()
 "test/integration/conftest.py" = ["E402"]

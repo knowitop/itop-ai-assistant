@@ -12,14 +12,19 @@ RUN npm ci
 COPY ui/ ./
 RUN npm run build
 
-# ---- python dependencies ----
+# ---- python dependencies + the project itself ----
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
 WORKDIR /app
 
 # Install dependencies into a separate venv — this layer is cached unless lockfile changes
 COPY assistant/pyproject.toml assistant/uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --no-install-project --no-editable
+
+# Install the application itself. --no-editable puts the package inside the
+# venv, so the runtime image needs nothing but /app/.venv.
+COPY assistant/ ./
+RUN uv sync --frozen --no-dev --no-editable
 
 # ---- runtime image ----
 FROM python:3.13-slim-bookworm
@@ -29,18 +34,15 @@ LABEL org.opencontainers.image.licenses="AGPL-3.0"
 
 WORKDIR /app
 
-# Copy venv from builder
+# The venv already contains the application, its default prompts and config.yaml
 COPY --from=builder /app/.venv /app/.venv
 
-# Copy application code, default config and the admin UI build
-COPY assistant/src ./src
-COPY assistant/prompts ./prompts
-COPY assistant/config.yaml ./
+# The admin SPA is not a Python artifact — it is copied alongside
 COPY --from=ui-builder /ui/dist ./ui/dist
 
 ENV PATH="/app/.venv/bin:$PATH"
-ENV PYTHONPATH=/app/src
+ENV UI_DIST_DIR=/app/ui/dist
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "itop_ai_assistant.main:app", "--host", "0.0.0.0", "--port", "8000"]

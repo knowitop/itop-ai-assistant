@@ -3,12 +3,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 from langchain_core.messages import AIMessage, ToolMessage
 
-from agents.intake import tools
-from agents.intake.tools import ToolRejection
-from config import IntakeConfig
-from domain.catalog import Service, ServiceSubcategory
-from domain.ticket import Ticket
-from state.ticket_state import TicketState
+from itop_ai_assistant.agents.intake import tools
+from itop_ai_assistant.agents.intake.tools import ToolRejection
+from itop_ai_assistant.config import IntakeConfig
+from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
+from itop_ai_assistant.domain.ticket import Ticket
+from itop_ai_assistant.state.ticket_state import TicketState
 
 
 def _ticket(**overrides) -> Ticket:

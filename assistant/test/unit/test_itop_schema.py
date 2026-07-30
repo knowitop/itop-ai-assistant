@@ -4,7 +4,7 @@ from urllib.parse import parse_qs
 
 import httpx
 
-from itop_client import Itop
+from itop_ai_assistant.itop_client import Itop
 
 
 class _CapturingTransport(httpx.AsyncBaseTransport):

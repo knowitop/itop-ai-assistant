@@ -1,22 +1,21 @@
 import unittest
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-from agents.intake.context import IntakeContext
-from agents.intake.prompt import (
+from itop_ai_assistant.agents.intake.context import IntakeContext
+from itop_ai_assistant.agents.intake.prompt import (
     build_conversation_xml,
     build_initial_messages,
     build_service_context,
     format_options,
 )
-from agents.intake.prompts import build_intake_prompts
-from config import IntakeConfig
-from domain.catalog import Service, ServiceSubcategory
-from domain.ticket import LogEntry, Ticket
-from prompt_store import read_prompt_dir
+from itop_ai_assistant.agents.intake.prompts import build_intake_prompts
+from itop_ai_assistant.config import IntakeConfig
+from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
+from itop_ai_assistant.domain.ticket import LogEntry, Ticket
+from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
 
-_PROMPTS = build_intake_prompts(read_prompt_dir(Path(__file__).parents[2] / "prompts" / "intake"))
+_PROMPTS = build_intake_prompts(read_prompt_dir(PACKAGED_PROMPTS_DIR / "intake"))
 
 
 def _ticket(**overrides) -> Ticket:

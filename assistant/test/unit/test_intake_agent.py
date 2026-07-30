@@ -6,7 +6,6 @@ and the loop is driven by a scripted model of our own.
 """
 
 import unittest
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -15,14 +14,14 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from agents.intake.pipeline import _run_intake_agent
-from config import IntakeConfig, LlmConfig
-from domain.catalog import Service, ServiceSubcategory
-from domain.ticket import Ticket
-from prompt_store import read_prompt_dir
-from state.ticket_state import TicketState
+from itop_ai_assistant.agents.intake.pipeline import _run_intake_agent
+from itop_ai_assistant.config import IntakeConfig, LlmConfig
+from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
+from itop_ai_assistant.domain.ticket import Ticket
+from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
+from itop_ai_assistant.state.ticket_state import TicketState
 
-_PROMPT_FILES = read_prompt_dir(Path(__file__).parents[2] / "prompts" / "intake")
+_PROMPT_FILES = read_prompt_dir(PACKAGED_PROMPTS_DIR / "intake")
 
 
 class FakeToolCallingModel(BaseChatModel):
@@ -111,7 +110,7 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def run_agent(self, responses: list[AIMessage]) -> FakeToolCallingModel:
         model = FakeToolCallingModel(responses=responses)
-        with patch("agents.intake.pipeline.create_llm", return_value=model):
+        with patch("itop_ai_assistant.agents.intake.pipeline.create_llm", return_value=model):
             await _run_intake_agent(self.ticket, "ai-assistant", self.bundle, uuid4(), self.deps)
         return model
 
@@ -329,7 +328,7 @@ class TestClassifiedTicket(IntakeAgentTestCase):
                 return self
 
         model = Recording(responses=[ai([call("finish_handoff", {"note": "n"}, "h1")])])
-        with patch("agents.intake.pipeline.create_llm", return_value=model):
+        with patch("itop_ai_assistant.agents.intake.pipeline.create_llm", return_value=model):
             await _run_intake_agent(self.ticket, "ai-assistant", self.bundle, uuid4(), self.deps)
 
         self.assertEqual(captured[0], ["post_public_question", "finish_handoff"])

@@ -2,11 +2,11 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from agents.intake.pipeline import handle_assigned, handle_ticket_event
-from config import TicketMappingConfig
-from domain.ticket import LogEntry, Ticket
-from state.ticket_state import TicketState
-from webhook.models import WebhookPayload
+from itop_ai_assistant.agents.intake.pipeline import handle_assigned, handle_ticket_event
+from itop_ai_assistant.config import TicketMappingConfig
+from itop_ai_assistant.domain.ticket import LogEntry, Ticket
+from itop_ai_assistant.state.ticket_state import TicketState
+from itop_ai_assistant.webhook.models import WebhookPayload
 
 
 def _payload(event: str = "created") -> WebhookPayload:
@@ -34,7 +34,7 @@ class TestHandleTicketEvent(unittest.IsolatedAsyncioTestCase):
         self.deps.itop.get = AsyncMock(return_value=self.bundle)
         self.deps.journal = AsyncMock()
 
-        run_patch = patch("agents.intake.pipeline._run_intake_agent", new_callable=AsyncMock)
+        run_patch = patch("itop_ai_assistant.agents.intake.pipeline._run_intake_agent", new_callable=AsyncMock)
         self.mock_run = run_patch.start()
         self.addCleanup(run_patch.stop)
 
@@ -98,7 +98,7 @@ class TestGuard(unittest.IsolatedAsyncioTestCase):
         self.bundle.ticket_repo.fetch = AsyncMock(return_value=_ticket())
         self.deps.itop.get = AsyncMock(return_value=self.bundle)
 
-        run_patch = patch("agents.intake.pipeline._run_intake_agent", new_callable=AsyncMock)
+        run_patch = patch("itop_ai_assistant.agents.intake.pipeline._run_intake_agent", new_callable=AsyncMock)
         self.mock_run = run_patch.start()
         self.addCleanup(run_patch.stop)
 

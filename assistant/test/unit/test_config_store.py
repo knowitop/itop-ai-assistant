@@ -1,18 +1,17 @@
 import unittest
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import fakeredis.aioredis
 from pydantic import ValidationError
 from redis.exceptions import RedisError
 
-from config import IntakeConfig
-from config_store import RedisConfigStore
+from itop_ai_assistant.config import IntakeConfig, Settings
+from itop_ai_assistant.config_store import RedisConfigStore
 
 
 def _make_store() -> tuple[RedisConfigStore, fakeredis.aioredis.FakeRedis]:
     redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    settings = SimpleNamespace(intake=IntakeConfig())
+    settings = Settings(intake=IntakeConfig())
     return RedisConfigStore(redis, settings), redis
 
 

@@ -57,7 +57,7 @@ jobs:
 
       # `test/integration` is deliberately excluded — it needs a real LLM endpoint.
       - name: Unit tests
-        run: uv run pytest --cov=src --cov-report=term-missing -o log_cli=false
+        run: uv run pytest --cov=itop_ai_assistant --cov-report=term-missing -o log_cli=false
 
       # Testcontainers spins up pgvector/pgvector:pg17 — the runner has a Docker daemon.
       - name: Postgres/pgvector tests

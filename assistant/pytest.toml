@@ -1,6 +1,5 @@
 [pytest]
 addopts = ["--import-mode=importlib"]
-pythonpath = ["src"]
 testpaths = [
     "test/unit"
 ]

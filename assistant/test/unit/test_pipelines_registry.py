@@ -2,8 +2,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from config import IntakeConfig
-from pipelines.registry import ModuleInfo, PipelineRegistry, build_registry
+from itop_ai_assistant.config import IntakeConfig
+from itop_ai_assistant.pipelines.registry import ModuleInfo, PipelineRegistry, build_registry
 
 
 def _module(name: str = "test-module") -> ModuleInfo:
