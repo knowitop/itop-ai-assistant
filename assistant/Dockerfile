@@ -43,6 +43,14 @@ COPY --from=ui-builder /ui/dist ./ui/dist
 ENV PATH="/app/.venv/bin:$PATH"
 ENV UI_DIST_DIR=/app/ui/dist
 
+# Build stamp. .git is excluded from the build context, so the version cannot
+# be derived here — CI passes it from the tag it is building. Declared last so
+# a changed stamp does not invalidate the layers above. A local build without
+# these arguments honestly reports "dev".
+ARG APP_VERSION=dev
+ARG BUILD_COMMIT=""
+ENV APP_VERSION=${APP_VERSION} BUILD_COMMIT=${BUILD_COMMIT}
+
 EXPOSE 8000
 
 CMD ["uvicorn", "itop_ai_assistant.main:app", "--host", "0.0.0.0", "--port", "8000"]

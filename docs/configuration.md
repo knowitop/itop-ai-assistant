@@ -35,6 +35,7 @@ A full `.env` template with examples is in [`docker/.env.dist`](../docker/.env.d
 | `EMBEDDINGS_BATCH_SIZE` | default `32` | Texts per embeddings request |
 | `PROMPTS_DIR` | optional | Directory with prompt file overrides (env-only) — see [Customizing prompts](prompts.md) |
 | `UI_DIST_DIR` | optional | Directory with the built admin SPA (env-only). The Docker image sets it; running from a source checkout finds `ui/dist` on its own |
+| `APP_VERSION` + `BUILD_COMMIT` | set by the image build | Build stamp, passed by CI from the git tag being built. Served by `GET /version` and shown at the bottom of the admin sidebar; any other build reports `dev` |
 | `LOG_LEVEL` | default `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR` (env-only) |
 
 > [!NOTE]

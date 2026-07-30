@@ -25,9 +25,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _short_commit(commit: str | None) -> str | None:
+    return commit[:7] if commit else None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    logger.info(f"iTop AI Assistant {settings.app_version} ({_short_commit(settings.build_commit) or 'no commit'})")
     deps = build_deps(settings)
     registry = build_registry(settings)
     # Fail fast on missing or broken prompt templates instead of on a live ticket
@@ -77,7 +82,7 @@ async def lifespan(app: FastAPI):
         await deps.aclose()
 
 
-app = FastAPI(title="iTop AI Assistant", lifespan=lifespan)
+app = FastAPI(title="iTop AI Assistant", version=settings.app_version, lifespan=lifespan)
 app.include_router(router)
 app.include_router(admin_router)
 
@@ -115,6 +120,13 @@ async def health(request: Request) -> dict:
     except Exception:
         redis_ok = False
     return {"status": "ok" if redis_ok else "degraded", "redis": redis_ok}
+
+
+# Public like /health, and for the same reason: the setup wizard runs before
+# an admin token exists, and "which build is this?" is the first support question.
+@app.get("/version")
+async def version() -> dict:
+    return {"version": settings.app_version, "commit": _short_commit(settings.build_commit)}
 
 
 if __name__ == "__main__":

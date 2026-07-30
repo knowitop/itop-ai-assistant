@@ -307,6 +307,10 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     log_level: str = "INFO"
+    # Build stamp, baked into the image by CI from the git tag it was built
+    # from (see docker-publish.yml). Any other build honestly reports "dev".
+    app_version: str = "dev"
+    build_commit: str | None = None
     webhook_token: SecretStr | None = None
     # Bearer token for the admin API (Authorization header); None = no auth
     admin_token: SecretStr | None = None

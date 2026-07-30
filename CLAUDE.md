@@ -322,6 +322,7 @@ None (`RuntimeSectionConfig`). Webhook/admin token checks read the effective
 | `admin_token` | recommended | Bearer token for `/api` admin endpoints (`Authorization: Bearer`); unset = no auth (first-run mode) |
 | `prompts_dir` | optional (env-only) | Directory with per-deployment prompt overrides |
 | `ui_dist_dir` | optional (env-only) | Where the built admin SPA lives; the image sets `/app/ui/dist`, a source checkout is auto-detected |
+| `app_version` + `build_commit` | set by the image build | Build stamp served by the public `GET /version` and shown at the bottom of the admin sidebar; any non-CI build reports `dev` |
 | `llm_provider` | default `openai_compatible` | Which entry of `llm_providers.PROVIDERS` to build the client from |
 | `llm_base_url` | required by the provider's `base_url_mode` | Endpoint URL; unused by `openai` / `google_genai` |
 | `llm_model` | required (env or setup API) | Model name as exposed by the endpoint |
@@ -471,7 +472,7 @@ simplicity beats elegance. These constraints are mandatory:
   no CORS. The admin token lives in `localStorage`; 401 shows the token
   entry screen.
 
-**Commands** (run from `ui/`; the dev server proxies `/api` and `/health`
+**Commands** (run from `ui/`; the dev server proxies `/api`, `/health` and `/version`
 to the assistant on `:8001`, so run the backend alongside):
 
 ```bash

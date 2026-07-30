@@ -43,6 +43,14 @@ class TestHealth(AdminApiTestCase):
         self.assertEqual(response.json(), {"status": "ok", "redis": True})
 
 
+class TestVersion(AdminApiTestCase):
+    def test_reports_the_build_stamp(self):
+        response = self.client.get("/version")
+        self.assertEqual(response.status_code, 200)
+        # Nothing was baked in by a build, so the stamp is honest about it.
+        self.assertEqual(response.json(), {"version": "dev", "commit": None})
+
+
 class TestModules(AdminApiTestCase):
     def test_lists_intake_module(self):
         response = self.client.get("/api/modules")
@@ -194,6 +202,9 @@ class TestAdminAuth(unittest.TestCase):
 
     def test_health_is_public(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
+
+    def test_version_is_public(self):
+        self.assertEqual(self.client.get("/version").status_code, 200)
 
 
 if __name__ == "__main__":
