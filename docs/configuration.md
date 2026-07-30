@@ -1,10 +1,10 @@
 # Configuration
 
-Settings resolve in priority order: **runtime overrides (setup API / admin UI, stored in Redis) → environment variables / `.env` → built-in defaults**.
+Settings resolve in priority order: **runtime overrides (setup API / admin UI, stored in Redis) → environment variables → `.env` → `assistant/config.yaml` → built-in defaults**.
 
-Environment variables are the IaC-friendly path; the setup API edits the same settings at runtime without a restart. Only the bootstrap values (`REDIS_URL`, `LOG_LEVEL`, `PROMPTS_DIR`) are env-only and require a restart to change.
+Environment variables are the IaC-friendly path; the setup API edits the same settings at runtime without a restart. Only the bootstrap values (`REDIS_URL`, `DATABASE_URL`, `LOG_LEVEL`, `PROMPTS_DIR`) are env-only and require a restart to change.
 
-A full `.env` template with examples is in [`docker/.env.dist`](../docker/.env.dist).
+A full `.env` template with examples is in [`docker/.env.dist`](../docker/.env.dist). `assistant/config.yaml` is committed to the repository and holds non-secret defaults — it is the convenient place for structured values like `LLM_PARAMS`, which env vars can only express as a JSON string.
 
 ---
 
@@ -15,15 +15,24 @@ A full `.env` template with examples is in [`docker/.env.dist`](../docker/.env.d
 | `ITOP_URL` | yes — env or setup API | iTop REST API URL |
 | `ITOP_USER` + `ITOP_PWD` | one of — env or setup API | iTop basic auth — use this or `ITOP_TOKEN` |
 | `ITOP_TOKEN` | one of — env or setup API | iTop application/personal token — use this or basic auth |
+| `ITOP_API_VERSION` | default `1.3` | iTop REST API version |
+| `ITOP_TIMEOUT` | default `30.0` | HTTP timeout in seconds for iTop requests |
 | `LLM_PROVIDER` | default `openai_compatible` | How the model is reached — see [Supported LLM providers](#supported-llm-providers) |
 | `LLM_BASE_URL` | depends on provider | Endpoint URL; unused by `openai` and `google_genai` |
 | `LLM_MODEL` | yes — env or setup API | Model name as exposed by the endpoint |
 | `LLM_API_KEY` | depends on provider | Required by cloud providers; local servers ignore it |
 | `LLM_PARAMS` | optional | JSON passed to the client as-is: `{"temperature": 0.2, "max_tokens": 2048}` |
 | `LLM_SUPPORTS_FORCED_TOOL_CHOICE` | optional | Only for `openai_compatible` — see [Forced tool calls](#forced-tool-calls) |
+| `LLM_THINK_TAGS` | default `["think","thinking","reasoning"]` | JSON list of tag names stripped from responses as reasoning blocks |
 | `WEBHOOK_TOKEN` | recommended | Shared secret for `/webhook`; iTop must send it in `X-Auth-Token`. Unset = unauthenticated |
 | `ADMIN_TOKEN` | recommended | Bearer token for `/api` admin endpoints. Unset = open (first-run mode) |
-| `REDIS_URL` | default `redis://redis:6379` | Redis connection URL (env-only, requires restart) |
+| `REDIS_URL` | default `redis://localhost:6379` | Redis connection URL (env-only, requires restart); the compose stack sets `redis://redis:6379` |
+| `STATE_TTL_DAYS` | default `30` | How long per-ticket AI state lives in Redis |
+| `RUN_TTL_DAYS` | default `7` | How long the run journal keeps a processing run |
+| `DATABASE_URL` | optional | Postgres DSN for the vector index (`postgresql+asyncpg://…`), env-only. Unset = Redis-only — see [Vector index](#vector-index) |
+| `EMBEDDINGS_BASE_URL` / `EMBEDDINGS_MODEL` / `EMBEDDINGS_API_KEY` | optional | OpenAI-compatible `/v1/embeddings` endpoint for the vector index |
+| `EMBEDDINGS_DIMENSION` | default `1024` | Vector dimension — must match what the model returns |
+| `EMBEDDINGS_BATCH_SIZE` | default `32` | Texts per embeddings request |
 | `PROMPTS_DIR` | optional | Directory with prompt file overrides (env-only) — see [Customizing prompts](prompts.md) |
 | `LOG_LEVEL` | default `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR` (env-only) |
 
@@ -80,3 +89,19 @@ Adding a provider is a single entry in `assistant/src/llm_providers.py` — the 
 The intake agent has no way to deliver plain text — the requester only sees what a tool posts — so where the endpoint allows it, the agent forbids prose outright by forcing a tool call. OpenAI and Gemini accept that; Ollama ignores it; DeepSeek rejects it with HTTP 400 ("Thinking mode does not support this tool_choice"). For the named providers the answer is built in and there is nothing to configure.
 
 `openai_compatible` is the exception: the same setting fronts vLLM (accepts) and DeepSeek (rejects), so the deployment owner has to answer. Tick **Endpoint accepts a forced tool_choice** in Connections (or set `LLM_SUPPORTS_FORCED_TOOL_CHOICE=true`) and press **Test LLM** — the probe forces the choice and tells you whether the server took it. Leave it off if unsure: the agent then retries a prose answer once instead, which costs an extra model call but works everywhere.
+
+---
+
+## Vector index
+
+Optional infrastructure: a semantic index of iTop objects in Postgres + `pgvector`, built for upcoming features (similar tickets, KB matching, pattern analysis). **Nothing in the current intake flow reads it** — leave `DATABASE_URL` unset and the whole subsystem stays off, with the assistant running Redis-only exactly as before.
+
+To switch it on:
+
+1. Point `DATABASE_URL` at a Postgres with the `pgvector` extension available — the compose stack ships one (`postgresql+asyncpg://assistant:assistant@postgres:5432/assistant`). Schema migrations run automatically at startup; a failure is logged as a warning and never blocks the boot.
+2. Configure the **Embeddings** connection (see [Admin UI → Connections](admin-ui.md#embeddings-tab)). The model must be **multilingual** — tickets are rarely single-language. `EMBEDDINGS_DIMENSION` must match what the model returns; **Test embeddings** measures the real dimension and tells you if it does not.
+3. Turn indexing on in [Admin UI → Vector index](admin-ui.md#vector-index) and configure per-class settings there.
+
+A background sweep picks up objects changed since the last pass, splits them into chunks per the class's chunking profile, and embeds only what actually changed (content-hash guard). The index stores **embeddings, ids and filter metadata only — never ticket text**; anything shown to a user is re-fetched fresh from iTop, so the index is a rebuildable cache, not a copy of your ticket database.
+
+Changing the embeddings model or its dimension invalidates every stored vector — vectors from different models are not comparable. The assistant refuses to mix them and asks for a full reindex instead (**Reindex** in the UI, or `PYTHONPATH=src uv run python -m vector.reindex --full` next to the deployment).

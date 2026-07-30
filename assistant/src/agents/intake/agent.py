@@ -1,4 +1,4 @@
-"""The intake agent: `create_agent` plus three middleware.
+"""The intake agent: `create_agent` plus four middleware.
 
 `system_prompt` is not passed to `create_agent` — the initial messages are
 assembled by `prompt.py` and already start with a `SystemMessage`.

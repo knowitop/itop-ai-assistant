@@ -10,7 +10,12 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # No image is published unless lint, mypy and the whole test suite pass.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   build-and-push:
+    needs: ci
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -18,7 +23,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3

@@ -100,6 +100,15 @@ uv run pre-commit run --all-files
 cd docker && docker-compose up -d
 ```
 
+**CI (`.github/workflows/ci.yml`)** runs on every push to `main` and every PR,
+and gates the image publish (`docker-publish.yml` calls it via
+`workflow_call`). It runs `ruff check`, `ruff format --check`,
+`pre-commit run mypy --all-files` (the strict gate — *not* `uv run mypy src`),
+`pytest --cov` and `pytest test/pg`, plus `npm run build` for the UI in a
+parallel job. `test/integration` needs a real model endpoint and is excluded.
+Before pushing, the same gates locally are `uv run pre-commit run --all-files`
+and `uv run pytest`.
+
 ## Architecture
 
 ### Request Flow
@@ -158,10 +167,13 @@ cd docker && docker-compose up -d
 | `src/vector/index.py`                           | `VectorIndex` — the single SQL/pgvector seam (versioned tables, KNN) |
 | `src/vector/embedder.py`                        | `EmbeddingsClient` — OpenAI-compatible /v1/embeddings, batching |
 | `src/vector/chunker.py`                         | Pure chunking: profiles → chunks, token budget, log windows |
+| `src/vector/source.py`                          | `VectorSource` protocol + `VectorRecord` — the indexer's only contract with a content source |
 | `src/vector/indexer.py`                         | `VectorIndexer` — background sweep, backfill, reconciliation |
 | `src/vector/reindex.py`                         | Backfill/reindex CLI (`python -m vector.reindex`)   |
 | `src/vector/router.py`                          | `GET /api/vector/status`, `POST /api/vector/reindex` |
 | `src/vector/migrations/`                        | Alembic migrations (applied automatically at startup) |
+| `src/vector_sources/registry.py`                | `build_vector_sources()` — one line per content source |
+| `src/vector_sources/tickets.py`                 | `TicketVectorSource` — the only source today (tickets) |
 | `src/itop_client/`                              | `Itop` — vendored iTop REST API library (itoptop fork) |
 
 **`src/itop_client/` is a vendored external library** (fork of itoptop,
@@ -350,9 +362,14 @@ error) — journal writes are non-fatal by design. Inspect via
 **Setup API (wizard backend).** Connection sections are managed via
 `/api/setup`: `GET /status` (what's missing), `GET/PATCH/DELETE /{section}`
 for `itop` / `llm` / `security` / `ticket_mapping` / `embeddings` / `vector`,
+`GET /llm-providers` (the `llm_providers` registry as JSON — the UI builds
+the connection form from it instead of duplicating the list in TypeScript),
 `POST /test-itop`, `POST /test-llm` and `POST /test-embeddings` probes
-(nothing saved; `test-embeddings` measures the endpoint's real vector
-dimension and reports `dimension_match`). PATCH is a partial update merged
+(nothing saved; `test-llm` also binds a probe tool and calls it, forcing
+`tool_choice` when the section says the endpoint accepts it, so a
+non-tool-calling model or a rejected forcing shows up in the wizard instead
+of on the first live ticket; `test-embeddings` measures the endpoint's real
+vector dimension and reports `dimension_match`). PATCH is a partial update merged
 over the current effective config; GET responses mask secrets
 (`secrets: {field: is_set}`); in PATCH bodies an absent field keeps the
 stored value, explicit `null` clears it. Until an admin token is set the
@@ -363,8 +380,8 @@ runtime config to survive restarts (compose already enables appendonly).
 `X-Auth-Token`) under one-time admin credentials from the body — never
 stored; the same logic runs standalone as a CLI
 (`PYTHONPATH=src uv run python -m itop_provisioning`). The wizard step
-order is Security → iTop → LLM → iTop webhooks: provisioning needs the
-saved webhook token.
+order is Security → iTop → iTop webhooks → LLM: provisioning needs the
+saved webhook token, so security comes first and the LLM step last.
 
 **Vector store (optional infrastructure, `src/vector/`).** Postgres +
 pgvector behind the env-only `database_url`; unset = the whole subsystem is
@@ -387,17 +404,27 @@ project's first background task, started in the lifespan when `database_url`
 is set (`app.state.vector_indexer`, stopped before `deps.aclose()`). Every
 `vector.sweep_interval_seconds` it re-reads the runtime config (so flipping
 `vector.enabled` needs no restart), takes a Postgres advisory lock (safe with
-replicas) and sweeps: reads tickets changed since the per-class cursor
+replicas) and sweeps: reads objects changed since the per-class cursor
 (`last_update`, 2×interval overlap, paged with `sweep_throttle_seconds`
 between pages), chunks them per `vector.classes[<class>].profile` (chunk
 kinds = profile keys; log kinds `log:public`/`log:private` are implemented
 but not in the default profiles), embeds only changed chunks (sha256
 hash-guard) and deletes vanished ones; objects whose relevance value is
 outside the per-class `index_values` get their chunks removed (empty list =
-index everything). The source contract (`vector/source.py`): every indexed
-class exposes a last-modification datetime and a relevance attribute — which
-attributes those are is the source's mapping concern (tickets: semantic
-`status`/`last_update` via `ticket_mapping`).
+index everything).
+
+**The indexer knows nothing about iTop or tickets.** It drives the
+`VectorSource` protocol (`vector/source.py`): a source yields `VectorRecord`s
+(identity, a last-modification datetime, a relevance value, source-defined
+`filters`, and an opaque `payload`) and chunks them back on request. Which
+iTop attributes those map to is the source's own concern — `TicketVectorSource`
+(`vector_sources/tickets.py`) is the only implementation today and wraps
+`TicketRepository` + `CatalogRepository` (semantic `status`/`last_update` via
+`ticket_mapping`). Adding a content source (KB articles, KnownErrors, …) means
+a new `src/vector_sources/<name>.py` plus one line in
+`vector_sources/registry.py` — same one-function-to-extend pattern as
+`pipelines/registry.py`, and no change to `vector/`. A configured class with no
+registered source logs a warning and is skipped.
 The cursor advances once per completed class pass (iTop OQL has no ORDER BY).
 Every `vector.reconcile_interval_days` a reconciliation pass deletes chunks
 of objects that disappeared from iTop. Runs are journaled in the

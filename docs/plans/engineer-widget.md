@@ -1,23 +1,270 @@
 # Engineer Widget — Architecture & Implementation Plan
 
-Contextual AI sidebar inside the iTop backoffice UI: on a ticket details page
-the engineer gets AI help — what the assistant already did with the ticket,
-a summary of the conversation, similar past tickets with their resolutions,
-and a draft reply to the user.
+An AI console the engineer talks to while working a ticket: what the assistant
+already did, a summary of a long thread, similar past tickets and how they were
+resolved, a draft reply — and, for anything that does not fit a prepared
+command, a free-text conversation with a read-only agent.
 
-Status: **plan** (nothing implemented yet).
+Status: **prototype, unmerged.** A first slice lives on the branch
+`widget-debug-console` (commit `533a19e`): `src/widget/` with one endpoint
+`POST /api/widget/query`, a flat `WidgetService._COMMANDS` dict holding a
+single `/summary` command, and a console in the admin UI
+(`ui/src/WidgetConsole.tsx` + its host page `ui/src/Widget.tsx`). No agent, no
+memory, no iTop sidebar yet. The branch predates the enrichment deletion and
+needs a rebase onto `main` before anything is built on it — in particular its
+`strip_thinking` move into `text_utils.py` has since landed on `main` anyway.
 
 ---
 
-## 1. Architecture Overview
+## 1. The load-bearing decision: two input paths
+
+One console, two ways in, split by **who decided to act**:
+
+| | Slash command (`/summary`, `/draft`, …) | Free text |
+|---|---|---|
+| Who chose the action | the engineer, explicitly | the model |
+| Dispatch | deterministic — a registry lookup, no LLM decides *what* to do | a tool-calling agent decides |
+| May write to iTop | **yes** | **no**, ever |
+| Tools | the command's own fixed logic | read-only tools only |
+
+This is the project's human-in-the-loop principle with the autonomy criterion
+moved: elsewhere the assistant acts alone when the action is *reversible*; here
+it acts when the action was *explicitly invoked*. An engineer who types
+`/note ...` has authored that write. Text typed at an agent has not authorized
+anything, so the agent physically cannot write — not because the prompt asks it
+not to, but because no writing tool is in the set it is given. Same enforcement
+model as intake: take the capability away rather than request good behaviour.
+
+The console already has the seam. Today free text is answered with a hint that
+only slash commands exist (`widget.hint_slash_command`); the agent path
+replaces that branch.
+
+---
+
+## 2. Backend module shape
+
+`src/widget/` is a peer of `src/admin/` — a synchronous query API, not a
+webhook pipeline. It registers a `ModuleInfo` with an **empty route map**,
+which is enough to get `/api/config/widget`, `/api/prompts/widget` and the
+generic Modules/Prompts admin screens for free (already so on the branch,
+`widget/module.py`).
+
+```
+assistant/src/widget/
+├── module.py      # ModuleInfo registration (config + prompts discovery)
+├── router.py      # POST /api/widget/query
+├── commands.py    # CommandRegistry + the command handlers          (new)
+├── agent.py       # build_widget_agent(): create_agent + checkpointer (new)
+├── tools.py       # read-only tools for the agent path              (new)
+├── context.py     # WidgetContext — per-request deps for tools      (new)
+├── service.py     # ticket fetch, caching — shared by both paths
+└── prompts.py     # WidgetPrompts + PROMPT_VARIABLES registry
+assistant/prompts/widget/*.md
+```
+
+### 2.1 Slash commands: a registry, not a dict
+
+The prototype's `_COMMANDS: dict[str, str]` (name → method name) is fine for
+one command and wrong for five: it carries no metadata, so the router cannot
+tell a reading command from a writing one, and the UI cannot list what exists.
+Model it on `PipelineRegistry` / `ModuleInfo` (`src/pipelines/registry.py`) —
+the pattern is already established and understood in this codebase:
+
+```python
+@dataclass(frozen=True)
+class CommandInfo:
+    name: str                 # "summary", without the slash
+    description: str          # shown in the console's own /help
+    handler: CommandHandler   # async (ctx, text) -> CommandResult
+    read_only: bool           # False = this command writes to iTop
+```
+
+One `register()` call per command, and `GET /api/widget/commands` returns the
+registry so the console renders `/help` and autocompletion from the backend
+instead of duplicating the list in TypeScript — the same trick the LLM provider
+form already uses with `GET /api/setup/llm-providers`.
+
+`read_only` is not decoration: a writing command is the one place in this module
+allowed to call a mutating `TicketRepository` method, and having the flag on the
+record makes "did anything write?" answerable by the router and the audit log
+rather than by reading each handler.
+
+**Deliberately not designed: dynamic command loading.** Third-party commands as
+independent installable packages, discovered without touching core code, is a
+real idea and explicitly deferred — the registry gives code-level extensibility
+(one line per command), which is what is actually needed. Revisit only when
+someone genuinely needs to ship a command without a core change.
+
+### 2.2 The agent path
+
+```python
+from langchain.agents import create_agent
+
+agent = create_agent(
+    model=create_llm(llm_cfg, cfg.agent_model),
+    tools=READ_ONLY_TOOLS,
+    context_schema=WidgetContext,
+    checkpointer=deps.checkpointer,
+    middleware=[ModelCallLimitMiddleware(run_limit=cfg.max_iterations,
+                                         exit_behavior="end")],
+)
+```
+
+Three points where this agent is deliberately **unlike** intake:
+
+- **`create_agent`, not `langgraph.prebuilt.create_react_agent`.** The latter is
+  deprecated in the installed langgraph ("moved to
+  `langchain.agents.create_agent`") and the project standardized on
+  `create_agent` when intake won its A/B. `create_agent` also takes
+  `checkpointer=` directly, so §2.3 needs no drop into raw langgraph.
+- **Prose is the product; do not force a tool call.** Intake forces
+  `tool_choice="any"` wherever the endpoint accepts it because its plain text
+  reaches nobody. Here plain text *is* the answer to the engineer, so
+  `build_widget_agent` never passes `force_tool_choice` — the default `False`
+  is correct and this is exactly the case CLAUDE.md anticipates when it says
+  whether to force is the agent's call, not the connection's.
+- **No terminal-tool middleware, no epilogue.** Intake ends its run the moment
+  a terminal tool succeeds and closes the ticket if the model wandered off.
+  Nothing here is terminal and nothing needs closing: the run ends when the
+  model answers, and `ModelCallLimitMiddleware` is the only backstop needed.
+
+Tool failures still deserve intake's treatment — a rejection that says what to
+do instead, surfaced as an error `ToolMessage` rather than crashing the request.
+Reuse the shape of `_tool_gate` (`agents/intake/agent.py`); a `ToolRejection`
+equivalent belongs in `widget/tools.py`.
+
+### 2.3 Memory for the agent path
+
+Multi-turn memory comes from LangGraph's own checkpointer, keyed by
+`thread_id = ticket.label` (`"UserRequest::123"`) — the same identity already
+used for `lock:{ref}`, `TicketState` and journal entries, so a conversation is
+per-engineer-session-per-ticket without inventing a new key space:
+
+```python
+config = {"configurable": {"thread_id": ticket.label}}
+```
+
+Rejected alternatives, for the record: **client-side-only history** (lost on
+page reload, which disqualifies it as a working tool) and a **hand-rolled
+conversation store** (LangGraph already solves this, and the project's own
+`RunJournal` is a trace log, not a resumable state store).
+
+Backend — a **new dependency either way**, to be added deliberately:
+
+- `langgraph-checkpoint-redis` → `AsyncRedisSaver`
+  (`langgraph.checkpoint.redis.aio`). Preferred: it has built-in TTL,
+  `ttl={"default_ttl": <minutes>, "refresh_on_read": True}`, which lands almost
+  exactly on the project's existing "Redis = TTL-bounded operational state"
+  model (`state_ttl_days`, `run_ttl_days`). It accepts an existing
+  `redis_client=`, so no second connection pool.
+- `langgraph-checkpoint-postgres` — the alternative, and Postgres is already in
+  the stack for pgvector. Heavier, but durable and queryable; pick it if
+  conversations turn out to be worth keeping.
+
+Two things to verify at implementation time, both cheap and both able to waste
+an afternoon if missed:
+
+1. `default_ttl` is in **minutes**, unlike every other TTL in this project
+   (days) — convert at the boundary and name the config field accordingly.
+2. The project's client is built with `decode_responses=True`
+   (`deps.py:122`). Confirm `AsyncRedisSaver` tolerates that or give it its own
+   client. `AsyncRedisSaver.asetup()` must also run once before use — the
+   lifespan is the place.
+
+`AppDeps` currently does not expose the raw Redis client (it is created inside
+`build_deps` and handed to the stores). Adding the checkpointer means one new
+`AppDeps` field, created in `build_deps` and closed in `aclose()` — the same
+treatment `vector_db` already gets.
+
+---
+
+## 3. Read-only tools for the agent
+
+The agent's power is entirely in this list, so it is worth being explicit about
+each entry and its cost:
+
+| Tool | Reads | Notes |
+|---|---|---|
+| `get_ticket_context` | `TicketState` + recent `RunJournal` entries for this ticket | what the assistant already did: classification, questions asked, handoff note. Zero LLM cost |
+| `find_similar_tickets` | resolved/closed tickets, via the pgvector index | needs [vector-store](vector-store.md) Stage 4 — there is no non-vector mode |
+| `get_service_context` | `Service` / `ServiceSubcategory` | the subcategory description is the desk's own definition of a complete ticket |
+| `search_kb` | iTop `FAQ` | later; same retriever, different corpus — needs a KB `VectorSource` (vector-store Stage 6) |
+
+`get_ticket_context` needs runs filtered by ticket ref. `RunJournal` lists runs
+and filters in Python (`journal.py:107`); if that proves too slow, a secondary
+index (`runs:by_ref:{ref}`) is the fix.
+
+Note what is **not** here: no `post_public_log`, no `set_fields`, no
+`create_problem`. Writes live in slash commands (§1).
+
+### Similar tickets — semantic search, no keyword mode
+
+An earlier draft of this plan had a keyword MVP (LLM-extracted search terms →
+`title LIKE '%kw%'` OQL → rerank) with vectors as a later upgrade and keyword as
+the permanent fallback. **Dropped.** The pgvector index is built and sweeping;
+building an OQL keyword search now would mean writing, testing and then
+maintaining forever a second retrieval path whose only job is to be worse than
+the one that already exists. Multilingual embeddings are also the whole point
+here — `LIKE '%принтер%'` does not find "printer", which is exactly the
+service-desk case this feature exists for.
+
+Retrieval is [vector-store.md §5](vector-store.md) end to end:
+
+1. **Embed the query** — built from the current ticket's `profile` +
+   `description` source text. One embeddings call.
+2. **Filtered KNN**, one SQL statement: `GROUP BY obj_id` with `max(score)` so a
+   ticket matching on both description and solution counts once and verbosity is
+   not rewarded; layer-1 predicates for class, `similar_statuses`, visibility and
+   org; `obj_id <> current`. Over-fetch (`similar_candidates`, default 15 for a
+   `similar_top_n` of 5) because HNSW is approximate and pre-filters thin the
+   `ef_search` frontier.
+3. **Fresh fetch from iTop** for the surviving ids — the index holds no text, so
+   title, status and solution come from the system of record at query time.
+4. **Re-rank** (`similar_rerank` prompt): candidate titles + solution excerpts
+   plus the current ticket → top-N with a one-line relevance reason.
+   Non-parseable output degrades to raw KNN order.
+
+`retriever.py` (steps 1–3) is vector-store Stage 4 and is a **hard prerequisite**
+— this feature cannot ship before it, and there is no reduced mode that ships
+earlier. `TicketRepository` gains the semantic field `solution` (+ a
+`TicketFieldMap` entry, default `"solution"`) and a batch read by ids —
+`fetch_many(obj_class, ids)`, the same `WHERE id IN (…)` shape
+`find_existing_ids` already uses, but projecting the full mapped field set. The
+`search(oql, …)` method the keyword design needed is not required. Tools and
+services still never see iTop attribute names.
+
+**When the index is unavailable, say so.** No `database_url`, no embeddings
+connection, `vector.enabled` off, an empty index, or Postgres down — every one
+of these makes `/similar` and `find_similar_tickets` return a plain "semantic
+search is not configured" (or "the index is still building"), not silence and
+not an empty result that reads like "no similar tickets exist". The command
+registry should also hide `/similar` from `/help` while the feature cannot work,
+so `/help` never advertises a dead command. This visible unavailability is what
+replaces the keyword fallback, and it is the honest trade of dropping it:
+similar-tickets becomes the one widget feature with an infrastructure
+requirement.
+
+---
+
+## 4. Delivery vehicle: from admin console to iTop sidebar
+
+The console lives in the admin UI **on purpose** — it lets the prompts, the
+tools and the agent loop be iterated without touching iTop at all. The end
+goal is unchanged: the same console inside the iTop backoffice, on the ticket
+page the engineer is already looking at.
+
+`WidgetConsole.tsx` is written for that move: it takes ticket context as props
+and talks to `POST /api/widget/query`. Hosting it in iTop changes only where
+the context comes from (page DOM instead of two text inputs); the component and
+the endpoint contract stay.
 
 ```
 ┌─ Engineer's browser ────────────────────────────────┐
 │  iTop backoffice page (UserRequest / Incident)      │
 │  ┌───────────────────────────┐  ┌────────────────┐  │
-│  │ iTop page DOM             │  │ AI sidebar     │  │
-│  │ .object-details           │  │ (widget.js)    │  │
-│  │   data-object-class       │◄─┤ reads class/id │  │
+│  │ iTop page DOM             │  │ AI console     │  │
+│  │ .object-details           │◄─┤ (widget.js)    │  │
+│  │   data-object-class       │  │ reads class/id │  │
 │  │   data-object-id          │  │ from DOM       │  │
 │  └───────────────────────────┘  └───────┬────────┘  │
 └─────────────────────────────────────────┼───────────┘
@@ -33,52 +280,39 @@ Status: **plan** (nothing implemented yet).
                               HTTP (server-to-server)
                                           ▼
 ┌─ assistant (FastAPI) ───────────────────────────────┐
-│  /api/widget/*  — new "widget" module               │
-│   • TicketRepository / CatalogRepository (iTop API) │
-│   • LLM calls (summary, rerank, draft)              │
-│   • Redis: response cache + config + prompts        │
+│  /api/widget/*                                      │
+│   • commands (may write) / agent (read-only)        │
+│   • TicketRepository / CatalogRepository (iTop API)  │
+│   • Redis: checkpointer + response cache            │
 └─────────────────────────────────────────────────────┘
 ```
 
-### Key decision: PHP proxy, not direct browser→assistant calls
-
-The widget JS talks only to its own iTop origin; the iTop extension proxies
-whitelisted routes to the assistant. Rationale:
+### Why a PHP proxy rather than browser→assistant calls
 
 - **No secret in the browser.** `widget_token` lives in the iTop config file
   and is attached server-side.
 - **Engineer authn for free.** The proxy enforces the iTop backoffice session
   (`LoginWebPage::DoLogin()`); the assistant trusts the proxy and receives the
-  engineer's login in a header for audit/logging.
-- **No CORS, no mixed-content.** The assistant does not need to be reachable
-  from engineers' browsers at all — only iTop server → assistant (same
-  topology as webhooks, just reversed).
+  engineer's login in a header for audit.
+- **No CORS, no mixed content.** The assistant never needs to be reachable
+  from engineers' browsers — only iTop server → assistant, the same topology as
+  webhooks, reversed.
 
-Trade-off: no easy SSE streaming through the proxy. MVP endpoints are
-synchronous JSON with a spinner in the UI; streaming is a later phase (either
-chunked proxy or an optional direct-CORS mode).
+Trade-off: no easy SSE streaming through the proxy. Responses are synchronous
+JSON with a spinner; streaming is a later phase (chunked proxy or an optional
+direct-CORS mode).
 
-### Embedding into the iTop UI
+### iTop-side pieces
 
 iTop 3.x extension interfaces (module `knowitop-ai-widget`):
 
-- `iBackofficeLinkedScriptsExtension::GetLinkedScriptsAbsUrls()` — injects
-  `widget.js` on all backoffice pages.
-- `iBackofficeLinkedStylesheetsExtension::GetLinkedStylesheetsAbsUrls()` —
-  injects `widget.css`.
+- `iBackofficeLinkedScriptsExtension::GetLinkedScriptsAbsUrls()` → `widget.js`
+- `iBackofficeLinkedStylesheetsExtension::GetLinkedStylesheetsAbsUrls()` → `widget.css`
 
 `widget.js` self-activates only on object details pages: iTop 3.x renders
-`div.object-details[data-object-class][data-object-id]` — if the class is in
-the enabled list (fetched from the proxy `config` route), render the sidebar;
-otherwise do nothing. No server-side page hooks (`iApplicationUIExtension`)
-needed for the MVP — pure JS keeps the extension trivial and iTop-version
-tolerant.
-
-UI shape: a fixed toggle button at the right edge of ticket pages; clicking it
-slides out a collapsible panel with sections. Vanilla JS + CSS, one file each,
-no build step (same simplicity policy as `ui/`).
-
-### iTop extension layout (new top-level dir)
+`div.object-details[data-object-class][data-object-id]` — if the class is in the
+enabled list (fetched from the proxy's `config` route), render the panel;
+otherwise do nothing. No server-side page hooks needed.
 
 ```
 itop-extension/knowitop-ai-widget/
@@ -86,13 +320,12 @@ itop-extension/knowitop-ai-widget/
 ├── main.knowitop-ai-widget.php      # the two *LinkedScripts/Stylesheets classes
 ├── ajax.knowitop-ai-widget.php      # session-guarded proxy to the assistant
 └── asset/
-    ├── widget.js                    # all UI logic, vanilla JS
+    ├── widget.js                    # panel host + context extraction
     └── widget.css
 ```
 
-iTop-side configuration (`config-itop.php` module_settings):
-
 ```php
+// config-itop.php module_settings
 'knowitop-ai-widget' => array(
     'assistant_url' => 'http://assistant:8000',   // server-to-server URL
     'widget_token'  => '<same value as assistant security.widget_token>',
@@ -102,262 +335,229 @@ iTop-side configuration (`config-itop.php` module_settings):
 Proxy contract (`ajax.knowitop-ai-widget.php`):
 
 - `LoginWebPage::DoLogin()` — backoffice session required.
-- `?route=` whitelist: `config`, `context`, `summary`, `similar`,
-  `draft-reply`; anything else → 404. `class`/`id` passed through as-is —
-  the assistant re-fetches the ticket from iTop anyway (system of record),
-  so a tampered id leaks nothing the engineer could not open in iTop itself.
-  (Optional hardening later: `UserRights::IsObjectAllowedRead()` per id.)
-- Adds headers: `X-Auth-Token: widget_token`,
+- `?route=` whitelist: `config`, `commands`, `query`; anything else → 404.
+  `class`/`id` pass through as-is — the assistant re-fetches the ticket from
+  iTop anyway (system of record), so a tampered id leaks nothing the engineer
+  could not open in iTop directly. (Optional hardening:
+  `UserRights::IsObjectAllowedRead()` per id.)
+- Adds `X-Auth-Token: widget_token` and
   `X-Itop-User: UserRights::GetUserLogin()`.
-- Forwards JSON body for POST routes; returns assistant's status/body
-  verbatim; maps network errors to 502 with a short JSON error.
+- Forwards the JSON body; returns the assistant's status/body verbatim; maps
+  network errors to 502 with a short JSON error.
 
 Deployment note: in the dev compose, mount `itop-extension/` into the iTop
-container's `extensions/` dir and re-run the iTop setup once to register the
-module (iTop requires setup to pick up new modules).
+container's `extensions/` dir and re-run the iTop setup once — iTop only picks
+up new modules through setup.
 
 ---
 
-## 2. Backend: new "widget" module
+## 5. Access control
 
-Not a webhook pipeline — a synchronous query API. Lives in `src/widget/`
-(peer of `src/admin/`), but registers a `ModuleInfo` (with an empty route
-map) so its config and prompts show up in the existing admin UI machinery.
+Auth on `/api/widget/*` is `X-Auth-Token` == `security.widget_token` (a new
+secret field; `None` = auth disabled plus a startup warning, same policy as
+`webhook_token`). While the console is admin-UI-only, the existing admin token
+covers it and `widget_token` can wait for the iTop extension.
 
-```
-assistant/src/widget/
-├── __init__.py
-├── router.py      # FastAPI router /api/widget/*, X-Auth-Token check
-├── service.py     # WidgetService: ticket fetch, LLM calls, caching
-└── prompts.py     # WidgetPrompts + PROMPT_VARIABLES registry (mirrors agents/intake/prompts.py)
-assistant/prompts/widget/
-├── summary_system.md / summary_human.md
-├── similar_keywords_system.md / similar_keywords_human.md
-├── similar_rerank_system.md / similar_rerank_human.md
-└── draft_reply_system.md / draft_reply_human.md
-```
+`X-Itop-User` is logged with every request — which engineer asked for what.
+The prototype already logs a client-supplied `user` field; that is acceptable
+for a debug console behind the admin token and **must** become the
+proxy-supplied header before the iTop extension ships, since a
+client-supplied login is not an audit trail.
 
-### Endpoints
+**Retrieval, once vector mode exists, does not get to define its own rights
+model.** The three-layer scheme in [vector-store.md §4](vector-store.md) holds:
+an org/visibility pre-filter in SQL is an optimization, and the authoritative
+check is an iTop-side `check-read` oracle route executed in the engineer's own
+session before any candidate content reaches the engineer *or an LLM prompt*.
+The agent path makes that stricter, not looser: content the agent pulls into
+its context has to clear the same check, because the model will paraphrase it
+into the reply.
 
-All under `/api/widget`, auth via `X-Auth-Token` == `security.widget_token`
-(new secret field; `None` = auth disabled + startup warning, same policy as
-webhook_token). Responses are plain JSON.
+---
 
-| Endpoint | LLM | Purpose |
-|---|---|---|
-| `GET /api/widget/config` | no | Bootstrap for widget.js: enabled flag, enabled classes, feature flags. |
-| `GET /api/widget/tickets/{class}/{id}/context` | no | Ticket snapshot (ref, title, status) + AI activity: `TicketState` (rounds, ai_done) + recent `RunJournal` entries for this ticket. Rendered as the "AI activity" section. |
-| `GET /api/widget/tickets/{class}/{id}/summary` | yes | Summary of description + public log. Cached. |
-| `GET /api/widget/tickets/{class}/{id}/similar` | yes | Similar resolved/closed tickets with solution excerpts. Cached. |
-| `POST /api/widget/tickets/{class}/{id}/draft-reply` | yes | Body `{"instruction": "optional engineer hint"}` → draft public reply text. Not cached. |
+## 6. UX
 
-Response sketches:
+The console is one text field, not a row of per-feature buttons. Two rules keep
+it from reading as an opaque chat:
 
-```jsonc
-// context
-{"ticket": {"ref": "R-000123", "title": "...", "status": "new"},
- "ai": {"ai_done": true, "rounds": 1, "classify_rounds": 0,
-        "runs": [{"run_id": "...", "status": "completed", "steps": [...]}]}}
+- **Visible tool trail.** An agent reply carries small chips above it naming
+  the tools it used ("🔍 similar tickets → 📄 service context"), so the
+  engineer can tell "the model decided this from these sources" from the output
+  of a deterministic command. The response needs a `tools_used` field for this;
+  `describe_ai_message` (`agents/intake/agent.py`) is the existing precedent for
+  turning a model turn into a readable line.
+- **`/help` from the registry.** The console lists commands (and their
+  descriptions) from `GET /api/widget/commands`, so a newly registered command
+  is discoverable without a frontend change.
 
-// summary
-{"summary": "markdown text", "cached": false}
+Everything LLM-backed is **on demand** — a submitted line. Nothing is computed
+because a page opened; `config` and `commands` are free reads. The input is
+disabled while a request is in flight.
 
-// similar
-{"items": [{"obj_class": "UserRequest", "id": "42", "ref": "R-000042",
-            "title": "...", "solution_excerpt": "...", "reason": "same error code"}],
- "cached": true}
-// URLs are built client-side (same origin): /pages/UI.php?operation=details&class=..&id=..
+Draft replies are inserted into the engineer's own case-log textarea (or copied
+to the clipboard) — the engineer reviews, edits and posts under their own name.
+Widget output is advice, not action.
 
-// draft-reply
-{"reply": "text the engineer can paste into the public log"}
-```
+---
 
-The `X-Itop-User` header is logged with every request (audit trail: which
-engineer asked for what).
+## 7. Caching and cost control
 
-### Similar tickets — MVP retrieval (no embeddings)
-
-Two-step, LLM-assisted, everything read fresh from iTop:
-
-1. **Keyword extraction** (`similar_keywords` prompt): LLM pulls 3–5 search
-   terms from the ticket title/description.
-2. **Candidate search**: OQL over resolved/closed tickets of the same class —
-   `title LIKE '%kw%'` per keyword (OR-joined), optional same-service boost,
-   `limit` = `similar_max_candidates` (default 30). OQL template is config
-   (`widget.similar_oql`) with the same `:this->field` binding as the
-   classify OQLs; keyword interpolation escapes quotes.
-3. **Re-rank** (`similar_rerank` prompt): LLM gets candidate titles +
-   solution excerpts and the current ticket, returns top-N (default 5) with a
-   one-line relevance reason. Non-parseable LLM output degrades to the raw
-   OQL order.
-
-`TicketRepository` gains: semantic fields `solution` (+ mapping entry in
-`TicketFieldMap`, default `"solution"`) and a
-`search(oql, bind_ticket, limit)` read method returning lightweight `Ticket`
-objects. Nodes/services still never see iTop attribute names.
-
-**Phase 2+ (explicitly out of MVP): embeddings.** Redis 8 ships vector search
-in core, so a background indexer (ticket ref + embedding only, rebuildable,
-TTL-managed) is feasible without new infrastructure — but it deviates from
-the "never store iTop data locally" principle and needs its own design pass
-(indexing triggers, backfill, redaction). Keyword+rerank first; measure
-quality before paying that complexity.
-
-### Caching & cost control
-
-- Redis cache per feature: `widget:cache:{feature}:{class}:{id}` →
-  `{content_hash, payload, ts}`; `content_hash` covers title, description and
-  public-log length, so a new comment invalidates naturally. TTL
+- Redis cache per command: `widget:cache:{command}:{class}:{id}` →
+  `{content_hash, payload, ts}`, where `content_hash` covers title, description
+  and public-log length, so a new comment invalidates naturally. TTL
   `widget.cache_ttl_minutes` (default 60).
-- All LLM features are **on demand** (engineer clicks a button); nothing is
-  computed just because a page opened. `context` and `config` are free reads.
-- UI disables buttons while a request is in flight; a Redis per-ticket lock
-  against concurrent duplicate LLM calls is a later hardening step.
+- The agent path is **not** cached — it is a conversation, and the checkpointer
+  is its state. `max_iterations` is the cost ceiling per turn.
+- A per-ticket in-flight lock against duplicate concurrent LLM calls is a later
+  hardening step; the disabled input covers the common case.
 
-### Config section (`config.py`)
+---
+
+## 8. Config
 
 ```python
 class WidgetConfig(BaseModel):
     enabled: bool = True
     classes: list[str] = ["UserRequest", "Incident"]
-    summary_enabled: bool = True
-    similar_enabled: bool = True
-    draft_reply_enabled: bool = True
-    similar_statuses: list[str] = ["resolved", "closed"]
-    similar_max_candidates: int = 30
-    similar_top_n: int = 5
-    similar_oql: str = _WIDGET_SIMILAR_OQL
-    # Per-feature model overrides; None falls back to the global llm.model
+    # Free-text agent path
+    agent_enabled: bool = True
+    agent_model: str | None = None      # None = global llm.model
+    max_iterations: int = 6
+    memory_ttl_minutes: int = 60 * 24   # checkpointer TTL (minutes — see §2.3)
+    # Slash commands
     summary_model: str | None = None
-    similar_model: str | None = None
-    draft_model: str | None = None
+    # Similar tickets — semantic search only; the feature reports itself
+    # unavailable when the vector index is not there (§3)
+    similar_statuses: list[str] = ["resolved", "closed"]
+    similar_candidates: int = 15         # KNN over-fetch before the rerank
+    similar_top_n: int = 5
     cache_ttl_minutes: int = 60
 ```
+
+No `similar_backend`: there is one retrieval path. Whether similar-tickets works
+is a question about the infrastructure (`database_url`, the `embeddings` section,
+`vector.enabled`, a non-empty index), and those already have their own settings —
+a `widget.*` flag on top of them would only add a second place to get it wrong.
 
 Plus `SecurityConfig.widget_token: str | None` (added to `SECRET_FIELDS`;
 editable through the existing `/api/setup/security` endpoint and the
 Connections UI with zero extra backend work).
 
-Runtime-editable like the intake module: `widget.*` via `/api/config/widget`,
-prompts via `/api/prompts/widget` — both come free from the `ModuleInfo`
-registration.
-
-### Human-in-the-loop guarantees
-
-The widget is **read-only towards iTop**. It never posts to logs or updates
-fields. The draft reply is inserted client-side into the engineer's case-log
-textarea (or copied to clipboard) — the engineer reviews, edits, and posts it
-under their own name. This keeps the existing "AI acts as a named user" and
-HITL principles intact: widget output is advice, not action.
+`agent_enabled` earns its place: it is the switch that turns the console back
+into a pure command dispatcher if the agent misbehaves in a deployment, without
+a redeploy. All of it is runtime-editable through `/api/config/widget`, prompts
+through `/api/prompts/widget` — both free from the `ModuleInfo` registration.
 
 ---
 
-## 3. Feature priorities (Service Desk rationale)
+## 9. Implementation stages
 
-MVP order — value vs. effort for a service desk engineer:
+### Stage 0 — land the prototype
+- [ ] Rebase `widget-debug-console` onto `main` (the branch predates the
+      enrichment deletion; its `strip_thinking` move is already on `main`).
+- [ ] Rename `WidgetService._COMMANDS` into the `CommandRegistry` of §2.1,
+      `/summary` as its first entry; `GET /api/widget/commands`.
+- [ ] Console renders `/help` from that endpoint.
+- [ ] Tests: registry (unknown command → 400, listing), `/summary` unchanged.
 
-1. **AI activity panel** (`context`) — zero LLM cost, instant trust-builder:
-   shows what the assistant already did (classification, questions asked,
-   the handoff note) without digging through logs.
-2. **Similar past tickets + how they were resolved** — the single biggest
-   time-to-resolution lever: reuses the team's institutional memory that
-   today lives only in closed tickets.
-3. **Conversation summary** — cheap and valuable on long threads,
-   reassignments, and escalations ("catch me up in 10 seconds").
-4. **Draft reply** — speeds up the most repetitive part of the job; safe
-   because the engineer posts it themselves.
+Exit criterion: same behaviour as the prototype, extensible shape.
 
-Later phases (in rough order):
+### Stage 1 — the agent path
+- [ ] `widget/context.py`, `widget/tools.py` with `get_ticket_context` and
+      `get_service_context` (read-only), a `ToolRejection` equivalent and a
+      `_tool_gate`-shaped middleware.
+- [ ] `widget/agent.py`: `create_agent` + `ModelCallLimitMiddleware`, no forced
+      `tool_choice`; router dispatches non-slash input here when
+      `agent_enabled`.
+- [ ] Response carries `tools_used`; console renders the trail chips.
+- [ ] Prompts: `agent_system.md` with the placeholder registry and startup
+      validation via `ModuleInfo.validate_prompts`.
+- [ ] Tests: a scripted `FakeToolCallingModel` as in `test_intake_agent.py`
+      (langchain-core's ready-made fakes leave `bind_tools` unimplemented);
+      assert no writing tool is reachable and that `tool_choice` is *not*
+      forced.
 
-5. **Suggested resolution / next actions** — synthesized from similar tickets'
-   solutions; needs quality similar-search first.
-6. **KB article matching** (iTop `FAQ` class) — same retrieval machinery,
-   different corpus.
-7. **KB draft from a resolved ticket** — "this ticket looks KB-worthy" +
-   generated draft (feeds the knowledge-base-automation vision).
-8. **Embeddings retrieval** (Redis vector search) — replaces keyword search
-   when its quality ceiling is hit.
-9. **Feedback buttons** (👍/👎 per suggestion → journal) — data for prompt
-   tuning.
-10. **Streaming** responses for summary/draft (chunked proxy or direct mode).
+Note the consequence of dropping the keyword path: at this stage the agent has
+only ticket and service context to work with — enough to answer "catch me up"
+and "what has the assistant already done", not enough for "has anyone seen this
+before". It becomes genuinely useful at Stage 3. Ship it anyway; the loop, the
+tool trail and the memory are what need real-engineer feedback, and they can get
+it on the two cheap tools.
 
----
+### Stage 2 — memory
+- [ ] Pick the checkpointer backend (§2.3), add the dependency, expose it on
+      `AppDeps` (created in `build_deps`, `asetup()` in the lifespan, closed in
+      `aclose()`).
+- [ ] `thread_id = ticket.label`; `memory_ttl_minutes` wired.
+- [ ] A console "reset conversation" action that drops the thread.
+- [ ] Tests: two turns share context; a third after a reset does not.
 
-## 4. Implementation stages
+### Stage 3 — similar tickets (blocked on vector-store Stage 4)
+Prerequisite, not part of this stage: `vector/retriever.py` — embed → filtered
+KNN → fresh fetch. Until it exists there is nothing to build here, and there is
+deliberately no reduced version that ships earlier (§3).
+- [ ] `TicketFieldMap.solution` + `TicketRepository.fetch_many(obj_class, ids)`.
+- [ ] `find_similar_tickets` tool and `/similar` command over the retriever;
+      `similar_candidates` over-fetch → `similar_rerank` prompt →
+      `similar_top_n` with reasons; degrade to raw KNN order on parse failure.
+- [ ] Unavailability is a message, not silence: no Postgres / no embeddings /
+      `vector.enabled` off / empty index each produce a stated reason, and
+      `/similar` disappears from `/help` while it cannot work.
+- [ ] Tests: score aggregation per object, filter composition, rerank parse
+      fallback, and each unavailability branch returning its reason rather than
+      an empty list.
 
-### Stage 0 — end-to-end spike (embedding proof)
-- [ ] `itop-extension/knowitop-ai-widget/`: module + main + ajax + empty panel
-      JS/CSS; `config` route proxied to assistant `/health`.
-- [ ] Compose: mount `itop-extension/` into the iTop container, document the
-      one-time setup re-run.
-- [ ] Verify: panel appears on UserRequest/Incident details only; proxy
-      reaches the assistant; unauthenticated browser hit on ajax page is
+### Stage 4 — writing commands
+- [ ] `/draft` (draft reply, returned for the engineer to post) and `/note`
+      (writes a private-log note) — the first `read_only=False` command, so
+      this is where the flag starts doing work.
+- [ ] Audit: writing commands recorded with the engineer login. Consider
+      journalling widget queries as `module="widget"` runs — `ProcessingRun`
+      already has the field, so they would appear in the existing Runs screen
+      for free.
+- [ ] Tests: endpoint + prompt placeholders; a read-only command cannot reach
+      a mutating repository method.
+
+### Stage 5 — into iTop
+- [ ] `itop-extension/knowitop-ai-widget/`: module + main + ajax proxy;
+      `widget.js` hosting the console; `security.widget_token`;
+      `X-Itop-User` replacing the client-supplied login.
+- [ ] Compose: mount `itop-extension/`, document the one-time setup re-run.
+- [ ] Verify: panel appears on UserRequest/Incident details only; the proxy
+      reaches the assistant; an unauthenticated browser hit on the ajax page is
       rejected.
+- [ ] `docs/widget.md`: extension install, config snippet, token wiring;
+      README feature mention.
 
-Exit criterion: sidebar renders inside iTop and gets JSON from the assistant
-through the proxy. Everything after this is incremental.
-
-### Stage 1 — backend module skeleton
-- [ ] `SecurityConfig.widget_token`; `WidgetConfig` in `config.py`.
-- [ ] `src/widget/router.py`: auth dependency, `GET /config`,
-      `GET /tickets/{class}/{id}/context` (TicketState + RunJournal reads;
-      journal needs a "runs by ticket ref" lookup if not already there).
-- [ ] Register `ModuleInfo(name="widget", routes={})` in `build_registry`.
-- [ ] Tests: `test_widget_api.py` — auth on/off, config, context happy path
-      + unknown class.
-
-### Stage 2 — summary
-- [ ] `prompts/widget/summary_*.md`, `src/widget/prompts.py` with placeholder
-      registry; startup validation via the module's `ModuleInfo.validate_prompts`.
-- [ ] `WidgetService.summary()`: fetch ticket, html→markdown (reuse
-      `text_utils.html_to_markdown` / `strip_thinking` — promoted out of
-      enrichment when it was deleted; `extract_xml_field` / `drop_xml_field`
-      went with it, see git history if XML-field parsing is needed again),
-      LLM call, `strip_thinking`, Redis cache.
-- [ ] UI: Summary section with "Generate" button, loading state, error state.
-- [ ] Tests: caching behavior (hash invalidation), prompt validation.
-
-### Stage 3 — similar tickets
-- [ ] `TicketFieldMap.solution` + `TicketRepository.search()`.
-- [ ] Keyword extraction + OQL candidates + rerank in `WidgetService`;
-      quote-escaping for keywords; degrade to raw order on parse failure.
-- [ ] UI: Similar section — ref/title links (same-origin URL), solution
-      excerpt, relevance reason.
-- [ ] Tests: OQL building/escaping, rerank parse fallback, empty results.
-
-### Stage 4 — draft reply
-- [ ] `draft_reply` prompt + endpoint (instruction passthrough, optional
-      inclusion of top similar solutions in context).
-- [ ] UI: instruction input, "Generate", then "Copy" + "Insert into reply"
-      (fills the case-log textarea — best-effort DOM integration, Copy is the
-      guaranteed path).
-- [ ] Tests: endpoint + prompt placeholders.
-
-### Stage 5 — polish & docs
-- [ ] Admin UI: widget section appears in Modules/Prompts (should be mostly
-      free via ModuleInfo; verify and fix gaps).
-- [ ] Setup docs: `docs/widget.md` — extension install, config file snippet,
-      token wiring; README feature mention.
-- [ ] Extension i18n pass (strings table in widget.js is enough; iTop Dict
-      files only if we later render server-side).
-- [ ] Hardening: per-ticket in-flight lock; proxy timeout/502 mapping review.
+### Stage 6 — hardening and beyond
+- [ ] Rights oracle (`check-read`) and the two-leg flow
+      ([vector-store.md §4](vector-store.md)) — required before the console
+      leaves the admin UI, since retrieved content reaches both the engineer and
+      the model's context.
+- [ ] `search_kb` over iTop `FAQ`; "this ticket looks KB-worthy" + draft.
+- [ ] Feedback chips (👍/👎 per reply → journal) as prompt-tuning data.
+- [ ] Streaming (chunked proxy or direct mode) if wait time becomes a complaint.
 
 ---
 
-## 5. Open questions / assumptions
+## 10. Open questions / assumptions
 
 - **iTop version**: assumes 3.x backoffice (`data-object-class` DOM markers,
   `iBackofficeLinkedScriptsExtension` — 3.0+). 2.7 is out of scope.
-- **Backoffice only**: no end-user portal widget in this plan.
-- **Widget token distribution is manual** (iTop config file). Provisioning
-  via `POST /provision-itop` can't write iTop config files — acceptable,
-  documented step.
-- **Journal lookup by ticket**: `context` needs runs filtered by ticket ref;
-  if `RunJournal` only supports listing, add a secondary index
-  (`runs:by_ref:{ref}`) in Stage 1.
-- **`solution` field on Incident**: stock iTop has it on both UserRequest and
+- **Backoffice only**: no end-user portal console in this plan. A portal
+  version would need §5 re-run with the portal rights model in scope.
+- **Widget token distribution is manual** (iTop config file).
+  `POST /provision-itop` cannot write iTop config files — accepted, documented.
+- **`thread_id = ticket.label` means one conversation per ticket**, shared by
+  every engineer who opens it. That is probably right for a service desk (the
+  next engineer sees the reasoning), but it is a decision, not a detail — if it
+  turns out wrong, the key becomes `f"{ticket.label}:{engineer_login}"`.
+- **`solution` on Incident**: stock iTop has it on both UserRequest and
   Incident; customized datamodels handle it via `ticket_mapping`
-  class_overrides as usual.
+  `class_overrides` as usual.
+- **Prompt-editing story for the agent**: the system prompt is a prompt file,
+  but tool docstrings are code — the same split as intake, and worth stating in
+  `docs/prompts.md` when this ships.
 
 ## References
 

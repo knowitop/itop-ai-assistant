@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Called by docker-publish.yml so a release build cannot skip the gates.
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Lint, type-check, test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: assistant
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        # Pinned to an exact tag: astral-sh does not publish a moving `v9`.
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: assistant/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint (ruff check)
+        run: uv run ruff check --output-format=github .
+
+      - name: Format (ruff format --check)
+        run: uv run ruff format --check .
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('assistant/.pre-commit-config.yaml') }}
+
+      # The real type gate is the pre-commit hook: mirrors-mypy runs mypy in its
+      # own venv (without langchain & co), which catches things that the more
+      # permissive `uv run mypy src` lets through.
+      - name: Type check (mypy via pre-commit)
+        run: uv run pre-commit run mypy --all-files --show-diff-on-failure
+
+      # `test/integration` is deliberately excluded — it needs a real LLM endpoint.
+      - name: Unit tests
+        run: uv run pytest --cov=src --cov-report=term-missing -o log_cli=false
+
+      # Testcontainers spins up pgvector/pgvector:pg17 — the runner has a Docker daemon.
+      - name: Postgres/pgvector tests
+        run: uv run pytest test/pg -o log_cli=false
+
+  ui:
+    name: Build admin UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `npm run build` is `tsc --noEmit && vite build` — this is the TS gate too.
+      - name: Build
+        run: npm run build

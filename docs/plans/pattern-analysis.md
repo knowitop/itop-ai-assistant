@@ -7,8 +7,11 @@ category/volume trends, and KB gaps. Builds directly on the
 `pgvector` are the clustering input) and feeds both the admin UI and the
 [engineer widget](engineer-widget.md).
 
-Status: **plan** (nothing implemented yet). Depends on vector-store
-Stages 1–3; one detector (metadata trends) works without vectors at all.
+Status: **plan** (nothing implemented yet). The vector-store dependency is
+satisfied on the write side — the index and its background sweep are built —
+so what this plan needs from there is the retrieval path (vector-store
+Stage 4). One detector (metadata trends) works without vectors at all and
+could be built today.
 
 ---
 
@@ -35,8 +38,8 @@ Stages 1–3; one detector (metadata trends) works without vectors at all.
 
 ```
 ┌─ Postgres (pgvector) ──────────────────────────────────┐
-│ vector_chunk_v{N} (embeddings + org/status/service     │  ← vector store (built)
-│                    columns)                            │
+│ vector_chunk_v{N} (embeddings + org/status/filters     │  ← vector store (built)
+│                    columns, no raw text)               │
 │ insights_baseline / insights_cluster / insights_report │  ← this plan (durable, queryable)
 └──────────────┬─────────────────────────────────────────┘
                │ read vectors & metadata (SQL; no iTop load)
@@ -57,7 +60,8 @@ Stages 1–3; one detector (metadata trends) works without vectors at all.
 overrides and the run journal — it is simply no longer where insights live.)
 
 Key reuse: the analysis input is **the index we already maintain** — vectors
-plus `obj_class/status/service_id/org_id/created_at` columns. Jobs do not
+plus the `obj_class/status/org_id/created_at` columns and the source-defined
+`filters` jsonb (tickets write `{"service_id": …}` there). Jobs do not
 re-read the ticket mass from iTop; only cluster *exemplars* (a handful of
 representative tickets per cluster) are fetched fresh for LLM labeling and
 display, which also re-applies the "iTop is the source of truth" rule.
@@ -85,7 +89,7 @@ exceeds a configured threshold and the absolute count exceeds a floor
 Data source: OQL aggregate reads over recent windows (`SELECT … WHERE
 start_date > …`, minimal output_fields, paged) — cheap enough daily; no
 dependence on the vector index at all. **The daily counts land in Postgres**
-(`insights_counts (env, day, class, service, subcategory, org, n)`), and the
+(`insights_counts (day, class, service, subcategory, org, n)`), and the
 baseline is a *query*, not a hand-rolled rolling hash:
 `GROUP BY … , extract(dow FROM day)` with `date_trunc`/window functions over
 the trailing weeks. This is the concrete payoff of the datastore fork — the
