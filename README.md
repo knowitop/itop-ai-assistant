@@ -1,5 +1,7 @@
 # iTop AI Assistant
 
+[![CI](https://github.com/knowitop/itop-ai-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/knowitop/itop-ai-assistant/actions/workflows/ci.yml)
+
 AI-powered middleware for [Combodo iTop](https://www.itophub.io/) that reduces ticket back-and-forth and helps engineers start working faster.
 
 ---

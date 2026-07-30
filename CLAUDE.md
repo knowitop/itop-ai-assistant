@@ -100,6 +100,15 @@ uv run pre-commit run --all-files
 cd docker && docker-compose up -d
 ```
 
+**CI (`.github/workflows/ci.yml`)** runs on every push to `main` and every PR,
+and gates the image publish (`docker-publish.yml` calls it via
+`workflow_call`). It runs `ruff check`, `ruff format --check`,
+`pre-commit run mypy --all-files` (the strict gate — *not* `uv run mypy src`),
+`pytest --cov` and `pytest test/pg`, plus `npm run build` for the UI in a
+parallel job. `test/integration` needs a real model endpoint and is excluded.
+Before pushing, the same gates locally are `uv run pre-commit run --all-files`
+and `uv run pytest`.
+
 ## Architecture
 
 ### Request Flow

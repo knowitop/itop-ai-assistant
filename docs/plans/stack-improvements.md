@@ -31,26 +31,33 @@ These constraints look like limitations but are load-bearing — keep them:
 
 ---
 
-## 1. Two quick wins
+## 1. Quick wins
 
-### 1.1 CI that runs the tests (biggest process gap, still open)
+### 1.1 CI that runs the tests — **done**
 
-`.github/workflows/` has **only `docker-publish.yml`** — the extensive test
-suite, `ruff`, and `mypy` never run on a push or PR. The image publishes
-whether or not tests pass.
+Was the biggest process gap: `.github/workflows/` held only
+`docker-publish.yml`, so the test suite, `ruff` and `mypy` never ran on a push
+or a PR, and the image published whether or not tests passed.
 
-- Add a `ci.yml`: `uv sync`, `ruff check`, `ruff format --check`, `mypy src`,
-  `pytest --cov`; matrix on the one supported Python. Gate `docker-publish`
-  on it.
-- Note the mypy trap when writing it: the real gate is
-  `pre-commit run mypy --all-files`, which runs mypy in its own venv without
-  langchain. `uv run mypy src` is more permissive and will pass things CI
-  should catch.
-- `test/pg` needs a Docker daemon (Testcontainers) — available on GitHub
-  runners, so it can join the same job. `test/integration` needs a real model
-  endpoint and stays out of CI.
-- Effort: ~1 hour. Payoff: every future plan lands with a safety net instead
-  of on trust. **Do this first, before writing any new module.**
+`ci.yml` now runs on push to `main` and on every PR, in two parallel jobs:
+
+- **python** (`assistant/`): `uv sync --frozen` → `ruff check` →
+  `ruff format --check` → mypy → `pytest --cov` → `pytest test/pg`.
+  Single Python (3.13), no matrix — one version is supported.
+- **ui**: `npm ci` + `npm run build`, which is `tsc --noEmit && vite build` —
+  the TypeScript gate the release build depends on.
+
+Three details worth keeping in mind when touching it:
+
+- mypy runs as `pre-commit run mypy --all-files`, not `uv run mypy src`. The
+  hook runs mypy in its own venv without langchain, and is the stricter of the
+  two; `uv run mypy src` would pass things CI should catch.
+- `test/pg` joins the same job — Testcontainers needs a Docker daemon and the
+  GitHub runner has one. `test/integration` needs a real model endpoint and
+  stays out of CI.
+- `docker-publish.yml` calls `ci.yml` via `workflow_call` and gates
+  `build-and-push` on it (`needs: ci`), so a tag cannot publish an image that
+  fails the suite.
 
 ### 1.2 LLM tracing — see inside the black box
 
