@@ -14,25 +14,47 @@ The first-run wizard ([detailed walkthrough](setup.md#setup-wizard)). On a confi
 
 ## Connections
 
-Fine-grained editing of the iTop, LLM and security settings after initial setup. Changes apply immediately without a restart. Each section can be reset to its environment defaults.
+Fine-grained editing of every connection section after initial setup — iTop, LLM, embeddings, security and the iTop datamodel mapping. Changes apply from the next processed ticket without a restart, and each section can be reset to its environment defaults.
 
 ### iTop tab
 
 - **REST API URL**, API version, request timeout
 - **Auth method** — application token or username + password; secrets are write-only (shown as "set" / "not set")
-- **Test connection** — probes the current saved settings without saving changes
+- **Test connection** — probes the values currently in the form without saving anything; secrets you have not retyped are taken from the stored config, so you can re-test without re-entering the password. A successful probe returns the login of the account behind the credentials — check that it is the AI service account
 - **iTop webhooks** — the same provisioning form as in the setup wizard step 3; useful for re-provisioning after a URL or token change
 
 ### LLM tab
 
-- **Base URL**, model name, API key
+- **Provider** — how the model is reached (`openai_compatible`, `openai`, `google_genai`, `ollama`). The form follows the choice: fields the provider does not use are hidden, and the base-URL placeholder changes with it. See [supported providers](configuration.md#supported-llm-providers)
+- **Base URL**, model name, API key — shown only where the selected provider needs them
+- **Model parameters** — free-form JSON forwarded to the client as-is: `{"temperature": 0.2, "max_tokens": 2048}`. Connection fields (`model`, `base_url`, `api_key`) are rejected here — they have their own inputs
+- **Endpoint accepts a forced `tool_choice`** — visible only for `openai_compatible`, where the answer depends on the actual server behind the URL (vLLM and LiteLLM accept it, DeepSeek returns HTTP 400). For the named providers the answer is built in and there is nothing to set. See [Forced tool calls](configuration.md#forced-tool-calls)
 - **Think tags** — tag names stripped from model responses as reasoning blocks (default: `think`, `thinking`, `reasoning`); relevant for reasoning models like DeepSeek-R1 or Qwen3
-- **Test LLM** — sends a test request to verify the model responds
+- **Test LLM** — sends a test request and reports three things: that the model answered, that it can call a tool, and — when forcing is switched on — whether the endpoint accepted the forced `tool_choice`
+
+Model parameters and the `tool_choice` switch live here only, not in the setup wizard: the wizard gets you to a working state, fine-tuning belongs in Connections.
+
+### Embeddings tab
+
+Only needed for the optional [vector index](#vector-index) — leave it empty for a plain intake deployment.
+
+- **Base URL**, model, API key — an OpenAI-compatible `/v1/embeddings` endpoint. The model must be **multilingual** (tickets are usually mixed-language), e.g. `bge-m3`
+- **Dimension** — must match what the model actually returns
+- **Batch size** — texts per request (default `32`)
+- **Test embeddings** — embeds a probe text, reports the endpoint's real vector dimension and whether it matches the Dimension field
 
 ### Security tab
 
 - **Webhook Token** and **Admin Token** — write-only fields with generate, copy and clear buttons
 - Clearing the admin token puts the API back into open (unauthenticated) mode — a confirmation is required
+
+### Ticket mapping tab
+
+How semantic ticket fields map onto your iTop datamodel — edit this instead of the code when iTop has been customized:
+
+- `fields` — semantic name → iTop attribute code (`null` = the attribute does not exist)
+- `class_overrides` — per-class differences (e.g. `Incident` has no `request_type`)
+- `active_statuses` — the statuses in which the assistant is allowed to act
 
 ---
 
@@ -82,6 +104,25 @@ The processing journal — a filterable list of every ticket the assistant has h
 - **Filter by status** — `running`, `done`, or `failed`
 - The list auto-refreshes every 5 seconds while any run is in progress
 
-Click a row to see the step-by-step timeline: which processing node ran, when, and what it did. Failed runs show the full error text.
+Click a row to see the step-by-step timeline of the agent session:
+
+| Step | What it shows |
+|------|---------------|
+| `lock` / `guard` | Why a run stopped before reaching the model (already processed, engineer assigned, last comment was ours) |
+| `agent` | One model turn: which tools it called and with which arguments, or the text it wrote when it called nothing |
+| `tool:<name>` | The result of that call — `[success]` or `[error]` plus the text the tool sent back to the model |
+| `usage` | Model calls, tokens in/out and wall time for the whole run |
+
+Failed runs show the full error text.
 
 The `processing_id` returned by `POST /webhook` can be used to find the exact run — the interactive API docs at `http://localhost:8001/docs` describe all available endpoints.
+
+---
+
+## Vector index
+
+Optional — the screen only does something when `DATABASE_URL` points at a Postgres with `pgvector`. This is infrastructure for upcoming semantic-search features; nothing in the current intake flow reads the index.
+
+**Status tab** — badges for database, embeddings and indexer state; the active index version with row count and size on disk; the per-class sweep cursors and the last reconciliation; and a table of recent indexing runs (objects seen, chunks embedded, chunks deleted, duration). **Reindex** schedules a full rebuild — every object is re-embedded, so it can take a while and load the embeddings endpoint. A warning appears if the index was built with a different embeddings model or dimension than the current config: incomparable vectors are never mixed, so a rebuild is the only way forward.
+
+**Settings tab** — whether indexing is on (applies from the next sweep, no restart), the sweep interval / page size / throttle, the reconciliation interval, chunk token budget, and per-class settings: which values of the class's relevance attribute keep an object in the index (empty = index everything) and the chunking profile (chunk kind → semantic fields).

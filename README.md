@@ -14,16 +14,17 @@ Engineers waste time on tickets that arrive without enough information: vague de
 
 > **The engineer sees the ticket only when it's ready to work on.**
 
-When a new ticket arrives, the assistant intercepts it via webhook — no changes to iTop itself are needed. It works in two stages:
+When a new ticket arrives, the assistant intercepts it via webhook — no changes to iTop itself are needed. Processing runs as a **single AI agent** that decides what the ticket needs and acts through a fixed set of tools:
 
-1. **Classify** — if the ticket has no service or subcategory set, the assistant queries iTop for the available options and picks the best match based on the title and description. If it cannot determine the right category confidently, it posts one clarifying question in the public log and waits for the user to reply.
+- **Classify** — if the ticket has no service or subcategory, the agent reads the service catalog from iTop and writes the best match back to the ticket. The classification tools validate every id against the catalog, so the agent cannot invent a category.
+- **Ask** — if the ticket is too vague to classify or to work on, the agent posts exactly **one** focused clarifying question in the public log and stops. The user replies through the portal as usual, which triggers a new webhook and a fresh round. Two rounds at most per stage, then the ticket moves on with whatever is available.
+- **Hand off** — once the picture is clear, the agent writes a structured internal note for the engineer and marks the ticket done.
 
-2. **Evaluate** — once the category is known, the assistant uses the subcategory's description as the completeness criteria. This means the questions it asks are specific to the service context, not generic prompts.
+The subcategory's own **description** in iTop is what the agent treats as the completeness criteria — so the questions it asks are specific to the service context, not generic prompts.
 
-- If the description is **complete** — it generates a structured internal note for the engineer and marks the ticket ready.
-- If the description is **incomplete** — it posts one focused clarifying question in the iTop public log. The user replies through the portal as usual, the assistant re-evaluates and either asks one follow-up or hands the ticket to an engineer. Maximum two rounds per stage.
+The agent decides the order; the tools enforce the rules. The round limits, the "one question per run" rule and the "stop once an engineer takes the ticket" guard are plain code, not instructions in a prompt — a model that misbehaves gets its call rejected rather than the ticket damaged.
 
-All AI actions are performed under a dedicated iTop service account, so every comment is clearly attributed and auditable.
+All AI actions are performed under a dedicated iTop service account, so every comment is clearly attributed and auditable. Every run leaves a full trace — each model turn, each tool call and its result, tokens and wall time — in the **Runs** screen of the admin UI.
 
 ### Examples
 
@@ -59,43 +60,35 @@ All required fields are present. No question is asked. Instead, the engineer imm
 ### The flow
 
 ```
-Ticket created          User commented
-        │                       │
-        └──────────┬────────────┘
+Ticket created           User commented
+       │                        │
+       └───────────┬────────────┘
                    │
                    ▼
-         Already processed?  ──yes──▶  stop
-         Engineer assigned?  ──yes──▶  stop
-                   │ no
-                   ▼
-        Service/subcategory set?
-                   │
-        ┌──────────┴──────────────────────┐
-        │ yes                             │ no
-        │                                 ▼
-        │                    LLM picks category from iTop
-        │                                 │
-        │                    ┌────────────┴──────────┐
-        │                    │ confident             │ unsure
-        │                    ▼                       ▼
-        │             category set        Ask clarifying question
-        │                    │            in public log,
-        │                    │            wait for reply
-        │                    │            (triggers new webhook)
-        └──────────┬─────────┘
-                   ▼
-        Is description sufficient?
-                   │
-        ┌──────────┴──────────────┐
-        │ yes                     │ no
-        ▼                         ▼
-Post internal note          Ask clarifying question
-for engineer                in public log,
-        │                   wait for user reply
-        │                   (triggers new webhook)
-        │
-        ▼
-Mark ticket processed
+┌─ guard (plain code) ──────────────────────────────┐
+│  Already processed?      ──yes──▶  stop           │
+│  Engineer assigned?      ──yes──▶  stop           │
+│  Last comment was ours?  ──yes──▶  stop           │
+└─────────────────────────┬─────────────────────────┘
+                          │ no
+                          ▼
+┌─ agent session ───────────────────────────────────┐
+│  In the prompt: the ticket, the conversation,     │
+│  plus the service catalog while the ticket is     │
+│  still unclassified.                              │
+│                                                   │
+│  The agent picks a tool, the tool enforces:       │
+│                                                   │
+│   set_classification    service + subcategory     │
+│                         set, session continues    │
+│   post_public_question  one question in the       │
+│                         public log, session ends  │
+│   finish_handoff        internal note for the     │
+│                         engineer, session ends    │
+└─────────────────────────┬─────────────────────────┘
+                          ▼
+Ticket marked processed, or left waiting for a reply
+that arrives as the next webhook
 ```
 
 ---
@@ -104,6 +97,7 @@ Mark ticket processed
 
 - **iTop 3.x** with REST API enabled
 - **Redis** (included in the Docker Compose stack)
+- **Postgres with `pgvector`** — optional, only for the semantic index that upcoming features build on. Included in the compose stack but unused until `DATABASE_URL` is set; without it the assistant runs Redis-only
 - **An LLM that calls tools reliably** — OpenAI, Google Gemini, Ollama, or any OpenAI-compatible endpoint (LM Studio, vLLM, LiteLLM Proxy, DeepSeek, Azure); see [supported providers](docs/configuration.md#supported-llm-providers)
 - **Docker and Docker Compose** for the quick start; [uv](https://docs.astral.sh/uv/) for local development
 
@@ -150,7 +144,7 @@ The current release covers the first-contact intake loop — intercepting new ti
 - **Pattern analysis** — background jobs that surface recurring issues and trends across tickets.
 - **Knowledge base maintenance** — automatically flag outdated KB articles and suggest updates based on resolved tickets.
 - **Change Management review** — AI-assisted risk and impact assessment for RFCs.
-- **Engineer widget** — contextual AI sidebar inside the iTop UI showing similar past tickets and suggested actions.
+- **Engineer console** — an AI panel inside the iTop ticket page: explicit slash commands for summaries, similar past tickets and draft replies, plus free-text questions answered by a read-only agent that cannot change the ticket.
 - **User memory** — persistent context per user across tickets: no repeated questions about device or department, automatic adaptation to technical vs. non-technical communication style and pattern detection across a user's ticket history.
 
 Feedback and ideas are welcome in [GitHub Issues](../../issues).
@@ -172,9 +166,13 @@ uvicorn src.main:app --host 0.0.0.0 --port 8001 --reload
 
 ```bash
 cd assistant
-uv run pytest              # unit tests (mocked LLM, iTop and Redis)
-uv run pytest --cov=src    # with coverage report
+uv run pytest                   # unit tests (mocked LLM, iTop and Redis)
+uv run pytest --cov=src         # with coverage report
+uv run pytest test/pg           # pgvector tests (Testcontainers, needs Docker)
+uv run pytest test/integration   # agent against a real LLM (needs .env.test)
 ```
+
+Only the unit tests run by default; the other two suites are opt-in because they need a Docker daemon and a reachable model endpoint respectively.
 
 **Admin UI** (requires Node.js; the dev server proxies `/api` to the backend on `:8001`):
 

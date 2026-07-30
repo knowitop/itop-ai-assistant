@@ -1,16 +1,22 @@
 # Vector Store — Architecture & Implementation Plan
 
 Semantic search over iTop objects (tickets first, KB/FAQ later) to power the
-engineer widget's "similar tickets", future KB matching, and RAG-style
-suggestions. Replaces/augments the keyword+rerank MVP from
-[engineer-widget.md](engineer-widget.md) when its quality ceiling is hit.
+engineer console's "similar tickets", future KB matching, and RAG-style
+suggestions. This is the *only* retrieval path for those features — the keyword
+MVP [engineer-widget.md](engineer-widget.md) once planned as a stopgap was
+dropped, so Stage 4 below is what unblocks them rather than what improves
+them.
 
-Status: **in progress** — Stage 0, Stage 1, Stage 2 (indexer) and Stage 3
-(source layer) implemented (2026-07-13); Stage 4 (retrieval into the widget)
-is next.
+Status: **in progress.** The write path is built and shipped — Postgres +
+Alembic foundation, the embeddings client, `VectorIndex` (versioned tables,
+upsert/delete/KNN), the chunker, the background sweep with cursors and
+reconciliation, the reindex CLI and endpoint, the admin UI screen, and the
+pluggable `VectorSource` layer. What remains is everything that *reads* the
+index: Stage 4 (retrieval into the widget) is next, then access-control
+hardening and the first non-ticket source.
 
 Backend decision: **Postgres + `pgvector`** (see
-[stack-improvements.md §2](stack-improvements.md), decided 2026-07-07). Redis
+[stack-improvements.md §3](stack-improvements.md), decided 2026-07-07). Redis
 keeps operational state (ticket state, locks, config/prompt overrides, run
 journal); Postgres owns the vector index and the analytical/reporting tables.
 The whole feature is gated behind `vector.enabled` so the base deployment stays
@@ -69,7 +75,7 @@ quality is better when a match pinpoints "the solution looked similar" vs
 | `log:private` | private_log, same windowing | 0..n | internal |
 
 Chunk kinds are literally the keys of the per-class
-`vector.classes[<class>].profile` config (Stage 2 decision): the config is
+`vector.classes[<class>].profile` config: the config is
 the single source of truth, no mapping layer in between — which is why the
 body kind is called `body`, matching the profile key, not `description`.
 
@@ -95,7 +101,7 @@ CREATE TABLE vector_chunk (
     visibility    text        NOT NULL,          -- public / internal
     org_id        text,                          -- rights pre-filter (see §4); NULL = global
     status        text        NOT NULL,          -- query-time scoping (resolved-only etc.)
-    filters       jsonb,                         -- source-defined pre-filter keys (Stage 3, see below)
+    filters       jsonb,                         -- source-defined pre-filter keys (see below)
     content_hash  text        NOT NULL,          -- sha256 of the chunk's cleaned source text
     embedding     halfvec(:dim) NOT NULL,        -- dim from config, baked into the table version
     created_at    timestamptz NOT NULL,          -- object creation — time-window KNN (storm detector)
@@ -118,12 +124,11 @@ CREATE INDEX vector_chunk_obj ON vector_chunk (obj_class, obj_id);
 CREATE INDEX vector_chunk_filters ON vector_chunk USING gin (filters jsonb_path_ops);
 ```
 
-**Why `filters jsonb` instead of a typed `service_id` column (Stage 3
-correction):** the original sketch had a plain `service_id text` here,
-intended as a future retrieval-time filter/boost ("similar tickets in the
-same service"). It shipped in Stage 2 but was never actually read by
-`search()` — a ticket-only column sitting unused in a table every future
-source would also write to.
+**Why `filters jsonb` instead of a typed `service_id` column:** the original
+sketch had a plain `service_id text` here, intended as a future
+retrieval-time filter/boost ("similar tickets in the same service"). It
+shipped that way and was never actually read by `search()` — a ticket-only
+column sitting unused in a table every future source would also write to.
 
 The real reason it isn't a typed scalar column (an earlier draft of this
 correction argued "no cheap `ALTER`" — wrong: adding a nullable column to an
@@ -186,11 +191,11 @@ attribute; the config lists only the relevance *values* — which attributes
 those are is the source's own mapping concern (a KnownError source may key
 relevance off any attribute, not necessarily a status).
 
-**Stage 3 turned this from a paragraph into an enforced seam.** A new class
-of content (KB article, KnownError, …) is not "another entry in
-`vector.classes`" alone — it needs a `VectorSource` implementation
-(`vector/source.py`) registered in `vector_sources/registry.py`. See §7
-Stage 3 for the contract and rationale.
+This is an enforced seam, not a convention: a new class of content (KB
+article, KnownError, …) is not "another entry in `vector.classes`" alone — it
+needs a `VectorSource` implementation (`vector/source.py`) registered in
+`vector_sources/registry.py`. A configured class with no registered source
+logs a warning and is skipped.
 
 ---
 
@@ -214,7 +219,7 @@ every sweep_interval (default 5 min):
     cursor = max(last_update) seen   (persisted in vector_sync_state)
 ```
 
-**Cursor granularity (Stage 2 deviation from the original sketch):** iTop OQL
+**Cursor granularity** (a deviation from the original sketch): iTop OQL
 has no `ORDER BY`, pages arrive in internal order — a per-page
 `max(last_update)` cursor would leave holes. The cursor therefore advances
 once per *completed class pass*; a crashed pass just re-reads from the old
@@ -277,13 +282,13 @@ assistant/src/vector/            # source-agnostic infrastructure
 ├── models.py     # SQLAlchemy models: vector_chunk_v{N}, vector_sync_state, vector_index_meta, index_journal
 ├── embedder.py   # EmbeddingsClient: OpenAI-compatible /v1/embeddings, batching
 ├── index.py      # VectorIndex: table create/upsert/delete/KNN over SQLAlchemy — the single SQL seam
-├── chunker.py    # object → [(chunk_kind, n, text, visibility, hash)] — no domain imports (Stage 3)
-├── source.py     # VectorSource protocol + VectorRecord (Stage 3) — the sweep's only contract with a source
+├── chunker.py    # object → [(chunk_kind, n, text, visibility, hash)] — no domain imports
+├── source.py     # VectorSource protocol + VectorRecord — the sweep's only contract with a source
 ├── indexer.py    # sweep loop, cursor, advisory lock, reconciliation, backfill CLI — drives VectorSource, not iTop
 ├── retriever.py  # query → embed → filtered KNN → ids → fresh fetch from the owning source
 └── router.py     # /api/vector/status, /api/vector/reindex (admin-token auth)
 
-assistant/src/vector_sources/    # one module per content source (Stage 3+)
+assistant/src/vector_sources/    # one module per content source
 ├── registry.py   # build_vector_sources() — same pattern as pipelines/registry.py
 ├── tickets.py    # TicketVectorSource — wraps TicketRepository + CatalogRepository
 # later: kb_articles.py, known_errors.py, ...
@@ -299,9 +304,10 @@ default, per-class `classes` dict (index_values + profile), sweep_interval,
 page size, max_chunk_tokens,
 log_entries_per_chunk) + a bootstrap `database_url` (asyncpg
 DSN, env-only like `redis_url` — connection settings, not runtime-editable).
-Wired through `AppDeps`; the widget's `similar` switches between keyword and
-vector retrieval by config flag — keyword mode stays as the no-embeddings /
-no-Postgres fallback.
+Wired through `AppDeps`. There is no alternative retrieval backend to switch
+to: a consumer whose index is absent, empty or unreachable reports the feature
+as unavailable with the reason (see the widget plan §3), which is why none of
+the settings above has a per-consumer mirror.
 
 ---
 
@@ -428,8 +434,8 @@ Note the ANN + `WHERE` + `GROUP BY` interaction: pgvector's HNSW is
 approximate, so aggressive pre-filters can thin the `ef_search` frontier —
 tune `ef_search` (query-time) up and over-fetch K×3 to keep recall healthy
 (§6). Latency budget: embed ~50–200 ms, KNN ~ms–low-tens, iTop fetch
-~100–300 ms, rerank is the dominant LLM call — same as the keyword MVP, so the
-UX (on-demand button, spinner) doesn't change. Hybrid retrieval (full-text +
+~100–300 ms, rerank is the dominant LLM call. That total is what dictates the
+consumer UX: on demand, with a spinner, never on page load. Hybrid retrieval (full-text +
 vector fusion) is a natural later upgrade — Postgres does BM25-ish ranking via
 `tsvector`/`ts_rank` and pgvector in the same query — but it requires storing
 text in the index, so it conflicts with §1's "no text" stance — evaluate only
@@ -487,11 +493,15 @@ with anonymization or accept the trade-off consciously.
     DB (network isolation, `scram-sha-256` auth, TLS in prod; compose keeps it
     on the internal network). No raw-vector egress via API.
 13. **Multilingual quality** — pick a multilingual embedding model
-    explicitly; add a "known-good models" note in docs. The keyword fallback
-    remains one config flag away if embedding quality disappoints.
+    explicitly; add a "known-good models" note in docs. With no keyword
+    fallback to hide behind, a bad embedding model is directly visible as bad
+    results: `test-embeddings` proves the endpoint answers and the dimension
+    matches, but not that the model is any good at ru/en tickets. Validate on
+    a labelled sample before trusting it.
 14. **Cold-start cost** — backfilling 100k tickets on a local embedding model
-    takes hours: resumable cursor, progress in status endpoint, and the
-    widget keeps working in keyword mode until `vector.enabled` flips.
+    takes hours: resumable cursor and progress in the status endpoint. There
+    is no keyword mode to serve results meanwhile, so consumers must say "the
+    index is still building" rather than return thin results as if complete.
 15. **Env/key hygiene** — one Postgres database per deployment; staging/prod
     isolation is a separate database (or schema) per environment, not a
     discriminator column. (An earlier draft had an `env` column filtering
@@ -499,111 +509,28 @@ with anonymization or accept the trade-off consciously.
 
 ---
 
-## 7. Implementation stages
+## 7. Remaining stages
 
-### Stage 0 — Postgres foundation (new prerequisite) — DONE (2026-07-11)
-- [x] Add Postgres to `docker-compose` (with `pgvector` image / extension),
-      `database_url` bootstrap config, async engine/session in `vector/db.py`.
-- [x] Alembic wired (`alembic upgrade head` runs automatically at startup
-      when `database_url` is set; failure = warning, not boot failure);
-      first migration creates the extension and `vector_index_meta` /
-      `vector_sync_state` / `index_journal` tables.
-- [x] Testcontainers-python dev dep; a smoke test that spins real Postgres +
-      `pgvector` and round-trips a vector (`test/pg/`, opt-in, needs Docker).
+The write path (§2–§3) is built; what follows is the read path. Two carry-overs
+worth knowing before starting:
 
-### Stage 1 — foundations (no consumer change) — DONE (2026-07-11)
-- [x] `EmbeddingsConfig` (runtime section + setup API entry,
-      `POST /api/setup/test-embeddings` probe measuring the real dimension)
-      and `VectorConfig` (enabled=False; also a setup-API section — vector is
-      infrastructure, not a business module, so nothing registers in
-      `PipelineRegistry`).
-- [x] `EmbeddingsClient` (httpx, batching), `VectorIndex` (versioned-table
-      create, `ON CONFLICT` upsert/delete/KNN, model-fingerprint guard).
-- [x] `GET /api/vector/status`.
-- [x] Tests: the SQL seam integration-tested against a Testcontainers
-      Postgres (`test/pg/test_vector_index.py`); embedder mocked
-      (chunker/hashing tests arrive with the chunker in Stage 2).
+- **`filters` has no readers yet.** Ticket chunks are written with
+  `{"service_id": ...}`, but nothing filters on it — wiring it up is Stage 4's
+  job, deliberately left until there was a query to serve.
+- **Per-source config namespacing is deferred.** `VectorConfig` is flat
+  (one `enabled`/`classes`/`profiles` set shared by all sources), which is fine
+  with exactly one source. Revisit when a second source needs its own settings.
 
-### Stage 2 — indexer — DONE (2026-07-11)
-- [x] `chunker.py` (per-class profiles, html cleanup, token budget, stable
-      log windows) + content hashing. Log kinds (`log:public`/`log:private`)
-      are implemented and tested but not in the default profiles — enabling
-      them is a config change (add the kind to the class's profile in
-      `vector.classes`), the
-      phase-2 decision from §2 stands.
-- [x] Sweep loop with cursor (`vector_sync_state`), advisory lock,
-      page/throttle; delete of vanished chunks; `IndexJournal` table; weekly
-      reconciliation tick (`vector.reconcile_interval_days`, last-run mark =
-      `__reconcile__` sentinel row in `vector_sync_state`).
-- [x] Backfill CLI (`python -m vector.reindex [--full]`) +
-      `POST /api/vector/reindex` (admin; cursor reset + immediate sweep —
-      no truncate: unchanged chunks are cheap thanks to the hash-guard,
-      orphans go to reconciliation).
-- [x] Tests: hash-guard skips, append-only log growth, chunk-count shrink,
-      cursor overlap idempotency (`test_chunker.py`, `test_indexer.py`,
-      `test/pg/test_indexer_pg.py`).
-
-### Stage 3 — generalize the source layer — DONE (2026-07-13)
-Motivation: Stage 2's `indexer.py` was a ticket sweeper that happened to
-write into a generic store — `Ticket`, `ItopBundle`, and `CatalogRepository`
-were imported directly, and `chunker.py` imported `domain.ticket.LogEntry`
-for log-window role labeling. That made every future content source (KB
-articles, KnownErrors, pattern-analysis inputs, …) mean touching the sweep
-engine itself instead of plugging into it.
-- [x] `vector/source.py`: `VectorSource` protocol (`name`, `classes`,
-      `prepare()`, `find_modified_since()`, `find_existing_ids()`, `chunk()`)
-      and `VectorRecord` — the only shape the indexer knows (identity +
-      filter fields + an opaque `payload` the source's own `chunk()` reads
-      back).
-- [x] `chunker.py` stripped of the `domain.ticket` import: `ConversationEntry
-      (speaker, message)` replaces `LogEntry`, already role-labeled by the
-      caller — `chunk_object`/`_log_chunks` no longer know what a "caller" is.
-- [x] `vector_sources/tickets.py`: `TicketVectorSource`, the first (and so
-      far only) concrete source — moved `_CatalogNames`, ticket field
-      extraction and caller/agent role labeling out of `indexer.py` verbatim.
-      `classes` is taken from `vector.classes` at construction (unchanged
-      admin-editable behavior — `TicketRepository` was already generic over
-      any mapped class, so the source imposes no list of its own).
-- [x] `vector_sources/registry.py`: `build_vector_sources(deps, cfg)` —
-      same one-function-to-extend pattern as `pipelines/registry.py`.
-- [x] `indexer.py` rewritten against `VectorSource`/`VectorRecord` only;
-      `VectorIndexer(deps, sources=...)` accepts an explicit source list
-      (tests inject fakes instead of mocking iTop/repository internals).
-      Class→source routing is a plain dict built fresh each sweep tick from
-      `cfg.classes`; a configured class with no registered source logs a
-      warning and is skipped (same tolerance as "no chunking profile").
-- [x] `service_id` chunk-row column replaced with a generic `filters jsonb`
-      (+ GIN index, `jsonb_path_ops`) instead of the originally-planned
-      rename to a source-neutral scalar (e.g. `scope_id`). Two rounds of
-      correction here, both worth keeping for the reasoning: (1) the column
-      had zero readers — `search()` never filtered on `service_id` — so it
-      was dead ticket-only weight in a shared table; (2) a single scalar
-      `scope_id` was rejected not because of migration cost (a nullable
-      column is a cheap `ALTER` on the live versioned table — an earlier
-      version of this note claimed otherwise, wrong) but because a ticket's
-      Service, a KB article's Category and a KnownError's CI type are
-      different concepts, not one concept with a per-class vocabulary like
-      `status`/`org_id` — cramming them into one column's identity would
-      silently conflate unrelated id spaces. `VectorRecord.filters:
-      dict[str, str] | None` lets each source key its own dimension
-      (tickets write `{"service_id": ...}`); nothing reads it yet — that's
-      still Stage 4's job, deliberately.
-- [x] Deferred, not done: per-source config namespacing
-      (`vector.sources.<name>.*` — separate `enabled`/`classes`/`profiles`
-      per source). Today's flat `VectorConfig` is fine with exactly one
-      source; revisit once a second source needs independent settings.
-- [x] Tests: `test_chunker.py` (speaker labels pass through unresolved),
-      `test_indexer.py` (rewritten around a fake `VectorSource`, no more
-      `ItopBundle` mocking), `test_vector_sources_tickets.py` (new — ticket→
-      `VectorRecord` mapping, catalog-name memoization, role labeling).
-
-### Stage 4 — retrieval into the widget
+### Stage 4 — retrieval
+Now on the critical path: the engineer console's similar-tickets feature is
+blocked on this stage and has no reduced mode to ship first.
 - [ ] `retriever.py`: embed → filtered KNN (`GROUP BY obj_id`, max score) →
-      fresh fetch from the owning source → existing rerank prompt.
-- [ ] `widget.similar_backend: keyword | vector` config switch; graceful
-      fallback to keyword when the index is empty/absent/Postgres down.
+      fresh fetch from the owning source → rerank prompt.
 - [ ] Layer-1 predicates wired (`status`, `visibility`, org when available).
-- [ ] Tests: aggregation, filter composition, fallback path.
+- [ ] A typed "why is there nothing" answer — index absent / disabled / empty /
+      unreachable are distinct states a consumer must be able to show the user,
+      not one empty list.
+- [ ] Tests: aggregation, filter composition, and each unavailable state.
 
 ### Stage 5 — access control hardening
 - [ ] Allowed-orgs resolver (`User.allowedorg_list` via REST) + per-login TTL
@@ -617,10 +544,10 @@ engine itself instead of plugging into it.
 ### Stage 6 — beyond tickets
 - [ ] First non-ticket `VectorSource` (KB articles: `KbArticleVectorSource` →
       widget "KB suggestions"; or KnownError: symptom-based workaround
-      matching for Incidents) — proves the Stage 3 seam with a second
+      matching for Incidents) — proves the source seam with a second
       implementer instead of just the one.
-- [ ] Revisit the deferred Stage 3 item once there's a real second source:
-      per-source config namespacing (`vector.sources.<name>.*`).
+- [ ] With that second source in hand, revisit per-source config namespacing
+      (`vector.sources.<name>.*`).
 - [ ] Phase-2 chunk kinds: `log:public` / `log:private` windows.
 - [ ] Evaluate hybrid (`tsvector` + vector) retrieval — only with an explicit
       decision on storing text (see §5).
@@ -630,13 +557,15 @@ engine itself instead of plugging into it.
 ## 8. Open questions / assumptions
 
 - **Embedding endpoint availability**: assumes the deployment can serve an
-  OpenAI-compatible `/v1/embeddings` (LM Studio, LiteLLM, cloud all can).
-  If a customer has chat-LLM-only, the widget stays in keyword mode.
+  OpenAI-compatible `/v1/embeddings` (LM Studio, LiteLLM, cloud all can). A
+  chat-LLM-only deployment does not get semantic search at all — with the
+  keyword fallback dropped, that is a feature the customer does not have
+  rather than a degraded one.
 - **`allowedorg_list` via REST**: needs a verification spike — the `User`
   class link set must be readable by the service account; if not, the
   extension oracle can also serve the org list (it has full `UserRights`).
 - **iTop `last_update` on log append**: assumed true (log append modifies the
-  ticket). Stage 2 is implemented on this assumption; the live spike (append
+  ticket). The sweep is implemented on this assumption; the live spike (append
   to a ticket's public log in iTop → the ticket shows up in the next sweep)
   is still pending. If false for some class, fall back to also matching on
   log `lastentry` dates.
@@ -646,7 +575,7 @@ engine itself instead of plugging into it.
 - **Postgres operational ownership**: this is the project's first relational
   store — backups, connection pooling (pgbouncer?), and migration discipline
   become part of ops. Documented as an accepted one-time cost
-  ([stack-improvements.md §2](stack-improvements.md)).
+  ([stack-improvements.md §3](stack-improvements.md)).
 - **Scope**: engineer/backoffice consumers only. Any portal- or caller-facing
   retrieval must re-run this design's §4 with the portal rights model in
   scope (`visibility = 'public'` alone is not enough — callers see only

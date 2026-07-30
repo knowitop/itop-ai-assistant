@@ -33,25 +33,29 @@ This step creates the triggers and webhooks in iTop automatically, using one-tim
 
 | Object | Purpose |
 |--------|---------|
-| `RemoteApplicationConnection` | iTop connection config for the assistant |
-| `TriggerOnObjectCreate` (UserRequest, Incident) | Fires when a new ticket is created |
-| `TriggerOnObjectUpdate` (UserRequest, Incident) | Fires when a user posts to the public log |
-| `ActionWebhook` × 2 | Sends `POST /webhook` for each trigger |
+| `RemoteApplicationType` + `RemoteApplicationConnection` | iTop connection config for the assistant, including the `X-Auth-Token` header |
+| `TriggerOnObjectCreate` | One trigger on `Ticket`, filtered to `UserRequest` and `Incident` — fires when a new ticket is created |
+| `TriggerOnObjectUpdate` | One per ticket class — fires when someone posts to the public log |
+| `ActionWebhook` × 2 | Sends `POST /webhook` — one for creation, one shared by the update triggers |
 
-Objects that already exist (matched by name) are left untouched — re-running is safe. You can skip this step and create the iTop objects manually (see below).
+Classes missing from your datamodel are skipped rather than failing the step, and objects that already exist (matched by name) are left untouched — re-running is safe. You can skip this step and create the iTop objects manually (see below).
 
 > [!IMPORTANT]
 > The **Backend URL** field (auto-filled from the browser) must be the address at which the iTop server can reach the assistant — not necessarily `localhost`. In Docker Compose, that is `http://assistant:8000`.
 
 ### Step 4 — LLM connection
 
-Enter your LLM endpoint details:
+Enter your LLM connection details:
 
-- **Base URL** — the OpenAI-compatible endpoint (see [Configuration → LLM providers](configuration.md#supported-llm-providers))
+- **Provider** — how the model is reached: `openai_compatible` (default; anything serving `/chat/completions` — LM Studio, vLLM, LiteLLM, DeepSeek, Azure, OpenRouter), `openai`, `google_genai` or `ollama`. The rest of the form follows this choice — fields the provider does not use are hidden. See [Configuration → LLM providers](configuration.md#supported-llm-providers)
+- **Base URL** — the endpoint; not shown for `openai` and `google_genai`
 - **Model** — the model name exactly as the endpoint exposes it
-- **API key** — optional; omit for local LM Studio
+- **API key** — required by the cloud providers, ignored by local servers
 
-Click **Test LLM** to verify the model responds before saving.
+Click **Test LLM** to verify before saving. The probe checks two things: that the model answers, and that it can **call a tool** — the assistant is one tool-calling agent, so a model that only writes prose cannot do the job.
+
+> [!TIP]
+> Model parameters (temperature, max tokens) and the forced-`tool_choice` switch are not part of the wizard — set them afterwards in [Connections → LLM](admin-ui.md#llm-tab).
 
 Once all four steps are complete, `/webhook` becomes active and iTop will start sending tickets to the assistant.
 
@@ -129,6 +133,10 @@ For each trigger, create a **Webhook action** that sends a `POST` to the assista
 
 ![Webhook: ticket created](webhook_request_created.png)
 ![Webhook: user commented](webhook_request_commented.png)
+
+Repeat both for every class the assistant handles (`Incident` by default, alongside `UserRequest`) — or use a single creation trigger on `Ticket` with the filter `SELECT Ticket WHERE finalclass IN ('UserRequest', 'Incident')`, which is what the wizard does.
+
+**Optional third trigger.** The assistant also understands `"event": "assigned"` — on receiving it, it marks the ticket as no longer its business without calling iTop or the LLM. It is purely an optimization: the guard reaches the same conclusion from the ticket status anyway. Wire it to a trigger on `agent_id` changes if you want to save those API calls.
 
 ### Automated provisioning (CLI)
 
