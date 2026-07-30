@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from config import (
+from itop_ai_assistant.config import (
     EmbeddingsConfig,
     ItopConfig,
     LlmConfig,

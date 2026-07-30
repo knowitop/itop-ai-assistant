@@ -1,6 +1,13 @@
 import unittest
 
-from vector.chunker import CHARS_PER_TOKEN, Chunk, ConversationEntry, chunk_object, clean_text, split_text
+from itop_ai_assistant.vector.chunker import (
+    CHARS_PER_TOKEN,
+    Chunk,
+    ConversationEntry,
+    chunk_object,
+    clean_text,
+    split_text,
+)
 
 _PROFILE = {
     "profile": ["title", "service", "subcategory"],
@@ -63,7 +70,7 @@ class TestFieldChunks(unittest.TestCase):
         self.assertNotEqual(a[0].content_hash, b[0].content_hash)
 
     def test_unknown_field_in_profile_treated_as_empty(self):
-        with self.assertLogs("vector.chunker", level="WARNING"):
+        with self.assertLogs("itop_ai_assistant.vector.chunker", level="WARNING"):
             chunks = _chunk({"description": "Text"}, {"body": ["description", "no_such_field"]})
 
         self.assertEqual(len(chunks), 1)

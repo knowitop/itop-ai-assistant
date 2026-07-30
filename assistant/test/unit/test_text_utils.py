@@ -1,6 +1,6 @@
 import unittest
 
-from text_utils import bind_oql, html_to_markdown, strip_thinking
+from itop_ai_assistant.text_utils import bind_oql, html_to_markdown, strip_thinking
 
 
 class TestBindOql(unittest.TestCase):

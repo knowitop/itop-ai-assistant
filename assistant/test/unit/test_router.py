@@ -4,8 +4,8 @@ from uuid import UUID
 
 from fastapi.testclient import TestClient
 
-from config import ItopConfig, LlmConfig, SecurityConfig, TicketMappingConfig
-from main import app
+from itop_ai_assistant.config import ItopConfig, LlmConfig, SecurityConfig, TicketMappingConfig
+from itop_ai_assistant.main import app
 
 
 def _mock_deps(security: SecurityConfig | None = None, configured: bool = True) -> MagicMock:

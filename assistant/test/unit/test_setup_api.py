@@ -1,21 +1,18 @@
 import unittest
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from config import get_settings
-from config_store import RedisConfigStore
-from deps import AppDeps
-from journal import RunJournal
-from main import app
-from prompt_store import FilePromptStore, RedisPromptStore
-from state.ticket_state import TicketStateManager
-from vector.db import VectorDb
-
-_PROMPTS_DIR = Path(__file__).parents[2] / "prompts"
+from itop_ai_assistant.config import get_settings
+from itop_ai_assistant.config_store import RedisConfigStore
+from itop_ai_assistant.deps import AppDeps
+from itop_ai_assistant.journal import RunJournal
+from itop_ai_assistant.main import app
+from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore, RedisPromptStore
+from itop_ai_assistant.state.ticket_state import TicketStateManager
+from itop_ai_assistant.vector.db import VectorDb
 
 # Env/yaml on the developer machine must not leak into these tests — blank
 # out every field that feeds the runtime section defaults.
@@ -64,7 +61,7 @@ def _make_deps(redis, **settings_overrides) -> AppDeps:
         itop=MagicMock(),
         state_manager=TicketStateManager(redis),
         config_store=RedisConfigStore(redis, settings),
-        prompt_store=RedisPromptStore(FilePromptStore(_PROMPTS_DIR), redis),
+        prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR), redis),
         journal=RunJournal(redis),
         vector_db=VectorDb(None),
     )
@@ -265,7 +262,7 @@ class TestConnectionProbes(SetupApiTestCase):
         client.schema.return_value.find_one = AsyncMock(return_value={"friendlyname": "AI Assistant"})
         client.aclose = AsyncMock()
 
-        with patch("admin.setup.create_itop_client", return_value=client) as factory:
+        with patch("itop_ai_assistant.admin.setup.create_itop_client", return_value=client) as factory:
             response = self.client.post(
                 "/api/setup/test-itop", json={"url": "http://itop/rest.php", "user": "ai", "pwd": "pw"}
             )
@@ -284,7 +281,7 @@ class TestConnectionProbes(SetupApiTestCase):
         client.schema.return_value.find_one = AsyncMock(return_value={"friendlyname": "AI"})
         client.aclose = AsyncMock()
 
-        with patch("admin.setup.create_itop_client", return_value=client) as factory:
+        with patch("itop_ai_assistant.admin.setup.create_itop_client", return_value=client) as factory:
             self.client.post("/api/setup/test-itop", json={"user": "ai"})
 
         self.assertEqual(factory.call_args.args[0].pwd, "stored-pw")
@@ -294,7 +291,7 @@ class TestConnectionProbes(SetupApiTestCase):
         client.schema.return_value.find_one = AsyncMock(side_effect=ConnectionError("refused"))
         client.aclose = AsyncMock()
 
-        with patch("admin.setup.create_itop_client", return_value=client):
+        with patch("itop_ai_assistant.admin.setup.create_itop_client", return_value=client):
             body = self.client.post("/api/setup/test-itop", json={"url": "http://itop/rest.php", "token": "tok"}).json()
 
         self.assertFalse(body["ok"])
@@ -305,7 +302,7 @@ class TestConnectionProbes(SetupApiTestCase):
         client.schema.return_value.find_one = AsyncMock(return_value=None)
         client.aclose = AsyncMock()
 
-        with patch("admin.setup.create_itop_client", return_value=client):
+        with patch("itop_ai_assistant.admin.setup.create_itop_client", return_value=client):
             body = self.client.post("/api/setup/test-itop", json={"url": "http://itop/rest.php", "token": "tok"}).json()
 
         self.assertFalse(body["ok"])
@@ -333,7 +330,7 @@ class TestConnectionProbes(SetupApiTestCase):
     def test_llm_probe_success_strips_thinking(self):
         llm = _fake_llm(content="<think>hmm</think>OK")
 
-        with patch("admin.setup.create_llm", return_value=llm):
+        with patch("itop_ai_assistant.admin.setup.create_llm", return_value=llm):
             body = self.client.post(
                 "/api/setup/test-llm", json={"base_url": "http://llm/v1", "model": "gpt-test"}
             ).json()
@@ -347,7 +344,7 @@ class TestConnectionProbes(SetupApiTestCase):
     def test_llm_probe_reports_a_model_that_cannot_call_tools(self):
         llm = _fake_llm(content="OK", tool_calls=[])
 
-        with patch("admin.setup.create_llm", return_value=llm):
+        with patch("itop_ai_assistant.admin.setup.create_llm", return_value=llm):
             body = self.client.post(
                 "/api/setup/test-llm", json={"base_url": "http://llm/v1", "model": "gpt-test"}
             ).json()
@@ -359,7 +356,7 @@ class TestConnectionProbes(SetupApiTestCase):
     def test_llm_probe_does_not_force_tool_choice_unless_the_endpoint_accepts_it(self):
         llm = _fake_llm(content="OK")
 
-        with patch("admin.setup.create_llm", return_value=llm):
+        with patch("itop_ai_assistant.admin.setup.create_llm", return_value=llm):
             body = self.client.post(
                 "/api/setup/test-llm", json={"base_url": "http://llm/v1", "model": "gpt-test"}
             ).json()
@@ -370,7 +367,7 @@ class TestConnectionProbes(SetupApiTestCase):
     def test_llm_probe_verifies_a_forced_tool_choice(self):
         llm = _fake_llm(content="OK")
 
-        with patch("admin.setup.create_llm", return_value=llm):
+        with patch("itop_ai_assistant.admin.setup.create_llm", return_value=llm):
             body = self.client.post(
                 "/api/setup/test-llm",
                 json={"base_url": "http://llm/v1", "model": "gpt-test", "supports_forced_tool_choice": True},
@@ -384,7 +381,7 @@ class TestConnectionProbes(SetupApiTestCase):
         # user's answer about it is wrong
         llm = _fake_llm(content="OK", tool_error=RuntimeError("Thinking mode does not support this tool_choice"))
 
-        with patch("admin.setup.create_llm", return_value=llm):
+        with patch("itop_ai_assistant.admin.setup.create_llm", return_value=llm):
             body = self.client.post(
                 "/api/setup/test-llm",
                 json={"base_url": "http://llm/v1", "model": "gpt-test", "supports_forced_tool_choice": True},
@@ -398,7 +395,7 @@ class TestConnectionProbes(SetupApiTestCase):
         llm = MagicMock()
         llm.ainvoke = AsyncMock(side_effect=TimeoutError("no answer"))
 
-        with patch("admin.setup.create_llm", return_value=llm):
+        with patch("itop_ai_assistant.admin.setup.create_llm", return_value=llm):
             body = self.client.post(
                 "/api/setup/test-llm", json={"base_url": "http://llm/v1", "model": "gpt-test"}
             ).json()
@@ -425,7 +422,7 @@ class TestEmbeddingsProbe(SetupApiTestCase):
         client.embed_raw = AsyncMock(return_value=[[0.0] * 768])
         client.aclose = AsyncMock()
 
-        with patch("admin.setup.EmbeddingsClient", return_value=client):
+        with patch("itop_ai_assistant.admin.setup.EmbeddingsClient", return_value=client):
             body = self.client.post(
                 "/api/setup/test-embeddings",
                 json={"base_url": "http://emb/v1", "model": "bge-m3", "dimension": 1024},
@@ -442,7 +439,7 @@ class TestEmbeddingsProbe(SetupApiTestCase):
         client.embed_raw = AsyncMock(return_value=[[0.0] * 1024])
         client.aclose = AsyncMock()
 
-        with patch("admin.setup.EmbeddingsClient", return_value=client):
+        with patch("itop_ai_assistant.admin.setup.EmbeddingsClient", return_value=client):
             body = self.client.post(
                 "/api/setup/test-embeddings", json={"base_url": "http://emb/v1", "model": "bge-m3"}
             ).json()
@@ -455,7 +452,7 @@ class TestEmbeddingsProbe(SetupApiTestCase):
         client.embed_raw = AsyncMock(side_effect=TimeoutError("no answer"))
         client.aclose = AsyncMock()
 
-        with patch("admin.setup.EmbeddingsClient", return_value=client):
+        with patch("itop_ai_assistant.admin.setup.EmbeddingsClient", return_value=client):
             body = self.client.post(
                 "/api/setup/test-embeddings", json={"base_url": "http://emb/v1", "model": "bge-m3"}
             ).json()
@@ -502,8 +499,8 @@ class TestProvisionItop(SetupApiTestCase):
         client.aclose = AsyncMock()
 
         with (
-            patch("admin.setup.create_itop_client", return_value=client) as factory,
-            patch("admin.setup.provision_itop", AsyncMock(return_value=report)) as provision,
+            patch("itop_ai_assistant.admin.setup.create_itop_client", return_value=client) as factory,
+            patch("itop_ai_assistant.admin.setup.provision_itop", AsyncMock(return_value=report)) as provision,
         ):
             body = self.client.post(
                 "/api/setup/provision-itop",
@@ -528,8 +525,8 @@ class TestProvisionItop(SetupApiTestCase):
         client.aclose = AsyncMock()
 
         with (
-            patch("admin.setup.create_itop_client", return_value=client),
-            patch("admin.setup.provision_itop", AsyncMock(side_effect=ConnectionError("refused"))),
+            patch("itop_ai_assistant.admin.setup.create_itop_client", return_value=client),
+            patch("itop_ai_assistant.admin.setup.provision_itop", AsyncMock(side_effect=ConnectionError("refused"))),
         ):
             body = self.client.post(
                 "/api/setup/provision-itop", json={"backend_url": "http://assistant:8000", "token": "tok"}

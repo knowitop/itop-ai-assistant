@@ -2,7 +2,7 @@
 
 from sqlalchemy import text
 
-from vector.db import run_migrations
+from itop_ai_assistant.vector.db import run_migrations
 
 _STATIC_TABLES = {"vector_index_meta", "vector_sync_state", "index_journal"}
 

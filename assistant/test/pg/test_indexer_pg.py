@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy import text
 
-from config import EmbeddingsConfig, VectorClassConfig, VectorConfig
-from domain.ticket import Ticket
-from vector.db import VectorDb
-from vector.indexer import VectorIndexer
+from itop_ai_assistant.config import EmbeddingsConfig, VectorClassConfig, VectorConfig
+from itop_ai_assistant.domain.ticket import Ticket
+from itop_ai_assistant.vector.db import VectorDb
+from itop_ai_assistant.vector.indexer import VectorIndexer
 
 _DIM = 4
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
@@ -86,7 +86,7 @@ async def db(migrated: str, engine):
 
 async def _sweep(deps) -> tuple:
     embedder = FakeEmbedder()
-    with patch("vector.indexer.EmbeddingsClient", return_value=embedder):
+    with patch("itop_ai_assistant.vector.indexer.EmbeddingsClient", return_value=embedder):
         report = await VectorIndexer(deps).sweep_once()
     return report, embedder
 
@@ -120,7 +120,7 @@ class TestSweepEndToEnd:
         ]
 
         # cursor advanced, journal has ok runs (sweep + first reconcile)
-        from vector.index import VectorIndex
+        from itop_ai_assistant.vector.index import VectorIndex
 
         index = VectorIndex(db)
         assert await index.get_cursor("UserRequest") == _NOW

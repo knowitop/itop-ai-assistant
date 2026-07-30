@@ -6,7 +6,7 @@ code reads out of it — not the individual values.
 
 import unittest
 
-from llm_providers import DEFAULT_PROVIDER, PROVIDERS, get_provider
+from itop_ai_assistant.llm_providers import DEFAULT_PROVIDER, PROVIDERS, get_provider
 
 _FIELD_MODES = {"required", "optional", "unused"}
 

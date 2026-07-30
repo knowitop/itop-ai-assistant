@@ -2,9 +2,9 @@ import unittest
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
-from config import TicketMappingConfig
-from domain.ticket import Ticket
-from ticket_repository import TicketRepository, _parse_dt
+from itop_ai_assistant.config import TicketMappingConfig
+from itop_ai_assistant.domain.ticket import Ticket
+from itop_ai_assistant.ticket_repository import TicketRepository, _parse_dt
 
 _RAW_TICKET = {
     "id": "42",

@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from config import ItopConfig, LlmConfig, TicketMappingConfig
-from deps import ItopProvider, create_llm
+from itop_ai_assistant.config import ItopConfig, LlmConfig, TicketMappingConfig
+from itop_ai_assistant.deps import ItopProvider, create_llm
 
 
 class _FakeConfigStore:

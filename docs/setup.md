@@ -144,12 +144,12 @@ The same iTop objects can be created via the CLI — useful for scripted deploym
 
 ```bash
 # from a local checkout
-cd assistant && PYTHONPATH=src uv run python -m itop_provisioning \
+cd assistant && uv run itop-ai-provision \
   --itop-url http://localhost:8000/webservices/rest.php --user admin \
   --backend-url http://assistant:8000 --webhook-token <WEBHOOK_TOKEN>
 
 # or inside the Docker stack
-docker compose exec assistant python -m itop_provisioning \
+docker compose exec assistant itop-ai-provision \
   --itop-url http://itop/webservices/rest.php --user admin \
   --backend-url http://assistant:8000 --webhook-token <WEBHOOK_TOKEN>
 ```

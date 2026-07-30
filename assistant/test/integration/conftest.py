@@ -17,19 +17,19 @@ import pytest
 
 logger = logging.getLogger(__name__)
 
-from agents.intake.context import IntakeContext
-from agents.intake.prompts import build_intake_prompts
-from catalog_repository import CatalogRepository
-from config import get_settings
-from domain.ticket import Ticket
-from itop_client import Itop
-from prompt_store import read_prompt_dir
-from state.ticket_state import TicketStateManager
-from ticket_repository import TicketRepository
+from itop_ai_assistant.agents.intake.context import IntakeContext
+from itop_ai_assistant.agents.intake.prompts import build_intake_prompts
+from itop_ai_assistant.catalog_repository import CatalogRepository
+from itop_ai_assistant.config import get_settings
+from itop_ai_assistant.domain.ticket import Ticket
+from itop_ai_assistant.itop_client import Itop
+from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
+from itop_ai_assistant.state.ticket_state import TicketStateManager
+from itop_ai_assistant.ticket_repository import TicketRepository
 
 ITOP_URL = "http://mock-itop/webservices/rest.php"
 
-_PROMPTS = build_intake_prompts(read_prompt_dir(Path(__file__).parents[2] / "prompts" / "intake"))
+_PROMPTS = build_intake_prompts(read_prompt_dir(PACKAGED_PROMPTS_DIR / "intake"))
 
 _SERVICE_FIELDS = {"name": "IT Support", "description": "General IT support services"}
 # service_id is a mandatory external key in iTop — always present in real responses

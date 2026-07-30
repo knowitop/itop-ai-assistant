@@ -161,7 +161,7 @@ Requires [uv](https://docs.astral.sh/uv/).
 cd assistant
 uv sync
 cp docker/.env.dist .env   # fill in LLM and iTop settings
-uvicorn src.main:app --host 0.0.0.0 --port 8001 --reload
+uv run uvicorn itop_ai_assistant.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
 **Tests:**
@@ -169,7 +169,7 @@ uvicorn src.main:app --host 0.0.0.0 --port 8001 --reload
 ```bash
 cd assistant
 uv run pytest                   # unit tests (mocked LLM, iTop and Redis)
-uv run pytest --cov=src         # with coverage report
+uv run pytest --cov=itop_ai_assistant  # with coverage report
 uv run pytest test/pg           # pgvector tests (Testcontainers, needs Docker)
 uv run pytest test/integration   # agent against a real LLM (needs .env.test)
 ```

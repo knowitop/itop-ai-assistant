@@ -1,9 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "itop-ai-assistant"
 version = "0.1.0"
 description = "iTop AI Assistant"
+# SPDX expression only: the license text lives in the repository root, outside
+# this package's build root, and hatchling cannot reach above it.
 license = "AGPL-3.0-only"
-license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -27,6 +32,10 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.0",
     "uvicorn>=0.43.0",
 ]
+
+[project.scripts]
+itop-ai-reindex = "itop_ai_assistant.vector.reindex:main"
+itop-ai-provision = "itop_ai_assistant.itop_provisioning:main"
 
 [dependency-groups]
 dev = [

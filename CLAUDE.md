@@ -76,7 +76,7 @@ uv sync --no-dev # production only
 
 **Run locally:**
 ```bash
-uvicorn src.main:app --host 0.0.0.0 --port 8001 --reload
+uv run uvicorn itop_ai_assistant.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
 **Run tests:**
@@ -84,7 +84,7 @@ uvicorn src.main:app --host 0.0.0.0 --port 8001 --reload
 uv run pytest                          # all tests
 uv run pytest test/unit/test_router.py # single file
 uv run pytest -k "test_name"           # single test by name
-uv run pytest --cov=src                # with coverage
+uv run pytest --cov=itop_ai_assistant  # with coverage
 ```
 
 **Lint and format:**
@@ -135,54 +135,54 @@ and `uv run pytest`.
 
 ### Key Source Files
 
-| File                                            | Role                                                |
-|-------------------------------------------------|-----------------------------------------------------|
-| `src/main.py`                                   | FastAPI app init, lifespan (builds `AppDeps`)       |
-| `src/config.py`                                 | `Settings` — centralized config (pydantic-settings) |
-| `src/deps.py`                                   | Composition root: `AppDeps`, `build_deps`, `create_llm` |
-| `src/config_store.py`                           | `RedisConfigStore` — runtime-editable module config |
-| `src/journal.py`                                | `RunJournal` — per-run status/steps in Redis        |
-| `src/admin/router.py`                           | Admin API: config, prompts, runs, module discovery  |
-| `src/admin/setup.py`                            | Setup API: connection sections + probes (wizard backend) |
-| `src/itop_provisioning.py`                      | iTop-side triggers/webhooks: find-or-create + CLI   |
-| `src/webhook/router.py`                         | Webhook endpoint: auth, configured-gate, dispatch   |
-| `src/pipelines/registry.py`                     | `PipelineRegistry` — (class, event) → module handler |
-| `src/text_utils.py`                             | Generic `html_to_markdown`, `bind_oql`, `strip_thinking` (no biz deps) |
-| `src/llm_providers.py`                          | Provider registry: connection shape + forced-`tool_choice` support |
-| `src/prompt_store.py`                           | `PromptStore` — file-based templates with overrides |
-| `src/agents/intake/pipeline.py`                 | Intake module: registration, guard, agent run, epilogue, journal |
-| `src/agents/intake/agent.py`                    | `create_agent` + tool-gate / terminal-exit / call-limit middleware |
-| `src/agents/intake/tools.py`                    | Five tools, one invariant each; `ToolRejection`     |
-| `src/agents/intake/prompt.py`                   | Initial messages: catalog, ticket, conversation as XML |
-| `src/agents/intake/prompts.py`                  | `IntakePrompts` + placeholder registry/validation   |
-| `src/agents/intake/context.py`                  | `IntakeContext` — per-run dependencies for tools    |
-| `prompts/intake/*.md`                           | Default intake prompts (system, catalog, ticket)    |
-| `src/domain/ticket.py`                          | `Ticket` — semantic domain model (no iTop names)    |
-| `src/ticket_repository.py`                      | `TicketRepository` — semantic ↔ iTop attribute adapter |
-| `src/catalog_repository.py`                     | `CatalogRepository` — service catalog reads         |
-| `src/domain/catalog.py`                         | `Service` / `ServiceSubcategory` semantic models    |
-| `src/state/ticket_state.py`                     | Redis-backed `TicketState` and `TicketStateManager` |
-| `src/vector/db.py`                              | `VectorDb` — lazy async Postgres engine + migrations runner |
-| `src/vector/models.py`                          | Vector store schema: static tables + `chunk_table` factory |
-| `src/vector/index.py`                           | `VectorIndex` — the single SQL/pgvector seam (versioned tables, KNN) |
-| `src/vector/embedder.py`                        | `EmbeddingsClient` — OpenAI-compatible /v1/embeddings, batching |
-| `src/vector/chunker.py`                         | Pure chunking: profiles → chunks, token budget, log windows |
-| `src/vector/source.py`                          | `VectorSource` protocol + `VectorRecord` — the indexer's only contract with a content source |
-| `src/vector/indexer.py`                         | `VectorIndexer` — background sweep, backfill, reconciliation |
-| `src/vector/reindex.py`                         | Backfill/reindex CLI (`python -m vector.reindex`)   |
-| `src/vector/router.py`                          | `GET /api/vector/status`, `POST /api/vector/reindex` |
-| `src/vector/migrations/`                        | Alembic migrations (applied automatically at startup) |
-| `src/vector_sources/registry.py`                | `build_vector_sources()` — one line per content source |
-| `src/vector_sources/tickets.py`                 | `TicketVectorSource` — the only source today (tickets) |
-| `src/itop_client/`                              | `Itop` — vendored iTop REST API library (itoptop fork) |
+| File (under `assistant/src/itop_ai_assistant/`) | Role                                                                                         |
+|-------------------------------------------------|----------------------------------------------------------------------------------------------|
+| `main.py`                                       | FastAPI app init, lifespan (builds `AppDeps`)                                                |
+| `config.py`                                     | `Settings` — centralized config (pydantic-settings)                                          |
+| `deps.py`                                       | Composition root: `AppDeps`, `build_deps`, `create_llm`                                      |
+| `config_store.py`                               | `RedisConfigStore` — runtime-editable module config                                          |
+| `journal.py`                                    | `RunJournal` — per-run status/steps in Redis                                                 |
+| `admin/router.py`                               | Admin API: config, prompts, runs, module discovery                                           |
+| `admin/setup.py`                                | Setup API: connection sections + probes (wizard backend)                                     |
+| `itop_provisioning.py`                          | iTop-side triggers/webhooks: find-or-create + CLI                                            |
+| `webhook/router.py`                             | Webhook endpoint: auth, configured-gate, dispatch                                            |
+| `pipelines/registry.py`                         | `PipelineRegistry` — (class, event) → module handler                                         |
+| `text_utils.py`                                 | Generic `html_to_markdown`, `bind_oql`, `strip_thinking` (no biz deps)                       |
+| `llm_providers.py`                              | Provider registry: connection shape + forced-`tool_choice` support                           |
+| `prompt_store.py`                               | `PromptStore` — file-based templates with overrides                                          |
+| `agents/intake/pipeline.py`                     | Intake module: registration, guard, agent run, epilogue, journal                             |
+| `agents/intake/agent.py`                        | `create_agent` + tool-gate / terminal-exit / call-limit middleware                           |
+| `agents/intake/tools.py`                        | Five tools, one invariant each; `ToolRejection`                                              |
+| `agents/intake/prompt.py`                       | Initial messages: catalog, ticket, conversation as XML                                       |
+| `agents/intake/prompts.py`                      | `IntakePrompts` + placeholder registry/validation                                            |
+| `agents/intake/context.py`                      | `IntakeContext` — per-run dependencies for tools                                             |
+| `prompts/intake/*.md`                           | Default intake prompts (system, catalog, ticket)                                             |
+| `domain/ticket.py`                              | `Ticket` — semantic domain model (no iTop names)                                             |
+| `ticket_repository.py`                          | `TicketRepository` — semantic ↔ iTop attribute adapter                                       |
+| `catalog_repository.py`                         | `CatalogRepository` — service catalog reads                                                  |
+| `domain/catalog.py`                             | `Service` / `ServiceSubcategory` semantic models                                             |
+| `state/ticket_state.py`                         | Redis-backed `TicketState` and `TicketStateManager`                                          |
+| `vector/db.py`                                  | `VectorDb` — lazy async Postgres engine + migrations runner                                  |
+| `vector/models.py`                              | Vector store schema: static tables + `chunk_table` factory                                   |
+| `vector/index.py`                               | `VectorIndex` — the single SQL/pgvector seam (versioned tables, KNN)                         |
+| `vector/embedder.py`                            | `EmbeddingsClient` — OpenAI-compatible /v1/embeddings, batching                              |
+| `vector/chunker.py`                             | Pure chunking: profiles → chunks, token budget, log windows                                  |
+| `vector/source.py`                              | `VectorSource` protocol + `VectorRecord` — the indexer's only contract with a content source |
+| `vector/indexer.py`                             | `VectorIndexer` — background sweep, backfill, reconciliation                                 |
+| `vector/reindex.py`                             | Backfill/reindex CLI (`python -m vector.reindex`)                                            |
+| `vector/router.py`                              | `GET /api/vector/status`, `POST /api/vector/reindex`                                         |
+| `vector/migrations/`                            | Alembic migrations (applied automatically at startup)                                        |
+| `vector_sources/registry.py`                    | `build_vector_sources()` — one line per content source                                       |
+| `vector_sources/tickets.py`                     | `TicketVectorSource` — the only source today (tickets)                                       |
+| `itop_client/`                                  | `Itop` — vendored iTop REST API library (itoptop fork)                                       |
 
-**`src/itop_client/` is a vendored external library** (fork of itoptop,
+**`src/itop_ai_assistant/itop_client/` is a vendored external library** (fork of itoptop,
 rewritten with httpx). Keep it self-contained and generic: no imports from
 this application, and do not remove functionality that this service happens
 not to use. Application-specific logic belongs in `ticket_repository.py`.
 
 **Dependency injection:** no module-level singletons. `build_deps()` in
-`src/deps.py` assembles all shared dependencies at startup (FastAPI lifespan,
+`src/itop_ai_assistant/deps.py` assembles all shared dependencies at startup (FastAPI lifespan,
 stored in `app.state.deps`). Each processing run builds an `IntakeContext` with
 a config snapshot from `ConfigStore` and a per-run LLM client — tools take
 everything from `runtime.context`, never from globals or `get_settings()`.
@@ -195,7 +195,7 @@ next ticket without a restart.
 **Pipeline registry:** webhook events reach business modules through
 `PipelineRegistry` — a startup-built map of `(object class, event)` → handler.
 The router accepts only registered combinations. Adding a new module: create
-`src/agents/<module>/pipeline.py` with `register(registry, settings)` exposing
+`src/itop_ai_assistant/agents/<module>/pipeline.py` with `register(registry, settings)` exposing
 a `ModuleInfo` (name, description, config model, prompt names — consumed by
 the admin UI) and its routes, add one call in
 `pipelines/registry.py::build_registry`, add a config section in `config.py`.
@@ -204,7 +204,7 @@ so a broken template fails the boot instead of a live ticket. The intake module
 is enabled/scoped via `intake.enabled` (default `true`) and `intake.classes`
 (default `[UserRequest, Incident]`).
 
-**`src/agents/intake/` — the ticket-processing module.** Classify
+**`src/itop_ai_assistant/agents/intake/` — the ticket-processing module.** Classify
 Service/ServiceSubcategory, ask one clarifying question, post the handoff
 note, set `ai_done` — as a single tool-calling agent
 (`langchain.agents.create_agent`). Deterministic shell, agentic core: the
@@ -240,10 +240,10 @@ from `wrap_tool_call` does *not* end the run — the conditional edge
 Every run leaves a full trace in `/api/runs`: every model turn, every tool
 result and a final `usage` step (model calls, tokens, wall time).
 
-The module lives under `src/agents/` rather than `src/graph/` because its flow
+The module lives under `src/itop_ai_assistant/agents/` rather than `src/itop_ai_assistant/graph/` because its flow
 is not an explicit graph — keep that convention for future modules: `agents/`
 for "the model decides the order", `graph/` for "the code does". It won an A/B
-against a deterministic LangGraph module (`src/graph/enrichment/`, five nodes
+against a deterministic LangGraph module (`src/itop_ai_assistant/graph/enrichment/`, five nodes
 doing the same job) which was deleted whole once intake proved itself; if you
 need the comparison, `git log --diff-filter=D -- assistant/src/graph` has it.
 
@@ -266,7 +266,7 @@ templates use semantic `:this->field` placeholders bound from
 ### LLM Stack
 
 **`init_chat_model`** (langchain) builds the client, one provider per entry in
-`src/llm_providers.py` — `openai_compatible` (default, any `/chat/completions`
+`src/itop_ai_assistant/llm_providers.py` — `openai_compatible` (default, any `/chat/completions`
 URL: LM Studio, vLLM, LiteLLM, DeepSeek, Azure, OpenRouter), `openai`,
 `google_genai`, `ollama`. `create_llm` (`deps.py`) is the only construction
 site and returns `BaseChatModel`; every consumer types it that way, so adding
@@ -287,11 +287,11 @@ Avoid plain LangChain chains for anything beyond a single LLM call.
 on it) and is imported directly in one place only, for the
 `CompiledStateGraph` return type in `agents/intake/agent.py`. Reach for it
 explicitly if a future module needs a genuinely deterministic multi-step flow —
-that is what `src/graph/` is reserved for.
+that is what `src/itop_ai_assistant/graph/` is reserved for.
 
 ### Configuration
 
-Config is centralized in `src/config.py` using **pydantic-settings**.
+Config is centralized in `src/itop_ai_assistant/config.py` using **pydantic-settings**.
 Priority (high → low): Redis runtime overrides (setup/admin API) → env vars
 → `.env` file → `config.yaml` → field defaults.
 
@@ -321,6 +321,7 @@ None (`RuntimeSectionConfig`). Webhook/admin token checks read the effective
 | `webhook_token` | recommended | Shared secret for `/webhook` (`X-Auth-Token` header); unset = no auth |
 | `admin_token` | recommended | Bearer token for `/api` admin endpoints (`Authorization: Bearer`); unset = no auth (first-run mode) |
 | `prompts_dir` | optional (env-only) | Directory with per-deployment prompt overrides |
+| `ui_dist_dir` | optional (env-only) | Where the built admin SPA lives; the image sets `/app/ui/dist`, a source checkout is auto-detected |
 | `llm_provider` | default `openai_compatible` | Which entry of `llm_providers.PROVIDERS` to build the client from |
 | `llm_base_url` | required by the provider's `base_url_mode` | Endpoint URL; unused by `openai` / `google_genai` |
 | `llm_model` | required (env or setup API) | Model name as exposed by the endpoint |
@@ -379,13 +380,13 @@ runtime config to survive restarts (compose already enables appendonly).
 (`itop_provisioning.py`, find-or-create by name, webhook auth via
 `X-Auth-Token`) under one-time admin credentials from the body — never
 stored; the same logic runs standalone as a CLI
-(`PYTHONPATH=src uv run python -m itop_provisioning`). The wizard step
+(`uv run itop-ai-provision`). The wizard step
 order is Security → iTop → iTop webhooks → LLM: provisioning needs the
 saved webhook token, so security comes first and the LLM step last.
 
-**Vector store (optional infrastructure, `src/vector/`).** Postgres +
+**Vector store (optional infrastructure, `src/itop_ai_assistant/vector/`).** Postgres +
 pgvector behind the env-only `database_url`; unset = the whole subsystem is
-off and the deployment stays Redis-only. `src/vector/` is an infrastructure
+off and the deployment stays Redis-only. `src/itop_ai_assistant/vector/` is an infrastructure
 layer like `state/` or `journal.py` — it is NOT a business module: it does
 not register in `PipelineRegistry`, has no prompts or webhook routes; future
 business modules consume it through `AppDeps.vector_db`. Alembic migrations
@@ -399,7 +400,7 @@ Diagnostics: `GET /api/vector/status`. The chunk tables store embeddings +
 ids + filter metadata only — never raw ticket text (see
 `docs/plans/vector-store.md`).
 
-The index is filled by `VectorIndexer` (`src/vector/indexer.py`) — the
+The index is filled by `VectorIndexer` (`src/itop_ai_assistant/vector/indexer.py`) — the
 project's first background task, started in the lifespan when `database_url`
 is set (`app.state.vector_indexer`, stopped before `deps.aclose()`). Every
 `vector.sweep_interval_seconds` it re-reads the runtime config (so flipping
@@ -421,7 +422,7 @@ iTop attributes those map to is the source's own concern — `TicketVectorSource
 (`vector_sources/tickets.py`) is the only implementation today and wraps
 `TicketRepository` + `CatalogRepository` (semantic `status`/`last_update` via
 `ticket_mapping`). Adding a content source (KB articles, KnownErrors, …) means
-a new `src/vector_sources/<name>.py` plus one line in
+a new `src/itop_ai_assistant/vector_sources/<name>.py` plus one line in
 `vector_sources/registry.py` — same one-function-to-extend pattern as
 `pipelines/registry.py`, and no change to `vector/`. A configured class with no
 registered source logs a warning and is skipped.
@@ -430,11 +431,12 @@ Every `vector.reconcile_interval_days` a reconciliation pass deletes chunks
 of objects that disappeared from iTop. Runs are journaled in the
 `index_journal` table (visible in `/api/vector/status`). Full rebuild:
 `POST /api/vector/reindex` (resets cursors, wakes the sweep) or the CLI
-`PYTHONPATH=src uv run python -m vector.reindex --full` (reads runtime config
+`uv run itop-ai-reindex --full` (reads runtime config
 from Redis, so run it next to the deployment).
 
-**Prompts are files, not code.** Defaults live in `prompts/<module>/*.md`
-(`intake/`); a deployment overrides individual prompts by
+**Prompts are files, not code.** Defaults ship inside the package
+(`src/itop_ai_assistant/prompts/<module>/*.md` — currently `intake/` — exposed
+as `prompt_store.PACKAGED_PROMPTS_DIR`); a deployment overrides individual prompts by
 placing same-named files under `<prompts_dir>/<module>/`. Placeholders are
 validated against `PROMPT_VARIABLES` (in the module's `prompts.py`) at
 startup — adding a new placeholder to a prompt requires adding it there and
@@ -481,7 +483,8 @@ npm run build   # type-check (tsc --noEmit) + production build into ui/dist
 ## Testing Notes
 
 - Tests live in `assistant/test/unit/`
-- `pytest.toml` sets `pythonpath = ["src"]` and `importmode = importlib`
+- `pytest.toml` sets `importmode = importlib`; the package itself is on the
+  path because `uv sync` installs it into the venv (editable)
 - LLM calls and HTTP requests are mocked — no real iTop or LLM needed
 - Redis is mocked with `fakeredis`
 - `get_settings()` is cached via `lru_cache`; call `get_settings.cache_clear()`
