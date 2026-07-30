@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from itop_ai_assistant.admin.router import router as admin_router
+from itop_ai_assistant.build_info import get_build_info
 from itop_ai_assistant.config import ItopConfig, LlmConfig, SecurityConfig, get_settings, missing_setup
 from itop_ai_assistant.deps import build_deps
 from itop_ai_assistant.pipelines.registry import build_registry
@@ -25,9 +26,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+build = get_build_info()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    logger.info(f"iTop AI Assistant {build.version} ({build.commit or 'no commit'})")
     deps = build_deps(settings)
     registry = build_registry(settings)
     # Fail fast on missing or broken prompt templates instead of on a live ticket
@@ -77,7 +82,7 @@ async def lifespan(app: FastAPI):
         await deps.aclose()
 
 
-app = FastAPI(title="iTop AI Assistant", lifespan=lifespan)
+app = FastAPI(title="iTop AI Assistant", version=build.version, lifespan=lifespan)
 app.include_router(router)
 app.include_router(admin_router)
 
@@ -115,6 +120,13 @@ async def health(request: Request) -> dict:
     except Exception:
         redis_ok = False
     return {"status": "ok" if redis_ok else "degraded", "redis": redis_ok}
+
+
+# Public like /health, and for the same reason: the setup wizard runs before
+# an admin token exists, and "which build is this?" is the first support question.
+@app.get("/version")
+async def version() -> dict:
+    return {"version": build.version, "commit": build.commit, "built_at": build.built_at}
 
 
 if __name__ == "__main__":

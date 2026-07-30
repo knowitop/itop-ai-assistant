@@ -1,10 +1,12 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "itop-ai-assistant"
-version = "0.1.0"
+# Derived from the git tag at build time — never edited by hand, so it cannot
+# drift from the tag the way a literal here always eventually does.
+dynamic = ["version"]
 description = "iTop AI Assistant"
 # SPDX expression only: the license text lives in the repository root, outside
 # this package's build root, and hatchling cannot reach above it.
@@ -32,6 +34,31 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.0",
     "uvicorn>=0.43.0",
 ]
+
+[tool.hatch.version]
+source = "vcs"
+# No repository (a source archive, say) — better a flag value than a crash.
+fallback-version = "0.0.0"
+
+[tool.hatch.version.raw-options]
+# .git lives at the repository root; this pyproject sits one level down.
+root = ".."
+# The commit is reported as its own field, so keep it out of the version
+# string: "0.3.1.dev7", not "0.3.1.dev7+gde778d1".
+local_scheme = "no-local-version"
+
+# Writes src/itop_ai_assistant/_build_info.py — see hatch_build.py.
+[tool.hatch.build.hooks.custom]
+
+[tool.hatch.build]
+# The stamp is generated, hence gitignored, and hatchling leaves VCS-ignored
+# files out of the artifact unless they are named here.
+artifacts = ["src/itop_ai_assistant/_build_info.py"]
+
+[tool.uv]
+# Without this uv reuses a cached build after a commit or a new tag, and the
+# baked version silently goes stale.
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
 
 [project.scripts]
 itop-ai-reindex = "itop_ai_assistant.vector.reindex:main"
