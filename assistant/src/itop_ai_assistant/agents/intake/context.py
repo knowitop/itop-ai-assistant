@@ -25,4 +25,3 @@ class IntakeContext:
     state_manager: TicketStateManager
     intake: IntakeConfig
     ai_name: str
-    think_tags: tuple[str, ...] = ("think", "thinking", "reasoning")

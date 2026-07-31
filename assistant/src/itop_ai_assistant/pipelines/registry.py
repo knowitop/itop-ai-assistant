@@ -3,8 +3,11 @@
 Adding a new module:
 1. Create a package (e.g. `src/agents/<module>/`) with a `pipeline.py` exposing
    `register(registry, settings)`.
-2. Call it from `build_registry()` below — one line.
-3. Add the module's config section to `config.py`.
+2. Subclass `shell.TicketRun` for the work itself — the lock, the object read,
+   the journal steps and the guaranteed closure come from there; the module
+   supplies `stop_reason` and `body`, and registers `<Run>.handle` as its route.
+3. Call it from `build_registry()` below — one line.
+4. Add the module's config section to `config.py`.
 """
 
 import logging

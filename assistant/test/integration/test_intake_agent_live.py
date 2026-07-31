@@ -7,8 +7,8 @@ Integration tests for the intake agent against a real model.
 
 These are the only tests that exercise the prompts and the model's tool-calling
 end to end: the unit suite asserts everything against a scripted fake model.
-The guard is not covered here — it is plain code in `pipeline._stop_reason` and
-unit-tested there.
+The guard is not covered here — it is plain code in `IntakeRun.stop_reason`,
+called by the core run shell and unit-tested there.
 
 Run: uv run pytest test/integration/ -v
 """

@@ -147,10 +147,12 @@ and `uv run pytest`.
 | `itop_provisioning.py`                          | iTop-side triggers/webhooks: find-or-create + CLI                                            |
 | `webhook/router.py`                             | Webhook endpoint: auth, configured-gate, dispatch                                            |
 | `pipelines/registry.py`                         | `PipelineRegistry` — (class, event) → module handler                                         |
+| `pipelines/shell.py`                            | `TicketRun` — the run shell: lock → fetch → guard → body → release                           |
+| `pipelines/agent_run.py`                        | `AgentRun` — agent loop: journal trace, `RunUsage`, guaranteed closure                       |
 | `text_utils.py`                                 | Generic `html_to_markdown`, `bind_oql`, `strip_thinking` (no biz deps)                       |
 | `llm_providers.py`                              | Provider registry: connection shape + forced-`tool_choice` support                           |
 | `prompt_store.py`                               | `PromptStore` — file-based templates with overrides                                          |
-| `agents/intake/pipeline.py`                     | Intake module: registration, guard, agent run, epilogue, journal                             |
+| `agents/intake/pipeline.py`                     | Intake module: registration, `IntakeRun` (guard + body), `IntakeAgentRun` (epilogue)         |
 | `agents/intake/agent.py`                        | `create_agent` + tool-gate / terminal-exit / call-limit middleware                           |
 | `agents/intake/tools.py`                        | Five tools, one invariant each; `ToolRejection`                                              |
 | `agents/intake/prompt.py`                       | Initial messages: catalog, ticket, conversation as XML                                       |
@@ -199,17 +201,46 @@ The router accepts only registered combinations. Adding a new module: create
 a `ModuleInfo` (name, description, config model, prompt names — consumed by
 the admin UI) and its routes, add one call in
 `pipelines/registry.py::build_registry`, add a config section in `config.py`.
+The work itself subclasses `pipelines/shell.py::TicketRun` and registers
+`<Run>.handle` as the route — see the run shell below.
 `ModuleInfo.validate_prompts` is called for every registered module at startup,
 so a broken template fails the boot instead of a live ticket. The intake module
 is enabled/scoped via `intake.enabled` (default `true`) and `intake.classes`
 (default `[UserRequest, Incident]`).
 
+**The run shell (`pipelines/shell.py`, `pipelines/agent_run.py`) is the core, not
+a module's business.** `TicketRun` is the contract every webhook module runs
+under: acquire the per-object lock, read the object from iTop, ask the module's
+guard, run the module's body, release in `finally`. It writes the `lock` /
+`fetch` / `guard` journal steps itself, so every module leaves the same trace
+whatever it does inside. A module subclasses it, implements `stop_reason` and
+`body`, and registers `<Run>.handle` (a classmethod matching `PipelineHandler`).
+**One instance per run, never per registration** — the payload, ids, deps and
+`bundle` live on the instance, so a shared instance in the registry would race
+between concurrent webhooks.
+
+`AgentRun` is the other half: it streams one agent to the end, journals every
+model turn and tool result, counts `RunUsage`, and — when no tool in
+`terminal_tools` succeeded — calls `epilogue()`. That is the closure guarantee:
+the model may answer in prose, burn its budget or loop, and the run still closes
+instead of being replayed by the next event.
+
+The two halves are **composed, not inherited**, because their consumers differ.
+A webhook module needs both. A synchronous one (the engineer console) needs
+`AgentRun` and no lock at all; a single template method would force it to stub
+the locking half out. The outer frame stays at the entry point: `journal.start`
+/ `finish` and the top-level exception capture belong to `webhook/router.py`, so
+body exceptions deliberately propagate out of `execute()`.
+
 **`src/itop_ai_assistant/agents/intake/` — the ticket-processing module.** Classify
 Service/ServiceSubcategory, ask one clarifying question, post the handoff
 note, set `ai_done` — as a single tool-calling agent
-(`langchain.agents.create_agent`). Deterministic shell, agentic core: the
-per-ticket lock, the guard (`_stop_reason` — three checks) and the epilogue are
-plain code in `pipeline.py`; everything between them is the agent's decision.
+(`langchain.agents.create_agent`). What intake itself supplies is
+`IntakeRun.stop_reason` (three checks), `IntakeRun.body` (assemble context,
+prompts and agent) and `IntakeAgentRun.epilogue` (fallback note + `ai_done`);
+everything between them is the agent's decision. `handle_assigned` stays a plain
+function and takes **no** lock — that is deliberate, and it is exactly the race
+`IntakeAgentRun.epilogue` re-reads `ai_done` for.
 Five tools (`tools.py`), each enforcing one invariant and rejecting bad calls
 with a `ToolRejection` that says what to do instead; the round counters are
 picked by code, never by the model. The tool set is **per run**, not fixed:
@@ -284,8 +315,9 @@ agents, `@tool` + `ToolRuntime`, `wrap_tool_call` / `before_model` middleware.
 Avoid plain LangChain chains for anything beyond a single LLM call.
 
 **langgraph** is a required dependency of `langchain` (`create_agent` is built
-on it) and is imported directly in one place only, for the
-`CompiledStateGraph` return type in `agents/intake/agent.py`. Reach for it
+on it) and is imported directly for one thing only — the `CompiledStateGraph`
+type, as the return of `agents/intake/agent.py::build_intake_agent` and the
+argument of `pipelines/agent_run.py::AgentRun`. Reach for it
 explicitly if a future module needs a genuinely deterministic multi-step flow —
 that is what `src/itop_ai_assistant/graph/` is reserved for.
 
@@ -500,7 +532,8 @@ npm run build   # type-check (tsc --noEmit) + production build into ui/dist
   tool-calling regressions show up — run `uv run pytest test/integration`
   after touching `prompts/intake/*.md` or a tool signature.
 - Current test files: `test_config.py`, `test_router.py`, `test_deps.py`,
-  `test_pipelines_registry.py`, `test_ticket_state.py`, `test_prompt_store.py`,
+  `test_pipelines_registry.py`, `test_pipelines_shell.py`,
+  `test_ticket_state.py`, `test_prompt_store.py`,
   `test_ticket_repository.py`, `test_catalog_repository.py`,
   `test_itop_schema.py`, `test_itop_provisioning.py`, `test_journal.py`,
   `test_config_store.py`, `test_admin_api.py`, `test_setup_api.py`,
@@ -513,5 +546,9 @@ npm run build   # type-check (tsc --noEmit) + production build into ui/dist
 - The intake agent loop is tested without an LLM through a scripted
   `FakeToolCallingModel(BaseChatModel)` (`test_intake_agent.py`) —
   `create_agent` calls `bind_tools`, which `BaseChatModel` leaves
-  unimplemented, so the ready-made langchain-core fakes do not fit. Tools are
+  unimplemented, so the ready-made langchain-core fakes do not fit. Those tests
+  call `IntakeRun.body(...)` directly and set `run.bundle` by hand — `execute()`
+  is the shell's job, covered by `test_intake_pipeline.py` (through intake) and
+  `test_pipelines_shell.py` (through a probe subclass, so "generic" is pinned by
+  a second implementation). Tools are
   called directly as `tools.<name>.coroutine(...)`, bypassing pydantic.

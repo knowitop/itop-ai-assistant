@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from itop_ai_assistant.agents.intake.pipeline import handle_assigned, handle_ticket_event
+from itop_ai_assistant.agents.intake.pipeline import IntakeRun, handle_assigned
 from itop_ai_assistant.config import TicketMappingConfig
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.state.ticket_state import TicketState
@@ -34,7 +34,7 @@ class TestHandleTicketEvent(unittest.IsolatedAsyncioTestCase):
         self.deps.itop.get = AsyncMock(return_value=self.bundle)
         self.deps.journal = AsyncMock()
 
-        run_patch = patch("itop_ai_assistant.agents.intake.pipeline._run_intake_agent", new_callable=AsyncMock)
+        run_patch = patch.object(IntakeRun, "body", new_callable=AsyncMock)
         self.mock_run = run_patch.start()
         self.addCleanup(run_patch.stop)
 
@@ -44,7 +44,7 @@ class TestHandleTicketEvent(unittest.IsolatedAsyncioTestCase):
     async def test_lock_not_acquired_skips_processing(self):
         self.state_manager.acquire_lock.return_value = False
 
-        await handle_ticket_event(_payload(), uuid4(), self.deps)
+        await IntakeRun.handle(_payload(), uuid4(), self.deps)
 
         self.fetch.assert_not_called()
         self.mock_run.assert_not_called()
@@ -52,7 +52,7 @@ class TestHandleTicketEvent(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self._journalled_steps(), ["lock"])
 
     async def test_lock_acquired_runs_agent_and_releases(self):
-        await handle_ticket_event(_payload(), uuid4(), self.deps)
+        await IntakeRun.handle(_payload(), uuid4(), self.deps)
 
         self.fetch.assert_awaited_once_with("Incident", "123")
         self.mock_run.assert_awaited_once()
@@ -62,14 +62,14 @@ class TestHandleTicketEvent(unittest.IsolatedAsyncioTestCase):
         self.mock_run.side_effect = RuntimeError("LLM down")
 
         with self.assertRaises(RuntimeError):
-            await handle_ticket_event(_payload(), uuid4(), self.deps)
+            await IntakeRun.handle(_payload(), uuid4(), self.deps)
 
         self.state_manager.release_lock.assert_awaited_once_with("Incident::123")
 
     async def test_ticket_not_found_skips_agent_and_releases(self):
         self.fetch.return_value = None
 
-        await handle_ticket_event(_payload(), uuid4(), self.deps)
+        await IntakeRun.handle(_payload(), uuid4(), self.deps)
 
         self.mock_run.assert_not_called()
         self.state_manager.release_lock.assert_awaited_once_with("Incident::123")
@@ -98,12 +98,12 @@ class TestGuard(unittest.IsolatedAsyncioTestCase):
         self.bundle.ticket_repo.fetch = AsyncMock(return_value=_ticket())
         self.deps.itop.get = AsyncMock(return_value=self.bundle)
 
-        run_patch = patch("itop_ai_assistant.agents.intake.pipeline._run_intake_agent", new_callable=AsyncMock)
+        run_patch = patch.object(IntakeRun, "body", new_callable=AsyncMock)
         self.mock_run = run_patch.start()
         self.addCleanup(run_patch.stop)
 
     async def _run(self) -> None:
-        await handle_ticket_event(_payload(), uuid4(), self.deps)
+        await IntakeRun.handle(_payload(), uuid4(), self.deps)
 
     def _assert_guarded(self) -> None:
         self.mock_run.assert_not_called()
