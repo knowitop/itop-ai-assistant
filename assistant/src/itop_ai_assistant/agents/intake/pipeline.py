@@ -1,4 +1,4 @@
-"""Intake module: webhook events → one tool-calling agent.
+"""Intake module: a ticket in, one tool-calling agent over it.
 
 Deterministic shell, agentic core — the shell itself is the core's
 (`pipelines/shell.py`, `pipelines/agent_run.py`). What this module supplies is
@@ -13,9 +13,10 @@ from itop_ai_assistant.config import IntakeConfig, LlmConfig, Settings
 from itop_ai_assistant.deps import AppDeps, create_llm
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.agent_run import AgentRun
-from itop_ai_assistant.pipelines.registry import ModuleInfo, PipelineRegistry
+from itop_ai_assistant.pipelines.models import ObjectRef
+from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, TriggerRegistry
 from itop_ai_assistant.pipelines.shell import TicketRun
-from itop_ai_assistant.webhook.models import TicketEvent, WebhookPayload
+from itop_ai_assistant.webhook.models import TicketEvent
 
 from .agent import TERMINAL_TOOLS, build_intake_agent
 from .context import IntakeContext
@@ -26,7 +27,7 @@ from .tools import tools_for
 logger = logging.getLogger(__name__)
 
 
-def register(registry: PipelineRegistry, settings: Settings) -> None:
+def register(registry: TriggerRegistry, settings: Settings) -> None:
     cfg = settings.intake
     if not cfg.enabled:
         logger.info("Intake module is disabled, skipping registration")
@@ -39,11 +40,24 @@ def register(registry: PipelineRegistry, settings: Settings) -> None:
         prompt_names=tuple(PROMPT_VARIABLES),
         validate_prompts=build_intake_prompts,
     )
-    routes = {}
+    webhooks = {}
     for obj_class in cfg.classes:
         for event in (TicketEvent.CREATED, TicketEvent.USER_COMMENTED, TicketEvent.ASSIGNED):
-            routes[(obj_class, str(event))] = handle_assigned if event is TicketEvent.ASSIGNED else IntakeRun.handle
-    registry.register(info, routes)
+            webhooks[(obj_class, str(event))] = handle_assigned if event is TicketEvent.ASSIGNED else IntakeRun.handle
+    # The same run, triggered by hand: the caller waits and gets the outcome
+    # instead of it going into the ticket only. The guard is not bypassed — a
+    # ticket the assistant is done with answers "skipped", which is the truth.
+    requests = [
+        RequestRoute(
+            action="process",
+            module=info.name,
+            input_model=ObjectRef,
+            handler=IntakeRun.handle,
+            subject_of=lambda ref: ref.label,
+            summary="Run intake on one ticket now and return the outcome",
+        )
+    ]
+    registry.register(info, webhooks=webhooks, requests=requests)
 
 
 class IntakeRun(TicketRun):
@@ -53,17 +67,17 @@ class IntakeRun(TicketRun):
         """Why this ticket must not be processed, or None to proceed."""
         ticket_state = await self.deps.state_manager.get(ticket.label)
         if ticket_state.ai_done:
-            return "already processed (ai_done) — skipped"
+            return "already processed (ai_done)"
 
         active_statuses = self.bundle.ticket_repo.mapping.active_statuses
         if ticket.status not in active_statuses:
-            return f"status={ticket.status} not in {active_statuses} — skipped"
+            return f"status={ticket.status} not in {active_statuses}"
 
         # Loop protection, second line of defense after iTop trigger contexts:
         # if our own question is the last public entry, wait for the user instead
         # of reacting to our own comment or a duplicate webhook.
         if ticket.public_log and ticket.public_log[-1].user_login == ai_name:
-            return "last public entry is ours, waiting for the requester — skipped"
+            return "last public entry is ours, waiting for the requester"
 
         return None
 
@@ -130,13 +144,12 @@ class IntakeAgentRun(AgentRun[IntakeContext]):
         await self.step("epilogue", "no terminal action — fallback note posted, ai_done set")
 
 
-async def handle_assigned(payload: WebhookPayload, processing_id: UUID, deps: AppDeps) -> None:
+async def handle_assigned(ref: ObjectRef, processing_id: UUID, deps: AppDeps) -> None:
     """Engineer took the ticket: stop any further AI processing.
 
     Not a `TicketRun`: no lock and no read. The missing lock is deliberate — it
     is what lets this land while an agent is mid-run, and what
     `IntakeAgentRun.epilogue` re-reads `ai_done` for.
     """
-    label = f"{payload.obj_class}::{payload.id}"
-    await deps.state_manager.mark_done(label)
-    logger.info(f"[{processing_id}] {label} assigned, marked done")
+    await deps.state_manager.mark_done(ref.label)
+    logger.info(f"[{processing_id}] {ref.label} assigned, marked done")

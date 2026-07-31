@@ -153,7 +153,10 @@
     "saved": "Збережено — буде застосовано при наступному обробленому тікеті",
     "config_reset": "Конфігурацію скинуто до налаштувань за замовчуванням",
     "reset_confirm": "Скинути конфігурацію \"{{name}}\" до значень env/yaml за замовчуванням?",
-    "field_invalid_json": "{{name}}: невалідний JSON"
+    "field_invalid_json": "{{name}}: невалідний JSON",
+    "requests_title": "Ручний запуск",
+    "run_action": "Запустити",
+    "run_id": "Прогін {{id}}"
   },
   "prompts": {
     "title": "Промпти",
@@ -177,6 +180,7 @@
     "col_started": "Розпочато",
     "col_ticket": "Тікет",
     "col_module": "Модуль",
+    "col_kind": "Тригер",
     "col_event": "Подія",
     "col_status": "Статус",
     "col_duration": "Тривалість",

@@ -5,6 +5,7 @@ from uuid import uuid4
 from itop_ai_assistant.agents.intake.pipeline import IntakeRun, handle_assigned
 from itop_ai_assistant.config import TicketMappingConfig
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
+from itop_ai_assistant.pipelines.models import ObjectRef
 from itop_ai_assistant.state.ticket_state import TicketState
 from itop_ai_assistant.webhook.models import WebhookPayload
 
@@ -80,6 +81,21 @@ class TestHandleTicketEvent(unittest.IsolatedAsyncioTestCase):
 
         self.state_manager.mark_done.assert_awaited_once_with("Incident::123")
         self.state_manager.acquire_lock.assert_not_called()
+
+    async def test_a_bare_object_ref_runs_the_same_way(self):
+        """What the request trigger hands over: no event, same run, an outcome back."""
+        outcome = await IntakeRun.handle(ObjectRef(obj_class="Incident", id="123"), uuid4(), self.deps)
+
+        self.assertEqual(outcome.status, "done")
+        self.mock_run.assert_awaited_once()
+
+    async def test_a_finished_ticket_reports_why_it_was_skipped(self):
+        self.state_manager.get.return_value = TicketState(ai_done=True)
+
+        outcome = await IntakeRun.handle(ObjectRef(obj_class="Incident", id="123"), uuid4(), self.deps)
+
+        self.assertEqual((outcome.status, outcome.detail), ("skipped", "already processed (ai_done)"))
+        self.mock_run.assert_not_called()
 
 
 class TestGuard(unittest.IsolatedAsyncioTestCase):

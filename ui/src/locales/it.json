@@ -153,7 +153,10 @@
     "saved": "Salvato — verrà applicato al prossimo ticket elaborato",
     "config_reset": "Configurazione ripristinata ai valori predefiniti",
     "reset_confirm": "Ripristinare la configurazione di \"{{name}}\" ai valori predefiniti di env/yaml?",
-    "field_invalid_json": "{{name}}: JSON non valido"
+    "field_invalid_json": "{{name}}: JSON non valido",
+    "requests_title": "Esecuzione manuale",
+    "run_action": "Esegui",
+    "run_id": "Esecuzione {{id}}"
   },
   "prompts": {
     "title": "Prompt",
@@ -177,6 +180,7 @@
     "col_started": "Avviato",
     "col_ticket": "Ticket",
     "col_module": "Modulo",
+    "col_kind": "Trigger",
     "col_event": "Evento",
     "col_status": "Stato",
     "col_duration": "Durata",

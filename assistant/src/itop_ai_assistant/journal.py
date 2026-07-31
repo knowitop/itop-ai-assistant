@@ -22,6 +22,9 @@ _MAX_INDEXED_RUNS = 1000
 _LIST_SCAN_WINDOW = 500
 
 RunStatus = Literal["running", "done", "failed"]
+# What started the run. "schedule" is part of the contract but has no producer
+# yet — the background sweep still runs outside the registry.
+TriggerKind = Literal["webhook", "request", "schedule"]
 
 
 class RunStep(BaseModel):
@@ -35,6 +38,8 @@ class ProcessingRun(BaseModel):
     ticket: str
     event: str
     module: str
+    # Runs recorded before triggers had kinds are webhook runs
+    kind: TriggerKind = "webhook"
     status: RunStatus = "running"
     started_at: datetime
     finished_at: datetime | None = None
@@ -53,7 +58,9 @@ class RunJournal:
     def _steps_key(self, processing_id: UUID | str) -> str:
         return f"{_RUN_PREFIX}{processing_id}:steps"
 
-    async def start(self, processing_id: UUID | str, ticket: str, event: str, module: str) -> None:
+    async def start(
+        self, processing_id: UUID | str, ticket: str, event: str, module: str, kind: TriggerKind = "webhook"
+    ) -> None:
         now = datetime.now(UTC)
         key = self._key(processing_id)
         try:
@@ -65,6 +72,7 @@ class RunJournal:
                         "ticket": ticket,
                         "event": event,
                         "module": module,
+                        "kind": kind,
                         "status": "running",
                         "started_at": now.isoformat(),
                     },

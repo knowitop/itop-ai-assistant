@@ -25,7 +25,24 @@ class TestJournalLifecycle(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run.status, "running")
         self.assertEqual(run.ticket, "UserRequest::42")
         self.assertEqual(run.module, "intake")
+        self.assertEqual(run.kind, "webhook")
         self.assertIsNone(run.finished_at)
+
+    async def test_trigger_kind_is_recorded(self):
+        journal, redis = _make_journal()
+        pid = uuid4()
+
+        await journal.start(pid, ticket="UserRequest::42", event="process", module="intake", kind="request")
+
+        self.assertEqual((await journal.get(pid)).kind, "request")
+
+    async def test_run_recorded_before_kinds_existed_reads_as_webhook(self):
+        journal, redis = _make_journal()
+        pid = uuid4()
+        await journal.start(pid, ticket="UserRequest::42", event="created", module="intake")
+        await redis.hdel(f"run:{pid}", "kind")
+
+        self.assertEqual((await journal.get(pid)).kind, "webhook")
 
     async def test_steps_recorded_in_order(self):
         journal, _ = _make_journal()

@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from itop_ai_assistant.domain.ticket import Ticket
+from itop_ai_assistant.pipelines.models import ObjectRef
 from itop_ai_assistant.pipelines.shell import TicketRun
 from itop_ai_assistant.webhook.models import WebhookPayload
 
@@ -64,8 +65,9 @@ class ShellTestCase(unittest.IsolatedAsyncioTestCase):
 
 class TestPhaseOrder(ShellTestCase):
     async def test_guard_runs_before_the_body_and_both_get_the_ticket(self):
-        await self.run.execute()
+        outcome = await self.run.execute()
 
+        self.assertEqual(outcome.status, "done")
         self.assertEqual(self.run.phases, ["guard", "body"])
         self.assertEqual(self.run.seen, (self.ticket, "ai-assistant"))
         self.assertIs(self.run.bundle_in_body, self.bundle)
@@ -80,11 +82,14 @@ class TestPhaseOrder(ShellTestCase):
 
 
 class TestSkips(ShellTestCase):
+    """Every stop reports itself the same way twice: a journal step and the outcome."""
+
     async def test_lock_held_stops_before_any_iTop_call(self):
         self.deps.state_manager.acquire_lock.return_value = False
 
-        await self.run.execute()
+        outcome = await self.run.execute()
 
+        self.assertEqual(outcome.status, "skipped")
         self.assertEqual(self.run.phases, [])
         self.deps.itop.get.assert_not_called()
         self.assertEqual(self.journalled(), ["lock"])
@@ -93,21 +98,23 @@ class TestSkips(ShellTestCase):
     async def test_missing_object_stops_before_the_guard(self):
         self.bundle.ticket_repo.fetch.return_value = None
 
-        await self.run.execute()
+        outcome = await self.run.execute()
 
+        self.assertEqual(outcome.status, "skipped")
         self.assertEqual(self.run.phases, [])
         self.assertEqual(self.journalled(), ["fetch"])
         self.deps.state_manager.release_lock.assert_awaited_once()
 
     async def test_guard_reason_stops_the_body_and_is_journalled_verbatim(self):
-        self.run.stop_with = "not our business — skipped"
+        self.run.stop_with = "not our business"
 
-        await self.run.execute()
+        outcome = await self.run.execute()
 
         self.assertEqual(self.run.phases, ["guard"])
         self.assertEqual(self.journalled(), ["guard"])
         detail = self.deps.journal.add_step.await_args.args[2]
-        self.assertEqual(detail, "not our business — skipped")
+        self.assertEqual(detail, "not our business")
+        self.assertEqual((outcome.status, outcome.detail), ("skipped", "not our business"))
 
 
 class TestFailure(ShellTestCase):
@@ -135,3 +142,9 @@ class TestHandleClassmethod(ShellTestCase):
 
         self.assertEqual(len(seen), 2)
         self.assertNotEqual(seen[0], seen[1])
+
+    async def test_handle_takes_a_bare_object_ref(self):
+        """The shell knows nothing about triggers — a plain reference is enough."""
+        outcome = await _ProbeRun.handle(ObjectRef(obj_class="Change", id="123"), uuid4(), self.deps)
+
+        self.assertEqual(outcome.status, "done")

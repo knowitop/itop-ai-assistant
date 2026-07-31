@@ -153,7 +153,10 @@
     "saved": "Сақталды — келесі өңделген тикетте қолданылады",
     "config_reset": "Конфигурация әдепкі мәндерге қайтарылды",
     "reset_confirm": "«{{name}}» конфигурациясын env/yaml әдепкі мәндеріне қайтару керек пе?",
-    "field_invalid_json": "{{name}}: қате JSON"
+    "field_invalid_json": "{{name}}: қате JSON",
+    "requests_title": "Қолмен іске қосу",
+    "run_action": "Іске қосу",
+    "run_id": "Орындау {{id}}"
   },
   "prompts": {
     "title": "Промпттар",
@@ -177,6 +180,7 @@
     "col_started": "Басталды",
     "col_ticket": "Тикет",
     "col_module": "Модуль",
+    "col_kind": "Триггер",
     "col_event": "Оқиға",
     "col_status": "Күй",
     "col_duration": "Ұзақтығы",

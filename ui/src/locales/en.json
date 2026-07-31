@@ -153,7 +153,10 @@
     "saved": "Saved — applies from the next processed ticket",
     "config_reset": "Config reset to defaults",
     "reset_confirm": "Reset the \"{{name}}\" config to env/yaml defaults?",
-    "field_invalid_json": "{{name}}: invalid JSON"
+    "field_invalid_json": "{{name}}: invalid JSON",
+    "requests_title": "Run manually",
+    "run_action": "Run",
+    "run_id": "Run {{id}}"
   },
   "prompts": {
     "title": "Prompts",
@@ -177,6 +180,7 @@
     "col_started": "Started",
     "col_ticket": "Ticket",
     "col_module": "Module",
+    "col_kind": "Trigger",
     "col_event": "Event",
     "col_status": "Status",
     "col_duration": "Duration",

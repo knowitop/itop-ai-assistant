@@ -6,48 +6,26 @@ separate from the webhook token.
 """
 
 import logging
-import secrets
-from typing import Annotated, Any
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ValidationError
 
 from itop_ai_assistant.admin.setup import router as setup_router
-from itop_ai_assistant.config import SecurityConfig
+from itop_ai_assistant.api_deps import verify_admin_token
 from itop_ai_assistant.deps import AppDeps
 from itop_ai_assistant.journal import ProcessingRun
 from itop_ai_assistant.pipelines.registry import ModuleInfo
 from itop_ai_assistant.prompt_store import PromptStoreError
+from itop_ai_assistant.request.router import router as request_router
 from itop_ai_assistant.vector.router import router as vector_router
 
 logger = logging.getLogger(__name__)
 
-# auto_error=False: a missing header must fall through to our own check —
-# the API is open until an admin token is set (first-run mode)
-_bearer = HTTPBearer(auto_error=False)
-
-
-async def verify_admin_token(
-    request: Request,
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)] = None,
-) -> None:
-    deps: AppDeps = request.app.state.deps
-    security = await deps.config_store.get("security", SecurityConfig)
-    if security.admin_token is None:
-        # First-run mode: the API stays open until the wizard sets a token
-        return
-    if credentials is None or not secrets.compare_digest(credentials.credentials, security.admin_token):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or missing bearer token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-
 router = APIRouter(prefix="/api", dependencies=[Depends(verify_admin_token)])
 router.include_router(setup_router)
 router.include_router(vector_router)
+router.include_router(request_router)
 
 
 def _deps(request: Request) -> AppDeps:
@@ -63,14 +41,25 @@ def _module_or_404(request: Request, module: str) -> ModuleInfo:
 
 @router.get("/modules")
 async def list_modules(request: Request) -> list[dict]:
+    registry = request.app.state.registry
     return [
         {
             "name": m.name,
             "description": m.description,
             "has_config": m.config_model is not None,
             "prompts": list(m.prompt_names),
+            # What the module can be asked to do synchronously; the UI builds
+            # its form from the schema instead of knowing the module
+            "requests": [
+                {
+                    "action": route.action,
+                    "summary": route.summary,
+                    "input_schema": route.input_model.model_json_schema(),
+                }
+                for route in registry.requests_for(m.name)
+            ],
         }
-        for m in request.app.state.registry.modules
+        for m in registry.modules
     ]
 
 

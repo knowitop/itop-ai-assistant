@@ -153,7 +153,10 @@
     "saved": "已保存 — 将在下一个处理的工单中生效",
     "config_reset": "配置已重置为默认值",
     "reset_confirm": "将「{{name}}」的配置重置为环境变量/yaml 默认值？",
-    "field_invalid_json": "{{name}}：无效的 JSON"
+    "field_invalid_json": "{{name}}：无效的 JSON",
+    "requests_title": "手动运行",
+    "run_action": "运行",
+    "run_id": "运行 {{id}}"
   },
   "prompts": {
     "title": "提示词",
@@ -177,6 +180,7 @@
     "col_started": "开始时间",
     "col_ticket": "工单",
     "col_module": "模块",
+    "col_kind": "触发方式",
     "col_event": "事件",
     "col_status": "状态",
     "col_duration": "耗时",

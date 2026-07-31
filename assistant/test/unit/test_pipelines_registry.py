@@ -3,67 +3,103 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from itop_ai_assistant.config import IntakeConfig
-from itop_ai_assistant.pipelines.registry import ModuleInfo, PipelineRegistry, build_registry
+from itop_ai_assistant.pipelines.models import ObjectRef
+from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, TriggerRegistry, build_registry
 
 
 def _module(name: str = "test-module") -> ModuleInfo:
     return ModuleInfo(name=name, description="Test module")
 
 
+def _request(module: str = "test-module", action: str = "run") -> RequestRoute:
+    return RequestRoute(
+        action=action,
+        module=module,
+        input_model=ObjectRef,
+        handler=AsyncMock(),
+        subject_of=lambda ref: ref.label,
+    )
+
+
 def _settings(**intake_overrides) -> SimpleNamespace:
     return SimpleNamespace(intake=IntakeConfig(**intake_overrides))
 
 
-class TestPipelineRegistry(unittest.TestCase):
+class TestWebhookRoutes(unittest.TestCase):
     def test_resolve_registered_route(self):
-        registry = PipelineRegistry()
+        registry = TriggerRegistry()
         handler = AsyncMock()
-        registry.register(_module(), {("UserRequest", "created"): handler})
+        registry.register(_module("my-module"), webhooks={("UserRequest", "created"): handler})
 
-        self.assertIs(registry.resolve("UserRequest", "created"), handler)
+        self.assertEqual(registry.resolve_webhook("UserRequest", "created"), ("my-module", handler))
 
     def test_resolve_unknown_route_returns_none(self):
-        registry = PipelineRegistry()
-        registry.register(_module(), {("UserRequest", "created"): AsyncMock()})
+        registry = TriggerRegistry()
+        registry.register(_module(), webhooks={("UserRequest", "created"): AsyncMock()})
 
-        self.assertIsNone(registry.resolve("Change", "created"))
-        self.assertIsNone(registry.resolve("UserRequest", "assigned"))
-
-    def test_duplicate_module_raises(self):
-        registry = PipelineRegistry()
-        registry.register(_module("dup"), {})
-
-        with self.assertRaises(ValueError):
-            registry.register(_module("dup"), {})
+        self.assertIsNone(registry.resolve_webhook("Change", "created"))
+        self.assertIsNone(registry.resolve_webhook("UserRequest", "assigned"))
 
     def test_conflicting_route_raises(self):
-        registry = PipelineRegistry()
-        registry.register(_module("a"), {("UserRequest", "created"): AsyncMock()})
+        registry = TriggerRegistry()
+        registry.register(_module("a"), webhooks={("UserRequest", "created"): AsyncMock()})
 
         with self.assertRaises(ValueError) as ctx:
-            registry.register(_module("b"), {("UserRequest", "created"): AsyncMock()})
+            registry.register(_module("b"), webhooks={("UserRequest", "created"): AsyncMock()})
         self.assertIn("UserRequest", str(ctx.exception))
 
+
+class TestRequestRoutes(unittest.TestCase):
+    def test_resolve_registered_request(self):
+        registry = TriggerRegistry()
+        route = _request()
+        registry.register(_module(), requests=[route])
+
+        self.assertIs(registry.resolve_request("test-module", "run"), route)
+
+    def test_resolve_unknown_request_returns_none(self):
+        registry = TriggerRegistry()
+        registry.register(_module(), requests=[_request()])
+
+        self.assertIsNone(registry.resolve_request("test-module", "nope"))
+        self.assertIsNone(registry.resolve_request("other", "run"))
+
+    def test_conflicting_request_raises(self):
+        registry = TriggerRegistry()
+        registry.register(_module("a"), requests=[_request(module="a")])
+
+        with self.assertRaises(ValueError) as ctx:
+            registry.register(_module("b"), requests=[_request(module="a")])
+        self.assertIn("a/run", str(ctx.exception))
+
+    def test_requests_for_module(self):
+        registry = TriggerRegistry()
+        registry.register(_module("a"), requests=[_request("a", "one"), _request("a", "two")])
+        registry.register(_module("b"), requests=[_request("b", "one")])
+
+        self.assertEqual([r.action for r in registry.requests_for("a")], ["one", "two"])
+        self.assertEqual([r.action for r in registry.requests_for("b")], ["one"])
+        self.assertEqual(registry.requests_for("nope"), [])
+
+
+class TestModules(unittest.TestCase):
+    def test_duplicate_module_raises(self):
+        registry = TriggerRegistry()
+        registry.register(_module("dup"))
+
+        with self.assertRaises(ValueError):
+            registry.register(_module("dup"))
+
     def test_modules_lists_registered(self):
-        registry = PipelineRegistry()
-        registry.register(_module("a"), {})
-        registry.register(_module("b"), {})
+        registry = TriggerRegistry()
+        registry.register(_module("a"))
+        registry.register(_module("b"))
 
         self.assertEqual([m.name for m in registry.modules], ["a", "b"])
 
-    def test_resolve_entry_returns_module_name(self):
-        registry = PipelineRegistry()
-        handler = AsyncMock()
-        registry.register(_module("my-module"), {("UserRequest", "created"): handler})
-
-        entry = registry.resolve_entry("UserRequest", "created")
-
-        self.assertEqual(entry, ("my-module", handler))
-        self.assertIsNone(registry.resolve_entry("Change", "created"))
-
     def test_get_module(self):
-        registry = PipelineRegistry()
-        registry.register(_module("a"), {})
+        registry = TriggerRegistry()
+        registry.register(_module("a"))
 
         self.assertEqual(registry.get_module("a").name, "a")
         self.assertIsNone(registry.get_module("nope"))
@@ -75,7 +111,7 @@ class TestBuildRegistry(unittest.TestCase):
 
         for obj_class in ("UserRequest", "Incident"):
             for event in ("created", "user_commented", "assigned"):
-                self.assertIsNotNone(registry.resolve(obj_class, event), f"{obj_class}/{event}")
+                self.assertIsNotNone(registry.resolve_webhook(obj_class, event), f"{obj_class}/{event}")
 
         self.assertEqual([m.name for m in registry.modules], ["intake"])
         module = registry.get_module("intake")
@@ -83,26 +119,36 @@ class TestBuildRegistry(unittest.TestCase):
         self.assertIn("system", module.prompt_names)
         self.assertIsNotNone(module.validate_prompts)
 
+    def test_intake_exposes_a_request_route(self):
+        registry = build_registry(_settings())
+
+        route = registry.resolve_request("intake", "process")
+
+        self.assertIsNotNone(route)
+        self.assertIs(route.input_model, ObjectRef)
+        self.assertEqual(route.subject_of(ObjectRef(obj_class="Incident", id="7")), "Incident::7")
+
     def test_disabled_intake_registers_nothing(self):
         registry = build_registry(_settings(enabled=False))
 
         self.assertEqual(registry.modules, [])
-        self.assertIsNone(registry.resolve("UserRequest", "created"))
+        self.assertIsNone(registry.resolve_webhook("UserRequest", "created"))
+        self.assertIsNone(registry.resolve_request("intake", "process"))
 
     def test_custom_class_list(self):
         registry = build_registry(_settings(classes=["UserRequest"]))
 
-        self.assertIsNotNone(registry.resolve("UserRequest", "created"))
-        self.assertIsNone(registry.resolve("Incident", "created"))
+        self.assertIsNotNone(registry.resolve_webhook("UserRequest", "created"))
+        self.assertIsNone(registry.resolve_webhook("Incident", "created"))
 
     def test_a_second_module_extends_the_map(self):
         registry = build_registry(_settings())
 
-        registry.register(_module("other"), {("Change", "created"): AsyncMock()})
+        registry.register(_module("other"), webhooks={("Change", "created"): AsyncMock()})
 
         self.assertEqual([m.name for m in registry.modules], ["intake", "other"])
-        self.assertEqual(registry.resolve_entry("UserRequest", "created")[0], "intake")
-        self.assertEqual(registry.resolve_entry("Change", "created")[0], "other")
+        self.assertEqual(registry.resolve_webhook("UserRequest", "created")[0], "intake")
+        self.assertEqual(registry.resolve_webhook("Change", "created")[0], "other")
 
 
 if __name__ == "__main__":

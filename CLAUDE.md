@@ -115,7 +115,9 @@ and `uv run pytest`.
 
 1. iTop sends `POST /webhook` with `{id, class, event}` payload
 2. Webhook handler returns HTTP 202 immediately; processing runs in background
-   via `asyncio.create_task`
+   via `asyncio.create_task`. (The same run is reachable synchronously via
+   `POST /api/modules/intake/process` — steps 3-8 are identical, only the
+   outcome goes back to the caller instead of into the ticket alone)
 3. Fetch `TicketState` from Redis — if `ai_done: true`, stop immediately
 4. Fetch full ticket from iTop API; for `UserRequest`/`Incident` also fetch
    related `Service` and `ServiceSubcategory`; fetch `Person` of caller
@@ -145,8 +147,12 @@ and `uv run pytest`.
 | `admin/router.py`                               | Admin API: config, prompts, runs, module discovery                                           |
 | `admin/setup.py`                                | Setup API: connection sections + probes (wizard backend)                                     |
 | `itop_provisioning.py`                          | iTop-side triggers/webhooks: find-or-create + CLI                                            |
+| `api_deps.py`                                   | Shared FastAPI dependencies: webhook/admin token, configured-gate                            |
 | `webhook/router.py`                             | Webhook endpoint: auth, configured-gate, dispatch                                            |
-| `pipelines/registry.py`                         | `PipelineRegistry` — (class, event) → module handler                                         |
+| `request/router.py`                             | `POST /api/modules/{module}/{action}` — the synchronous trigger                              |
+| `pipelines/registry.py`                         | `TriggerRegistry` — webhook `(class, event)` and request `(module, action)` routes           |
+| `pipelines/models.py`                           | `ObjectRef` / `RunOutcome` — what a run starts with and ends as                              |
+| `pipelines/runner.py`                           | `journalled_run` — the outer frame: journal start/finish around any trigger                  |
 | `pipelines/shell.py`                            | `TicketRun` — the run shell: lock → fetch → guard → body → release                           |
 | `pipelines/agent_run.py`                        | `AgentRun` — agent loop: journal trace, `RunUsage`, guaranteed closure                       |
 | `text_utils.py`                                 | Generic `html_to_markdown`, `bind_oql`, `strip_thinking` (no biz deps)                       |
@@ -194,30 +200,53 @@ The iTop client and repositories come from `ItopProvider` (`deps.itop.get()`
 dropped) when the runtime config changes — connection edits apply from the
 next ticket without a restart.
 
-**Pipeline registry:** webhook events reach business modules through
-`PipelineRegistry` — a startup-built map of `(object class, event)` → handler.
-The router accepts only registered combinations. Adding a new module: create
-`src/itop_ai_assistant/agents/<module>/pipeline.py` with `register(registry, settings)` exposing
-a `ModuleInfo` (name, description, config model, prompt names — consumed by
-the admin UI) and its routes, add one call in
+**Trigger registry:** work reaches business modules through `TriggerRegistry`
+(`pipelines/registry.py`) — a startup-built map of what may start a run. Two
+kinds today: a **webhook** route keyed `(object class, event)` and a **request**
+route keyed `(module, action)`, the synchronous path (`POST
+/api/modules/{module}/{action}`, admin-token auth, answer returned to the
+caller). `TriggerKind` names a third, `schedule`, which has no producer yet —
+the vector sweep still starts by hand in the lifespan. Every entry point rejects
+anything no module has claimed.
+
+Two things live in that one file and are deliberately *not* the same:
+`ModuleInfo` is what a **business module** is (config section, prompt names,
+its screen in the admin UI — consumed by `/api/modules`); the routes are what
+may **start a run**. Keeping them apart is what will let a trigger belong to
+something that is not a business module.
+
+Adding a new module: create `src/itop_ai_assistant/agents/<module>/pipeline.py`
+with `register(registry, settings)` exposing a `ModuleInfo` and its routes
+(`webhooks=` and/or `requests=`), add one call in
 `pipelines/registry.py::build_registry`, add a config section in `config.py`.
 The work itself subclasses `pipelines/shell.py::TicketRun` and registers
-`<Run>.handle` as the route — see the run shell below.
-`ModuleInfo.validate_prompts` is called for every registered module at startup,
-so a broken template fails the boot instead of a live ticket. The intake module
-is enabled/scoped via `intake.enabled` (default `true`) and `intake.classes`
-(default `[UserRequest, Incident]`).
+`<Run>.handle` — one classmethod that fits both kinds, since the shell takes an
+`ObjectRef` and returns a `RunOutcome`; the webhook drops it, the request
+returns it. `ModuleInfo.validate_prompts` is called for every registered module
+at startup, so a broken template fails the boot instead of a live ticket. The
+intake module is enabled/scoped via `intake.enabled` (default `true`) and
+`intake.classes` (default `[UserRequest, Incident]`); its request route is
+`intake/process` — run intake on one ticket now and get the outcome back. It
+does **not** bypass the guard: an already-finished ticket answers
+`skipped: already processed (ai_done)`, which is the truth.
+
+A request run acts as the module's **service account** — there is no principal
+resolution yet (`docs/architecture.md` §8.2), which is why the endpoint sits
+behind the admin token instead of an engineer's identity.
 
 **The run shell (`pipelines/shell.py`, `pipelines/agent_run.py`) is the core, not
-a module's business.** `TicketRun` is the contract every webhook module runs
-under: acquire the per-object lock, read the object from iTop, ask the module's
-guard, run the module's body, release in `finally`. It writes the `lock` /
-`fetch` / `guard` journal steps itself, so every module leaves the same trace
-whatever it does inside. A module subclasses it, implements `stop_reason` and
-`body`, and registers `<Run>.handle` (a classmethod matching `PipelineHandler`).
-**One instance per run, never per registration** — the payload, ids, deps and
+a module's business.** `TicketRun` is the contract every object-processing
+module runs under: acquire the per-object lock, read the object from iTop, ask
+the module's guard, run the module's body, release in `finally`. It writes the
+`lock` / `fetch` / `guard` journal steps itself, so every module leaves the same
+trace whatever it does inside. A module subclasses it, implements `stop_reason`
+and `body`, and registers `<Run>.handle`. **The trigger is not part of that
+contract**: the shell takes an `ObjectRef`, not a webhook payload, and every
+stop reports itself twice — a journal step and a `RunOutcome` with the same
+text, so a synchronous caller learns why nothing happened.
+**One instance per run, never per registration** — the reference, ids, deps and
 `bundle` live on the instance, so a shared instance in the registry would race
-between concurrent webhooks.
+between concurrent triggers.
 
 `AgentRun` is the other half: it streams one agent to the end, journals every
 model turn and tool result, counts `RunUsage`, and — when no tool in
@@ -228,9 +257,11 @@ instead of being replayed by the next event.
 The two halves are **composed, not inherited**, because their consumers differ.
 A webhook module needs both. A synchronous one (the engineer console) needs
 `AgentRun` and no lock at all; a single template method would force it to stub
-the locking half out. The outer frame stays at the entry point: `journal.start`
-/ `finish` and the top-level exception capture belong to `webhook/router.py`, so
-body exceptions deliberately propagate out of `execute()`.
+the locking half out. The outer frame stays at the entry point:
+`pipelines/runner.py::journalled_run` opens and closes the run, and each entry
+point decides what a failure means — the webhook logs it (its caller is iTop,
+already answered 202), the request lets it propagate into a 500. Body exceptions
+deliberately propagate out of `execute()` for exactly that reason.
 
 **`src/itop_ai_assistant/agents/intake/` — the ticket-processing module.** Classify
 Service/ServiceSubcategory, ask one clarifying question, post the handoff
@@ -420,7 +451,7 @@ saved webhook token, so security comes first and the LLM step last.
 pgvector behind the env-only `database_url`; unset = the whole subsystem is
 off and the deployment stays Redis-only. `src/itop_ai_assistant/vector/` is an infrastructure
 layer like `state/` or `journal.py` — it is NOT a business module: it does
-not register in `PipelineRegistry`, has no prompts or webhook routes; future
+not register in `TriggerRegistry`, has no prompts or trigger routes; future
 business modules consume it through `AppDeps.vector_db`. Alembic migrations
 (static tables: `vector_index_meta`, `vector_sync_state`, `index_journal`)
 run automatically at startup when `database_url` is set — failures degrade
@@ -531,9 +562,9 @@ npm run build   # type-check (tsc --noEmit) + production build into ui/dist
   (see `.env.test.dist`) and a reachable endpoint. This is where prompt and
   tool-calling regressions show up — run `uv run pytest test/integration`
   after touching `prompts/intake/*.md` or a tool signature.
-- Current test files: `test_config.py`, `test_router.py`, `test_deps.py`,
-  `test_pipelines_registry.py`, `test_pipelines_shell.py`,
-  `test_ticket_state.py`, `test_prompt_store.py`,
+- Current test files: `test_config.py`, `test_router.py`, `test_request_api.py`,
+  `test_deps.py`, `test_pipelines_registry.py`, `test_pipelines_shell.py`,
+  `test_pipelines_runner.py`, `test_ticket_state.py`, `test_prompt_store.py`,
   `test_ticket_repository.py`, `test_catalog_repository.py`,
   `test_itop_schema.py`, `test_itop_provisioning.py`, `test_journal.py`,
   `test_config_store.py`, `test_admin_api.py`, `test_setup_api.py`,
@@ -552,3 +583,7 @@ npm run build   # type-check (tsc --noEmit) + production build into ui/dist
   `test_pipelines_shell.py` (through a probe subclass, so "generic" is pinned by
   a second implementation). Tools are
   called directly as `tools.<name>.coroutine(...)`, bypassing pydantic.
+- The request endpoint is likewise pinned twice: through intake
+  (`test_request_api.py::TestIntakeProcessNow`) and through a probe module
+  registered on a throwaway registry — the endpoint must know a registry entry,
+  not a module by name.

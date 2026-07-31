@@ -153,7 +153,10 @@
     "saved": "Gespeichert — wird beim nächsten verarbeiteten Ticket angewendet",
     "config_reset": "Konfiguration auf Standardwerte zurückgesetzt",
     "reset_confirm": "Konfiguration von \"{{name}}\" auf env/yaml-Standardwerte zurücksetzen?",
-    "field_invalid_json": "{{name}}: ungültiges JSON"
+    "field_invalid_json": "{{name}}: ungültiges JSON",
+    "requests_title": "Manuell ausführen",
+    "run_action": "Ausführen",
+    "run_id": "Lauf {{id}}"
   },
   "prompts": {
     "title": "Prompts",
@@ -177,6 +180,7 @@
     "col_started": "Gestartet",
     "col_ticket": "Ticket",
     "col_module": "Modul",
+    "col_kind": "Auslöser",
     "col_event": "Ereignis",
     "col_status": "Status",
     "col_duration": "Dauer",

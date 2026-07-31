@@ -53,6 +53,15 @@ class TestModules(AdminApiTestCase):
         self.assertTrue(modules[0]["has_config"])
         self.assertIn("system", modules[0]["prompts"])
 
+    def test_lists_request_actions_with_their_schema(self):
+        """The UI builds the form from this, so the schema has to travel with it."""
+        modules = self.client.get("/api/modules").json()
+
+        (action,) = modules[0]["requests"]
+        self.assertEqual(action["action"], "process")
+        self.assertTrue(action["summary"])
+        self.assertEqual(sorted(action["input_schema"]["required"]), ["class", "id"])
+
 
 class TestConfigEndpoints(AdminApiTestCase):
     def test_get_config_returns_defaults(self):

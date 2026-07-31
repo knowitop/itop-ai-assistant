@@ -153,7 +153,10 @@
     "saved": "Zapisano — zostanie zastosowane przy następnym przetworzonym zgłoszeniu",
     "config_reset": "Konfiguracja przywrócona do ustawień domyślnych",
     "reset_confirm": "Przywrócić konfigurację \"{{name}}\" do domyślnych wartości env/yaml?",
-    "field_invalid_json": "{{name}}: nieprawidłowy JSON"
+    "field_invalid_json": "{{name}}: nieprawidłowy JSON",
+    "requests_title": "Uruchomienie ręczne",
+    "run_action": "Uruchom",
+    "run_id": "Przebieg {{id}}"
   },
   "prompts": {
     "title": "Prompty",
@@ -177,6 +180,7 @@
     "col_started": "Rozpoczęto",
     "col_ticket": "Zgłoszenie",
     "col_module": "Moduł",
+    "col_kind": "Wyzwalacz",
     "col_event": "Zdarzenie",
     "col_status": "Status",
     "col_duration": "Czas trwania",

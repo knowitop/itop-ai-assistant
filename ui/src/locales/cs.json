@@ -153,7 +153,10 @@
     "saved": "Uloženo — použije se při dalším zpracovaném ticketu",
     "config_reset": "Konfigurace obnovena na výchozí hodnoty",
     "reset_confirm": "Obnovit konfiguraci \"{{name}}\" na výchozí hodnoty env/yaml?",
-    "field_invalid_json": "{{name}}: neplatný JSON"
+    "field_invalid_json": "{{name}}: neplatný JSON",
+    "requests_title": "Ruční spuštění",
+    "run_action": "Spustit",
+    "run_id": "Běh {{id}}"
   },
   "prompts": {
     "title": "Prompty",
@@ -177,6 +180,7 @@
     "col_started": "Spuštěno",
     "col_ticket": "Ticket",
     "col_module": "Modul",
+    "col_kind": "Spouštěč",
     "col_event": "Událost",
     "col_status": "Stav",
     "col_duration": "Trvání",

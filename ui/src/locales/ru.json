@@ -153,7 +153,10 @@
     "saved": "Сохранено — применится со следующего обработанного тикета",
     "config_reset": "Конфигурация сброшена к умолчаниям",
     "reset_confirm": "Сбросить конфигурацию «{{name}}» к умолчаниям (env/yaml)?",
-    "field_invalid_json": "{{name}}: некорректный JSON"
+    "field_invalid_json": "{{name}}: некорректный JSON",
+    "requests_title": "Ручной запуск",
+    "run_action": "Запустить",
+    "run_id": "Прогон {{id}}"
   },
   "prompts": {
     "title": "Промпты",
@@ -177,6 +180,7 @@
     "col_started": "Начало",
     "col_ticket": "Тикет",
     "col_module": "Модуль",
+    "col_kind": "Триггер",
     "col_event": "Событие",
     "col_status": "Статус",
     "col_duration": "Длительность",

@@ -29,6 +29,7 @@ interface Run {
   ticket: string;
   event: string;
   module: string;
+  kind: 'webhook' | 'request' | 'schedule';
   status: 'running' | 'done' | 'failed';
   started_at: string;
   finished_at: string | null;
@@ -161,6 +162,7 @@ export default function Runs() {
                   <Table.Th>{t('runs.col_started')}</Table.Th>
                   <Table.Th>{t('runs.col_ticket')}</Table.Th>
                   <Table.Th>{t('runs.col_module')}</Table.Th>
+                  <Table.Th>{t('runs.col_kind')}</Table.Th>
                   <Table.Th>{t('runs.col_event')}</Table.Th>
                   <Table.Th>{t('runs.col_status')}</Table.Th>
                   <Table.Th>{t('runs.col_duration')}</Table.Th>
@@ -180,6 +182,7 @@ export default function Runs() {
                     <Table.Td>{formatWhen(run.started_at)}</Table.Td>
                     <Table.Td>{run.ticket}</Table.Td>
                     <Table.Td>{run.module}</Table.Td>
+                    <Table.Td>{run.kind}</Table.Td>
                     <Table.Td>{run.event}</Table.Td>
                     <Table.Td>
                       <StatusBadge status={run.status} />
