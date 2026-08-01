@@ -2,9 +2,15 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from itop_ai_assistant.config import IntakeConfig
+from itop_ai_assistant.config import IntakeConfig, SelfCheckConfig
 from itop_ai_assistant.pipelines.models import ObjectRef
-from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, TriggerRegistry, build_registry
+from itop_ai_assistant.pipelines.registry import (
+    ModuleInfo,
+    RequestRoute,
+    ScheduleRoute,
+    TriggerRegistry,
+    build_registry,
+)
 
 
 def _module(name: str = "test-module") -> ModuleInfo:
@@ -21,8 +27,21 @@ def _request(module: str = "test-module", action: str = "run") -> RequestRoute:
     )
 
 
-def _settings(**intake_overrides) -> SimpleNamespace:
-    return SimpleNamespace(intake=IntakeConfig(**intake_overrides))
+def _schedule(module: str = "test-module", name: str = "tick", **overrides) -> ScheduleRoute:
+    return ScheduleRoute(
+        name=name,
+        module=module,
+        handler=AsyncMock(),
+        interval_of=AsyncMock(return_value=60.0),
+        **overrides,
+    )
+
+
+def _settings(intake_overrides=None, selfcheck_overrides=None) -> SimpleNamespace:
+    return SimpleNamespace(
+        intake=IntakeConfig(**(intake_overrides or {})),
+        selfcheck=SelfCheckConfig(**(selfcheck_overrides or {})),
+    )
 
 
 class TestWebhookRoutes(unittest.TestCase):
@@ -82,6 +101,43 @@ class TestRequestRoutes(unittest.TestCase):
         self.assertEqual(registry.requests_for("nope"), [])
 
 
+class TestScheduleRoutes(unittest.TestCase):
+    def test_resolve_registered_schedule(self):
+        registry = TriggerRegistry()
+        route = _schedule()
+        registry.register(_module(), schedules=[route])
+
+        self.assertIs(registry.resolve_schedule("test-module", "tick"), route)
+        self.assertEqual(registry.schedules, [route])
+
+    def test_resolve_unknown_schedule_returns_none(self):
+        registry = TriggerRegistry()
+        registry.register(_module(), schedules=[_schedule()])
+
+        self.assertIsNone(registry.resolve_schedule("test-module", "nope"))
+        self.assertIsNone(registry.resolve_schedule("other", "tick"))
+
+    def test_conflicting_schedule_raises(self):
+        registry = TriggerRegistry()
+        registry.register(_module("a"), schedules=[_schedule(module="a")])
+
+        with self.assertRaises(ValueError) as ctx:
+            registry.register(_module("b"), schedules=[_schedule(module="a")])
+        self.assertIn("a/tick", str(ctx.exception))
+
+    def test_schedules_for_module(self):
+        registry = TriggerRegistry()
+        registry.register(_module("a"), schedules=[_schedule("a", "one"), _schedule("a", "two")])
+        registry.register(_module("b"), schedules=[_schedule("b", "one")])
+
+        self.assertEqual([r.name for r in registry.schedules_for("a")], ["one", "two"])
+        self.assertEqual([r.name for r in registry.schedules_for("b")], ["one"])
+        self.assertEqual(registry.schedules_for("nope"), [])
+
+    def test_label_defaults_to_module_and_name(self):
+        self.assertEqual(_schedule("kb", "sweep").label, "kb/sweep")
+
+
 class TestModules(unittest.TestCase):
     def test_duplicate_module_raises(self):
         registry = TriggerRegistry()
@@ -129,14 +185,14 @@ class TestBuildRegistry(unittest.TestCase):
         self.assertEqual(route.subject_of(ObjectRef(obj_class="Incident", id="7")), "Incident::7")
 
     def test_disabled_intake_registers_nothing(self):
-        registry = build_registry(_settings(enabled=False))
+        registry = build_registry(_settings({"enabled": False}))
 
         self.assertEqual(registry.modules, [])
         self.assertIsNone(registry.resolve_webhook("UserRequest", "created"))
         self.assertIsNone(registry.resolve_request("intake", "process"))
 
     def test_custom_class_list(self):
-        registry = build_registry(_settings(classes=["UserRequest"]))
+        registry = build_registry(_settings({"classes": ["UserRequest"]}))
 
         self.assertIsNotNone(registry.resolve_webhook("UserRequest", "created"))
         self.assertIsNone(registry.resolve_webhook("Incident", "created"))

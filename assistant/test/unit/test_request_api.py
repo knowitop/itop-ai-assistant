@@ -9,7 +9,14 @@ from unittest.mock import AsyncMock, MagicMock
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
 
-from itop_ai_assistant.config import IntakeConfig, ItopConfig, LlmConfig, SecurityConfig, TicketMappingConfig
+from itop_ai_assistant.config import (
+    IntakeConfig,
+    ItopConfig,
+    LlmConfig,
+    SecurityConfig,
+    SelfCheckConfig,
+    TicketMappingConfig,
+)
 from itop_ai_assistant.journal import RunJournal
 from itop_ai_assistant.main import app
 from itop_ai_assistant.pipelines.models import ObjectRef, RunOutcome
@@ -64,7 +71,7 @@ class TestIntakeProcessNow(RequestApiTestCase):
         self.assertEqual(run["kind"], "request")
         self.assertEqual(run["module"], "intake")
         self.assertEqual(run["event"], "process")
-        self.assertEqual(run["ticket"], "UserRequest::123")
+        self.assertEqual(run["subject"], "UserRequest::123")
         self.assertEqual(run["status"], "done")
 
     def test_unknown_action_is_404(self):
@@ -93,7 +100,7 @@ class TestProbeModule(unittest.TestCase):
 
         self.calls: list[ObjectRef] = []
         self.raises: Exception | None = None
-        registry = build_registry(SimpleNamespace(intake=IntakeConfig()))
+        registry = build_registry(SimpleNamespace(intake=IntakeConfig(), selfcheck=SelfCheckConfig()))
         registry.register(
             ModuleInfo(name="probe", description="Probe"),
             requests=[

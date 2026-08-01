@@ -144,6 +144,7 @@ and `uv run pytest`.
 | `deps.py`                                       | Composition root: `AppDeps`, `build_deps`, `create_llm`                                      |
 | `config_store.py`                               | `RedisConfigStore` — runtime-editable module config                                          |
 | `journal.py`                                    | `RunJournal` — per-run status/steps in Redis                                                 |
+| `background.py`                                 | `build_background_tasks` — every periodic loop of the process, one line each                 |
 | `admin/router.py`                               | Admin API: config, prompts, runs, module discovery                                           |
 | `admin/setup.py`                                | Setup API: connection sections + probes (wizard backend)                                     |
 | `itop_provisioning.py`                          | iTop-side triggers/webhooks: find-or-create + CLI                                            |
@@ -153,6 +154,8 @@ and `uv run pytest`.
 | `pipelines/registry.py`                         | `TriggerRegistry` — webhook `(class, event)` and request `(module, action)` routes           |
 | `pipelines/models.py`                           | `ObjectRef` / `RunOutcome` — what a run starts with and ends as                              |
 | `pipelines/runner.py`                           | `journalled_run` — the outer frame: journal start/finish around any trigger                  |
+| `pipelines/scheduler.py`                        | `PeriodicTasks` — pacing for every background loop (no run frame of its own)                 |
+| `schedule/runner.py`                            | The `schedule` entry point: one journalled run per tick of a `ScheduleRoute`                 |
 | `pipelines/shell.py`                            | `TicketRun` — the run shell: lock → fetch → guard → body → release                           |
 | `pipelines/agent_run.py`                        | `AgentRun` — agent loop: journal trace, `RunUsage`, guaranteed closure                       |
 | `text_utils.py`                                 | Generic `html_to_markdown`, `bind_oql`, `strip_thinking` (no biz deps)                       |
@@ -164,7 +167,10 @@ and `uv run pytest`.
 | `agents/intake/prompt.py`                       | Initial messages: catalog, ticket, conversation as XML                                       |
 | `agents/intake/prompts.py`                      | `IntakePrompts` + placeholder registry/validation                                            |
 | `agents/intake/context.py`                      | `IntakeContext` — per-run dependencies for tools                                             |
+| `agents/selfcheck/pipeline.py`                  | Selfcheck module: the module contract's own smoke test (schedule + request, writes nothing)  |
+| `agents/selfcheck/prompts.py`                   | `SelfCheckPrompts` + placeholder registry                                                    |
 | `prompts/intake/*.md`                           | Default intake prompts (system, catalog, ticket)                                             |
+| `prompts/selfcheck/greeting.md`                 | The one selfcheck prompt                                                                     |
 | `domain/ticket.py`                              | `Ticket` — semantic domain model (no iTop names)                                             |
 | `ticket_repository.py`                          | `TicketRepository` — semantic ↔ iTop attribute adapter                                       |
 | `catalog_repository.py`                         | `CatalogRepository` — service catalog reads                                                  |
@@ -201,34 +207,59 @@ dropped) when the runtime config changes — connection edits apply from the
 next ticket without a restart.
 
 **Trigger registry:** work reaches business modules through `TriggerRegistry`
-(`pipelines/registry.py`) — a startup-built map of what may start a run. Two
-kinds today: a **webhook** route keyed `(object class, event)` and a **request**
-route keyed `(module, action)`, the synchronous path (`POST
+(`pipelines/registry.py`) — a startup-built map of what may start a run. Three
+kinds, all implemented: a **webhook** route keyed `(object class, event)`; a
+**request** route keyed `(module, action)`, the synchronous path (`POST
 /api/modules/{module}/{action}`, admin-token auth, answer returned to the
-caller). `TriggerKind` names a third, `schedule`, which has no producer yet —
-the vector sweep still starts by hand in the lifespan. Every entry point rejects
+caller); and a **schedule** route keyed `(module, name)`, started by the clock
+(`schedule/runner.py`, one journalled run per tick, `interval_of` re-read from
+the module's runtime config before every wait). Every entry point rejects
 anything no module has claimed.
 
 Two things live in that one file and are deliberately *not* the same:
 `ModuleInfo` is what a **business module** is (config section, prompt names,
 its screen in the admin UI — consumed by `/api/modules`); the routes are what
-may **start a run**. Keeping them apart is what will let a trigger belong to
-something that is not a business module.
+may **start a run**.
+
+**A background loop is not a trigger.** `PeriodicTasks` (`pipelines/scheduler.py`)
+paces every periodic loop in the process — start, stop, interruptible wait,
+per-tick interval — and knows nothing about runs. Two kinds of loop use it, and
+`background.py` assembles both (one line each, same idiom as `build_registry`):
+the vector sweep, which is **infrastructure** (no module, no route, no
+`RunJournal` entry — it keeps its own `index_journal` in Postgres and its own
+advisory lock), and one loop per registered `ScheduleRoute`, whose ticks are
+journalled runs of a business module. Do not put an infrastructure loop in the
+registry: it would need a fake module name and a "do not journal" flag, which is
+the contract it disproves. Loops are **per process** — cross-replica exclusion
+is the tick's own business.
 
 Adding a new module: create `src/itop_ai_assistant/agents/<module>/pipeline.py`
 with `register(registry, settings)` exposing a `ModuleInfo` and its routes
-(`webhooks=` and/or `requests=`), add one call in
+(`webhooks=`, `requests=` and/or `schedules=`), add one call in
 `pipelines/registry.py::build_registry`, add a config section in `config.py`.
-The work itself subclasses `pipelines/shell.py::TicketRun` and registers
-`<Run>.handle` — one classmethod that fits both kinds, since the shell takes an
-`ObjectRef` and returns a `RunOutcome`; the webhook drops it, the request
-returns it. `ModuleInfo.validate_prompts` is called for every registered module
-at startup, so a broken template fails the boot instead of a live ticket. The
-intake module is enabled/scoped via `intake.enabled` (default `true`) and
-`intake.classes` (default `[UserRequest, Incident]`); its request route is
-`intake/process` — run intake on one ticket now and get the outcome back. It
-does **not** bypass the guard: an already-finished ticket answers
+Object-scoped work subclasses `pipelines/shell.py::TicketRun` and registers
+`<Run>.handle` — one classmethod that fits both object triggers, since the shell
+takes an `ObjectRef` and returns a `RunOutcome`; the webhook drops it, the
+request returns it. Work that is not about an object (a scheduled run) is a
+plain coroutine `(processing_id, deps) -> RunOutcome` and takes only the run
+frame from the core. `ModuleInfo.validate_prompts` is called for every
+registered module at startup, so a broken template fails the boot instead of a
+live ticket. The intake module is enabled/scoped via `intake.enabled` (default
+`true`) and `intake.classes` (default `[UserRequest, Incident]`); its request
+route is `intake/process` — run intake on one ticket now and get the outcome
+back. It does **not** bypass the guard: an already-finished ticket answers
 `skipped: already processed (ai_done)`, which is the truth.
+
+**`agents/selfcheck/` is the module contract's own smoke test** — the reference
+example for everything above, and disabled by default (`selfcheck.enabled`).
+It owns a config section, a prompt file, a `schedule` route and a `request`
+route bound to the same work, and the core knows nothing about it beyond the one
+line in `build_registry`. One run reads the service catalog through
+`CatalogRepository`, asks the model to say hello, and writes both to the run
+journal — no iTop writes, no state, no lock. Its journalled subject is
+`selfcheck`, not a ticket, which is why `ProcessingRun` calls the field
+`subject`. Turn it on to prove a deployment's seams under real module code
+rather than under a wizard probe.
 
 A request run acts as the module's **service account** — there is no principal
 resolution yet (`docs/architecture.md` §8.2), which is why the endpoint sits
@@ -413,6 +444,11 @@ are read at startup (`build_registry` takes `Settings`, not `ConfigStore`) —
 editing them in the admin UI does not re-route webhooks until a restart; every
 other field is read per run.
 
+`SelfCheckConfig` (`selfcheck.*`) is the same shape for the smoke module:
+`enabled` (default `false`, read at startup), `interval_seconds` (default 900,
+re-read per tick), `probe_oql` (default `SELECT Service`) and an optional
+`model` override.
+
 **Runtime-editable config and prompts.** Business config (module sections
 like `intake.*`) and prompts can be edited at runtime through the
 admin API (`/api/config/...`, `/api/prompts/...`): overrides live in Redis
@@ -463,9 +499,16 @@ Diagnostics: `GET /api/vector/status`. The chunk tables store embeddings +
 ids + filter metadata only — never raw ticket text (see
 `docs/plans/vector-store.md`).
 
-The index is filled by `VectorIndexer` (`src/itop_ai_assistant/vector/indexer.py`) — the
-project's first background task, started in the lifespan when `database_url`
-is set (`app.state.vector_indexer`, stopped before `deps.aclose()`). Every
+The index is filled by `VectorIndexer` (`src/itop_ai_assistant/vector/indexer.py`),
+registered as an infrastructure loop under `PeriodicTasks` when `database_url`
+is set (`register_vector_sweep`; `app.state.tasks`, stopped before
+`deps.aclose()`). It owns no loop and no state of its own — `sweep_once` is the
+whole object, which is what lets the reindex CLI drive it with no scheduler at
+all. A pending full backfill is a `__reindex__` row in `vector_sync_state`
+(`VectorIndex.request_reindex`), not a flag in the process, so the request
+survives a restart and is honoured by whichever replica wins the advisory lock;
+`reset_cursors()` drops that row along with the cursors, which is what clears
+it. Every
 `vector.sweep_interval_seconds` it re-reads the runtime config (so flipping
 `vector.enabled` needs no restart), takes a Postgres advisory lock (safe with
 replicas) and sweeps: reads objects changed since the per-class cursor
@@ -571,7 +614,8 @@ npm run build   # type-check (tsc --noEmit) + production build into ui/dist
   `test_text_utils.py`, `test_llm_providers.py`, `test_embedder.py`, `test_vector_status.py`,
   `test_chunker.py`, `test_indexer.py`, `test_vector_sources_tickets.py`,
   `test_intake_pipeline.py`, `test_intake_prompt.py`, `test_intake_tools.py`,
-  `test_intake_agent.py`; in `test/pg/`: `test_db_smoke.py`,
+  `test_intake_agent.py`, `test_scheduler.py`, `test_schedule_runner.py`,
+  `test_selfcheck.py`; in `test/pg/`: `test_db_smoke.py`,
   `test_vector_index.py`, `test_indexer_pg.py`; in `test/integration/`:
   `test_intake_agent_live.py`
 - The intake agent loop is tested without an LLM through a scripted
@@ -586,4 +630,8 @@ npm run build   # type-check (tsc --noEmit) + production build into ui/dist
 - The request endpoint is likewise pinned twice: through intake
   (`test_request_api.py::TestIntakeProcessNow`) and through a probe module
   registered on a throwaway registry — the endpoint must know a registry entry,
-  not a module by name.
+  not a module by name. The schedule entry point follows the same rule:
+  `test_schedule_runner.py` drives a probe route, `test_selfcheck.py` drives the
+  real module.
+- `test_scheduler.py` never sleeps for real time: intervals are microscopic and
+  every wait is on an `asyncio.Event` the tick sets.

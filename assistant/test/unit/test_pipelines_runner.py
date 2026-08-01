@@ -32,7 +32,7 @@ class TestJournalledRun(RunnerTestCase):
 
         run = await self.deps.journal.get(self.pid)
         self.assertEqual(run.status, "done")
-        self.assertEqual(run.ticket, "UserRequest::42")
+        self.assertEqual(run.subject, "UserRequest::42")
         self.assertEqual(run.module, "intake")
         self.assertIsNotNone(run.finished_at)
 

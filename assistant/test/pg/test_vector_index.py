@@ -270,9 +270,10 @@ class TestCursors:
         assert await index.get_cursor("UserRequest") == t2
         assert await index.list_cursors() == {"UserRequest": t2, "Incident": t1}
 
-    async def test_sentinel_excluded_from_list(self, index):
+    async def test_sentinels_excluded_from_list(self, index):
         mark = datetime(2026, 7, 1, tzinfo=UTC)
         await index.set_cursor(RECONCILE_SENTINEL, mark)
+        await index.request_reindex()
 
         assert await index.list_cursors() == {}
         assert await index.get_cursor(RECONCILE_SENTINEL) == mark
@@ -286,6 +287,26 @@ class TestCursors:
 
         assert await index.list_cursors() == {}
         assert await index.get_cursor(RECONCILE_SENTINEL) is None  # reset drops the mark too
+
+
+class TestReindexRequest:
+    """The pending backfill is a row, not a flag in the process — it survives a
+    restart and is visible to every replica."""
+
+    async def test_request_is_idempotent_and_readable(self, index):
+        assert await index.reindex_pending() is False
+
+        await index.request_reindex()
+        await index.request_reindex()
+
+        assert await index.reindex_pending() is True
+
+    async def test_reset_clears_the_request(self, index):
+        await index.request_reindex()
+
+        await index.reset_cursors()
+
+        assert await index.reindex_pending() is False
 
 
 class TestJournal:

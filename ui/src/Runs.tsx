@@ -26,7 +26,7 @@ interface RunStep {
 
 interface Run {
   processing_id: string;
-  ticket: string;
+  subject: string;
   event: string;
   module: string;
   kind: 'webhook' | 'request' | 'schedule';
@@ -70,7 +70,7 @@ export default function Runs() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [ticket, setTicket] = useState('');
+  const [subject, setSubject] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [runId, setRunId] = useState(searchParams.get('run') ?? '');
   const [selectedId, setSelectedId] = useState<string | null>(searchParams.get('run'));
@@ -91,7 +91,7 @@ export default function Runs() {
   useEffect(() => {
     let stale = false;
     const params = new URLSearchParams();
-    if (ticket.trim()) params.set('ticket', ticket.trim());
+    if (subject.trim()) params.set('subject', subject.trim());
     if (status) params.set('status', status);
     const query = params.toString();
     apiGet<Run[]>(`/runs${query ? `?${query}` : ''}`)
@@ -106,7 +106,7 @@ export default function Runs() {
     return () => {
       stale = true;
     };
-  }, [tick, ticket, status]);
+  }, [tick, subject, status]);
 
   return (
     <Stack>
@@ -130,10 +130,10 @@ export default function Runs() {
           ff="monospace"
         />
         <TextInput
-          label={t('common.field_ticket')}
-          placeholder={t('runs.ticket_placeholder')}
-          value={ticket}
-          onChange={(e) => setTicket(e.currentTarget.value)}
+          label={t('common.field_subject')}
+          placeholder={t('runs.subject_placeholder')}
+          value={subject}
+          onChange={(e) => setSubject(e.currentTarget.value)}
           w={260}
         />
         <Select
@@ -153,14 +153,14 @@ export default function Runs() {
             <Loader />
           ) : runs.length === 0 ? (
             <Text c="dimmed">
-              {t(ticket.trim() || status ? 'runs.no_runs_filtered' : 'runs.no_runs')}
+              {t(subject.trim() || status ? 'runs.no_runs_filtered' : 'runs.no_runs')}
             </Text>
           ) : (
             <Table highlightOnHover>
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>{t('runs.col_started')}</Table.Th>
-                  <Table.Th>{t('runs.col_ticket')}</Table.Th>
+                  <Table.Th>{t('runs.col_subject')}</Table.Th>
                   <Table.Th>{t('runs.col_module')}</Table.Th>
                   <Table.Th>{t('runs.col_kind')}</Table.Th>
                   <Table.Th>{t('runs.col_event')}</Table.Th>
@@ -180,7 +180,7 @@ export default function Runs() {
                     bg={run.processing_id === selectedId ? 'var(--mantine-color-blue-light)' : undefined}
                   >
                     <Table.Td>{formatWhen(run.started_at)}</Table.Td>
-                    <Table.Td>{run.ticket}</Table.Td>
+                    <Table.Td>{run.subject}</Table.Td>
                     <Table.Td>{run.module}</Table.Td>
                     <Table.Td>{run.kind}</Table.Td>
                     <Table.Td>{run.event}</Table.Td>
@@ -253,7 +253,7 @@ function RunDetail({ id, tick }: { id: string; tick: number }) {
   return (
     <Stack gap="sm">
       <Group>
-        <Title order={4}>{run.ticket}</Title>
+        <Title order={4}>{run.subject}</Title>
         <StatusBadge status={run.status} />
       </Group>
       <Text size="sm" c="dimmed">

@@ -5,10 +5,17 @@ Two things live here on purpose, and they are not the same thing:
 * `ModuleInfo` — what a **business module** is (config section, prompts, its
   screen in the admin UI). Discovery only.
 * the routes — what may **start a run**. A module claims a `(class, event)`
-  webhook route, a `(module, action)` request route, or both.
+  webhook route, a `(module, action)` request route, a `(module, name)`
+  schedule route, or any combination.
 
-Keeping them apart is what lets a trigger belong to something that is not a
-business module (the background sweep is infrastructure, not a module).
+Keeping them apart is what lets one module own several triggers, and one
+trigger be claimed without the module owning the others.
+
+What is *not* here: a background loop that starts no run. The vector sweep
+ticks forever and journals into Postgres, but it has no module, no subject and
+no principal — it takes pacing from `pipelines/scheduler.py` and nothing else.
+"Periodic" and "a trigger of a business module" are different questions, and a
+route answers only the second one.
 
 Adding a new module:
 1. Create a package (e.g. `src/agents/<module>/`) with a `pipeline.py` exposing
@@ -41,6 +48,8 @@ logger = logging.getLogger(__name__)
 # `TicketRun.handle` returning a RunOutcome have to fit.
 WebhookHandler = Callable[["WebhookPayload", UUID, "AppDeps"], Awaitable[object]]
 RequestHandler = Callable[[Any, UUID, "AppDeps"], Awaitable[RunOutcome]]
+# No payload: the clock carries no information beyond "it is time"
+ScheduleHandler = Callable[[UUID, "AppDeps"], Awaitable[RunOutcome]]
 
 
 @dataclass(frozen=True)
@@ -73,8 +82,33 @@ class RequestRoute:
     summary: str = ""
 
 
+@dataclass(frozen=True)
+class ScheduleRoute:
+    """A periodic entry point into a module: the clock starts the run.
+
+    `interval_of` re-reads the period from the module's runtime config on every
+    tick, so an edit in the admin UI applies without a restart;
+    `default_interval` is what the loop falls back to when that read fails.
+    `subject` names what the run is about for the journal — a schedule has no
+    payload to derive it from, so it is a constant (and, unlike a webhook's,
+    usually not a ticket).
+    """
+
+    name: str
+    module: str
+    handler: ScheduleHandler
+    interval_of: Callable[["AppDeps"], Awaitable[float]]
+    default_interval: float = 300.0
+    subject: str = ""
+    summary: str = ""
+
+    @property
+    def label(self) -> str:
+        return f"{self.module}/{self.name}"
+
+
 class TriggerRegistry:
-    """What may start a run: webhook events and synchronous requests.
+    """What may start a run: webhook events, synchronous requests, schedules.
 
     Modules claim their triggers at startup; an entry point rejects anything no
     module has claimed.
@@ -83,6 +117,7 @@ class TriggerRegistry:
     def __init__(self) -> None:
         self._webhooks: dict[tuple[str, str], tuple[str, WebhookHandler]] = {}
         self._requests: dict[tuple[str, str], RequestRoute] = {}
+        self._schedules: dict[tuple[str, str], ScheduleRoute] = {}
         self._modules: dict[str, ModuleInfo] = {}
 
     def register(
@@ -91,6 +126,7 @@ class TriggerRegistry:
         *,
         webhooks: Mapping[tuple[str, str], WebhookHandler] | None = None,
         requests: Iterable[RequestRoute] = (),
+        schedules: Iterable[ScheduleRoute] = (),
     ) -> None:
         if module.name in self._modules:
             raise ValueError(f"Module {module.name!r} is already registered")
@@ -99,14 +135,20 @@ class TriggerRegistry:
         if conflicts:
             raise ValueError(f"Webhook routes already claimed by another module: {sorted(conflicts)}")
         requests = list(requests)
-        for route in requests:
-            if (route.module, route.action) in self._requests:
-                raise ValueError(f"Request route {route.module}/{route.action} is already claimed")
+        for request_route in requests:
+            if (request_route.module, request_route.action) in self._requests:
+                raise ValueError(f"Request route {request_route.module}/{request_route.action} is already claimed")
+        schedules = list(schedules)
+        for schedule_route in schedules:
+            if (schedule_route.module, schedule_route.name) in self._schedules:
+                raise ValueError(f"Schedule route {schedule_route.label} is already claimed")
         self._modules[module.name] = module
         self._webhooks.update({key: (module.name, handler) for key, handler in webhooks.items()})
         self._requests.update({(route.module, route.action): route for route in requests})
+        self._schedules.update({(route.module, route.name): route for route in schedules})
         logger.info(
-            f"Registered module {module.name!r} with {len(webhooks)} webhook routes and {len(requests)} request routes"
+            f"Registered module {module.name!r} with {len(webhooks)} webhook routes, "
+            f"{len(requests)} request routes and {len(schedules)} schedules"
         )
 
     def resolve_webhook(self, obj_class: str, event: str) -> tuple[str, WebhookHandler] | None:
@@ -116,8 +158,18 @@ class TriggerRegistry:
     def resolve_request(self, module: str, action: str) -> RequestRoute | None:
         return self._requests.get((module, action))
 
+    def resolve_schedule(self, module: str, name: str) -> ScheduleRoute | None:
+        return self._schedules.get((module, name))
+
     def requests_for(self, module: str) -> list[RequestRoute]:
         return [route for (owner, _), route in self._requests.items() if owner == module]
+
+    def schedules_for(self, module: str) -> list[ScheduleRoute]:
+        return [route for (owner, _), route in self._schedules.items() if owner == module]
+
+    @property
+    def schedules(self) -> list[ScheduleRoute]:
+        return list(self._schedules.values())
 
     def get_module(self, name: str) -> ModuleInfo | None:
         return self._modules.get(name)
@@ -130,7 +182,9 @@ class TriggerRegistry:
 def build_registry(settings) -> "TriggerRegistry":
     """Assemble the registry from all known modules. New module = one line here."""
     from itop_ai_assistant.agents.intake import pipeline as intake_pipeline
+    from itop_ai_assistant.agents.selfcheck import pipeline as selfcheck_pipeline
 
     registry = TriggerRegistry()
     intake_pipeline.register(registry, settings)
+    selfcheck_pipeline.register(registry, settings)
     return registry

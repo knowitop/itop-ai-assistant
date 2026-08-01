@@ -58,6 +58,16 @@ async def list_modules(request: Request) -> list[dict]:
                 }
                 for route in registry.requests_for(m.name)
             ],
+            # What the clock starts on its own. Read-only: the period is a
+            # config field of the module, edited on the same screen.
+            "schedules": [
+                {
+                    "name": route.name,
+                    "summary": route.summary,
+                    "default_interval": route.default_interval,
+                }
+                for route in registry.schedules_for(m.name)
+            ],
         }
         for m in registry.modules
     ]
@@ -147,10 +157,10 @@ async def reset_prompt(module: str, name: str, request: Request) -> None:
 async def list_runs(
     request: Request,
     limit: int = 50,
-    ticket: str | None = None,
+    subject: str | None = None,
     status: str | None = None,
 ) -> list[ProcessingRun]:
-    return await _deps(request).journal.list(limit=limit, ticket=ticket, status=status)
+    return await _deps(request).journal.list(limit=limit, subject=subject, status=status)
 
 
 @router.get("/runs/{processing_id}")

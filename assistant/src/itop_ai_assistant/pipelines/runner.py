@@ -37,7 +37,7 @@ async def journalled_run(
     Journal writes are non-fatal by contract; the exception itself is always
     re-raised — swallowing it is the entry point's decision, not the frame's.
     """
-    await deps.journal.start(processing_id, ticket=subject, event=event, module=module, kind=kind)
+    await deps.journal.start(processing_id, subject=subject, event=event, module=module, kind=kind)
     try:
         yield
     except Exception as e:

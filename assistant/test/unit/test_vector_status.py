@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
@@ -13,6 +13,7 @@ from itop_ai_assistant.main import app
 from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore, RedisPromptStore
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.vector.db import VectorDb
+from itop_ai_assistant.vector.indexer import SWEEP_TASK
 
 _BLANK = {
     "admin_token": None,
@@ -41,7 +42,9 @@ class VectorStatusTestCase(unittest.TestCase):
         self.client = self.enterContext(TestClient(app))
         self.redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
         self.client.app.state.deps = _make_deps(self.redis)
-        self.client.app.state.vector_indexer = None
+        # The lifespan built a real (empty) scheduler: no database_url in the
+        # test settings, so the sweep loop was never registered
+        self.tasks = self.client.app.state.tasks
 
 
 class TestVectorStatus(VectorStatusTestCase):
@@ -96,7 +99,7 @@ class TestVectorStatus(VectorStatusTestCase):
 
 
 class TestReindex(VectorStatusTestCase):
-    def test_409_when_indexer_not_created(self):
+    def test_409_when_database_not_configured(self):
         self.client.patch("/api/setup/vector", json={"enabled": True})
 
         response = self.client.post("/api/vector/reindex")
@@ -105,23 +108,39 @@ class TestReindex(VectorStatusTestCase):
         self.assertIn("database_url", response.json()["detail"])
 
     def test_409_when_vector_disabled(self):
-        self.client.app.state.vector_indexer = MagicMock()
+        self.client.app.state.deps = _make_deps(self.redis, database_url="postgresql+asyncpg://localhost:1/x")
 
         response = self.client.post("/api/vector/reindex")
 
         self.assertEqual(response.status_code, 409)
         self.assertIn("disabled", response.json()["detail"])
 
-    def test_202_schedules_reindex(self):
-        indexer = MagicMock()
-        self.client.app.state.vector_indexer = indexer
+    def test_503_when_the_request_cannot_be_stored(self):
+        """The mark is a row now, so an unreachable Postgres is a real failure —
+        it must say so instead of pretending the backfill was scheduled."""
+        self.client.app.state.deps = _make_deps(self.redis, database_url="postgresql+asyncpg://localhost:1/x")
         self.client.patch("/api/setup/vector", json={"enabled": True})
 
         response = self.client.post("/api/vector/reindex")
 
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("unavailable", response.json()["detail"])
+
+    def test_202_marks_the_request_and_wakes_the_sweep(self):
+        """The request is a row in Postgres — the wake-up only makes the local
+        loop act on it sooner."""
+        self.client.app.state.deps = _make_deps(self.redis, database_url="postgresql+asyncpg://localhost:1/x")
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+        index = MagicMock(request_reindex=AsyncMock())
+        self.tasks.wake = MagicMock(return_value=True)
+
+        with patch("itop_ai_assistant.vector.router.VectorIndex", return_value=index):
+            response = self.client.post("/api/vector/reindex")
+
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json(), {"status": "scheduled"})
-        indexer.request_reindex.assert_called_once()
+        index.request_reindex.assert_awaited_once()
+        self.tasks.wake.assert_called_once_with(SWEEP_TASK)
 
 
 if __name__ == "__main__":

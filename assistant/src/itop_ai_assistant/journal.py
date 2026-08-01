@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
@@ -22,8 +22,7 @@ _MAX_INDEXED_RUNS = 1000
 _LIST_SCAN_WINDOW = 500
 
 RunStatus = Literal["running", "done", "failed"]
-# What started the run. "schedule" is part of the contract but has no producer
-# yet — the background sweep still runs outside the registry.
+# What started the run: an iTop event, a synchronous call, or the clock.
 TriggerKind = Literal["webhook", "request", "schedule"]
 
 
@@ -35,7 +34,11 @@ class RunStep(BaseModel):
 
 class ProcessingRun(BaseModel):
     processing_id: str
-    ticket: str
+    # What the run is about. A ticket reference for the two object-scoped
+    # triggers, but not necessarily: a scheduled run names its own subject.
+    # The "ticket" alias reads runs written before the field was renamed —
+    # they live out their TTL alongside the new ones.
+    subject: str = Field(validation_alias=AliasChoices("subject", "ticket"))
     event: str
     module: str
     # Runs recorded before triggers had kinds are webhook runs
@@ -45,6 +48,8 @@ class ProcessingRun(BaseModel):
     finished_at: datetime | None = None
     error: str | None = None
     steps: list[RunStep] = []
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class RunJournal:
@@ -59,7 +64,7 @@ class RunJournal:
         return f"{_RUN_PREFIX}{processing_id}:steps"
 
     async def start(
-        self, processing_id: UUID | str, ticket: str, event: str, module: str, kind: TriggerKind = "webhook"
+        self, processing_id: UUID | str, subject: str, event: str, module: str, kind: TriggerKind = "webhook"
     ) -> None:
         now = datetime.now(UTC)
         key = self._key(processing_id)
@@ -69,7 +74,7 @@ class RunJournal:
                     key,
                     mapping={
                         "processing_id": str(processing_id),
-                        "ticket": ticket,
+                        "subject": subject,
                         "event": event,
                         "module": module,
                         "kind": kind,
@@ -112,7 +117,7 @@ class RunJournal:
         steps = [RunStep.model_validate_json(raw) for raw in raw_steps]
         return ProcessingRun(**data, steps=steps)
 
-    async def list(self, limit: int = 50, ticket: str | None = None, status: str | None = None) -> list[ProcessingRun]:
+    async def list(self, limit: int = 50, subject: str | None = None, status: str | None = None) -> list[ProcessingRun]:
         """Most recent runs first. Steps are not loaded — use get() for details."""
         ids = await self._redis.zrevrange(_INDEX_KEY, 0, _LIST_SCAN_WINDOW - 1)
         runs: list[ProcessingRun] = []
@@ -123,7 +128,7 @@ class RunJournal:
                 stale.append(processing_id)
                 continue
             run = ProcessingRun(**data)
-            if ticket and run.ticket != ticket:
+            if subject and run.subject != subject:
                 continue
             if status and run.status != status:
                 continue

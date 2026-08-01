@@ -1,5 +1,6 @@
 import {
   Alert,
+  Badge,
   Button,
   Group,
   JsonInput,
@@ -25,12 +26,19 @@ interface RequestAction {
   input_schema: Schema;
 }
 
+interface ScheduleInfo {
+  name: string;
+  summary: string;
+  default_interval: number;
+}
+
 interface ModuleInfo {
   name: string;
   description: string;
   has_config: boolean;
   prompts: string[];
   requests: RequestAction[];
+  schedules: ScheduleInfo[];
 }
 
 // The subset of JSON Schema that pydantic emits for our config models.
@@ -97,6 +105,22 @@ export default function Modules() {
                 <ModuleConfigForm module={m.name} />
               ) : (
                 <Text c="dimmed">{t('modules.no_config')}</Text>
+              )}
+              {m.schedules.length > 0 && (
+                <>
+                  <Title order={4} mt="md">
+                    {t('modules.schedules_title')}
+                  </Title>
+                  {m.schedules.map((sch) => (
+                    <Group key={sch.name} gap="xs">
+                      <Badge variant="light">{sch.name}</Badge>
+                      <Text size="sm">{sch.summary}</Text>
+                      <Text size="sm" c="dimmed">
+                        {t('modules.schedule_interval', { seconds: sch.default_interval })}
+                      </Text>
+                    </Group>
+                  ))}
+                </>
               )}
               {m.requests.length > 0 && (
                 <>

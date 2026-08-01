@@ -19,7 +19,7 @@ import hashlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import delete, desc, func, insert, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -28,9 +28,15 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from itop_ai_assistant.vector.db import VectorDb
 from itop_ai_assistant.vector.models import IndexJournalEntry, VectorIndexMeta, VectorSyncState, chunk_table
 
-# vector_sync_state row that stores the last reconciliation time instead of a
-# per-class sweep cursor; filtered out of list_cursors()
+# vector_sync_state rows that are not per-class sweep cursors; filtered out of
+# list_cursors(). The reconcile row stores the last reconciliation time; the
+# reindex row is the pending-backfill flag — it lives in Postgres rather than
+# in the sweeping process so a request served by one replica is honoured by
+# whichever replica wins the advisory lock, and so no one has to hold on to
+# the indexer instance between ticks.
 RECONCILE_SENTINEL = "__reconcile__"
+REINDEX_SENTINEL = "__reindex__"
+_SENTINELS = (RECONCILE_SENTINEL, REINDEX_SENTINEL)
 
 
 @dataclass(frozen=True)
@@ -280,19 +286,27 @@ class VectorIndex:
             await conn.execute(stmt)
 
     async def list_cursors(self) -> dict[str, datetime | None]:
-        """Per-class sweep cursors (the reconcile sentinel is excluded)."""
+        """Per-class sweep cursors (the sentinel rows are excluded)."""
         async with self._db.connect() as conn:
             rows = (
                 await conn.execute(
                     select(VectorSyncState.obj_class, VectorSyncState.cursor).where(
-                        VectorSyncState.obj_class != RECONCILE_SENTINEL,
+                        VectorSyncState.obj_class.notin_(_SENTINELS),
                     )
                 )
             ).all()
         return {row.obj_class: row.cursor for row in rows}
 
+    async def request_reindex(self) -> None:
+        """Mark a full backfill as pending. Idempotent; cleared by the sweep
+        that acts on it (`reset_cursors` drops the row along with the cursors)."""
+        await self.set_cursor(REINDEX_SENTINEL, datetime.now(UTC))
+
+    async def reindex_pending(self) -> bool:
+        return await self.get_cursor(REINDEX_SENTINEL) is not None
+
     async def reset_cursors(self) -> None:
-        """Drop all sweep cursors (and the reconcile mark) — the next sweep
+        """Drop all sweep cursors (and the sentinel rows) — the next sweep
         becomes a full backfill."""
         async with self._db.engine.begin() as conn:
             await conn.execute(delete(VectorSyncState))

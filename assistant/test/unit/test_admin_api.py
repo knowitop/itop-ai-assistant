@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
@@ -10,6 +10,7 @@ from itop_ai_assistant.config_store import RedisConfigStore
 from itop_ai_assistant.deps import AppDeps
 from itop_ai_assistant.journal import RunJournal
 from itop_ai_assistant.main import app
+from itop_ai_assistant.pipelines.registry import ModuleInfo, ScheduleRoute, TriggerRegistry
 from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore, RedisPromptStore
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.vector.db import VectorDb
@@ -61,6 +62,34 @@ class TestModules(AdminApiTestCase):
         self.assertEqual(action["action"], "process")
         self.assertTrue(action["summary"])
         self.assertEqual(sorted(action["input_schema"]["required"]), ["class", "id"])
+
+    def test_lists_schedules(self):
+        """A module's own triggers, whatever kind — intake has none on a timer."""
+        registry = TriggerRegistry()
+        registry.register(
+            ModuleInfo(name="probe", description="Probe"),
+            schedules=[
+                ScheduleRoute(
+                    name="tick",
+                    module="probe",
+                    handler=AsyncMock(),
+                    interval_of=AsyncMock(return_value=60.0),
+                    default_interval=120.0,
+                    summary="Probe tick",
+                )
+            ],
+        )
+        original = self.client.app.state.registry
+        self.client.app.state.registry = registry
+        self.addCleanup(setattr, self.client.app.state, "registry", original)
+
+        (module,) = self.client.get("/api/modules").json()
+
+        self.assertEqual(module["requests"], [])
+        (schedule,) = module["schedules"]
+        self.assertEqual(schedule["name"], "tick")
+        self.assertEqual(schedule["summary"], "Probe tick")
+        self.assertEqual(schedule["default_interval"], 120.0)
 
 
 class TestConfigEndpoints(AdminApiTestCase):
@@ -140,10 +169,10 @@ class TestPromptEndpoints(AdminApiTestCase):
 class TestRunEndpoints(AdminApiTestCase):
     def _seed_runs(self):
         async def seed():
-            await self.deps.journal.start("run-1", ticket="UserRequest::1", event="created", module="intake")
+            await self.deps.journal.start("run-1", subject="UserRequest::1", event="created", module="intake")
             await self.deps.journal.add_step("run-1", "guard", "")
             await self.deps.journal.finish("run-1", "done")
-            await self.deps.journal.start("run-2", ticket="UserRequest::2", event="created", module="intake")
+            await self.deps.journal.start("run-2", subject="UserRequest::2", event="created", module="intake")
 
         self.client.portal.call(seed)  # run inside the TestClient event loop
 
@@ -162,6 +191,14 @@ class TestRunEndpoints(AdminApiTestCase):
         runs = self.client.get("/api/runs", params={"status": "done"}).json()
 
         self.assertEqual([r["processing_id"] for r in runs], ["run-1"])
+
+    def test_list_runs_filtered_by_subject(self):
+        self._seed_runs()
+
+        runs = self.client.get("/api/runs", params={"subject": "UserRequest::2"}).json()
+
+        self.assertEqual([r["processing_id"] for r in runs], ["run-2"])
+        self.assertEqual(runs[0]["subject"], "UserRequest::2")
 
     def test_get_run_with_steps(self):
         self._seed_runs()
