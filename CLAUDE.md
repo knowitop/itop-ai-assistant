@@ -153,10 +153,12 @@ and `uv run pytest`.
 | `admin/router.py`                               | Admin API: config, prompts, runs, module discovery                                           |
 | `admin/setup.py`                                | Setup API: connection sections + probes (wizard backend)                                     |
 | `itop_provisioning.py`                          | iTop-side triggers/webhooks: find-or-create + CLI                                            |
-| `api_deps.py`                                   | Shared FastAPI dependencies: webhook/admin token, configured-gate                            |
+| `api_deps.py`                                   | Shared FastAPI dependencies: webhook/admin token, configured-gate, `resolve_principal`       |
 | `webhook/router.py`                             | Webhook endpoint: auth, configured-gate, dispatch                                            |
 | `request/router.py`                             | `POST /api/modules/{module}/{action}` — the synchronous trigger                              |
 | `pipelines/registry.py`                         | `TriggerRegistry` — webhook `(class, event)` and request `(module, action)` routes           |
+| `principal.py`                                  | `Principal` — who a run acts as; the token never leaves it                                   |
+| `pipelines/context.py`                          | `RunContext` — run id, module, principal; builds the iTop change comment                     |
 | `pipelines/models.py`                           | `ObjectRef` / `RunOutcome` — what a run starts with and ends as                              |
 | `pipelines/runner.py`                           | `journalled_run` — the outer frame: journal start/finish around any trigger                  |
 | `pipelines/scheduler.py`                        | `PeriodicTasks` — pacing for every background loop (no run frame of its own)                 |
@@ -205,11 +207,19 @@ not to use. Application-specific logic belongs in `ticket_repository.py`.
 stored in `app.state.deps`). Each processing run builds an `IntakeContext` with
 a config snapshot from `ConfigStore` and a per-run LLM client — tools take
 everything from `runtime.context`, never from globals or `get_settings()`.
-The iTop client and repositories come from `ItopProvider` (`deps.itop.get()`
-→ `ItopBundle`): the bundle is cached by a fingerprint of the `itop` +
-`ticket_mapping` sections and rebuilt (old client closed, repo caches
-dropped) when the runtime config changes — connection edits apply from the
-next ticket without a restart.
+The iTop client and repositories come from `ItopProvider`: `get()` →
+`ItopBundle` is the connection itself, cached by a fingerprint of the `itop` +
+`ticket_mapping` sections and rebuilt (old client closed, caches dropped) when
+the runtime config changes — connection edits apply from the next ticket
+without a restart. A run does not call `get()`; it calls
+`for_principal(principal, comment=...)`, which returns a bundle over a **view**
+of that connection (`Itop.as_()`) — same HTTP pool, this run's credentials and
+this run's change comment. Two methods rather than one defaulted argument on
+purpose: a bare `get()` then reads as the statement it is — no run, no
+principal, the service account (the vector sweep, the wizard probes).
+`deps.itop.ai_person_name()` answers off the **service** bundle whatever the run
+acts as: the name is what the loop guard compares the last public comment
+against, so resolving it under an engineer's token would make that guard lie.
 
 **Trigger registry:** work reaches business modules through `TriggerRegistry`
 (`pipelines/registry.py`) — a startup-built map of what may start a run. Three
@@ -246,8 +256,10 @@ Object-scoped work subclasses `pipelines/shell.py::TicketRun` and registers
 `<Run>.handle` — one classmethod that fits both object triggers, since the shell
 takes an `ObjectRef` and returns a `RunOutcome`; the webhook drops it, the
 request returns it. Work that is not about an object (a scheduled run) is a
-plain coroutine `(processing_id, deps) -> RunOutcome` and takes only the run
-frame from the core. `ModuleInfo.validate_prompts` is called for every
+plain coroutine `(run, deps) -> RunOutcome` and takes only the run frame from
+the core. Every handler takes a `RunContext` (`pipelines/context.py`) where it
+used to take a bare `processing_id`: it carries the run id, the module name and
+the principal, and builds the change comment iTop records for the run. `ModuleInfo.validate_prompts` is called for every
 registered module at startup, so a broken template fails the boot instead of a
 live ticket. The intake module is enabled/scoped via `intake.enabled` (default
 `true`) and `intake.classes` (default `[UserRequest, Incident]`); its request
@@ -266,9 +278,12 @@ journal — no iTop writes, no state, no lock. Its journalled subject is
 `subject`. Turn it on to prove a deployment's seams under real module code
 rather than under a wizard probe.
 
-A request run acts as the module's **service account** — there is no principal
-resolution yet (`docs/architecture.md` §8.2), which is why the endpoint sits
-behind the admin token instead of an engineer's identity.
+A request run acts as the module's **service account**: `api_deps.resolve_principal`
+returns `Principal.service()` for every entry point today, which is why the
+endpoint sits behind the admin token instead of an engineer's identity. That one
+function is the seam — when the console sends an engineer's iTop token per
+request, or a webhook arrives with the account to process it under, nothing else
+changes, because the principal already flows from there down to the HTTP call.
 
 **The run shell (`pipelines/shell.py`, `pipelines/agent_run.py`) is the core, not
 a module's business.** `TicketRun` is the contract every object-processing
@@ -611,7 +626,7 @@ npm run build   # type-check (tsc --noEmit) + production build into ui/dist
   tool-calling regressions show up — run `uv run pytest test/integration`
   after touching `prompts/intake/*.md` or a tool signature.
 - Current test files: `test_config.py`, `test_router.py`, `test_request_api.py`,
-  `test_deps.py`, `test_pipelines_registry.py`, `test_pipelines_shell.py`,
+  `test_deps.py`, `test_principal.py`, `test_pipelines_registry.py`, `test_pipelines_shell.py`,
   `test_pipelines_runner.py`, `test_ticket_state.py`, `test_prompt_store.py`,
   `test_ticket_repository.py`, `test_catalog_repository.py`,
   `test_itop_schema.py`, `test_itop_provisioning.py`, `test_journal.py`,
