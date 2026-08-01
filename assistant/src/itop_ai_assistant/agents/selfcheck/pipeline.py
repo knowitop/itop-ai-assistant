@@ -13,7 +13,6 @@ state, no lock — nothing here is worth guarding.
 """
 
 import logging
-from uuid import UUID
 
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import PromptTemplate
@@ -21,6 +20,7 @@ from pydantic import BaseModel
 
 from itop_ai_assistant.config import ItopConfig, LlmConfig, SelfCheckConfig, Settings, missing_setup
 from itop_ai_assistant.deps import AppDeps, create_llm
+from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import RunOutcome
 from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, ScheduleRoute, TriggerRegistry
 from itop_ai_assistant.text_utils import strip_thinking
@@ -80,29 +80,29 @@ async def _interval(deps: AppDeps) -> float:
     return (await deps.config_store.get(MODULE, SelfCheckConfig)).interval_seconds
 
 
-async def handle_request(payload: SelfCheckInput, processing_id: UUID, deps: AppDeps) -> RunOutcome:
-    return await run_selfcheck(processing_id, deps)
+async def handle_request(payload: SelfCheckInput, run: RunContext, deps: AppDeps) -> RunOutcome:
+    return await run_selfcheck(run, deps)
 
 
-async def run_selfcheck(processing_id: UUID, deps: AppDeps) -> RunOutcome:
+async def run_selfcheck(run: RunContext, deps: AppDeps) -> RunOutcome:
     """One pass over every seam: config, iTop, prompts, model, journal."""
     cfg = await deps.config_store.get(MODULE, SelfCheckConfig)
     llm_cfg = await deps.config_store.get("llm", LlmConfig)
     missing = missing_setup(await deps.config_store.get("itop", ItopConfig), llm_cfg)
     if missing:
         reason = f"setup incomplete: {'; '.join(missing)}"
-        await deps.journal.add_step(processing_id, "guard", reason)
+        await deps.journal.add_step(run.processing_id, "guard", reason)
         return RunOutcome(status="skipped", detail=reason)
 
     bundle = await deps.itop.get()
     services = await bundle.catalog_repo.find_services(cfg.probe_oql)
-    await deps.journal.add_step(processing_id, "itop", f"{len(services)} services read with {cfg.probe_oql!r}")
+    await deps.journal.add_step(run.processing_id, "itop", f"{len(services)} services read with {cfg.probe_oql!r}")
 
     prompts = build_selfcheck_prompts(await deps.prompt_store.get(MODULE))
     message = PromptTemplate.from_template(prompts.greeting).format(services=len(services))
     response = await create_llm(llm_cfg, cfg.model).ainvoke([HumanMessage(content=message)])
     answer = strip_thinking(response.content, tuple(llm_cfg.think_tags)).strip()
-    await deps.journal.add_step(processing_id, "llm", answer[:500])
+    await deps.journal.add_step(run.processing_id, "llm", answer[:500])
 
-    logger.info(f"[{processing_id}] selfcheck: {len(services)} services, model answered {len(answer)} chars")
+    logger.info(f"[{run.processing_id}] selfcheck: {len(services)} services, model answered {len(answer)} chars")
     return RunOutcome(status="done", detail=f"{len(services)} services, model answered")

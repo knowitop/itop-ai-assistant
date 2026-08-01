@@ -10,6 +10,7 @@ from uuid import uuid4
 import fakeredis.aioredis
 
 from itop_ai_assistant.journal import RunJournal
+from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.runner import journalled_run
 
 
@@ -20,9 +21,8 @@ class RunnerTestCase(unittest.IsolatedAsyncioTestCase):
         self.pid = uuid4()
 
     def _run(self, kind="webhook"):
-        return journalled_run(
-            self.deps, self.pid, kind=kind, subject="UserRequest::42", event="created", module="intake"
-        )
+        run = RunContext(processing_id=self.pid, module="intake")
+        return journalled_run(self.deps, run, kind=kind, subject="UserRequest::42", event="created")
 
 
 class TestJournalledRun(RunnerTestCase):

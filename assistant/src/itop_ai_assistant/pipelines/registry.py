@@ -31,10 +31,10 @@ import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
 
 from pydantic import BaseModel
 
+from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import RunOutcome
 
 if TYPE_CHECKING:
@@ -46,10 +46,10 @@ logger = logging.getLogger(__name__)
 # `object` as the return type, not `None`: a webhook route drops whatever the
 # handler produced, and both a plain function returning None and
 # `TicketRun.handle` returning a RunOutcome have to fit.
-WebhookHandler = Callable[["WebhookPayload", UUID, "AppDeps"], Awaitable[object]]
-RequestHandler = Callable[[Any, UUID, "AppDeps"], Awaitable[RunOutcome]]
+WebhookHandler = Callable[["WebhookPayload", RunContext, "AppDeps"], Awaitable[object]]
+RequestHandler = Callable[[Any, RunContext, "AppDeps"], Awaitable[RunOutcome]]
 # No payload: the clock carries no information beyond "it is time"
-ScheduleHandler = Callable[[UUID, "AppDeps"], Awaitable[RunOutcome]]
+ScheduleHandler = Callable[[RunContext, "AppDeps"], Awaitable[RunOutcome]]
 
 
 @dataclass(frozen=True)

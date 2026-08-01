@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from itop_ai_assistant.api_deps import require_configured, verify_webhook_token
 from itop_ai_assistant.deps import AppDeps
+from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.registry import WebhookHandler
 from itop_ai_assistant.pipelines.runner import journalled_run
 from itop_ai_assistant.webhook.models import WebhookPayload
@@ -24,23 +25,20 @@ class WebhookResponse(BaseModel):
     processing_id: Optional[UUID]
 
 
-async def _process_safely(
-    module: str, handler: WebhookHandler, payload: WebhookPayload, processing_id: UUID, deps: AppDeps
-) -> None:
+async def _process_safely(handler: WebhookHandler, payload: WebhookPayload, run: RunContext, deps: AppDeps) -> None:
     """Run a webhook trigger in the background. Nobody is waiting for an answer,
     so a failure is recorded and logged, never raised."""
     try:
         async with journalled_run(
             deps,
-            processing_id,
+            run,
             kind="webhook",
             subject=payload.label,
             event=str(payload.event),
-            module=module,
         ):
-            await handler(payload, processing_id, deps)
+            await handler(payload, run, deps)
     except Exception:
-        logger.exception(f"[{processing_id}] Processing failed for {payload.label}")
+        logger.exception(f"[{run.processing_id}] Processing failed for {payload.label}")
 
 
 @router.post("/webhook", status_code=202, dependencies=[Depends(verify_webhook_token), Depends(require_configured)])
@@ -51,9 +49,9 @@ async def receive_webhook(payload: WebhookPayload, request: Request) -> WebhookR
     module, handler = entry
 
     deps: AppDeps = request.app.state.deps
-    processing_id = uuid4()
-    logger.info(f"[{processing_id}] Accepted {payload.label} ({payload.event})")
-    task = asyncio.create_task(_process_safely(module, handler, payload, processing_id, deps))
+    run = RunContext(processing_id=uuid4(), module=module)
+    logger.info(f"[{run.processing_id}] Accepted {payload.label} ({payload.event})")
+    task = asyncio.create_task(_process_safely(handler, payload, run, deps))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
-    return WebhookResponse(status="accepted", processing_id=processing_id)
+    return WebhookResponse(status="accepted", processing_id=run.processing_id)

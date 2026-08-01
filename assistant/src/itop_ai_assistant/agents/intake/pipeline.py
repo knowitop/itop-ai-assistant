@@ -7,12 +7,12 @@ and what to write when the agent closed nothing itself.
 """
 
 import logging
-from uuid import UUID
 
 from itop_ai_assistant.config import IntakeConfig, LlmConfig, Settings
 from itop_ai_assistant.deps import AppDeps, create_llm
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.agent_run import AgentRun
+from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import ObjectRef
 from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, TriggerRegistry
 from itop_ai_assistant.pipelines.shell import TicketRun
@@ -110,7 +110,7 @@ class IntakeRun(TicketRun):
             agent,
             context,
             deps=self.deps,
-            processing_id=self.processing_id,
+            run=self.run,
             think_tags=tuple(llm_cfg.think_tags),
         ).stream(messages)
 
@@ -144,7 +144,7 @@ class IntakeAgentRun(AgentRun[IntakeContext]):
         await self.step("epilogue", "no terminal action — fallback note posted, ai_done set")
 
 
-async def handle_assigned(ref: ObjectRef, processing_id: UUID, deps: AppDeps) -> None:
+async def handle_assigned(ref: ObjectRef, run: RunContext, deps: AppDeps) -> None:
     """Engineer took the ticket: stop any further AI processing.
 
     Not a `TicketRun`: no lock and no read. The missing lock is deliberate — it
@@ -152,4 +152,4 @@ async def handle_assigned(ref: ObjectRef, processing_id: UUID, deps: AppDeps) ->
     `IntakeAgentRun.epilogue` re-reads `ai_done` for.
     """
     await deps.state_manager.mark_done(ref.label)
-    logger.info(f"[{processing_id}] {ref.label} assigned, marked done")
+    logger.info(f"[{run.processing_id}] {ref.label} assigned, marked done")

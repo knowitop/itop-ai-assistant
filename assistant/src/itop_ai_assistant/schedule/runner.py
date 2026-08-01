@@ -19,6 +19,7 @@ from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
 from itop_ai_assistant.deps import AppDeps
+from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import RunOutcome
 from itop_ai_assistant.pipelines.registry import ScheduleRoute, TriggerRegistry
 from itop_ai_assistant.pipelines.runner import journalled_run
@@ -40,17 +41,16 @@ def register_schedules(tasks: PeriodicTasks, registry: TriggerRegistry, deps: Ap
 
 async def run_schedule(route: ScheduleRoute, deps: AppDeps) -> RunOutcome:
     """One tick of one schedule route, journalled start to finish."""
-    processing_id = uuid4()
+    run = RunContext(processing_id=uuid4(), module=route.module)
     async with journalled_run(
         deps,
-        processing_id,
+        run,
         kind="schedule",
         subject=route.subject or route.label,
         event=route.name,
-        module=route.module,
     ):
-        outcome = await route.handler(processing_id, deps)
-    logger.info(f"[{processing_id}] {route.label}: {outcome.status} {outcome.detail}".rstrip())
+        outcome = await route.handler(run, deps)
+    logger.info(f"[{run.processing_id}] {route.label}: {outcome.status} {outcome.detail}".rstrip())
     return outcome
 
 

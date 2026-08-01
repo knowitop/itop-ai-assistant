@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from itop_ai_assistant.domain.ticket import Ticket
+from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import ObjectRef
 from itop_ai_assistant.pipelines.shell import TicketRun
 from itop_ai_assistant.webhook.models import WebhookPayload
@@ -19,11 +20,15 @@ def _payload() -> WebhookPayload:
     return WebhookPayload.model_validate({"id": "123", "class": "Change", "event": "created"})
 
 
+def _run() -> RunContext:
+    return RunContext(processing_id=uuid4(), module="probe")
+
+
 class _ProbeRun(TicketRun):
     """Records the order of the phases and what each one was handed."""
 
-    def __init__(self, payload, processing_id, deps):
-        super().__init__(payload, processing_id, deps)
+    def __init__(self, payload, run, deps):
+        super().__init__(payload, run, deps)
         self.phases: list[str] = []
         self.stop_with: str | None = None
         self.body_raises: Exception | None = None
@@ -57,7 +62,7 @@ class ShellTestCase(unittest.IsolatedAsyncioTestCase):
         self.deps.itop.ai_person_name = AsyncMock(return_value="ai-assistant")
         self.deps.itop.get = AsyncMock(return_value=self.bundle)
 
-        self.run = _ProbeRun(_payload(), uuid4(), self.deps)
+        self.run = _ProbeRun(_payload(), _run(), self.deps)
 
     def journalled(self) -> list[str]:
         return [call.args[1] for call in self.deps.journal.add_step.await_args_list]
@@ -137,14 +142,14 @@ class TestHandleClassmethod(ShellTestCase):
             async def body(self, ticket, ai_name):
                 seen.append(id(self))
 
-        await Counting.handle(_payload(), uuid4(), self.deps)
-        await Counting.handle(_payload(), uuid4(), self.deps)
+        await Counting.handle(_payload(), _run(), self.deps)
+        await Counting.handle(_payload(), _run(), self.deps)
 
         self.assertEqual(len(seen), 2)
         self.assertNotEqual(seen[0], seen[1])
 
     async def test_handle_takes_a_bare_object_ref(self):
         """The shell knows nothing about triggers — a plain reference is enough."""
-        outcome = await _ProbeRun.handle(ObjectRef(obj_class="Change", id="123"), uuid4(), self.deps)
+        outcome = await _ProbeRun.handle(ObjectRef(obj_class="Change", id="123"), _run(), self.deps)
 
         self.assertEqual(outcome.status, "done")

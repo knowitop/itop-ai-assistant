@@ -118,7 +118,7 @@ class TestProbeModule(unittest.TestCase):
         self.client.app.state.registry = registry
         self.addCleanup(setattr, self.client.app.state, "registry", original)
 
-    async def _handler(self, ref, processing_id, deps) -> RunOutcome:
+    async def _handler(self, ref, run, deps) -> RunOutcome:
         self.calls.append(ref)
         if self.raises:
             raise self.raises

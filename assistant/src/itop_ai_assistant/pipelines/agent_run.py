@@ -17,6 +17,7 @@ from uuid import UUID
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langgraph.graph.state import CompiledStateGraph
 
+from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.text_utils import strip_thinking
 
 if TYPE_CHECKING:
@@ -76,14 +77,18 @@ class AgentRun(Generic[ContextT]):
         context: ContextT,
         *,
         deps: "AppDeps",
-        processing_id: UUID,
+        run: RunContext,
         think_tags: tuple[str, ...],
     ) -> None:
         self.agent = agent
         self.context = context
         self.deps = deps
-        self.processing_id = processing_id
+        self.run = run
         self.think_tags = think_tags
+
+    @property
+    def processing_id(self) -> UUID:
+        return self.run.processing_id
 
     async def stream(self, messages: list[BaseMessage]) -> RunUsage:
         """Run the agent to the end, journalling every turn. Returns what it cost."""

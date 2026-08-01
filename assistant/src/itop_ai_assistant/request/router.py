@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from itop_ai_assistant.api_deps import require_configured
 from itop_ai_assistant.deps import AppDeps
+from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import RunOutcome
 from itop_ai_assistant.pipelines.registry import RequestRoute
 from itop_ai_assistant.pipelines.runner import journalled_run
@@ -41,9 +42,9 @@ async def run_request(module: str, action: str, body: dict, request: Request) ->
         raise HTTPException(status_code=422, detail=str(e)) from e
 
     deps: AppDeps = request.app.state.deps
-    processing_id = uuid4()
+    run = RunContext(processing_id=uuid4(), module=module)
     subject = route.subject_of(payload)
-    logger.info(f"[{processing_id}] Running {module}/{action} for {subject}")
-    async with journalled_run(deps, processing_id, kind="request", subject=subject, event=action, module=module):
-        outcome = await route.handler(payload, processing_id, deps)
-    return RunRequestResponse(processing_id=processing_id, **outcome.model_dump())
+    logger.info(f"[{run.processing_id}] Running {module}/{action} for {subject}")
+    async with journalled_run(deps, run, kind="request", subject=subject, event=action):
+        outcome = await route.handler(payload, run, deps)
+    return RunRequestResponse(processing_id=run.processing_id, **outcome.model_dump())

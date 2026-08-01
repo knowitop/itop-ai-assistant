@@ -24,8 +24,8 @@ class ScheduleRunnerTestCase(unittest.IsolatedAsyncioTestCase):
         self.calls: list = []
 
     def _route(self, handler=None, **overrides) -> ScheduleRoute:
-        async def default_handler(processing_id, deps) -> RunOutcome:
-            self.calls.append(processing_id)
+        async def default_handler(run, deps) -> RunOutcome:
+            self.calls.append(run.processing_id)
             return RunOutcome(status="done", detail="probed")
 
         return ScheduleRoute(
@@ -136,8 +136,8 @@ class TestRegisterSchedules(ScheduleRunnerTestCase):
     async def test_a_failing_tick_does_not_stop_the_loop(self):
         seen = asyncio.Event()
 
-        async def boom(processing_id, deps) -> RunOutcome:
-            self.calls.append(processing_id)
+        async def boom(run, deps) -> RunOutcome:
+            self.calls.append(run.processing_id)
             seen.set()
             raise RuntimeError("boom")
 

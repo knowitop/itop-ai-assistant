@@ -25,6 +25,7 @@ from itop_ai_assistant.agents.selfcheck.prompts import build_selfcheck_prompts
 from itop_ai_assistant.config import ItopConfig, LlmConfig, SelfCheckConfig
 from itop_ai_assistant.domain.catalog import Service
 from itop_ai_assistant.journal import RunJournal
+from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.registry import TriggerRegistry
 from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore
 
@@ -62,7 +63,7 @@ class SelfCheckTestCase(unittest.IsolatedAsyncioTestCase):
         self.pid = uuid4()
         await deps.journal.start(self.pid, subject=MODULE, event="tick", module=MODULE, kind="schedule")
         with patch("itop_ai_assistant.agents.selfcheck.pipeline.create_llm", return_value=self.llm):
-            return await run_selfcheck(self.pid, deps)
+            return await run_selfcheck(RunContext(processing_id=self.pid, module=MODULE), deps)
 
     async def _steps(self, deps) -> dict[str, str]:
         run = await deps.journal.get(self.pid)
@@ -172,7 +173,7 @@ class TestRun(SelfCheckTestCase):
         await deps.journal.start(pid, subject=MODULE, event="run", module=MODULE, kind="request")
 
         with patch("itop_ai_assistant.agents.selfcheck.pipeline.create_llm", return_value=_llm_mock()):
-            outcome = await handle_request(SelfCheckInput(), pid, deps)
+            outcome = await handle_request(SelfCheckInput(), RunContext(processing_id=pid, module=MODULE), deps)
 
         self.assertEqual(outcome.status, "done")
         run = await deps.journal.get(pid)

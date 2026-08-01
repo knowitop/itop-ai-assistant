@@ -22,6 +22,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import ObjectRef, RunOutcome
 
 if TYPE_CHECKING:
@@ -43,20 +44,24 @@ class TicketRun(ABC):
     # to read before that.
     bundle: "ItopBundle"
 
-    def __init__(self, ref: ObjectRef, processing_id: UUID, deps: "AppDeps") -> None:
+    def __init__(self, ref: ObjectRef, run: RunContext, deps: "AppDeps") -> None:
         self.ref = ref
-        self.processing_id = processing_id
+        self.run = run
         self.deps = deps
         self.label = ref.label
 
+    @property
+    def processing_id(self) -> UUID:
+        return self.run.processing_id
+
     @classmethod
-    async def handle(cls, ref: ObjectRef, processing_id: UUID, deps: "AppDeps") -> RunOutcome:
+    async def handle(cls, ref: ObjectRef, run: RunContext, deps: "AppDeps") -> RunOutcome:
         """What a module registers as its route — fits both handler types.
 
         A webhook route drops the outcome; a request route returns it to the
         caller. That is the whole difference between the two triggers here.
         """
-        return await cls(ref, processing_id, deps).execute()
+        return await cls(ref, run, deps).execute()
 
     async def execute(self) -> RunOutcome:
         if not await self.deps.state_manager.acquire_lock(self.label):

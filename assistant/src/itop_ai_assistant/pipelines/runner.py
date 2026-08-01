@@ -12,9 +12,9 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
-from uuid import UUID
 
 from itop_ai_assistant.journal import TriggerKind
+from itop_ai_assistant.pipelines.context import RunContext
 
 if TYPE_CHECKING:
     from itop_ai_assistant.deps import AppDeps
@@ -25,19 +25,19 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def journalled_run(
     deps: "AppDeps",
-    processing_id: UUID,
+    run: RunContext,
     *,
     kind: TriggerKind,
     subject: str,
     event: str,
-    module: str,
 ) -> AsyncIterator[None]:
     """Record one run from start to finish, whatever trigger opened it.
 
     Journal writes are non-fatal by contract; the exception itself is always
     re-raised — swallowing it is the entry point's decision, not the frame's.
     """
-    await deps.journal.start(processing_id, subject=subject, event=event, module=module, kind=kind)
+    processing_id = run.processing_id
+    await deps.journal.start(processing_id, subject=subject, event=event, module=run.module, kind=kind)
     try:
         yield
     except Exception as e:
