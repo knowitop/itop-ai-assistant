@@ -68,7 +68,7 @@ class TicketRun(ABC):
             if ticket is None:
                 logger.warning(f"[{self.processing_id}] {self.label} not found in iTop, skipping")
                 return await self.skip("fetch", "ticket not found in iTop")
-            ai_name = await self.bundle.ticket_repo.get_ai_person_name()
+            ai_name = await self.deps.itop.ai_person_name()
             # The guard runs before the body, not as middleware: it needs no LLM
             # and it saves the catalog round-trip to iTop on a no-op webhook
             reason = await self.stop_reason(ticket, ai_name)

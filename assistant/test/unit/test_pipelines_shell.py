@@ -54,7 +54,7 @@ class ShellTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.bundle = MagicMock()
         self.bundle.ticket_repo.fetch = AsyncMock(return_value=self.ticket)
-        self.bundle.ticket_repo.get_ai_person_name = AsyncMock(return_value="ai-assistant")
+        self.deps.itop.ai_person_name = AsyncMock(return_value="ai-assistant")
         self.deps.itop.get = AsyncMock(return_value=self.bundle)
 
         self.run = _ProbeRun(_payload(), uuid4(), self.deps)

@@ -39,7 +39,6 @@ class TicketRepository:
     def __init__(self, itop: Itop, mapping: TicketMappingConfig):
         self._itop = itop
         self.mapping = mapping
-        self._ai_person_name: str | None = None
 
     async def fetch(self, obj_class: str, ticket_id: str) -> Ticket | None:
         # Request only the attributes the mapping reads — fetching everything
@@ -141,13 +140,3 @@ class TicketRepository:
             {"id": ticket.id},
             {attr_code: {"add_item": {"message": message, "format": "text"}}},
         )
-
-    async def get_ai_person_name(self) -> str:
-        """Friendly name of the AI service account. Cached for the process lifetime."""
-        if self._ai_person_name is None:
-            person = await self._itop.schema("Person").find_one({"id": ("=", ":current_contact_id")})
-            if person is None:
-                # Reachable state — the setup wizard probes for exactly this.
-                raise ValueError("No Person is linked to the iTop service account")
-            self._ai_person_name = person["friendlyname"]
-        return self._ai_person_name

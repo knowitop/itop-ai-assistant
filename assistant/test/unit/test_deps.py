@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from itop_ai_assistant.config import ItopConfig, LlmConfig, TicketMappingConfig
 from itop_ai_assistant.deps import ItopProvider, create_llm
@@ -54,6 +54,48 @@ class TestItopProvider(unittest.IsolatedAsyncioTestCase):
         b2 = await self.provider.get()
         self.assertIsNot(b1, b2)
         await self.provider.aclose()
+
+
+class TestAiPersonName(unittest.IsolatedAsyncioTestCase):
+    """The service account's own name — a property of the connection."""
+
+    def setUp(self):
+        self.store = _FakeConfigStore()
+        self.provider = ItopProvider(self.store)
+
+    async def asyncTearDown(self):
+        await self.provider.aclose()
+
+    def _answer(self, name="ai-assistant"):
+        schema = MagicMock()
+        schema.find_one = AsyncMock(return_value={"friendlyname": name})
+        return schema
+
+    async def test_resolved_once_and_cached(self):
+        bundle = await self.provider.get()
+        schema = self._answer()
+        with patch.object(bundle.client, "schema", return_value=schema):
+            self.assertEqual(await self.provider.ai_person_name(), "ai-assistant")
+            self.assertEqual(await self.provider.ai_person_name(), "ai-assistant")
+
+        schema.find_one.assert_awaited_once()
+
+    async def test_dropped_when_the_connection_is_rebuilt(self):
+        bundle = await self.provider.get()
+        with patch.object(bundle.client, "schema", return_value=self._answer("old")):
+            await self.provider.ai_person_name()
+
+        self.store.sections["itop"] = ItopConfig(url="http://two/rest.php", token="tok")
+        rebuilt = await self.provider.get()
+        with patch.object(rebuilt.client, "schema", return_value=self._answer("new")):
+            self.assertEqual(await self.provider.ai_person_name(), "new")
+
+    async def test_a_service_account_without_a_person_is_an_error(self):
+        bundle = await self.provider.get()
+        schema = MagicMock()
+        schema.find_one = AsyncMock(return_value=None)
+        with patch.object(bundle.client, "schema", return_value=schema), self.assertRaises(ValueError):
+            await self.provider.ai_person_name()
 
 
 class TestCreateLlm(unittest.TestCase):

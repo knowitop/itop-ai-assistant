@@ -265,18 +265,5 @@ class TestAppendLogs(unittest.IsolatedAsyncioTestCase):
         self.assertIn("user_log", raw_fields)
 
 
-class TestAiPersonCache(unittest.IsolatedAsyncioTestCase):
-    async def test_ai_person_fetched_once(self):
-        repo, schema = _make_repo()
-        schema.find_one.return_value = {"friendlyname": "ai-assistant"}
-
-        name1 = await repo.get_ai_person_name()
-        name2 = await repo.get_ai_person_name()
-
-        self.assertEqual(name1, "ai-assistant")
-        self.assertEqual(name2, "ai-assistant")
-        schema.find_one.assert_awaited_once()
-
-
 if __name__ == "__main__":
     unittest.main()

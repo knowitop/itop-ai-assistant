@@ -46,6 +46,7 @@ class ItopProvider:
         self._config_store = config_store
         self._bundle: ItopBundle | None = None
         self._fingerprint: str | None = None
+        self._ai_person_name: str | None = None
         self._rebuild_lock = asyncio.Lock()
 
     async def get(self) -> ItopBundle:
@@ -63,13 +64,34 @@ class ItopProvider:
                     catalog_repo=CatalogRepository(client),
                 )
                 self._fingerprint = fingerprint
+                self._ai_person_name = None
             return self._bundle
+
+    async def ai_person_name(self) -> str:
+        """Friendly name of the AI service account. Cached until the bundle is rebuilt.
+
+        A property of the connection, not of the ticket repository: it maps
+        nothing, it asks iTop who the service account is. It also has to stay
+        that way — the name is what tells a run "this last comment is our own"
+        (`IntakeRun.stop_reason`), so resolving it as anyone else would turn the
+        loop guard into a lie. Answering it here, off the service bundle, makes
+        that impossible rather than merely unlikely.
+        """
+        bundle = await self.get()
+        if self._ai_person_name is None:
+            person = await bundle.client.schema("Person").find_one({"id": ("=", ":current_contact_id")})
+            if person is None:
+                # Reachable state — the setup wizard probes for exactly this.
+                raise ValueError("No Person is linked to the iTop service account")
+            self._ai_person_name = person["friendlyname"]
+        return self._ai_person_name
 
     async def aclose(self) -> None:
         if self._bundle is not None:
             await self._bundle.client.aclose()
             self._bundle = None
             self._fingerprint = None
+            self._ai_person_name = None
 
 
 @dataclass
