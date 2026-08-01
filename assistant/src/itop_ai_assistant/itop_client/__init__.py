@@ -7,5 +7,6 @@ from this application, and do not remove functionality that this service
 happens not to use.
 """
 
+from .auth import ItopAuth as ItopAuth
 from .exceptions import ItopError as ItopError
 from .itop import Itop as Itop

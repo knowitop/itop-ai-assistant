@@ -1,8 +1,10 @@
 import json
+from copy import copy
 from typing import Any, Dict, Optional
 
 import httpx
 
+from .auth import ItopAuth
 from .datamodel import DataModel
 from .exceptions import ItopError
 from .schema import Schema
@@ -19,6 +21,7 @@ class Itop:
         data_model: Optional[str] = None,
         transport: Optional[httpx.AsyncBaseTransport] = None,
         timeout: float = 30.0,
+        comment: Optional[str] = None,
     ):
         """
         Create iTop API client.
@@ -33,27 +36,77 @@ class Itop:
                            (e.g. itop.UserRequest, itop.Person).
         :param transport: Optional httpx transport — used for testing (httpx.MockTransport).
         :param timeout: HTTP timeout in seconds for all iTop requests.
+        :param comment: Text iTop records in the object's change history for every
+                        operation this client makes. None keeps the per-operation
+                        default ("Update UserRequest" and friends).
         """
         self.url = url
         self.version = version
-        self.auth_user = auth_user
-        self.auth_pwd = auth_pwd
-        self.auth_token = auth_token
+        self.auth = ItopAuth(user=auth_user, pwd=auth_pwd, token=auth_token)
+        self.comment = comment
         self.data_model: Optional[DataModel] = None
         self._http = httpx.AsyncClient(transport=transport, timeout=timeout)
+        # A view built by as_() borrows this pool instead of owning it.
+        self._owns_http = True
 
         if data_model:
             self.data_model = DataModel(data_model)
-            for schema_name in self.data_model.schemas:
-                setattr(self, schema_name, Schema(self, schema_name))
+            self._bind_schemas()
+
+    @property
+    def auth_user(self) -> Optional[str]:
+        return self.auth.user
+
+    @property
+    def auth_pwd(self) -> Optional[str]:
+        return self.auth.pwd
+
+    @property
+    def auth_token(self) -> Optional[str]:
+        return self.auth.token
+
+    def _bind_schemas(self) -> None:
+        """Expose the datamodel's classes as attributes bound to *this* client."""
+        assert self.data_model is not None
+        for schema_name in self.data_model.schemas:
+            setattr(self, schema_name, Schema(self, schema_name))
+
+    def as_(self, auth: Optional[ItopAuth] = None, comment: Optional[str] = None) -> "Itop":
+        """This client seen through different credentials and/or a different comment.
+
+        The connection pool is shared: iTop authenticates per request, so one
+        pool legitimately serves several identities. A view does not own the
+        pool — closing it is a no-op, and only the client that built the pool
+        can close it.
+
+        Every request a view makes inherits its credentials, including the ones
+        `Schema` issues on its own (`update` retrying as multi, `sync` calling
+        `update`, `lookup` resolving external keys). That is the point of a view
+        over a per-call parameter: a forgotten hand-off there would silently
+        resolve someone else's objects under the service account.
+        """
+        if auth is None and comment is None:
+            return self
+        view = copy(self)
+        view._owns_http = False
+        if auth is not None:
+            view.auth = auth
+        if comment is not None:
+            view.comment = comment
+        if view.data_model:
+            # copy() carried over Schemas bound to *self*; rebind them, or a
+            # datamodel attribute would quietly act as the original client.
+            view._bind_schemas()
+        return view
 
     async def aclose(self) -> None:
-        """Close the underlying HTTP client."""
-        await self._http.aclose()
+        """Close the underlying HTTP client. A view borrows it and closes nothing."""
+        if self._owns_http:
+            await self._http.aclose()
 
     async def check_credentials(self) -> None:
         """Verify credentials against iTop. Raises ItopError if invalid."""
-        await self.request({"operation": "core/check_credentials", "user": self.auth_user, "password": self.auth_pwd})
+        await self.request({"operation": "core/check_credentials", "user": self.auth.user, "password": self.auth.pwd})
 
     async def request(self, data: Dict[str, Any], raw_response: bool = False) -> Any:
         """
@@ -65,14 +118,14 @@ class Itop:
         :raises ItopError: On any iTop or HTTP error.
         """
         form: Dict[str, Any] = {"version": self.version, "json_data": json.dumps(data)}
-        if self.auth_user:
-            form["auth_user"] = self.auth_user
-        if self.auth_pwd:
-            form["auth_pwd"] = self.auth_pwd
+        if self.auth.user:
+            form["auth_user"] = self.auth.user
+        if self.auth.pwd:
+            form["auth_pwd"] = self.auth.pwd
 
         headers: Dict[str, str] = {}
-        if self.auth_token:
-            headers["Auth-Token"] = self.auth_token
+        if self.auth.token:
+            headers["Auth-Token"] = self.auth.token
 
         try:
             response = await self._http.post(self.url, data=form, headers=headers)
