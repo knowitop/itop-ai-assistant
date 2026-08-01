@@ -15,6 +15,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from itop_ai_assistant.config import ItopConfig, LlmConfig, SecurityConfig, missing_setup
 from itop_ai_assistant.deps import AppDeps
+from itop_ai_assistant.principal import Principal
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,23 @@ async def verify_admin_token(
             detail="Invalid or missing bearer token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+async def resolve_principal(request: Request) -> Principal:
+    """Who this call acts as.
+
+    Today: always the service account from section `itop`. This is the one
+    function that changes when identity arrives, and both cases are the same
+    mechanism — the engineer console sending a personal iTop token in a header
+    on every call, and a webhook carrying the account it must be processed
+    under. Neither needs a stored secret (`docs/architecture.md` §3.5).
+
+    Called for its value rather than declared as a dependency: the routers need
+    the principal itself, and a `Depends` would advertise a security scheme in
+    the OpenAPI document before there is one to advertise. It becomes a
+    dependency the day it has to answer 401 on a revoked token.
+    """
+    return Principal.service()
 
 
 async def require_configured(request: Request) -> None:

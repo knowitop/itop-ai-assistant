@@ -60,7 +60,7 @@ class ShellTestCase(unittest.IsolatedAsyncioTestCase):
         self.bundle = MagicMock()
         self.bundle.ticket_repo.fetch = AsyncMock(return_value=self.ticket)
         self.deps.itop.ai_person_name = AsyncMock(return_value="ai-assistant")
-        self.deps.itop.get = AsyncMock(return_value=self.bundle)
+        self.deps.itop.for_principal = AsyncMock(return_value=self.bundle)
 
         self.run = _ProbeRun(_payload(), _run(), self.deps)
 
@@ -77,6 +77,17 @@ class TestPhaseOrder(ShellTestCase):
         self.assertEqual(self.run.seen, (self.ticket, "ai-assistant"))
         self.assertIs(self.run.bundle_in_body, self.bundle)
         self.assertEqual(self.journalled(), [], "a clean run leaves the trace to the module")
+
+    async def test_itop_is_reached_as_the_runs_principal(self):
+        await self.run.execute()
+
+        self.deps.itop.for_principal.assert_awaited_once()
+        principal = self.deps.itop.for_principal.await_args.args[0]
+        comment = self.deps.itop.for_principal.await_args.kwargs["comment"]
+        self.assertIs(principal, self.run.run.principal)
+        self.assertIn("probe", comment)
+        self.assertIn(str(self.run.processing_id), comment)
+        self.deps.itop.get.assert_not_called()
 
     async def test_label_is_the_lock_key(self):
         await self.run.execute()

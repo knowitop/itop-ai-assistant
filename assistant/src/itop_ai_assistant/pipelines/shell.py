@@ -68,7 +68,7 @@ class TicketRun(ABC):
             logger.info(f"[{self.processing_id}] {self.label} is already being processed, skipping")
             return await self.skip("lock", "ticket is already being processed")
         try:
-            self.bundle = await self.deps.itop.get()
+            self.bundle = await self.deps.itop.for_principal(self.run.principal, comment=self.run.comment)
             ticket = await self.bundle.ticket_repo.fetch(self.ref.obj_class, self.ref.id)
             if ticket is None:
                 logger.warning(f"[{self.processing_id}] {self.label} not found in iTop, skipping")

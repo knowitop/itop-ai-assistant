@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from itop_ai_assistant.api_deps import require_configured, verify_webhook_token
+from itop_ai_assistant.api_deps import require_configured, resolve_principal, verify_webhook_token
 from itop_ai_assistant.deps import AppDeps
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.registry import WebhookHandler
@@ -49,7 +49,7 @@ async def receive_webhook(payload: WebhookPayload, request: Request) -> WebhookR
     module, handler = entry
 
     deps: AppDeps = request.app.state.deps
-    run = RunContext(processing_id=uuid4(), module=module)
+    run = RunContext(processing_id=uuid4(), module=module, principal=await resolve_principal(request))
     logger.info(f"[{run.processing_id}] Accepted {payload.label} ({payload.event})")
     task = asyncio.create_task(_process_safely(handler, payload, run, deps))
     _background_tasks.add(task)

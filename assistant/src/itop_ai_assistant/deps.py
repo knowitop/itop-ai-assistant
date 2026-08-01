@@ -12,6 +12,7 @@ from itop_ai_assistant.config_store import ConfigStore, RedisConfigStore
 from itop_ai_assistant.itop_client import Itop
 from itop_ai_assistant.journal import RunJournal
 from itop_ai_assistant.llm_providers import get_provider
+from itop_ai_assistant.principal import Principal
 from itop_ai_assistant.prompt_store import (
     PACKAGED_PROMPTS_DIR,
     FilePromptStore,
@@ -25,7 +26,11 @@ from itop_ai_assistant.vector.db import VectorDb
 
 @dataclass
 class ItopBundle:
-    """iTop client plus the repositories bound to it — one consistent unit."""
+    """iTop client plus the repositories bound to it — one consistent unit.
+
+    One connection seen as one principal: everything in here talks to iTop with
+    the same credentials, so a run cannot half-act as somebody else.
+    """
 
     client: Itop
     ticket_repo: TicketRepository
@@ -66,6 +71,29 @@ class ItopProvider:
                 self._fingerprint = fingerprint
                 self._ai_person_name = None
             return self._bundle
+
+    async def for_principal(self, principal: Principal, *, comment: str) -> ItopBundle:
+        """The same connection, seen as this principal. One run, one bundle.
+
+        Deliberately a second method rather than a defaulted argument on
+        `get()`: "I forgot to say who is acting" would be invisible with a
+        default, whereas a plain `get()` at a call site now reads as the
+        statement it is — no run, no principal, the service account.
+
+        Adds no cache of its own. The connection is cached by the fingerprint of
+        its config sections, and the view over it costs three small objects, no
+        HTTP client and no lock. Repositories are rebuilt per run so that
+        nothing in them can reach the service credentials by accident.
+        """
+        base = await self.get()
+        client = base.client.as_(auth=principal.auth, comment=comment)
+        if client is base.client:
+            return base
+        return ItopBundle(
+            client=client,
+            ticket_repo=TicketRepository(client, base.ticket_repo.mapping),
+            catalog_repo=CatalogRepository(client),
+        )
 
     async def ai_person_name(self) -> str:
         """Friendly name of the AI service account. Cached until the bundle is rebuilt.

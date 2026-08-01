@@ -24,6 +24,7 @@ from itop_ai_assistant.pipelines.models import RunOutcome
 from itop_ai_assistant.pipelines.registry import ScheduleRoute, TriggerRegistry
 from itop_ai_assistant.pipelines.runner import journalled_run
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
+from itop_ai_assistant.principal import Principal
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,9 @@ def register_schedules(tasks: PeriodicTasks, registry: TriggerRegistry, deps: Ap
 
 async def run_schedule(route: ScheduleRoute, deps: AppDeps) -> RunOutcome:
     """One tick of one schedule route, journalled start to finish."""
-    run = RunContext(processing_id=uuid4(), module=route.module)
+    # A clock carries no token, so a scheduled run is the service account and
+    # always will be — delegated schedules are exactly the case §8.5 defers.
+    run = RunContext(processing_id=uuid4(), module=route.module, principal=Principal.service())
     async with journalled_run(
         deps,
         run,

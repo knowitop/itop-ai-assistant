@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import ValidationError
 
-from itop_ai_assistant.api_deps import require_configured
+from itop_ai_assistant.api_deps import require_configured, resolve_principal
 from itop_ai_assistant.deps import AppDeps
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import RunOutcome
@@ -42,7 +42,7 @@ async def run_request(module: str, action: str, body: dict, request: Request) ->
         raise HTTPException(status_code=422, detail=str(e)) from e
 
     deps: AppDeps = request.app.state.deps
-    run = RunContext(processing_id=uuid4(), module=module)
+    run = RunContext(processing_id=uuid4(), module=module, principal=await resolve_principal(request))
     subject = route.subject_of(payload)
     logger.info(f"[{run.processing_id}] Running {module}/{action} for {subject}")
     async with journalled_run(deps, run, kind="request", subject=subject, event=action):

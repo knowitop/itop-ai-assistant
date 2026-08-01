@@ -37,7 +37,7 @@ class TestHandleTicketEvent(unittest.IsolatedAsyncioTestCase):
         self.bundle.ticket_repo.fetch = self.fetch
         self.bundle.ticket_repo.mapping = TicketMappingConfig()
         self.deps.itop.ai_person_name = AsyncMock(return_value="ai-assistant")
-        self.deps.itop.get = AsyncMock(return_value=self.bundle)
+        self.deps.itop.for_principal = AsyncMock(return_value=self.bundle)
         self.deps.journal = AsyncMock()
 
         run_patch = patch.object(IntakeRun, "body", new_callable=AsyncMock)
@@ -117,7 +117,7 @@ class TestGuard(unittest.IsolatedAsyncioTestCase):
         self.bundle.ticket_repo.mapping = TicketMappingConfig()
         self.deps.itop.ai_person_name = AsyncMock(return_value="ai-assistant")
         self.bundle.ticket_repo.fetch = AsyncMock(return_value=_ticket())
-        self.deps.itop.get = AsyncMock(return_value=self.bundle)
+        self.deps.itop.for_principal = AsyncMock(return_value=self.bundle)
 
         run_patch = patch.object(IntakeRun, "body", new_callable=AsyncMock)
         self.mock_run = run_patch.start()

@@ -3,6 +3,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from itop_ai_assistant.config import ItopConfig, LlmConfig, TicketMappingConfig
 from itop_ai_assistant.deps import ItopProvider, create_llm
+from itop_ai_assistant.principal import Principal
+
+_ENGINEER = Principal.delegated("engineer-token", login="jdoe", name="John Doe")
 
 
 class _FakeConfigStore:
@@ -56,6 +59,44 @@ class TestItopProvider(unittest.IsolatedAsyncioTestCase):
         await self.provider.aclose()
 
 
+class TestForPrincipal(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.store = _FakeConfigStore()
+        self.provider = ItopProvider(self.store)
+
+    async def asyncTearDown(self):
+        await self.provider.aclose()
+
+    async def test_a_delegated_run_talks_to_itop_as_the_engineer(self):
+        bundle = await self.provider.for_principal(_ENGINEER, comment="run 42")
+
+        self.assertEqual(bundle.client.auth.token, "engineer-token")
+        self.assertEqual(bundle.client.comment, "run 42")
+
+    async def test_the_connection_pool_is_shared_not_duplicated(self):
+        base = await self.provider.get()
+
+        bundle = await self.provider.for_principal(_ENGINEER, comment="run 42")
+
+        self.assertIsNot(bundle.client, base.client)
+        self.assertIs(bundle.client._http, base.client._http)
+        self.assertIs(bundle.ticket_repo.mapping, base.ticket_repo.mapping)
+
+    async def test_the_service_account_keeps_the_connections_own_credentials(self):
+        base = await self.provider.get()
+
+        bundle = await self.provider.for_principal(Principal.service(), comment="run 42")
+
+        self.assertEqual(bundle.client.auth, base.client.auth)
+        self.assertEqual(bundle.client.comment, "run 42")
+
+    async def test_repositories_cannot_reach_past_their_principal(self):
+        bundle = await self.provider.for_principal(_ENGINEER, comment="run 42")
+
+        self.assertIs(bundle.ticket_repo._itop, bundle.client)
+        self.assertIs(bundle.catalog_repo._itop, bundle.client)
+
+
 class TestAiPersonName(unittest.IsolatedAsyncioTestCase):
     """The service account's own name — a property of the connection."""
 
@@ -89,6 +130,22 @@ class TestAiPersonName(unittest.IsolatedAsyncioTestCase):
         rebuilt = await self.provider.get()
         with patch.object(rebuilt.client, "schema", return_value=self._answer("new")):
             self.assertEqual(await self.provider.ai_person_name(), "new")
+
+    async def test_resolved_as_the_service_account_even_during_a_delegated_run(self):
+        """The name answers "is this last comment our own" — the loop guard. It has
+        to mean the service account whoever the run acts as, or an engineer's own
+        comments would start reading as ours."""
+        base = await self.provider.get()
+        delegated = await self.provider.for_principal(_ENGINEER, comment="run 42")
+        service_schema = self._answer()
+        with (
+            patch.object(base.client, "schema", return_value=service_schema) as as_service,
+            patch.object(delegated.client, "schema") as as_engineer,
+        ):
+            await self.provider.ai_person_name()
+
+        as_service.assert_called_once_with("Person")
+        as_engineer.assert_not_called()
 
     async def test_a_service_account_without_a_person_is_an_error(self):
         bundle = await self.provider.get()
