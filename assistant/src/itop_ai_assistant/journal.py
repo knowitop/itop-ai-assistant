@@ -43,6 +43,9 @@ class ProcessingRun(BaseModel):
     module: str
     # Runs recorded before triggers had kinds are webhook runs
     kind: TriggerKind = "webhook"
+    # Who the run acted as — a label, never a credential. Runs recorded before
+    # principals existed all ran as the service account.
+    principal: str = "service"
     status: RunStatus = "running"
     started_at: datetime
     finished_at: datetime | None = None
@@ -64,7 +67,13 @@ class RunJournal:
         return f"{_RUN_PREFIX}{processing_id}:steps"
 
     async def start(
-        self, processing_id: UUID | str, subject: str, event: str, module: str, kind: TriggerKind = "webhook"
+        self,
+        processing_id: UUID | str,
+        subject: str,
+        event: str,
+        module: str,
+        kind: TriggerKind = "webhook",
+        principal: str = "service",
     ) -> None:
         now = datetime.now(UTC)
         key = self._key(processing_id)
@@ -78,6 +87,7 @@ class RunJournal:
                         "event": event,
                         "module": module,
                         "kind": kind,
+                        "principal": principal,
                         "status": "running",
                         "started_at": now.isoformat(),
                     },

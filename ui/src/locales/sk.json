@@ -182,6 +182,7 @@
     "col_started": "Spustené",
     "col_subject": "Predmet",
     "col_module": "Modul",
+    "col_principal": "Koná ako",
     "col_kind": "Spúšťač",
     "col_event": "Udalosť",
     "col_status": "Stav",

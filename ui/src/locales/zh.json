@@ -182,6 +182,7 @@
     "col_started": "开始时间",
     "col_subject": "对象",
     "col_module": "模块",
+    "col_principal": "执行身份",
     "col_kind": "触发方式",
     "col_event": "事件",
     "col_status": "状态",

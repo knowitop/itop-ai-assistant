@@ -182,6 +182,7 @@
     "col_started": "Démarré",
     "col_subject": "Objet",
     "col_module": "Module",
+    "col_principal": "Agit en tant que",
     "col_kind": "Déclencheur",
     "col_event": "Événement",
     "col_status": "Statut",

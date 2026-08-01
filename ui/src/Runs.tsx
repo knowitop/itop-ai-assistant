@@ -29,6 +29,7 @@ interface Run {
   subject: string;
   event: string;
   module: string;
+  principal: string;
   kind: 'webhook' | 'request' | 'schedule';
   status: 'running' | 'done' | 'failed';
   started_at: string;
@@ -162,6 +163,7 @@ export default function Runs() {
                   <Table.Th>{t('runs.col_started')}</Table.Th>
                   <Table.Th>{t('runs.col_subject')}</Table.Th>
                   <Table.Th>{t('runs.col_module')}</Table.Th>
+                  <Table.Th>{t('runs.col_principal')}</Table.Th>
                   <Table.Th>{t('runs.col_kind')}</Table.Th>
                   <Table.Th>{t('runs.col_event')}</Table.Th>
                   <Table.Th>{t('runs.col_status')}</Table.Th>
@@ -182,6 +184,7 @@ export default function Runs() {
                     <Table.Td>{formatWhen(run.started_at)}</Table.Td>
                     <Table.Td>{run.subject}</Table.Td>
                     <Table.Td>{run.module}</Table.Td>
+                    <Table.Td>{run.principal}</Table.Td>
                     <Table.Td>{run.kind}</Table.Td>
                     <Table.Td>{run.event}</Table.Td>
                     <Table.Td>

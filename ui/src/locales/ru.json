@@ -182,6 +182,7 @@
     "col_started": "Начало",
     "col_subject": "Субъект",
     "col_module": "Модуль",
+    "col_principal": "От имени",
     "col_kind": "Триггер",
     "col_event": "Событие",
     "col_status": "Статус",

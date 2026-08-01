@@ -182,6 +182,7 @@
     "col_started": "Розпочато",
     "col_subject": "Суб'єкт",
     "col_module": "Модуль",
+    "col_principal": "Від імені",
     "col_kind": "Тригер",
     "col_event": "Подія",
     "col_status": "Статус",

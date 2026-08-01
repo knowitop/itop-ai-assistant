@@ -182,6 +182,7 @@
     "col_started": "Spuštěno",
     "col_subject": "Předmět",
     "col_module": "Modul",
+    "col_principal": "Jedná jako",
     "col_kind": "Spouštěč",
     "col_event": "Událost",
     "col_status": "Stav",

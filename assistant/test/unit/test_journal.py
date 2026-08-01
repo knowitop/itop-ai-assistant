@@ -44,6 +44,23 @@ class TestJournalLifecycle(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual((await journal.get(pid)).kind, "webhook")
 
+    async def test_principal_is_recorded(self):
+        journal, redis = _make_journal()
+        pid = uuid4()
+
+        await journal.start(pid, subject="UserRequest::42", event="ask", module="console", principal="engineer:jdoe")
+
+        self.assertEqual((await journal.get(pid)).principal, "engineer:jdoe")
+
+    async def test_run_recorded_before_principals_existed_reads_as_the_service_account(self):
+        journal, redis = _make_journal()
+        pid = uuid4()
+        await journal.start(pid, subject="UserRequest::42", event="created", module="intake")
+        await redis.hdel(f"run:{pid}", "principal")
+
+        self.assertEqual((await journal.get(pid)).principal, "service")
+        self.assertEqual((await journal.list())[0].principal, "service")
+
     async def test_run_recorded_as_ticket_reads_as_subject(self):
         """Runs written before the rename live out their TTL next to the new
         ones — without the alias the whole Runs screen would 500 for a week."""

@@ -182,6 +182,7 @@
     "col_started": "Gestartet",
     "col_subject": "Gegenstand",
     "col_module": "Modul",
+    "col_principal": "Handelt als",
     "col_kind": "Auslöser",
     "col_event": "Ereignis",
     "col_status": "Status",

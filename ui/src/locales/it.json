@@ -182,6 +182,7 @@
     "col_started": "Avviato",
     "col_subject": "Oggetto",
     "col_module": "Modulo",
+    "col_principal": "Agisce come",
     "col_kind": "Trigger",
     "col_event": "Evento",
     "col_status": "Stato",

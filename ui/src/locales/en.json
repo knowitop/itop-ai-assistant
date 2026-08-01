@@ -182,6 +182,7 @@
     "col_started": "Started",
     "col_subject": "Subject",
     "col_module": "Module",
+    "col_principal": "Acting as",
     "col_kind": "Trigger",
     "col_event": "Event",
     "col_status": "Status",

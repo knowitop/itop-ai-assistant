@@ -37,7 +37,17 @@ async def journalled_run(
     re-raised — swallowing it is the entry point's decision, not the frame's.
     """
     processing_id = run.processing_id
-    await deps.journal.start(processing_id, subject=subject, event=event, module=run.module, kind=kind)
+    await deps.journal.start(
+        processing_id,
+        subject=subject,
+        event=event,
+        module=run.module,
+        kind=kind,
+        # The label, never the credentials: reading under an engineer's token
+        # leaves almost no trace in iTop, so this is where "who asked" lives —
+        # and it must not become where their token lives.
+        principal=run.principal.label,
+    )
     try:
         yield
     except Exception as e:
