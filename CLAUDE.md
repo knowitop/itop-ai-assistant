@@ -38,6 +38,11 @@ processing-run journal. This is the only state the service owns.
 **AI acts as a named iTop user.** All comments posted to iTop are written on
 behalf of a dedicated service account (e.g. `ai-assistant`). This makes AI
 comments distinguishable from engineer and user comments without parsing text.
+Where a run acts under a delegated principal instead (the engineer's own iTop
+token, sent per request — `docs/architecture.md` §3.5), the account no longer
+says who acted, so every operation of a run carries a `comment` naming the
+module, the run id and, when delegated, the engineer it acts for. It lands in
+the object's History; the account attributes, the comment explains.
 
 **Human-in-the-loop by default.** The AI acts autonomously only when confident
 and the action is reversible. Asking a clarifying question and updating ticket

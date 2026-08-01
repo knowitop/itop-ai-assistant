@@ -48,6 +48,24 @@ Administrators do NOT get REST access by default — it must be explicitly grant
 }
 ```
 
+**Attribution (`comment`):** every operation payload accepts an optional
+top-level `comment` string, alongside `operation` / `class` / `key` / `fields`:
+
+```json
+{
+  "operation": "core/update",
+  "comment": "AI assistant · intake · run 3f2a1c4e",
+  "class": "UserRequest",
+  "key": 123,
+  "fields": { ... }
+}
+```
+
+On a write it lands in the object's change history (`CMDBChange` track info,
+the History tab); on `core/get` iTop discards it. This is the only way to
+distinguish "the engineer did it" from "the AI did it under the engineer's
+token" — the REST account alone cannot say that.
+
 **Response structure:**
 ```json
 {
