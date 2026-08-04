@@ -1,17 +1,23 @@
 """End-to-end sweep against real Postgres: fake iTop repositories and a fake
-embedder, everything below `VectorIndex` is real (tables, upserts, cursors,
-advisory lock, journal)."""
+embedder, everything below `VectorIndex` is real (tables, upserts). Sweep
+state (cursors, journal, lock) is Redis, backed by `fakeredis` here — this
+test exercises the pgvector chunk storage, not the Redis operational state,
+which has its own suite (`test/unit/test_vector_sync_state.py`)."""
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import fakeredis.aioredis
 import pytest
 from sqlalchemy import text
 
 from itop_ai_assistant.config import EmbeddingsConfig, VectorClassConfig, VectorConfig
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.vector.db import VectorDb
+from itop_ai_assistant.vector.index import VectorIndex
+from itop_ai_assistant.vector.index_journal import IndexJournal
 from itop_ai_assistant.vector.indexer import VectorIndexer
+from itop_ai_assistant.vector.sync_state import VectorSyncState
 
 _DIM = 4
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
@@ -67,7 +73,10 @@ def _deps(db: VectorDb, tickets: list[Ticket]) -> MagicMock:
     `TicketVectorSource` (via `build_vector_sources`) — this test exercises
     the source seam, not just `VectorIndex`."""
     deps = MagicMock()
-    deps.vector_db = db
+    deps.vector_store = VectorIndex(db)
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    deps.vector_sync = VectorSyncState(redis)
+    deps.vector_journal = IndexJournal(redis)
     deps.config_store.get = AsyncMock(
         side_effect=lambda name, model: {"vector": _VECTOR_CFG, "embeddings": _EMB_CFG}[name]
     )
@@ -120,11 +129,8 @@ class TestSweepEndToEnd:
         ]
 
         # cursor advanced, journal has ok runs (sweep + first reconcile)
-        from itop_ai_assistant.vector.index import VectorIndex
-
-        index = VectorIndex(db)
-        assert await index.get_cursor("UserRequest") == _NOW
-        runs = await index.journal_recent(10)
+        assert await deps.vector_sync.get_cursor("UserRequest") == _NOW
+        runs = await deps.vector_journal.recent(10)
         assert {run["kind"] for run in runs} == {"sweep", "reconcile"}
         assert all(run["status"] == "ok" for run in runs)
 

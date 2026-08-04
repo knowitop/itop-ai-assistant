@@ -11,7 +11,6 @@ from fastapi import APIRouter, HTTPException, Request
 from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
 from itop_ai_assistant.deps import AppDeps
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
-from itop_ai_assistant.vector.index import RECONCILE_SENTINEL, VectorIndex
 from itop_ai_assistant.vector.indexer import SWEEP_TASK
 
 logger = logging.getLogger(__name__)
@@ -26,19 +25,18 @@ async def vector_status(request: Request) -> dict:
     vector_cfg = await deps.config_store.get("vector", VectorConfig)
     embeddings_cfg = await deps.config_store.get("embeddings", EmbeddingsConfig)
 
-    database: dict = {"configured": deps.vector_db.configured, "ok": None, "error": None}
+    store_status: dict = {"configured": deps.vector_store.configured, "ok": None, "error": None}
     index_info: dict | None = None
     sync: dict | None = None
     last_reconcile = None
     reindex_pending = False
     runs: list[dict] = []
-    if deps.vector_db.configured:
-        index = VectorIndex(deps.vector_db)
+    if deps.vector_store.configured:
         try:
-            meta = await index.active_meta()
-            database["ok"] = True
+            meta = await deps.vector_store.active_meta()
+            store_status["ok"] = True
             if meta is not None:
-                stats = await index.stats()
+                stats = await deps.vector_store.stats()
                 # None when no embeddings model is configured to compare against
                 fingerprint_match = (
                     (meta.model, meta.dim) == (embeddings_cfg.model, embeddings_cfg.dimension)
@@ -52,18 +50,18 @@ async def vector_status(request: Request) -> dict:
                     "fingerprint_match": fingerprint_match,
                     "rows": stats.rows if stats else 0,
                 }
-            sync = await index.list_cursors()
-            last_reconcile = await index.get_cursor(RECONCILE_SENTINEL)
-            reindex_pending = await index.reindex_pending()
-            runs = await index.journal_recent(10)
-        except Exception as e:  # Postgres down, tables missing (migrations never ran) …
-            database["ok"] = False
-            database["error"] = f"{type(e).__name__}: {e}"
+            sync = await deps.vector_sync.list_cursors()
+            last_reconcile = await deps.vector_sync.get_reconcile()
+            reindex_pending = await deps.vector_sync.reindex_pending()
+            runs = await deps.vector_journal.recent(10)
+        except Exception as e:  # backend down, not provisioned yet …
+            store_status["ok"] = False
+            store_status["error"] = f"{type(e).__name__}: {e}"
 
     return {
         "enabled": vector_cfg.enabled,
         "embeddings_configured": bool(embeddings_cfg.base_url and embeddings_cfg.model),
-        "database": database,
+        "store": store_status,
         "index": index_info,
         "sync": sync,
         "last_reconcile": last_reconcile,
@@ -77,20 +75,20 @@ async def vector_status(request: Request) -> dict:
 async def vector_reindex(request: Request) -> dict:
     """Schedule a full backfill: cursor reset + an immediate sweep tick.
 
-    The request is a row in Postgres, not a flag in this process — whichever
-    replica wins the advisory lock acts on it; waking the local loop only makes
-    it happen sooner here.
+    The request is a flag in Redis, not in this process — whichever replica
+    wins the sweep lock acts on it; waking the local loop only makes it
+    happen sooner here.
     """
     deps: AppDeps = request.app.state.deps
     tasks: PeriodicTasks = request.app.state.tasks
-    if not deps.vector_db.configured:
+    if not deps.vector_store.configured:
         raise HTTPException(status_code=409, detail="Vector store is not configured (database_url is not set)")
     vector_cfg = await deps.config_store.get("vector", VectorConfig)
     if not vector_cfg.enabled:
         raise HTTPException(status_code=409, detail="Vector indexing is disabled (vector: enabled)")
     try:
-        await VectorIndex(deps.vector_db).request_reindex()
-    except Exception as e:  # Postgres down, tables missing (migrations never ran) …
+        await deps.vector_sync.request_reindex()
+    except Exception as e:  # Redis down …
         logger.warning(f"reindex request could not be stored: {e}")
         raise HTTPException(status_code=503, detail=f"Vector store is unavailable: {type(e).__name__}: {e}") from e
     tasks.wake(SWEEP_TASK)

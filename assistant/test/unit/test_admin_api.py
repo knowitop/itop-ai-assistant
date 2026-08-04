@@ -16,6 +16,9 @@ from itop_ai_assistant.pipelines.registry import ModuleInfo, ScheduleRoute, Trig
 from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore, RedisPromptStore
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.vector.db import VectorDb
+from itop_ai_assistant.vector.index import VectorIndex
+from itop_ai_assistant.vector.index_journal import IndexJournal
+from itop_ai_assistant.vector.sync_state import VectorSyncState
 
 
 def _make_deps(redis, settings=None) -> AppDeps:
@@ -27,7 +30,9 @@ def _make_deps(redis, settings=None) -> AppDeps:
         config_store=RedisConfigStore(redis, settings),
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR), redis),
         journal=RunJournal(redis),
-        vector_db=VectorDb(None),
+        vector_store=VectorIndex(VectorDb(None)),
+        vector_sync=VectorSyncState(redis),
+        vector_journal=IndexJournal(redis),
     )
 
 

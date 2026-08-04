@@ -1,5 +1,6 @@
+import asyncio
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
@@ -13,7 +14,10 @@ from itop_ai_assistant.main import app
 from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore, RedisPromptStore
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.vector.db import VectorDb
+from itop_ai_assistant.vector.index import VectorIndex
+from itop_ai_assistant.vector.index_journal import IndexJournal
 from itop_ai_assistant.vector.indexer import SWEEP_TASK
+from itop_ai_assistant.vector.sync_state import VectorSyncState
 
 _BLANK = {
     "admin_token": None,
@@ -33,7 +37,9 @@ def _make_deps(redis, database_url: str | None = None, **settings_overrides) -> 
         config_store=RedisConfigStore(redis, settings),
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR), redis),
         journal=RunJournal(redis),
-        vector_db=VectorDb(database_url),
+        vector_store=VectorIndex(VectorDb(database_url)),
+        vector_sync=VectorSyncState(redis),
+        vector_journal=IndexJournal(redis),
     )
 
 
@@ -53,8 +59,8 @@ class TestVectorStatus(VectorStatusTestCase):
 
         self.assertFalse(body["enabled"])
         self.assertFalse(body["embeddings_configured"])
-        self.assertFalse(body["database"]["configured"])
-        self.assertIsNone(body["database"]["ok"])
+        self.assertFalse(body["store"]["configured"])
+        self.assertIsNone(body["store"]["ok"])
         self.assertIsNone(body["index"])
         self.assertIsNone(body["sync"])
         self.assertIsNone(body["last_reconcile"])
@@ -69,9 +75,9 @@ class TestVectorStatus(VectorStatusTestCase):
 
         self.assertEqual(response.status_code, 200)
         body = response.json()
-        self.assertTrue(body["database"]["configured"])
-        self.assertFalse(body["database"]["ok"])
-        self.assertTrue(body["database"]["error"])
+        self.assertTrue(body["store"]["configured"])
+        self.assertFalse(body["store"]["ok"])
+        self.assertTrue(body["store"]["error"])
         self.assertIsNone(body["index"])
 
     def test_embeddings_configured_flag(self):
@@ -116,9 +122,12 @@ class TestReindex(VectorStatusTestCase):
         self.assertIn("disabled", response.json()["detail"])
 
     def test_503_when_the_request_cannot_be_stored(self):
-        """The mark is a row now, so an unreachable Postgres is a real failure —
-        it must say so instead of pretending the backfill was scheduled."""
-        self.client.app.state.deps = _make_deps(self.redis, database_url="postgresql+asyncpg://localhost:1/x")
+        """The mark is a flag in Redis now, so an unreachable Redis is a real
+        failure — it must say so instead of pretending the backfill was
+        scheduled."""
+        deps = _make_deps(self.redis, database_url="postgresql+asyncpg://localhost:1/x")
+        deps.vector_sync.request_reindex = AsyncMock(side_effect=ConnectionError("redis down"))
+        self.client.app.state.deps = deps
         self.client.patch("/api/setup/vector", json={"enabled": True})
 
         response = self.client.post("/api/vector/reindex")
@@ -127,19 +136,18 @@ class TestReindex(VectorStatusTestCase):
         self.assertIn("unavailable", response.json()["detail"])
 
     def test_202_marks_the_request_and_wakes_the_sweep(self):
-        """The request is a row in Postgres — the wake-up only makes the local
+        """The request is a flag in Redis — the wake-up only makes the local
         loop act on it sooner."""
-        self.client.app.state.deps = _make_deps(self.redis, database_url="postgresql+asyncpg://localhost:1/x")
+        deps = _make_deps(self.redis, database_url="postgresql+asyncpg://localhost:1/x")
+        self.client.app.state.deps = deps
         self.client.patch("/api/setup/vector", json={"enabled": True})
-        index = MagicMock(request_reindex=AsyncMock())
         self.tasks.wake = MagicMock(return_value=True)
 
-        with patch("itop_ai_assistant.vector.router.VectorIndex", return_value=index):
-            response = self.client.post("/api/vector/reindex")
+        response = self.client.post("/api/vector/reindex")
 
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json(), {"status": "scheduled"})
-        index.request_reindex.assert_awaited_once()
+        self.assertTrue(asyncio.run(deps.vector_sync.reindex_pending()))
         self.tasks.wake.assert_called_once_with(SWEEP_TASK)
 
 

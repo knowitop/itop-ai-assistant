@@ -1,17 +1,21 @@
 import unittest
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import fakeredis.aioredis
 
 from itop_ai_assistant.config import EmbeddingsConfig, VectorClassConfig, VectorConfig
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.vector.chunker import chunk_object
-from itop_ai_assistant.vector.index import RECONCILE_SENTINEL, FingerprintMismatchError, IndexMeta
+from itop_ai_assistant.vector.index_journal import IndexJournal
 from itop_ai_assistant.vector.indexer import SWEEP_TASK, VectorIndexer, register_vector_sweep
 from itop_ai_assistant.vector.source import VectorRecord
+from itop_ai_assistant.vector.store import ChunkRecord, FingerprintMismatchError, IndexMeta
+from itop_ai_assistant.vector.sync_state import VectorSyncState
 
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 _META = IndexMeta(version=1, model="test-model", dim=4)
+_LOCK_KEY = "vector:sweep:lock"
 
 _VECTOR_CFG = VectorConfig(
     enabled=True,
@@ -65,28 +69,73 @@ class FakeTicketSource:
         )
 
 
-def _index_mock(*, locked: bool = True, reindex_pending: bool = False) -> MagicMock:
-    index = MagicMock()
+class FakeChunkStore:
+    """In-memory ChunkStore: the indexer's contract, none of the storage."""
 
-    @asynccontextmanager
-    async def lock():
-        yield locked
+    def __init__(self, meta: IndexMeta = _META, *, configured: bool = True):
+        self.configured = configured
+        self._meta = meta
+        self.hashes: dict[tuple[str, int], dict[tuple[str, int], str]] = {}
+        self.upsert_calls: list[list[ChunkRecord]] = []
+        self.delete_chunks_calls: list[tuple[str, int, list[tuple[str, int]]]] = []
+        self.delete_object_calls: list[tuple[str, int]] = []
+        self.delete_object_return = 3  # matches the previous mock's fixed return value
+        self.list_object_ids_calls = 0
+        self.list_object_ids_side_effect = None
+        self.ensure_version_error: Exception | None = None
 
-    index.try_advisory_lock = lock
-    index.ensure_version = AsyncMock(return_value=_META)
-    index.get_cursor = AsyncMock(return_value=None)
-    index.set_cursor = AsyncMock()
-    index.reindex_pending = AsyncMock(return_value=reindex_pending)
-    index.request_reindex = AsyncMock()
-    index.reset_cursors = AsyncMock()
-    index.get_chunk_hashes = AsyncMock(return_value={})
-    index.upsert_chunks = AsyncMock(side_effect=lambda records, **kw: len(records))
-    index.delete_chunks = AsyncMock(side_effect=lambda cls, oid, keys: len(keys))
-    index.delete_object = AsyncMock(return_value=3)
-    index.list_object_ids = AsyncMock(return_value=[])
-    index.journal_start = AsyncMock(return_value=7)
-    index.journal_finish = AsyncMock()
-    return index
+    async def ensure_version(self, model, dim) -> IndexMeta:
+        if self.ensure_version_error:
+            raise self.ensure_version_error
+        return self._meta
+
+    async def active_meta(self) -> IndexMeta | None:
+        return self._meta
+
+    async def upsert_chunks(self, chunks, *, model, dim) -> int:
+        self.upsert_calls.append(list(chunks))
+        return len(chunks)
+
+    async def get_chunk_hashes(self, obj_class, obj_id) -> dict[tuple[str, int], str]:
+        return self.hashes.get((obj_class, obj_id), {})
+
+    async def delete_chunks(self, obj_class, obj_id, keys) -> int:
+        self.delete_chunks_calls.append((obj_class, obj_id, list(keys)))
+        return len(keys)
+
+    async def delete_object(self, obj_class, obj_id) -> int:
+        self.delete_object_calls.append((obj_class, obj_id))
+        return self.delete_object_return
+
+    async def list_object_ids(self, obj_class, after=0, limit=1000) -> list[int]:
+        self.list_object_ids_calls += 1
+        if self.list_object_ids_side_effect:
+            return self.list_object_ids_side_effect(obj_class, after, limit)
+        return []
+
+    async def search(self, embedding, **kwargs):
+        return []
+
+    async def stats(self):
+        return None
+
+    async def aclose(self) -> None:
+        return None
+
+
+class FlakyStartJournal(IndexJournal):
+    """Journal whose start() always fails — start failures must be non-fatal."""
+
+    def __init__(self, redis):
+        super().__init__(redis)
+        self.finish_calls = 0
+
+    async def start(self, kind: str) -> str:
+        raise RuntimeError("pg hiccup")
+
+    async def finish(self, *args, **kwargs) -> None:
+        self.finish_calls += 1
+        await super().finish(*args, **kwargs)
 
 
 def _embedder_mock() -> MagicMock:
@@ -96,9 +145,19 @@ def _embedder_mock() -> MagicMock:
     return embedder
 
 
-def _deps_mock(*, vector_cfg=_VECTOR_CFG, emb_cfg=_EMB_CFG, configured=True) -> MagicMock:
+def _deps_mock(
+    *,
+    vector_cfg=_VECTOR_CFG,
+    emb_cfg=_EMB_CFG,
+    configured=True,
+    store: FakeChunkStore | None = None,
+    journal: IndexJournal | None = None,
+) -> MagicMock:
     deps = MagicMock()
-    deps.vector_db.configured = configured
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    deps.vector_store = store if store is not None else FakeChunkStore(configured=configured)
+    deps.vector_sync = VectorSyncState(redis)
+    deps.vector_journal = journal if journal is not None else IndexJournal(redis)
     deps.config_store.get = AsyncMock(
         side_effect=lambda name, model: {"vector": vector_cfg, "embeddings": emb_cfg}[name]
     )
@@ -106,53 +165,50 @@ def _deps_mock(*, vector_cfg=_VECTOR_CFG, emb_cfg=_EMB_CFG, configured=True) -> 
 
 
 class IndexerTestCase(unittest.IsolatedAsyncioTestCase):
-    async def _run(self, deps, index, source, embedder=None):
+    async def _run(self, deps, source, embedder=None):
         indexer = VectorIndexer(deps, sources=[source])
         self.indexer = indexer
         embedder = embedder or _embedder_mock()
         self.embedder = embedder
-        with (
-            patch("itop_ai_assistant.vector.indexer.VectorIndex", return_value=index),
-            patch("itop_ai_assistant.vector.indexer.EmbeddingsClient", return_value=embedder),
-        ):
+        with patch("itop_ai_assistant.vector.indexer.EmbeddingsClient", return_value=embedder):
             return await indexer.sweep_once()
 
 
 class TestSkips(IndexerTestCase):
     async def test_skip_when_db_not_configured(self):
-        report = await self._run(_deps_mock(configured=False), _index_mock(), FakeTicketSource())
+        report = await self._run(_deps_mock(configured=False), FakeTicketSource())
 
         self.assertEqual(report.status, "skipped")
         self.assertIn("database_url", report.skip_reason)
 
     async def test_skip_when_disabled(self):
         deps = _deps_mock(vector_cfg=VectorConfig(enabled=False))
-        report = await self._run(deps, _index_mock(), FakeTicketSource())
+        report = await self._run(deps, FakeTicketSource())
 
         self.assertEqual(report.status, "skipped")
         self.assertIn("disabled", report.skip_reason)
 
     async def test_skip_when_embeddings_missing(self):
         deps = _deps_mock(emb_cfg=EmbeddingsConfig(base_url=None, model=None))
-        report = await self._run(deps, _index_mock(), FakeTicketSource())
+        report = await self._run(deps, FakeTicketSource())
 
         self.assertEqual(report.status, "skipped")
         self.assertIn("embeddings", report.skip_reason)
 
     async def test_skip_when_lock_not_acquired(self):
-        index = _index_mock(locked=False)
-        report = await self._run(_deps_mock(), index, FakeTicketSource([_record(1)]))
+        deps = _deps_mock()
+        await deps.vector_sync._redis.set(_LOCK_KEY, "someone-else", ex=120)
+        report = await self._run(deps, FakeTicketSource([_record(1)]))
 
         self.assertEqual(report.status, "skipped")
         self.assertIn("lock", report.skip_reason)
-        index.journal_start.assert_not_awaited()
+        self.assertEqual(await deps.vector_journal.recent(), [])
 
     async def test_no_source_registered_for_class_is_reported_as_ok(self):
         # A class in cfg.classes that no registered source claims — logged
         # and skipped, same tolerance as "no chunking profile".
         source = FakeTicketSource([_record(1)], classes=("SomeOtherClass",))
-        index = _index_mock()
-        report = await self._run(_deps_mock(), index, source)
+        report = await self._run(_deps_mock(), source)
 
         self.assertEqual(report.status, "ok")
         self.assertEqual(report.objects_seen, 0)
@@ -161,114 +217,116 @@ class TestSkips(IndexerTestCase):
 
 class TestSweep(IndexerTestCase):
     async def test_embeds_and_upserts_new_ticket(self):
-        index = _index_mock()
+        store = FakeChunkStore()
         source = FakeTicketSource([_record(1)])
-        report = await self._run(_deps_mock(), index, source)
+        report = await self._run(_deps_mock(store=store), source)
 
         self.assertEqual(report.status, "ok")
         self.assertEqual(report.kind, "sweep")
         self.assertEqual(report.objects_seen, 1)
         self.assertEqual(report.chunks_embedded, 1)
         self.assertEqual(source.prepare_calls, 1)
-        records = index.upsert_chunks.await_args.args[0]
+        records = store.upsert_calls[-1]
         self.assertEqual(records[0].obj_id, 1)
         self.assertEqual(records[0].chunk_kind, "body")
         self.assertEqual(records[0].status, "resolved")
 
     async def test_hash_guard_skips_unchanged(self):
-        index = _index_mock()
+        store = FakeChunkStore()
         source = FakeTicketSource([_record(1)])
-        await self._run(_deps_mock(), index, source)
-        stored = {(r.chunk_kind, r.chunk_n): r.content_hash for r in index.upsert_chunks.await_args.args[0]}
+        await self._run(_deps_mock(store=store), source)
+        stored = {(r.chunk_kind, r.chunk_n): r.content_hash for r in store.upsert_calls[-1]}
 
-        index2 = _index_mock()
-        index2.get_chunk_hashes = AsyncMock(return_value=stored)
+        store2 = FakeChunkStore()
+        store2.hashes[("UserRequest", 1)] = stored
         embedder2 = _embedder_mock()
-        report = await self._run(_deps_mock(), index2, FakeTicketSource([_record(1)]), embedder2)
+        report = await self._run(_deps_mock(store=store2), FakeTicketSource([_record(1)]), embedder2)
 
         self.assertEqual(report.status, "ok")
         self.assertEqual(report.chunks_embedded, 0)
         embedder2.embed.assert_not_awaited()
-        index2.upsert_chunks.assert_not_awaited()
+        self.assertEqual(store2.upsert_calls, [])
 
     async def test_vanished_chunks_deleted(self):
-        index = _index_mock()
-        index.get_chunk_hashes = AsyncMock(return_value={("body", 0): "stale", ("body", 5): "gone"})
-        report = await self._run(_deps_mock(), index, FakeTicketSource([_record(1)]))
+        store = FakeChunkStore()
+        store.hashes[("UserRequest", 1)] = {("body", 0): "stale", ("body", 5): "gone"}
+        report = await self._run(_deps_mock(store=store), FakeTicketSource([_record(1)]))
 
-        index.delete_chunks.assert_awaited_once_with("UserRequest", 1, [("body", 5)])
+        self.assertEqual(store.delete_chunks_calls, [("UserRequest", 1, [("body", 5)])])
         self.assertEqual(report.chunks_deleted, 1)
         self.assertEqual(report.chunks_embedded, 1)  # ("body", 0) hash mismatch → re-embedded
 
     async def test_object_out_of_index_values_deleted(self):
-        index = _index_mock()
-        report = await self._run(_deps_mock(), index, FakeTicketSource([_record(1, index_value="new")]))
+        store = FakeChunkStore()
+        report = await self._run(_deps_mock(store=store), FakeTicketSource([_record(1, index_value="new")]))
 
-        index.delete_object.assert_awaited_once_with("UserRequest", 1)
+        self.assertEqual(store.delete_object_calls, [("UserRequest", 1)])
         self.assertEqual(report.chunks_deleted, 3)
-        index.upsert_chunks.assert_not_awaited()
+        self.assertEqual(store.upsert_calls, [])
 
     async def test_empty_index_values_indexes_everything(self):
         cfg = _VECTOR_CFG.model_copy(deep=True)
         cfg.classes["UserRequest"].index_values = []
-        index = _index_mock()
-        report = await self._run(_deps_mock(vector_cfg=cfg), index, FakeTicketSource([_record(1, index_value="new")]))
+        store = FakeChunkStore()
+        report = await self._run(
+            _deps_mock(vector_cfg=cfg, store=store), FakeTicketSource([_record(1, index_value="new")])
+        )
 
         self.assertEqual(report.chunks_embedded, 1)
-        index.delete_object.assert_not_awaited()
+        self.assertEqual(store.delete_object_calls, [])
 
     async def test_cursor_set_to_max_last_update(self):
         newest = _NOW + timedelta(hours=2)
-        index = _index_mock()
+        deps = _deps_mock()
         source = FakeTicketSource([_record(1, last_update=_NOW), _record(2, last_update=newest)])
-        await self._run(_deps_mock(), index, source)
+        await self._run(deps, source)
 
-        class_calls = [c for c in index.set_cursor.await_args_list if c.args[0] == "UserRequest"]
-        self.assertEqual(class_calls, [unittest.mock.call("UserRequest", newest)])
+        self.assertEqual(await deps.vector_sync.get_cursor("UserRequest"), newest)
 
     async def test_since_is_cursor_minus_double_interval(self):
         cursor = _NOW
-
-        async def get_cursor(name):
-            return cursor if name == "UserRequest" else datetime.now(UTC)  # reconcile not due
-
-        index = _index_mock()
-        index.get_cursor = AsyncMock(side_effect=get_cursor)
+        deps = _deps_mock()
+        await deps.vector_sync.set_cursor("UserRequest", cursor)
+        await deps.vector_sync.set_reconcile(datetime.now(UTC))  # reconcile not due
         source = FakeTicketSource([])
-        await self._run(_deps_mock(), index, source)
+        await self._run(deps, source)
 
         since = source.find_modified_since_calls[-1][1]
         self.assertEqual(since, cursor - timedelta(seconds=2 * _VECTOR_CFG.sweep_interval_seconds))
 
     async def test_class_error_keeps_cursor_and_reports(self):
-        index = _index_mock()
+        deps = _deps_mock()
         source = FakeTicketSource([])
         source.find_modified_since_error = RuntimeError("itop down")
-        report = await self._run(_deps_mock(), index, source)
+        report = await self._run(deps, source)
 
         self.assertEqual(report.status, "error")
         self.assertIn("itop down", report.errors[0])
-        index.set_cursor.assert_not_awaited()
-        index.journal_finish.assert_awaited_once()
-        self.assertEqual(index.journal_finish.await_args.kwargs["status"], "error")
+        self.assertEqual(await deps.vector_sync.list_cursors(), {})
+        entries = await deps.vector_journal.recent()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["status"], "error")
 
     async def test_fingerprint_mismatch_is_journaled_error(self):
-        index = _index_mock()
-        index.ensure_version = AsyncMock(side_effect=FingerprintMismatchError("dim changed"))
-        report = await self._run(_deps_mock(), index, FakeTicketSource([_record(1)]))
+        store = FakeChunkStore()
+        store.ensure_version_error = FingerprintMismatchError("dim changed")
+        deps = _deps_mock(store=store)
+        report = await self._run(deps, FakeTicketSource([_record(1)]))
 
         self.assertEqual(report.status, "error")
         self.assertIn("rebuild required", report.errors[0])
-        self.assertEqual(index.journal_finish.await_args.kwargs["status"], "error")
+        entries = await deps.vector_journal.recent()
+        self.assertEqual(entries[0]["status"], "error")
 
     async def test_journal_failure_is_non_fatal(self):
-        index = _index_mock()
-        index.journal_start = AsyncMock(side_effect=RuntimeError("pg hiccup"))
-        report = await self._run(_deps_mock(), index, FakeTicketSource([_record(1)]))
+        redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        journal = FlakyStartJournal(redis)
+        deps = _deps_mock(journal=journal)
+        report = await self._run(deps, FakeTicketSource([_record(1)]))
 
         self.assertEqual(report.status, "ok")
         self.assertEqual(report.chunks_embedded, 1)
-        index.journal_finish.assert_not_awaited()
+        self.assertEqual(journal.finish_calls, 0)
 
 
 class TestSweepRegistration(unittest.IsolatedAsyncioTestCase):
@@ -296,70 +354,88 @@ class TestSweepRegistration(unittest.IsolatedAsyncioTestCase):
 
 
 class TestReindex(IndexerTestCase):
-    """The pending backfill lives in Postgres, not in the sweeping process:
-    the request survives a restart and is honoured by whichever replica wins
-    the advisory lock."""
+    """The pending backfill lives in Redis, not in the sweeping process: the
+    request survives a restart and is honoured by whichever replica wins the
+    sweep lock."""
 
     async def test_request_reindex_marks_it_in_the_index(self):
-        index = _index_mock()
-        indexer = VectorIndexer(_deps_mock())
-        with patch("itop_ai_assistant.vector.indexer.VectorIndex", return_value=index):
-            await indexer.request_reindex()
+        deps = _deps_mock()
+        indexer = VectorIndexer(deps)
+        await indexer.request_reindex()
 
-        index.request_reindex.assert_awaited_once()
+        self.assertTrue(await deps.vector_sync.reindex_pending())
 
     async def test_pending_request_resets_cursors_and_runs_backfill(self):
-        index = _index_mock(reindex_pending=True)
-        report = await self._run(_deps_mock(), index, FakeTicketSource([_record(1)]))
+        deps = _deps_mock()
+        await deps.vector_sync.set_cursor("UserRequest", _NOW)
+        await deps.vector_sync.request_reindex()
+        # reset_cursors drops the pending flag too — that is what clears it.
+        # Spy rather than asserting a post-run empty state: a backfill that
+        # successfully re-indexes the object sets the cursor right back.
+        original_reset = deps.vector_sync.reset_cursors
+        reset_calls = []
+
+        async def spy_reset() -> None:
+            reset_calls.append(1)
+            await original_reset()
+
+        deps.vector_sync.reset_cursors = spy_reset
+
+        report = await self._run(deps, FakeTicketSource([_record(1)]))
 
         self.assertEqual(report.kind, "backfill")
-        # reset_cursors drops the sentinel row too — that is what clears it
-        index.reset_cursors.assert_awaited_once()
-        index.journal_start.assert_any_await("backfill")
+        self.assertEqual(len(reset_calls), 1)
+        self.assertFalse(await deps.vector_sync.reindex_pending())
+        kinds = [e["kind"] for e in await deps.vector_journal.recent()]
+        self.assertIn("backfill", kinds)
 
     async def test_request_survives_a_failed_attempt(self):
-        index = _index_mock(reindex_pending=True)
-        index.ensure_version = AsyncMock(side_effect=RuntimeError("pg down"))
-        await self._run(_deps_mock(), index, FakeTicketSource([_record(1)]))
+        store = FakeChunkStore()
+        store.ensure_version_error = RuntimeError("pg down")
+        deps = _deps_mock(store=store)
+        await deps.vector_sync.set_cursor("UserRequest", _NOW)
+        await deps.vector_sync.request_reindex()
+        await self._run(deps, FakeTicketSource([_record(1)]))
 
-        # Cursors untouched, so the sentinel stands and the next tick retries
-        index.reset_cursors.assert_not_awaited()
+        # Cursors untouched, so the pending flag stands and the next tick retries
+        self.assertEqual(await deps.vector_sync.get_cursor("UserRequest"), _NOW)
+        self.assertTrue(await deps.vector_sync.reindex_pending())
 
 
 class TestReconciliation(IndexerTestCase):
     async def test_due_when_never_ran_and_deletes_orphans(self):
-        index = _index_mock()
-        index.list_object_ids = AsyncMock(side_effect=lambda cls, after, limit: [1, 2] if after == 0 else [])
+        store = FakeChunkStore()
+        store.list_object_ids_side_effect = lambda cls, after, limit: [1, 2] if after == 0 else []
         source = FakeTicketSource([])
         source.find_existing_ids_result = {1}
-        report = await self._run(_deps_mock(), index, source)
+        deps = _deps_mock(store=store)
+        report = await self._run(deps, source)
 
         self.assertEqual(report.status, "ok")
-        index.delete_object.assert_awaited_once_with("UserRequest", 2)
-        index.journal_start.assert_any_await("reconcile")
-        sentinel_call = [c for c in index.set_cursor.await_args_list if c.args[0] == RECONCILE_SENTINEL]
-        self.assertEqual(len(sentinel_call), 1)
+        self.assertEqual(store.delete_object_calls, [("UserRequest", 2)])
+        kinds = [e["kind"] for e in await deps.vector_journal.recent()]
+        self.assertIn("reconcile", kinds)
+        self.assertIsNotNone(await deps.vector_sync.get_reconcile())
 
     async def test_not_due_when_recent(self):
-        async def get_cursor(name):
-            return datetime.now(UTC) - timedelta(days=1) if name == RECONCILE_SENTINEL else None
-
-        index = _index_mock()
-        index.get_cursor = AsyncMock(side_effect=get_cursor)
-        report = await self._run(_deps_mock(), index, FakeTicketSource([]))
+        store = FakeChunkStore()
+        deps = _deps_mock(store=store)
+        await deps.vector_sync.set_reconcile(datetime.now(UTC) - timedelta(days=1))
+        report = await self._run(deps, FakeTicketSource([]))
 
         self.assertEqual(report.status, "ok")
-        index.list_object_ids.assert_not_awaited()
-        for call in index.journal_start.await_args_list:
-            self.assertNotEqual(call.args[0], "reconcile")
+        self.assertEqual(store.list_object_ids_calls, 0)
+        kinds = [e["kind"] for e in await deps.vector_journal.recent()]
+        self.assertNotIn("reconcile", kinds)
 
     async def test_skipped_after_class_errors(self):
-        index = _index_mock()
+        store = FakeChunkStore()
         source = FakeTicketSource([])
         source.find_modified_since_error = RuntimeError("boom")
-        await self._run(_deps_mock(), index, source)
+        deps = _deps_mock(store=store)
+        await self._run(deps, source)
 
-        index.list_object_ids.assert_not_awaited()
+        self.assertEqual(store.list_object_ids_calls, 0)
 
 
 if __name__ == "__main__":

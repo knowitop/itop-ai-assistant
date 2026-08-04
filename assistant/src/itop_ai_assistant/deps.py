@@ -22,6 +22,10 @@ from itop_ai_assistant.prompt_store import (
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.ticket_repository import TicketRepository
 from itop_ai_assistant.vector.db import VectorDb
+from itop_ai_assistant.vector.index import VectorIndex
+from itop_ai_assistant.vector.index_journal import IndexJournal
+from itop_ai_assistant.vector.store import ChunkStore
+from itop_ai_assistant.vector.sync_state import VectorSyncState
 
 
 @dataclass
@@ -132,12 +136,14 @@ class AppDeps:
     config_store: ConfigStore
     prompt_store: PromptStore
     journal: RunJournal
-    vector_db: VectorDb
+    vector_store: ChunkStore
+    vector_sync: VectorSyncState
+    vector_journal: IndexJournal
 
     async def aclose(self) -> None:
         await self.itop.aclose()
         await self.state_manager.aclose()
-        await self.vector_db.aclose()
+        await self.vector_store.aclose()
 
 
 def create_itop_client(cfg: ItopConfig) -> Itop:
@@ -187,5 +193,7 @@ def build_deps(settings: Settings) -> AppDeps:
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR, settings.prompts_dir), redis),
         journal=RunJournal(redis, ttl_seconds=settings.run_ttl_days * 24 * 60 * 60),
         # Lazy: no engine (and no connection) until the vector store is used
-        vector_db=VectorDb(settings.database_url),
+        vector_store=VectorIndex(VectorDb(settings.database_url)),
+        vector_sync=VectorSyncState(redis),
+        vector_journal=IndexJournal(redis),
     )
