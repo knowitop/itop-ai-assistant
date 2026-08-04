@@ -7,32 +7,27 @@ MVP [engineer-widget.md](engineer-widget.md) once planned as a stopgap was
 dropped, so Stage 4 below is what unblocks them rather than what improves
 them.
 
-Status: **in progress.** The write path is built and shipped — Postgres +
-Alembic foundation, the embeddings client, `VectorIndex` (versioned tables,
-upsert/delete/KNN), the chunker, the background sweep with cursors and
-reconciliation, the reindex CLI and endpoint, the admin UI screen, and the
-pluggable `VectorSource` layer. What remains is everything that *reads* the
-index: Stage 4 (retrieval into the widget) is next, then access-control
-hardening and the first non-ticket source. Read the rest as a description of
-the pgvector write path as built: §2 (schema) and §3 (pipeline) go away with
-the backend, while §4 (access control) survives the change of store.
+Status: **in progress.** The write path is built and shipped — the chunker,
+the background sweep with cursors and reconciliation, the reindex CLI and
+endpoint, the admin UI screen, and the pluggable `VectorSource` layer. What
+remains is everything that *reads* the index: Stage 4 (retrieval into the
+widget) is next, then access-control hardening and the first non-ticket
+source.
 
-Backend decision: **reopened and reversed on 2026-08-04 in favour of Qdrant**
-(ADR-001 "Векторное хранилище — Qdrant"; the superseded choice is
-[stack-improvements.md §3](stack-improvements.md), decided 2026-07-07). Two
-reasons. The "one system instead of two" argument never held — iTop runs on
-MariaDB, so Postgres was always an extra service the customer installs and
-operates. And filtering has to happen *during* the graph walk, not after it:
-taking the 50 nearest and then discarding the ones that do not match can leave
-you with nothing, and over-fetching is symptom relief with no guarantee
-attached.
-
-**The shipped code is still pgvector.** The replacement is planned as its own
-task; until it lands, this document describes what exists, and the ADRs
-describe where it is going. Redis keeps operational state (ticket state, locks,
-config/prompt overrides, run journal); with Qdrant, Postgres leaves the stack
-entirely. The whole feature stays gated so the base deployment runs without a
-vector store at all until a customer turns it on.
+> **Backend history.** This plan was written against **Postgres + `pgvector`**
+> (see [stack-improvements.md §3](stack-improvements.md), decided
+> 2026-07-07). That decision was reversed by
+> [[ADR-001-vector-store-qdrant]] (dev-docs) and the relational
+> implementation was removed from the codebase in `TASK-002-qdrant-backend`
+> (dev-docs). §2 (schema) and §3 (indexing pipeline internals) below still
+> describe the Postgres design as it was planned and briefly shipped — kept
+> for the record, not current. **Current mechanics are
+> `dev-docs/architecture/vector.md`**; the ground rules in §1, the access
+> model in §4 and the retrieval flow in §5 were backend-agnostic to begin
+> with and still hold. The store is Qdrant, gated behind `qdrant_url` +
+> `vector.enabled` (was `database_url`); Redis still keeps operational state
+> (ticket state, locks, config/prompt overrides, run journal, and now also
+> the sweep's own cursors and lock — see the current doc).
 
 ---
 
@@ -70,6 +65,10 @@ must be **multilingual** (tickets are ru/en mixed) — e.g. `bge-m3`,
 ---
 
 ## 2. Document model: how to vectorize multi-field objects with logs
+
+> **Historical.** The chunking rationale below still holds; the `Postgres
+> schema` subsection is the Postgres design, superseded by Qdrant's
+> collection layout (`dev-docs/architecture/vector.md`).
 
 One iTop object ⇒ **several chunk rows**, grouped by semantic field, not one
 concatenated blob. Rationale: fields change independently (re-embed only what
@@ -213,6 +212,12 @@ logs a warning and is skipped.
 ---
 
 ## 3. Indexing pipeline: changes, appends, deletes
+
+> **Historical.** The sweep/cursor/reconciliation *design* below is what
+> shipped and is unchanged in spirit; the *code* it describes (`db.py`,
+> `VectorIndex`, the Postgres advisory lock, `test/pg/`) was removed in
+> `TASK-002-qdrant-backend`. Current mechanics, including the Redis lock that
+> replaced the advisory lock: `dev-docs/architecture/vector.md`.
 
 ### Backbone: reconciliation sweep (not webhooks)
 

@@ -73,9 +73,11 @@ them up with no code. So the cheap step is **documenting** that path, not
 building one.
 
 - If SaaS is unacceptable, **Langfuse** (self-hostable, LangChain callback)
-  is the alternative; it wants a Postgres, which this deployment now has.
-  That would need real wiring — a callback in `create_llm`, gated by config,
-  off by default, no egress unless enabled.
+  is the alternative; it wants a Postgres, which this deployment no longer
+  carries (the vector store moved to Qdrant — see §3 below). Adopting it
+  would mean bringing a relational store back for this one purpose. That
+  would need real wiring — a callback in `create_llm`, gated by config, off
+  by default, no egress unless enabled.
 - Payoff: prompt iteration by data rather than by anecdote — directly
   accelerates every prompt-heavy plan (intake tuning, widget, insights).
 
@@ -94,25 +96,35 @@ building one.
   mode is the unlock. Low priority.
 - **ARQ** (Redis async task queue) vs. the hand-rolled jobs framework
   (pattern-analysis Stage 0): the vector indexer is already a single-process
-  asyncio task with a Postgres advisory lock, and generalizing *it* into a
-  small job registry is the natural next step. Reach for ARQ only if you need
+  asyncio task with a renewed Redis lock, and generalizing *it* into a small
+  job registry is the natural next step. Reach for ARQ only if you need
   retries, multiple workers, and scheduled fan-out beyond what that gives you.
 
 ---
 
 ## 3. Settled — recorded, not up for re-litigation
 
-**Datastore fork → Postgres + `pgvector`** (decided 2026-07-07, built since).
-Redis keeps what it is genuinely best at — operational ticket state, locks,
-config/prompt overrides, the run journal, all short-lived and hot. Postgres
-owns the vector index and the future analytical tables. The decisive reasons
-were testability (`fakeredis` cannot emulate `FT.*` at all, so a Redis vector
-layer would have had no unit tests; pgvector is testable via Testcontainers)
-and the historical-analytics roadmap (pattern-analysis needs real `GROUP BY` /
-`date_trunc`, which Redis structurally cannot answer). Vector search itself
-was *not* the deciding factor — Redis 8 would have handled the scale. Gated
-behind `database_url` + `vector.enabled`, so the base deployment stays
-Redis-only. See [vector-store.md](vector-store.md).
+**Datastore fork → Postgres + `pgvector`** (decided 2026-07-07, built since;
+**reconsidered 2026-08-04**, see below). Redis keeps what it is genuinely
+best at — operational ticket state, locks, config/prompt overrides, the run
+journal, all short-lived and hot. Postgres owns the vector index and the
+future analytical tables. The decisive reasons were testability (`fakeredis`
+cannot emulate `FT.*` at all, so a Redis vector layer would have had no unit
+tests; pgvector is testable via Testcontainers) and the historical-analytics
+roadmap (pattern-analysis needs real `GROUP BY` / `date_trunc`, which Redis
+structurally cannot answer). Vector search itself was *not* the deciding
+factor — Redis 8 would have handled the scale. Gated behind `database_url` +
+`vector.enabled`, so the base deployment stays Redis-only. See
+[vector-store.md](vector-store.md).
+
+**Reversed** by [[ADR-001-vector-store-qdrant]] (dev-docs): the reasons above
+did not survive contact with the read path — filtering had to happen during
+the ANN walk, not after it, and Postgres does not offer that. `pgvector` is
+gone from the codebase (`TASK-002-qdrant-backend`, dev-docs); the store is
+Qdrant, gated behind `qdrant_url` + `vector.enabled`. The
+historical-analytics reasoning still stands as an open debt — pattern-analysis
+now has no assumed datastore (tracked in ADR-001). Current mechanics:
+`dev-docs/architecture/vector.md`.
 
 > **Reversed 2026-08-04** — ADR-001 "Векторное хранилище — Qdrant". The entry
 > above stays because the reasoning behind it is still worth reading; it is no
