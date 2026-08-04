@@ -114,5 +114,65 @@ class TestUpsert(QdrantStoreCase):
             self.assertNotIn("content", record.payload)
 
 
+class TestDeletion(QdrantStoreCase):
+    async def test_deleting_an_object_removes_all_of_its_chunks(self):
+        await self.store.upsert_chunks(
+            [_chunk(1, "body"), _chunk(1, "solution"), _chunk(2, "body")], model="test-model", dim=4
+        )
+
+        removed = await self.store.delete_object("UserRequest", 1)
+
+        self.assertEqual(removed, 2)
+        self.assertEqual((await self.store.stats()).rows, 1)
+        self.assertEqual(await self.store.get_chunk_hashes("UserRequest", 1), {})
+
+    async def test_deleting_an_absent_object_removes_nothing(self):
+        self.assertEqual(await self.store.delete_object("UserRequest", 999), 0)
+
+    async def test_named_chunks_are_deleted_and_the_rest_stay(self):
+        await self.store.upsert_chunks(
+            [_chunk(1, "body", 0), _chunk(1, "body", 1), _chunk(1, "solution", 0)],
+            model="test-model",
+            dim=4,
+        )
+
+        removed = await self.store.delete_chunks("UserRequest", 1, [("body", 1)])
+
+        self.assertEqual(removed, 1)
+        self.assertEqual(set(await self.store.get_chunk_hashes("UserRequest", 1)), {("body", 0), ("solution", 0)})
+
+    async def test_deleting_an_empty_list_touches_nothing(self):
+        await self.store.upsert_chunks([_chunk(1)], model="test-model", dim=4)
+
+        self.assertEqual(await self.store.delete_chunks("UserRequest", 1, []), 0)
+        self.assertEqual((await self.store.stats()).rows, 1)
+
+
+class TestReconciliationWalk(QdrantStoreCase):
+    async def test_object_ids_come_back_ascending_and_deduplicated(self):
+        await self.store.upsert_chunks(
+            [_chunk(3, "body"), _chunk(1, "body"), _chunk(1, "solution"), _chunk(2, "body")],
+            model="test-model",
+            dim=4,
+        )
+
+        self.assertEqual(await self.store.list_object_ids("UserRequest"), [1, 2, 3])
+
+    async def test_the_walk_resumes_after_the_last_id_seen(self):
+        await self.store.upsert_chunks([_chunk(1), _chunk(2), _chunk(3)], model="test-model", dim=4)
+
+        self.assertEqual(await self.store.list_object_ids("UserRequest", after=1), [2, 3])
+
+    async def test_the_walk_respects_its_limit(self):
+        await self.store.upsert_chunks([_chunk(1), _chunk(2), _chunk(3)], model="test-model", dim=4)
+
+        self.assertEqual(await self.store.list_object_ids("UserRequest", limit=2), [1, 2])
+
+    async def test_another_class_is_not_walked(self):
+        await self.store.upsert_chunks([_chunk(1)], model="test-model", dim=4)
+
+        self.assertEqual(await self.store.list_object_ids("Incident"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

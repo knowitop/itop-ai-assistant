@@ -158,6 +158,77 @@ class QdrantChunkStore:
         info = await self.client.get_collection(self.collection_name(meta.version))
         return IndexStats(version=meta.version, rows=info.points_count or 0)
 
+    async def delete_object(self, obj_class: str, obj_id: int) -> int:
+        """Delete every chunk of one object. Returns points deleted."""
+        meta = await self.active_meta()
+        if meta is None:
+            return 0
+        name = self.collection_name(meta.version)
+        selector = _object_filter(obj_class, obj_id)
+        # Qdrant's delete does not report how much it removed, and the sweep
+        # report counts deletions — so count first, then delete.
+        removed = (await self.client.count(collection_name=name, count_filter=selector, exact=True)).count
+        if removed:
+            await self.client.delete(
+                collection_name=name, points_selector=models.FilterSelector(filter=selector), wait=True
+            )
+        return removed
+
+    async def delete_chunks(self, obj_class: str, obj_id: int, keys: list[tuple[str, int]]) -> int:
+        """Delete specific chunks of one object (vanished kinds/ordinals)."""
+        if not keys:
+            return 0
+        meta = await self.active_meta()
+        if meta is None:
+            return 0
+        point_ids = [_point_id(obj_class, obj_id, kind, n) for kind, n in keys]
+        await self.client.delete(
+            collection_name=self.collection_name(meta.version),
+            points_selector=models.PointIdsList(points=point_ids),
+            wait=True,
+        )
+        return len(point_ids)
+
+    async def list_object_ids(self, obj_class: str, after: int = 0, limit: int = 1000) -> list[int]:
+        """Distinct indexed obj_ids > `after`, ascending — keyset pagination
+        for the reconciliation walk.
+
+        An object has several chunks, so the ordered scroll returns each id
+        as many times as it has chunks; pages are read until `limit` distinct
+        ids are collected or the class runs out.
+        """
+        meta = await self.active_meta()
+        if meta is None:
+            return []
+        found: list[int] = []
+        seen: set[int] = set()
+        offset = None
+        while len(found) < limit:
+            records, offset = await self.client.scroll(
+                collection_name=self.collection_name(meta.version),
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(key="obj_class", match=models.MatchValue(value=obj_class)),
+                        models.FieldCondition(key="obj_id", range=models.Range(gt=after)),
+                    ]
+                ),
+                order_by=models.OrderBy(key="obj_id", direction=models.Direction.ASC),
+                limit=_SCROLL_PAGE,
+                offset=offset,
+                with_payload=["obj_id"],
+                with_vectors=False,
+            )
+            for record in records:
+                obj_id = record.payload["obj_id"]
+                if obj_id not in seen:
+                    seen.add(obj_id)
+                    found.append(obj_id)
+                    if len(found) == limit:
+                        break
+            if offset is None:
+                break
+        return found
+
     async def _create_meta_collection(self) -> None:
         if await self.client.collection_exists(_META_COLLECTION):
             return
