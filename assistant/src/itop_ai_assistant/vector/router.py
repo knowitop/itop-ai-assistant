@@ -51,7 +51,6 @@ async def vector_status(request: Request) -> dict:
                     "dim": meta.dim,
                     "fingerprint_match": fingerprint_match,
                     "rows": stats.rows if stats else 0,
-                    "size_bytes": stats.size_bytes if stats else 0,
                 }
             sync = await index.list_cursors()
             last_reconcile = await index.get_cursor(RECONCILE_SENTINEL)

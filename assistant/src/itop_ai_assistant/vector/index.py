@@ -18,7 +18,6 @@ which `FingerprintMismatchError` enforces.
 import hashlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, desc, func, insert, select, tuple_, update
@@ -27,6 +26,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from itop_ai_assistant.vector.db import VectorDb
 from itop_ai_assistant.vector.models import IndexJournalEntry, VectorIndexMeta, VectorSyncState, chunk_table
+from itop_ai_assistant.vector.store import (
+    ChunkRecord,
+    FingerprintMismatchError,
+    IndexMeta,
+    IndexStats,
+    SearchHit,
+)
 
 # vector_sync_state rows that are not per-class sweep cursors; filtered out of
 # list_cursors(). The reconcile row stores the last reconciliation time; the
@@ -39,52 +45,16 @@ REINDEX_SENTINEL = "__reindex__"
 _SENTINELS = (RECONCILE_SENTINEL, REINDEX_SENTINEL)
 
 
-@dataclass(frozen=True)
-class IndexMeta:
-    """The active index version and its model fingerprint (model, dim)."""
-
-    version: int
-    model: str
-    dim: int
-
-
-@dataclass(frozen=True)
-class IndexStats:
-    version: int
-    rows: int
-    size_bytes: int
-
-
-@dataclass(frozen=True)
-class ChunkRecord:
-    """One embedded chunk of an iTop object — ids and filter metadata, no text."""
-
-    obj_class: str
-    obj_id: int
-    chunk_kind: str  # profile / description / solution / log:public …
-    chunk_n: int
-    visibility: str  # public / internal
-    status: str
-    content_hash: str
-    embedding: list[float]
-    created_at: datetime  # object creation time (time-window KNN later)
-    org_id: str | None = None
-    filters: dict[str, str] | None = None  # source-defined pre-filter keys, see vector/models.py
-
-
-@dataclass(frozen=True)
-class SearchHit:
-    obj_id: int
-    score: float
-
-
-class FingerprintMismatchError(Exception):
-    """The active index was built with a different model/dim — rebuild required."""
-
-
 class VectorIndex:
     def __init__(self, db: VectorDb) -> None:
         self._db = db
+
+    @property
+    def configured(self) -> bool:
+        return self._db.configured
+
+    async def aclose(self) -> None:
+        await self._db.aclose()
 
     async def active_meta(self) -> IndexMeta | None:
         async with self._db.connect() as conn:
@@ -209,8 +179,7 @@ class VectorIndex:
         table = chunk_table(meta.version, meta.dim)
         async with self._db.connect() as conn:
             rows = (await conn.execute(select(func.count()).select_from(table))).scalar_one()
-            size = (await conn.execute(select(func.pg_total_relation_size(table.name)))).scalar_one()
-        return IndexStats(version=meta.version, rows=rows, size_bytes=size)
+        return IndexStats(version=meta.version, rows=rows)
 
     async def get_chunk_hashes(self, obj_class: str, obj_id: int) -> dict[tuple[str, int], str]:
         """Stored content hashes of one object, keyed by (chunk_kind, chunk_n)."""

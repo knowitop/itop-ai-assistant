@@ -203,7 +203,7 @@ class TestDeleteAndStats:
         assert stats is not None
         assert stats.rows == 1
 
-    async def test_stats_reports_rows_and_size(self, index):
+    async def test_stats_reports_rows(self, index):
         await index.ensure_version(_MODEL, _DIM)
         await index.upsert_chunks([_chunk(1, [0.0] * _DIM)], model=_MODEL, dim=_DIM)
 
@@ -212,7 +212,6 @@ class TestDeleteAndStats:
         assert stats is not None
         assert stats.version == 1
         assert stats.rows == 1
-        assert stats.size_bytes > 0
 
 
 class TestChunkHashes:
