@@ -16,8 +16,8 @@ without a restart), a failing tick is logged and the loop lives on, and the
 wait is interruptible — `wake(name)` runs the next tick now.
 
 A loop is **per process**. Cross-replica exclusion is the tick's own business
-(the vector sweep takes a Postgres advisory lock); there is no leader election
-here.
+(the vector sweep takes a Redis lock with renewal); there is no leader
+election here.
 """
 
 import asyncio

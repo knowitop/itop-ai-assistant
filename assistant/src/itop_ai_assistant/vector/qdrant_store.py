@@ -1,8 +1,8 @@
 """ChunkStore on Qdrant.
 
-Why Qdrant and not pgvector: filtering happens during the graph walk instead
-of after it, grouping by object is built in, and new filter keys need no
-migration (ADR-001 in dev-docs).
+Why Qdrant and not a relational vector extension: filtering happens during
+the graph walk instead of after it, grouping by object is built in, and new
+filter keys need no migration (ADR-001 in dev-docs).
 
 Collection layout. One collection per index version, `chunks_v{N}`, with a
 named dense vector and an empty named sparse slot. The sparse slot is

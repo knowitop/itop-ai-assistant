@@ -3,7 +3,7 @@ VectorIndexer.
 
 The indexer knows nothing about iTop, tickets, or any other domain: it reads
 `VectorRecord`s from registered sources, hands them back for chunking, and
-writes the resulting `Chunk`s through `VectorIndex`. Adding a new source
+writes the resulting `Chunk`s through the `ChunkStore` port. Adding a new source
 (KB articles, KnownErrors, ...) means writing a new `src/vector_sources/
 <name>.py` module implementing this protocol and registering it in
 `vector_sources/registry.py` — no change needed here or in `vector/indexer.py`.

@@ -64,7 +64,7 @@ def register_vector_sweep(tasks: PeriodicTasks, deps: AppDeps) -> None:
 
     Infrastructure, not a business module: no `ModuleInfo`, no trigger route
     and no `RunJournal` entry — the sweep keeps its own `index_journal` in
-    Postgres. What it needs from the core is pacing, and that is all it takes.
+    Redis. What it needs from the core is pacing, and that is all it takes.
     """
     if not deps.vector_store.configured:
         logger.info("Vector store is not configured (qdrant_url), the sweep will not run")

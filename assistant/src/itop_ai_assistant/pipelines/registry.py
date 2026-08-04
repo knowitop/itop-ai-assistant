@@ -12,7 +12,7 @@ Keeping them apart is what lets one module own several triggers, and one
 trigger be claimed without the module owning the others.
 
 What is *not* here: a background loop that starts no run. The vector sweep
-ticks forever and journals into Postgres, but it has no module, no subject and
+ticks forever and journals into Redis, but it has no module, no subject and
 no principal — it takes pacing from `pipelines/scheduler.py` and nothing else.
 "Periodic" and "a trigger of a business module" are different questions, and a
 route answers only the second one.

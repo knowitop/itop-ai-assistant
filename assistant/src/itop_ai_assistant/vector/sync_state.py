@@ -1,9 +1,10 @@
 """Everything the sweep knows about its own progress — kept in Redis.
 
-Postgres held this before (`vector_sync_state`), which made the vector
-backend the owner of state that is not about vectors at all. It is
-operational state, and this project keeps operational state in Redis; the
-sweep now reads it from the same place as ticket state and the run journal.
+The relational vector store held this before (`vector_sync_state`), which
+made the vector backend the owner of state that is not about vectors at
+all. It is operational state, and this project keeps operational state in
+Redis; the sweep now reads it from the same place as ticket state and the
+run journal.
 
 No TTL on any of these keys: losing a cursor is not an error but it does
 cost a full backfill on a CPU-only box, which ADR-006 measures in hours.

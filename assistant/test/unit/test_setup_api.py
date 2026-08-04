@@ -12,9 +12,8 @@ from itop_ai_assistant.journal import RunJournal
 from itop_ai_assistant.main import app
 from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore, RedisPromptStore
 from itop_ai_assistant.state.ticket_state import TicketStateManager
-from itop_ai_assistant.vector.db import VectorDb
-from itop_ai_assistant.vector.index import VectorIndex
 from itop_ai_assistant.vector.index_journal import IndexJournal
+from itop_ai_assistant.vector.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.sync_state import VectorSyncState
 
 # Env/yaml on the developer machine must not leak into these tests — blank
@@ -66,7 +65,7 @@ def _make_deps(redis, **settings_overrides) -> AppDeps:
         config_store=RedisConfigStore(redis, settings),
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR), redis),
         journal=RunJournal(redis),
-        vector_store=VectorIndex(VectorDb(None)),
+        vector_store=QdrantChunkStore(None),
         vector_sync=VectorSyncState(redis),
         vector_journal=IndexJournal(redis),
     )

@@ -10,8 +10,8 @@ A failure is logged and the loop keeps ticking — the scheduler
 tick lets the exception out and `journalled_run` records `failed` on the way.
 
 One loop per **process**: two replicas tick twice. Whether that is acceptable
-is the handler's business — the vector sweep takes a Postgres advisory lock,
-a business job that must run once needs its own exclusion.
+is the handler's business — the vector sweep takes a Redis lock with
+renewal, a business job that must run once needs its own exclusion.
 """
 
 import logging
