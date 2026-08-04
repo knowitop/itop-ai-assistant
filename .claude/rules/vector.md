@@ -8,7 +8,10 @@ paths:
 # Vector layer
 
 Mechanics (sweep, cursors, advisory lock, reconciliation, fingerprints):
-`dev-docs/architecture/vector.md`.
+`dev-docs/architecture/vector.md`. The pgvector backend is superseded by a
+decision, not yet by code — read
+`dev-docs/decisions/ADR-001-vector-store-qdrant.md` before proposing changes to
+the storage seam.
 
 - **Infrastructure, not a business module.** It does not register in
   `TriggerRegistry`, has no prompts and no trigger routes. Business modules
