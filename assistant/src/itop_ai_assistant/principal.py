@@ -44,7 +44,7 @@ class Principal:
         """A run acting as a person, with the iTop token they sent us.
 
         The token is not stored anywhere: it arrives with the request that
-        needs it and lives as long as the run does (see `docs/architecture.md`
+        needs it and lives as long as the run does (see `dev-docs/architecture/platform.md`
         §3.5).
         """
         return cls(kind="delegated", label=f"engineer:{login}", auth=ItopAuth(token=token), on_behalf_of=name)

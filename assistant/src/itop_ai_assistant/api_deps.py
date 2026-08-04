@@ -57,7 +57,7 @@ async def resolve_principal(request: Request) -> Principal:
     function that changes when identity arrives, and both cases are the same
     mechanism — the engineer console sending a personal iTop token in a header
     on every call, and a webhook carrying the account it must be processed
-    under. Neither needs a stored secret (`docs/architecture.md` §3.5).
+    under. Neither needs a stored secret (`dev-docs/architecture/platform.md` §3.5).
 
     Called for its value rather than declared as a dependency: the routers need
     the principal itself, and a `Depends` would advertise a security scheme in
