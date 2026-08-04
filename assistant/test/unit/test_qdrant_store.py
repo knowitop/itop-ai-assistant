@@ -174,5 +174,95 @@ class TestReconciliationWalk(QdrantStoreCase):
         self.assertEqual(await self.store.list_object_ids("Incident"), [])
 
 
+_ALL = {"classes": ["UserRequest"], "statuses": ["resolved", "closed"], "visibilities": ["public", "internal"]}
+
+
+class TestSearch(QdrantStoreCase):
+    async def test_empty_index_returns_nothing(self):
+        self.assertEqual(await self.store.search([1.0, 0.0, 0.0, 0.0], **_ALL), [])
+
+    async def test_hits_come_back_by_descending_score(self):
+        await self.store.upsert_chunks(
+            [_chunk(1, vector=[1.0, 0.0, 0.0, 0.0]), _chunk(2, vector=[0.0, 1.0, 0.0, 0.0])],
+            model="test-model",
+            dim=4,
+        )
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], **_ALL)
+
+        self.assertEqual([hit.obj_id for hit in hits], [1, 2])
+        self.assertGreater(hits[0].score, hits[1].score)
+
+    async def test_an_object_matching_twice_appears_once(self):
+        # A ticket similar in both its description and its solution is one result,
+        # scored by its best chunk — not two results
+        await self.store.upsert_chunks(
+            [
+                _chunk(1, "body", vector=[1.0, 0.0, 0.0, 0.0]),
+                _chunk(1, "solution", vector=[0.99, 0.01, 0.0, 0.0]),
+            ],
+            model="test-model",
+            dim=4,
+        )
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], **_ALL)
+
+        self.assertEqual([hit.obj_id for hit in hits], [1])
+
+    async def test_status_filter_excludes_the_rest(self):
+        await self.store.upsert_chunks(
+            [_chunk(1, status="resolved"), _chunk(2, status="closed")], model="test-model", dim=4
+        )
+
+        hits = await self.store.search(
+            [1.0, 0.0, 0.0, 0.0],
+            classes=["UserRequest"],
+            statuses=["closed"],
+            visibilities=["public", "internal"],
+        )
+
+        self.assertEqual([hit.obj_id for hit in hits], [2])
+
+    async def test_visibility_filter_excludes_internal(self):
+        await self.store.upsert_chunks(
+            [_chunk(1, visibility="public"), _chunk(2, visibility="internal")], model="test-model", dim=4
+        )
+
+        hits = await self.store.search(
+            [1.0, 0.0, 0.0, 0.0],
+            classes=["UserRequest"],
+            statuses=["resolved", "closed"],
+            visibilities=["public"],
+        )
+
+        self.assertEqual([hit.obj_id for hit in hits], [1])
+
+    async def test_allowed_orgs_none_means_unrestricted(self):
+        await self.store.upsert_chunks([_chunk(1, org_id="1"), _chunk(2, org_id="2")], model="test-model", dim=4)
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], allowed_orgs=None, **_ALL)
+
+        self.assertEqual({hit.obj_id for hit in hits}, {1, 2})
+
+    async def test_allowed_orgs_narrows_the_candidates(self):
+        await self.store.upsert_chunks([_chunk(1, org_id="1"), _chunk(2, org_id="2")], model="test-model", dim=4)
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], allowed_orgs=["2"], **_ALL)
+
+        self.assertEqual([hit.obj_id for hit in hits], [2])
+
+    async def test_the_asking_ticket_can_be_excluded(self):
+        await self.store.upsert_chunks([_chunk(1), _chunk(2)], model="test-model", dim=4)
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], exclude_obj_id=1, **_ALL)
+
+        self.assertEqual([hit.obj_id for hit in hits], [2])
+
+    async def test_limit_caps_the_number_of_objects(self):
+        await self.store.upsert_chunks([_chunk(1), _chunk(2), _chunk(3)], model="test-model", dim=4)
+
+        self.assertEqual(len(await self.store.search([1.0, 0.0, 0.0, 0.0], limit=2, **_ALL)), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

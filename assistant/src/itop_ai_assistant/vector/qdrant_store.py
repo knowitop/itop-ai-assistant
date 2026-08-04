@@ -29,6 +29,7 @@ from itop_ai_assistant.vector.store import (
     FingerprintMismatchError,
     IndexMeta,
     IndexStats,
+    SearchHit,
 )
 
 _META_COLLECTION = "chunks_meta"
@@ -228,6 +229,51 @@ class QdrantChunkStore:
             if offset is None:
                 break
         return found
+
+    async def search(
+        self,
+        embedding: list[float],
+        *,
+        classes: list[str],
+        statuses: list[str],
+        visibilities: list[str],
+        allowed_orgs: list[str] | None = None,
+        exclude_obj_id: int | None = None,
+        limit: int = 30,
+    ) -> list[SearchHit]:
+        """Filtered nearest neighbours aggregated to objects: the score of an
+        object is its best chunk's, computed server-side by `group_by`.
+
+        Filters are applied during the walk, not over its result — the
+        property the backend was chosen for (ADR-001, R1). `allowed_orgs=None`
+        means unrestricted. Returns [] when no index version exists yet.
+        """
+        meta = await self.active_meta()
+        if meta is None:
+            return []
+        must: list[models.Condition] = [
+            models.FieldCondition(key="obj_class", match=models.MatchAny(any=classes)),
+            models.FieldCondition(key="status", match=models.MatchAny(any=statuses)),
+            models.FieldCondition(key="visibility", match=models.MatchAny(any=visibilities)),
+        ]
+        if allowed_orgs is not None:
+            must.append(models.FieldCondition(key="org_id", match=models.MatchAny(any=allowed_orgs)))
+        must_not: list[models.Condition] = []
+        if exclude_obj_id is not None:
+            must_not.append(models.FieldCondition(key="obj_id", match=models.MatchValue(value=exclude_obj_id)))
+        response = await self.client.query_points_groups(
+            collection_name=self.collection_name(meta.version),
+            query=embedding,
+            using=_DENSE,
+            query_filter=models.Filter(must=must, must_not=must_not or None),
+            group_by="obj_id",
+            group_size=1,
+            limit=limit,
+            with_payload=False,
+        )
+        return [
+            SearchHit(obj_id=int(group.id), score=float(group.hits[0].score)) for group in response.groups if group.hits
+        ]
 
     async def _create_meta_collection(self) -> None:
         if await self.client.collection_exists(_META_COLLECTION):
