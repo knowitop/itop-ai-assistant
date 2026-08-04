@@ -114,8 +114,28 @@ was *not* the deciding factor — Redis 8 would have handled the scale. Gated
 behind `database_url` + `vector.enabled`, so the base deployment stays
 Redis-only. See [vector-store.md](vector-store.md).
 
+> **Reversed 2026-08-04** — ADR-001 "Векторное хранилище — Qdrant". The entry
+> above stays because the reasoning behind it is still worth reading; it is no
+> longer the decision. What happened to each of its arguments:
+>
+> - **Testability** — closed better than before. `qdrant-client` runs
+>   in-process against `:memory:`, which is cheaper than Testcontainers and
+>   needs no Docker in CI.
+> - **Analytics for pattern-analysis** — *not* closed. That roadmap assumed a
+>   relational store and now has none; the question is deferred to the
+>   pattern-analysis work rather than answered by keeping a database installed
+>   for it.
+> - **Vector search**, explicitly not the deciding factor above, is what forced
+>   the reversal. iTop runs on MariaDB, so "one system instead of two" was
+>   never true, and pgvector post-filters where the requirement is to filter
+>   during the walk.
+>
+> The shipped code is still pgvector; replacement is a separate task.
+
 **Testcontainers-python** was adopted alongside it (`test/pg/`, opt-in, needs
-Docker) — the trigger condition in the original note was met.
+Docker) — the trigger condition in the original note was met. That trigger
+lapses with Postgres: the fate of `test/pg/` is decided when the backend is
+replaced, and an in-memory Qdrant needs no container.
 
 **Structured LLM output** is moot for the path that motivated it. The
 original concern was the "degrade gracefully when the LLM output doesn't
