@@ -209,7 +209,6 @@
     "fingerprint_mismatch": "El índice se construyó con otro modelo de embeddings u otra dimensión — ejecute una reindexación completa.",
     "index_version": "Versión del índice",
     "index_rows": "Filas",
-    "index_size": "Tamaño",
     "index_none": "Aún no hay índice activo — se crea en el primer barrido.",
     "last_reconcile": "Última conciliación",
     "never": "nunca",

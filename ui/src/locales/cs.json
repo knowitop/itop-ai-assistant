@@ -209,7 +209,6 @@
     "fingerprint_mismatch": "Index byl vytvořen jiným modelem embeddingů nebo s jinou dimenzí — spusťte úplnou reindexaci.",
     "index_version": "Verze indexu",
     "index_rows": "Řádky",
-    "index_size": "Velikost",
     "index_none": "Zatím žádný aktivní index — vytvoří se při prvním průchodu.",
     "last_reconcile": "Poslední rekonciliace",
     "never": "nikdy",

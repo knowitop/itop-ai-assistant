@@ -209,7 +209,6 @@
     "fingerprint_mismatch": "Der Index wurde mit einem anderen Embedding-Modell oder einer anderen Dimension erstellt — führen Sie eine vollständige Neuindexierung durch.",
     "index_version": "Indexversion",
     "index_rows": "Zeilen",
-    "index_size": "Größe",
     "index_none": "Noch kein aktiver Index — er wird beim ersten Durchlauf erstellt.",
     "last_reconcile": "Letzter Abgleich",
     "never": "nie",

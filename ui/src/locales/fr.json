@@ -209,7 +209,6 @@
     "fingerprint_mismatch": "L'index a été construit avec un autre modèle d'embeddings ou une autre dimension — lancez une réindexation complète.",
     "index_version": "Version de l'index",
     "index_rows": "Lignes",
-    "index_size": "Taille",
     "index_none": "Pas encore d'index actif — il est créé au premier balayage.",
     "last_reconcile": "Dernière réconciliation",
     "never": "jamais",

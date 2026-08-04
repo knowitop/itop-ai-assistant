@@ -24,11 +24,15 @@ _BLANK = {
     "embeddings_base_url": None,
     "embeddings_model": None,
     "embeddings_api_key": None,
-    "database_url": None,
+    "qdrant_url": None,
 }
 
 
-def _make_deps(redis, database_url: str | None = None, **settings_overrides) -> AppDeps:
+def _make_deps(redis, store_dsn: str | None = None, **settings_overrides) -> AppDeps:
+    """`store_dsn` feeds a pgvector-backed `ChunkStore` double, not the
+    production `qdrant_url` setting — these tests exercise `vector/router.py`
+    against the `ChunkStore` port generically (configured-but-unreachable
+    included), independent of which backend is actually wired."""
     settings = get_settings().model_copy(update={**_BLANK, **settings_overrides})
     return AppDeps(
         settings=settings,
@@ -37,7 +41,7 @@ def _make_deps(redis, database_url: str | None = None, **settings_overrides) -> 
         config_store=RedisConfigStore(redis, settings),
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR), redis),
         journal=RunJournal(redis),
-        vector_store=VectorIndex(VectorDb(database_url)),
+        vector_store=VectorIndex(VectorDb(store_dsn)),
         vector_sync=VectorSyncState(redis),
         vector_journal=IndexJournal(redis),
     )
@@ -48,7 +52,7 @@ class VectorStatusTestCase(unittest.TestCase):
         self.client = self.enterContext(TestClient(app))
         self.redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
         self.client.app.state.deps = _make_deps(self.redis)
-        # The lifespan built a real (empty) scheduler: no database_url in the
+        # The lifespan built a real (empty) scheduler: no qdrant_url in the
         # test settings, so the sweep loop was never registered
         self.tasks = self.client.app.state.tasks
 
@@ -69,7 +73,7 @@ class TestVectorStatus(VectorStatusTestCase):
 
     def test_database_down_reports_error_not_500(self):
         # Port 1 is never listening — connection fails fast
-        self.client.app.state.deps = _make_deps(self.redis, database_url="postgresql+asyncpg://localhost:1/x")
+        self.client.app.state.deps = _make_deps(self.redis, store_dsn="postgresql+asyncpg://localhost:1/x")
 
         response = self.client.get("/api/vector/status")
 
@@ -111,10 +115,10 @@ class TestReindex(VectorStatusTestCase):
         response = self.client.post("/api/vector/reindex")
 
         self.assertEqual(response.status_code, 409)
-        self.assertIn("database_url", response.json()["detail"])
+        self.assertIn("qdrant_url", response.json()["detail"])
 
     def test_409_when_vector_disabled(self):
-        self.client.app.state.deps = _make_deps(self.redis, database_url="postgresql+asyncpg://localhost:1/x")
+        self.client.app.state.deps = _make_deps(self.redis, store_dsn="postgresql+asyncpg://localhost:1/x")
 
         response = self.client.post("/api/vector/reindex")
 
@@ -125,7 +129,7 @@ class TestReindex(VectorStatusTestCase):
         """The mark is a flag in Redis now, so an unreachable Redis is a real
         failure — it must say so instead of pretending the backfill was
         scheduled."""
-        deps = _make_deps(self.redis, database_url="postgresql+asyncpg://localhost:1/x")
+        deps = _make_deps(self.redis, store_dsn="postgresql+asyncpg://localhost:1/x")
         deps.vector_sync.request_reindex = AsyncMock(side_effect=ConnectionError("redis down"))
         self.client.app.state.deps = deps
         self.client.patch("/api/setup/vector", json={"enabled": True})
@@ -138,7 +142,7 @@ class TestReindex(VectorStatusTestCase):
     def test_202_marks_the_request_and_wakes_the_sweep(self):
         """The request is a flag in Redis — the wake-up only makes the local
         loop act on it sooner."""
-        deps = _make_deps(self.redis, database_url="postgresql+asyncpg://localhost:1/x")
+        deps = _make_deps(self.redis, store_dsn="postgresql+asyncpg://localhost:1/x")
         self.client.app.state.deps = deps
         self.client.patch("/api/setup/vector", json={"enabled": True})
         self.tasks.wake = MagicMock(return_value=True)

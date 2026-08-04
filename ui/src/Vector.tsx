@@ -31,7 +31,6 @@ interface IndexInfo {
   // null = no embeddings model configured to compare against — not a warning
   fingerprint_match: boolean | null;
   rows: number;
-  size_bytes: number;
 }
 
 interface JournalRun {
@@ -49,7 +48,7 @@ interface JournalRun {
 interface VectorStatus {
   enabled: boolean;
   embeddings_configured: boolean;
-  database: { configured: boolean; ok: boolean | null; error: string | null };
+  store: { configured: boolean; ok: boolean | null; error: string | null };
   index: IndexInfo | null;
   sync: Record<string, string | null> | null;
   last_reconcile: string | null;
@@ -107,19 +106,6 @@ function formatDuration(run: JournalRun): string {
   if (seconds < 0) return '…';
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
   return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let value = bytes;
-  let unit = '';
-  for (const u of units) {
-    value /= 1024;
-    unit = u;
-    if (value < 1024) break;
-  }
-  return `${value.toFixed(1)} ${unit}`;
 }
 
 export default function Vector() {
@@ -190,7 +176,7 @@ function VectorStatusPanel() {
 
   if (!status) return error ? <Alert color="red">{error}</Alert> : <Loader />;
 
-  const db = status.database;
+  const db = status.store;
   const dbBadge = !db.configured
     ? { color: 'orange', label: t('vector.badge_db_not_configured') }
     : db.ok
@@ -245,10 +231,6 @@ function VectorStatusPanel() {
               <Table.Tr>
                 <Table.Td c="dimmed">{t('vector.index_rows')}</Table.Td>
                 <Table.Td>{status.index.rows}</Table.Td>
-              </Table.Tr>
-              <Table.Tr>
-                <Table.Td c="dimmed">{t('vector.index_size')}</Table.Td>
-                <Table.Td>{formatBytes(status.index.size_bytes)}</Table.Td>
               </Table.Tr>
             </Table.Tbody>
           </Table>

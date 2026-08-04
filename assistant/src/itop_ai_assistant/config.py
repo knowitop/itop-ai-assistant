@@ -177,8 +177,9 @@ class EmbeddingsConfig(RuntimeSectionConfig):
     base_url: str | None = None  # OpenAI-compatible, includes /v1 (like llm.base_url)
     model: str | None = None
     api_key: str | None = None
-    # pgvector HNSW indexes support halfvec up to 4000 dims
-    dimension: int = Field(default=1024, gt=0, le=4000)
+    # Qdrant has no hard ceiling here; the bound is a sanity check, and ADR-006
+    # points the default the other way — MRL truncation to 512 or 256.
+    dimension: int = Field(default=1024, gt=0, le=4096)
     batch_size: int = Field(default=32, gt=0)
     timeout: float = 30.0
 
@@ -366,10 +367,9 @@ class Settings(BaseSettings):
     # How long processing-run journal entries are kept
     run_ttl_days: int = 7
 
-    # Postgres (vector store) — bootstrap, env-only like redis_url.
+    # Qdrant (vector store) — bootstrap, env-only like redis_url.
     # None = vector features unavailable; the app runs Redis-only.
-    # Format: postgresql+asyncpg://user:pass@host:5432/dbname
-    database_url: str | None = None
+    qdrant_url: str | None = None
 
     # iTop datamodel mapping
     ticket_mapping: TicketMappingConfig = TicketMappingConfig()

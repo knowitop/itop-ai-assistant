@@ -21,9 +21,8 @@ from itop_ai_assistant.prompt_store import (
 )
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.ticket_repository import TicketRepository
-from itop_ai_assistant.vector.db import VectorDb
-from itop_ai_assistant.vector.index import VectorIndex
 from itop_ai_assistant.vector.index_journal import IndexJournal
+from itop_ai_assistant.vector.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.store import ChunkStore
 from itop_ai_assistant.vector.sync_state import VectorSyncState
 
@@ -192,8 +191,8 @@ def build_deps(settings: Settings) -> AppDeps:
         config_store=config_store,
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR, settings.prompts_dir), redis),
         journal=RunJournal(redis, ttl_seconds=settings.run_ttl_days * 24 * 60 * 60),
-        # Lazy: no engine (and no connection) until the vector store is used
-        vector_store=VectorIndex(VectorDb(settings.database_url)),
+        # Lazy: no client (and no connection) until the vector store is used
+        vector_store=QdrantChunkStore(settings.qdrant_url),
         vector_sync=VectorSyncState(redis),
         vector_journal=IndexJournal(redis),
     )

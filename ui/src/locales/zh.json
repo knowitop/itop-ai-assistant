@@ -209,7 +209,6 @@
     "fingerprint_mismatch": "索引由其他嵌入模型或其他维度构建 — 请执行完整重建索引。",
     "index_version": "索引版本",
     "index_rows": "行数",
-    "index_size": "大小",
     "index_none": "尚无活动索引 — 将在首次扫描时创建。",
     "last_reconcile": "上次核对",
     "never": "从未",

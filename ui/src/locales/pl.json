@@ -209,7 +209,6 @@
     "fingerprint_mismatch": "Indeks zbudowano innym modelem embeddingów lub z innym wymiarem — uruchom pełną reindeksację.",
     "index_version": "Wersja indeksu",
     "index_rows": "Wiersze",
-    "index_size": "Rozmiar",
     "index_none": "Brak aktywnego indeksu — powstanie przy pierwszym przebiegu.",
     "last_reconcile": "Ostatnie uzgodnienie",
     "never": "nigdy",

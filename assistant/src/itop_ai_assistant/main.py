@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,7 +12,6 @@ from itop_ai_assistant.build_info import get_build_info
 from itop_ai_assistant.config import ItopConfig, LlmConfig, SecurityConfig, get_settings, missing_setup
 from itop_ai_assistant.deps import build_deps
 from itop_ai_assistant.pipelines.registry import build_registry
-from itop_ai_assistant.vector.db import run_migrations
 from itop_ai_assistant.webhook.router import router
 
 settings = get_settings()
@@ -39,14 +37,6 @@ async def lifespan(app: FastAPI):
     for module in registry.modules:
         if module.validate_prompts:
             module.validate_prompts(await deps.prompt_store.get(module.name))
-
-    # Vector store is optional: no DATABASE_URL = Redis-only deployment, and a
-    # failed migration degrades to "vector unavailable", never a boot failure
-    if settings.database_url:
-        try:
-            await asyncio.to_thread(run_migrations, settings.database_url)
-        except Exception as e:
-            logger.warning(f"Postgres migrations failed — vector store unavailable until fixed: {e}")
 
     # Setup diagnostics against the *effective* config (Redis overrides > env)
     security = await deps.config_store.get("security", SecurityConfig)
@@ -76,7 +66,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        # Loops hold the Postgres engine and the iTop client — stop them first
+        # Loops hold the vector store client and the iTop client — stop them first
         await tasks.stop()
         await deps.aclose()
 

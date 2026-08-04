@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from itop_ai_assistant.config import ItopConfig, LlmConfig, TicketMappingConfig
-from itop_ai_assistant.deps import ItopProvider, create_llm
+from itop_ai_assistant.config import ItopConfig, LlmConfig, TicketMappingConfig, get_settings
+from itop_ai_assistant.deps import ItopProvider, build_deps, create_llm
 from itop_ai_assistant.principal import Principal
 
 _ENGINEER = Principal.delegated("engineer-token", login="jdoe", name="John Doe")
@@ -153,6 +153,20 @@ class TestAiPersonName(unittest.IsolatedAsyncioTestCase):
         schema.find_one = AsyncMock(return_value=None)
         with patch.object(bundle.client, "schema", return_value=schema), self.assertRaises(ValueError):
             await self.provider.ai_person_name()
+
+
+class TestVectorStore(unittest.TestCase):
+    def test_vector_store_is_unconfigured_without_a_url(self):
+        settings = get_settings().model_copy(update={"qdrant_url": None})
+        deps = build_deps(settings)
+
+        self.assertFalse(deps.vector_store.configured)
+
+    def test_vector_store_is_configured_from_qdrant_url(self):
+        settings = get_settings().model_copy(update={"qdrant_url": "http://qdrant:6333"})
+        deps = build_deps(settings)
+
+        self.assertTrue(deps.vector_store.configured)
 
 
 class TestCreateLlm(unittest.TestCase):

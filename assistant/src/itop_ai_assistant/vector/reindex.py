@@ -18,7 +18,6 @@ import sys
 
 from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.deps import build_deps
-from itop_ai_assistant.vector.db import run_migrations
 from itop_ai_assistant.vector.indexer import SweepReport, VectorIndexer
 
 _MAX_ATTEMPTS = 3
@@ -36,10 +35,9 @@ def _print_report(report: SweepReport) -> None:
 
 async def _run(full: bool) -> int:
     settings = get_settings()
-    if not settings.database_url:
-        print("database_url is not set — the vector store is unavailable", file=sys.stderr)
+    if not settings.qdrant_url:
+        print("qdrant_url is not set — the vector store is unavailable", file=sys.stderr)
         return 1
-    await asyncio.to_thread(run_migrations, settings.database_url)
     deps = build_deps(settings)
     try:
         indexer = VectorIndexer(deps)

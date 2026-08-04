@@ -154,9 +154,9 @@ class TestRuntimeSections(unittest.TestCase):
         self.assertEqual(EmbeddingsConfig.SECRET_FIELDS, frozenset({"api_key"}))
         self.assertIsNone(EmbeddingsConfig(api_key="").api_key)
 
-    def test_embeddings_dimension_capped_at_hnsw_halfvec_limit(self):
+    def test_embeddings_dimension_capped_as_a_sanity_check(self):
         with self.assertRaises(ValidationError):
-            EmbeddingsConfig(dimension=4001)
+            EmbeddingsConfig(dimension=4097)
 
     def test_embeddings_unconfigured_by_default(self):
         s = self._settings()
@@ -172,10 +172,10 @@ class TestVectorConfig(unittest.TestCase):
         self.assertEqual(cfg.classes["UserRequest"].index_values, ["resolved", "closed"])
         self.assertIn("body", cfg.classes["UserRequest"].profile)
 
-    def test_database_url_defaults_to_none(self):
+    def test_qdrant_url_defaults_to_none(self):
         with patch.dict(os.environ, _REQUIRED, clear=True):
             s = Settings(_env_file=None)
-        self.assertIsNone(s.database_url)
+        self.assertIsNone(s.qdrant_url)
 
     def test_settings_expose_vector_section(self):
         with patch.dict(os.environ, _REQUIRED, clear=True):

@@ -82,7 +82,7 @@ async def vector_reindex(request: Request) -> dict:
     deps: AppDeps = request.app.state.deps
     tasks: PeriodicTasks = request.app.state.tasks
     if not deps.vector_store.configured:
-        raise HTTPException(status_code=409, detail="Vector store is not configured (database_url is not set)")
+        raise HTTPException(status_code=409, detail="Vector store is not configured (qdrant_url is not set)")
     vector_cfg = await deps.config_store.get("vector", VectorConfig)
     if not vector_cfg.enabled:
         raise HTTPException(status_code=409, detail="Vector indexing is disabled (vector: enabled)")

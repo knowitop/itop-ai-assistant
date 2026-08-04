@@ -67,7 +67,7 @@ def register_vector_sweep(tasks: PeriodicTasks, deps: AppDeps) -> None:
     Postgres. What it needs from the core is pacing, and that is all it takes.
     """
     if not deps.vector_store.configured:
-        logger.info("Vector store is not configured (database_url), the sweep will not run")
+        logger.info("Vector store is not configured (qdrant_url), the sweep will not run")
         return
 
     async def interval() -> float:
@@ -113,7 +113,7 @@ class VectorIndexer:
     async def sweep_once(self) -> SweepReport:
         deps = self._deps
         if not deps.vector_store.configured:
-            return SweepReport(kind="sweep", status="skipped", skip_reason="database_url is not set")
+            return SweepReport(kind="sweep", status="skipped", skip_reason="qdrant_url is not set")
         vector_cfg = await deps.config_store.get("vector", VectorConfig)
         if not vector_cfg.enabled:
             return SweepReport(kind="sweep", status="skipped", skip_reason="vector indexing is disabled")

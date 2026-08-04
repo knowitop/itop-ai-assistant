@@ -128,8 +128,8 @@ The `processing_id` returned by `POST /webhook` can be used to find the exact ru
 
 ## Vector index
 
-Optional — the screen only does something when `DATABASE_URL` points at a Postgres with `pgvector`. This is infrastructure for upcoming semantic-search features; nothing in the current intake flow reads the index.
+Optional — the screen only does something when `QDRANT_URL` points at a Qdrant instance. This is infrastructure for upcoming semantic-search features; nothing in the current intake flow reads the index.
 
-**Status tab** — badges for database, embeddings and indexer state; the active index version with row count and size on disk; the per-class sweep cursors and the last reconciliation; and a table of recent indexing runs (objects seen, chunks embedded, chunks deleted, duration). **Reindex** schedules a full rebuild — every object is re-embedded, so it can take a while and load the embeddings endpoint. A warning appears if the index was built with a different embeddings model or dimension than the current config: incomparable vectors are never mixed, so a rebuild is the only way forward.
+**Status tab** — badges for the vector store, embeddings and indexer state; the active index version with row count; the per-class sweep cursors and the last reconciliation; and a table of recent indexing runs (objects seen, chunks embedded, chunks deleted, duration). **Reindex** schedules a full rebuild — every object is re-embedded, so it can take a while and load the embeddings endpoint. A warning appears if the index was built with a different embeddings model or dimension than the current config: incomparable vectors are never mixed, so a rebuild is the only way forward.
 
 **Settings tab** — whether indexing is on (applies from the next sweep, no restart), the sweep interval / page size / throttle, the reconciliation interval, chunk token budget, and per-class settings: which values of the class's relevance attribute keep an object in the index (empty = index everything) and the chunking profile (chunk kind → semantic fields).

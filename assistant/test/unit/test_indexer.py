@@ -179,7 +179,7 @@ class TestSkips(IndexerTestCase):
         report = await self._run(_deps_mock(configured=False), FakeTicketSource())
 
         self.assertEqual(report.status, "skipped")
-        self.assertIn("database_url", report.skip_reason)
+        self.assertIn("qdrant_url", report.skip_reason)
 
     async def test_skip_when_disabled(self):
         deps = _deps_mock(vector_cfg=VectorConfig(enabled=False))
