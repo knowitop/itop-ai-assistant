@@ -9,14 +9,28 @@ No TTL on any of these keys: losing a cursor is not an error but it does
 cost a full backfill on a CPU-only box, which ADR-006 measures in hours.
 """
 
+import asyncio
+import contextlib
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
+from uuid import uuid4
 
 from redis.asyncio import Redis
+
+logger = logging.getLogger(__name__)
 
 _PREFIX = "vector:"
 _CURSOR_PREFIX = f"{_PREFIX}cursor:"
 _RECONCILE_KEY = f"{_PREFIX}reconcile"
 _REINDEX_KEY = f"{_PREFIX}reindex"
+_LOCK_KEY = f"{_PREFIX}sweep:lock"
+
+# Short enough that a crashed replica does not block indexing for long,
+# renewed often enough that an hours-long backfill keeps its lock.
+LOCK_TTL_SECONDS = 120
+RENEW_INTERVAL_SECONDS = 40
 
 
 class VectorSyncState:
@@ -61,6 +75,49 @@ class VectorSyncState:
 
     async def reindex_pending(self) -> bool:
         return await self._redis.exists(_REINDEX_KEY) == 1
+
+    @asynccontextmanager
+    async def sweep_lock(
+        self, *, ttl_seconds: int = LOCK_TTL_SECONDS, renew_interval: float = RENEW_INTERVAL_SECONDS
+    ) -> AsyncIterator[bool]:
+        """Cross-replica exclusion for the sweep. Yields False immediately
+        when someone else holds it — the sweep skips rather than queues.
+
+        The lock is renewed from a background task for as long as the body
+        runs, because a full backfill takes hours on CPU-only embeddings
+        while the TTL has to stay short enough to survive a crashed replica.
+        Renewal is a read-then-extend rather than one atomic script: losing
+        the key between the two calls needs it to expire *and* be re-taken
+        inside the same tick, which a 120s TTL renewed every 40s does not
+        offer. The cost of that race is a duplicated sweep pass, and the
+        hash-guard makes a duplicated pass cheap.
+        """
+        token = str(uuid4())
+        acquired = bool(await self._redis.set(_LOCK_KEY, token, nx=True, ex=ttl_seconds))
+        if not acquired:
+            yield False
+            return
+        renewer = asyncio.create_task(self._renew(token, ttl_seconds, renew_interval))
+        try:
+            yield True
+        finally:
+            renewer.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await renewer
+            # Compare before deleting: never drop a lock that is no longer ours
+            if await self._redis.get(_LOCK_KEY) == token:
+                await self._redis.delete(_LOCK_KEY)
+
+    async def _renew(self, token: str, ttl_seconds: int, interval: float) -> None:
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                if await self._redis.get(_LOCK_KEY) != token:
+                    logger.warning("vector sweep lock was taken over — this pass no longer holds it")
+                    return
+                await self._redis.expire(_LOCK_KEY, ttl_seconds)
+            except Exception as e:  # Redis blip: keep going, the TTL still has room
+                logger.warning(f"vector sweep lock renewal failed (will retry): {e}")
 
 
 def _parse(raw: str | None) -> datetime | None:
