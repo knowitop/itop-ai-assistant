@@ -13,14 +13,26 @@ upsert/delete/KNN), the chunker, the background sweep with cursors and
 reconciliation, the reindex CLI and endpoint, the admin UI screen, and the
 pluggable `VectorSource` layer. What remains is everything that *reads* the
 index: Stage 4 (retrieval into the widget) is next, then access-control
-hardening and the first non-ticket source.
+hardening and the first non-ticket source. Read the rest as a description of
+the pgvector write path as built: §2 (schema) and §3 (pipeline) go away with
+the backend, while §4 (access control) survives the change of store.
 
-Backend decision: **Postgres + `pgvector`** (see
-[stack-improvements.md §3](stack-improvements.md), decided 2026-07-07). Redis
-keeps operational state (ticket state, locks, config/prompt overrides, run
-journal); Postgres owns the vector index and the analytical/reporting tables.
-The whole feature is gated behind `vector.enabled` so the base deployment stays
-Redis-only until a customer turns it on.
+Backend decision: **reopened and reversed on 2026-08-04 in favour of Qdrant**
+(ADR-001 "Векторное хранилище — Qdrant"; the superseded choice is
+[stack-improvements.md §3](stack-improvements.md), decided 2026-07-07). Two
+reasons. The "one system instead of two" argument never held — iTop runs on
+MariaDB, so Postgres was always an extra service the customer installs and
+operates. And filtering has to happen *during* the graph walk, not after it:
+taking the 50 nearest and then discarding the ones that do not match can leave
+you with nothing, and over-fetching is symptom relief with no guarantee
+attached.
+
+**The shipped code is still pgvector.** The replacement is planned as its own
+task; until it lands, this document describes what exists, and the ADRs
+describe where it is going. Redis keeps operational state (ticket state, locks,
+config/prompt overrides, run journal); with Qdrant, Postgres leaves the stack
+entirely. The whole feature stays gated so the base deployment runs without a
+vector store at all until a customer turns it on.
 
 ---
 
@@ -39,7 +51,8 @@ explicit carve-out from the "never duplicate iTop data locally" principle:
   what the user actually sees is always gated by an iTop-side check
   (see §4).
 
-**Technology: Postgres + `pgvector`.** HNSW index (`vector_cosine_ops`),
+**Technology as built: Postgres + `pgvector`** — superseded by ADR-001, kept
+here because it is what the code does today. HNSW index (`vector_cosine_ops`),
 metadata filters as ordinary SQL `WHERE`/`JOIN`, ACL as a predicate rather than
 hand-built tag strings. `halfvec` (16-bit) storage halves memory vs `vector`
 (float32) with negligible recall loss at these dims. This is a new stateful
@@ -337,6 +350,14 @@ This mirrors the dominant stock-iTop rights dimension (org scoping) and cuts
 the candidate set before anything touches iTop. It is an *optimization and a
 first fence*, *not* the security boundary.
 
+Under Qdrant (ADR-001) the same predicates become collection filters applied
+*during* the graph walk rather than a `WHERE` over what the index already
+returned. The security boundary does not move — it was layer 2 all along; what
+changes is that a restrictive pre-filter now costs recall instead of silently
+costing results. The rule the filter must obey is unchanged and worth stating
+outright: it is built **deliberately over-permissive** — it may let through
+more than the user can see, it may never drop something they can.
+
 ### Layer 2 — authoritative check in iTop before exposure (exact)
 
 Before candidate content reaches the user **or an LLM prompt**, the id list
@@ -394,6 +415,11 @@ sensitive), and `/api/vector/*` is admin-token only.
   layer 2. Consequence: KNN top-K may be thinned by the oracle; the retriever
   over-fetches (K×3) and, if everything is filtered out, returns "nothing
   visible" rather than digging unboundedly.
+- That over-fetch compensates for **layer-2 thinning only**. It is not a
+  remedy for a store that post-filters: there the shortfall grows with
+  selectivity and no fixed multiplier covers it (ADR-001). Track the share
+  discarded at layer 2 as a metric — it is the one number that says whether
+  the coarse pre-filter still resembles the real rights model.
 - If a custom datamodel scopes rights by something other than org, the
   layer-1 predicate set is extensible via config (`vector.filter_columns`,
   materialized as extra `vector_chunk` columns), but that is tuning, not
@@ -511,6 +537,13 @@ with anonymization or accept the trade-off consciously.
 
 ## 7. Remaining stages
 
+**Stage order revised on 2026-08-04.** Replacing the backend now comes before
+the read path: a retriever written against SQL predicates and `GROUP BY obj_id`
+would have to be rewritten against collection filters and Qdrant's built-in
+grouping. Stages 4–6 below survive as a list of work, but they are executed on
+top of Qdrant, and the two carry-overs listed next apply to whichever store is
+underneath.
+
 The write path (§2–§3) is built; what follows is the read path. Two carry-overs
 worth knowing before starting:
 
@@ -549,8 +582,10 @@ blocked on this stage and has no reduced mode to ship first.
 - [ ] With that second source in hand, revisit per-source config namespacing
       (`vector.sources.<name>.*`).
 - [ ] Phase-2 chunk kinds: `log:public` / `log:private` windows.
-- [ ] Evaluate hybrid (`tsvector` + vector) retrieval — only with an explicit
-      decision on storing text (see §5).
+- [ ] Hybrid retrieval is no longer an open evaluation: ADR-007 settles it as
+      a sparse component merged with RRF, with the slot reserved in the
+      collection schema from the start and switched on later. The `tsvector`
+      variant dies with the Postgres backend.
 
 ---
 
@@ -569,13 +604,19 @@ blocked on this stage and has no reduced mode to ship first.
   to a ticket's public log in iTop → the ticket shows up in the next sweep)
   is still pending. If false for some class, fall back to also matching on
   log `lastentry` dates.
-- **Scale envelope**: pgvector HNSW comfortably covers 10⁴–10⁶ chunks on a
-  modest Postgres. Beyond that — partitioning, `ivfflat`, or a dedicated
-  vector DB; revisit with real numbers.
-- **Postgres operational ownership**: this is the project's first relational
-  store — backups, connection pooling (pgbouncer?), and migration discipline
-  become part of ops. Documented as an accepted one-time cost
-  ([stack-improvements.md §3](stack-improvements.md)).
+- ~~**Scale envelope**~~ — *settled by ADR-001.* The dedicated vector store is
+  the answer, chosen for filtering behaviour rather than for scale.
+- ~~**Postgres operational ownership**~~ — *settled by ADR-001.* Postgres
+  leaves the stack; the ops cost it would have introduced is not paid.
+- **Embedding dimensionality** (ADR-006): MRL truncation to 512 or 256 without
+  re-embedding. At a million chunks that is 4 GB versus 250 MB — the
+  difference between "brute force is impossible" and "brute force is a working
+  fallback", which is what makes a store that chooses between graph walk and
+  full scan worth having in the first place.
+- **Analytics storage is now open.** Postgres was also going to serve
+  pattern-analysis (`GROUP BY`, `date_trunc`); with it gone, that plan has no
+  assumed store. Deliberately deferred to the pattern-analysis work rather than
+  keeping a database installed for a subsystem that does not exist yet.
 - **Scope**: engineer/backoffice consumers only. Any portal- or caller-facing
   retrieval must re-run this design's §4 with the portal rights model in
   scope (`visibility = 'public'` alone is not enough — callers see only
