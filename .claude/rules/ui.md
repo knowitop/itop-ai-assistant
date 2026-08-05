@@ -29,6 +29,6 @@ instinct to reach for a library is exactly what they forbid:
 
 ```bash
 npm ci          # install pinned dependencies
-npm run dev     # vite dev server, proxies /api and /health to :8001
+npm run dev     # vite dev server, proxies /api, /health and /version to :8001
 npm run build   # tsc --noEmit + production build into ui/dist
 ```

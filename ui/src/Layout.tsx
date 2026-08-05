@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { loadLanguage } from './i18n';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
-import { fetchHealth, fetchSetupStatus, Health, SetupStatus } from './api';
+import { BuildInfo, fetchHealth, fetchSetupStatus, fetchVersion, Health, SetupStatus } from './api';
 
 const NAV = [
   { to: '/setup', key: 'nav.setup' },
@@ -66,12 +66,18 @@ export default function Layout() {
   const location = useLocation();
   const [health, setHealth] = useState<Health | null>(null);
   const [setup, setSetup] = useState<SetupStatus | null>(null);
+  const [build, setBuild] = useState<BuildInfo | null>(null);
 
   // Refetched on every navigation so the badges reflect wizard progress.
   useEffect(() => {
     fetchHealth().then(setHealth).catch(() => setHealth(null));
     fetchSetupStatus().then(setSetup).catch(() => setSetup(null));
   }, [location.pathname]);
+
+  // The build stamp cannot change while the page is open — fetched once.
+  useEffect(() => {
+    fetchVersion().then(setBuild).catch(() => setBuild(null));
+  }, []);
 
   const currentLang = LANGUAGES.find((l) => l.value === i18n.language)?.value ?? LANGUAGES[0].value;
   const currentLabel = LANGUAGES.find((l) => l.value === currentLang)?.label ?? currentLang;
@@ -144,15 +150,36 @@ export default function Layout() {
         </Group>
       </AppShell.Header>
       <AppShell.Navbar p="xs">
-        {NAV.map((item) => (
-          <NavLink
-            key={item.to}
-            component={Link}
-            to={item.to}
-            label={t(item.key)}
-            active={location.pathname.startsWith(item.to)}
-          />
-        ))}
+        <AppShell.Section grow>
+          {NAV.map((item) => (
+            <NavLink
+              key={item.to}
+              component={Link}
+              to={item.to}
+              label={t(item.key)}
+              active={location.pathname.startsWith(item.to)}
+            />
+          ))}
+        </AppShell.Section>
+        {build && (
+          <AppShell.Section pt="xs">
+            {/* Links to the commit rather than a release: valid for tagged and
+                untagged builds alike, and no guessing at the tag's v-prefix. */}
+            <Anchor
+              // A local build reports "<sha>-dirty"; the link needs the sha alone.
+              href={build.commit ? `${REPO_URL}/commit/${build.commit.split('-')[0]}` : REPO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              // Native tooltip: a build date needs no translation and no component.
+              title={build.built_at ?? undefined}
+              size="xs"
+              c="dimmed"
+            >
+              {build.version}
+              {build.commit ? ` · ${build.commit}` : ''}
+            </Anchor>
+          </AppShell.Section>
+        )}
       </AppShell.Navbar>
       <AppShell.Main>
         {setup && !setup.configured && location.pathname !== '/setup' && (

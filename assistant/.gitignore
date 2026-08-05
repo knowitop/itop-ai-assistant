@@ -247,3 +247,5 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 .idea/
 *.iml
+# Generated at build time by hatch_build.py
+src/itop_ai_assistant/_build_info.py
