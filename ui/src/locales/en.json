@@ -140,7 +140,7 @@
     "llm_tool_choice_desc": "vLLM, LiteLLM and LM Studio accept it; DeepSeek returns an error. Verify with Test LLM.",
     "llm_tool_choice_rejected": "The endpoint rejected the forced tool_choice — turn the switch off: {{error}}",
     "llm_no_tool_calling": "The endpoint answers, but the model did not call the tool. The assistant needs a model that calls tools reliably. {{error}}",
-    "embeddings_base_url_desc": "OpenAI-compatible endpoint, must include /v1, e.g. http://localhost:1234/v1. For Ollama this is http://localhost:11434/v1 — not the bare host:port used for the LLM chat connection.",
+    "embeddings_base_url_desc": "The full OpenAI-compatible prefix your provider documents for embeddings, not a bare host:port. For Ollama: http://localhost:11434/v1 — not the bare host:port used for the LLM chat connection. For Google's Gemini API: https://generativelanguage.googleapis.com/v1beta/openai.",
     "embeddings_model_desc": "Embedding model as exposed by the endpoint; must be multilingual, e.g. bge-m3",
     "embeddings_test_ok": "Model {{model}} responded — dimension {{dimension}}",
     "embeddings_dimension_mismatch": "The endpoint returned dimension {{actual}} but the config says {{expected}} — fix the Dimension field",

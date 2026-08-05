@@ -174,10 +174,11 @@ class EmbeddingsConfig(RuntimeSectionConfig):
 
     SECRET_FIELDS: ClassVar[frozenset[str]] = frozenset({"api_key"})
 
-    # OpenAI-compatible, must include /v1 (unlike llm_providers.ollama's base_url,
-    # which is the bare host:port — Ollama's native /api/* has no /v1/embeddings
-    # equivalent here, so this always goes through its OpenAI-compat layer).
-    # A bare host:port 404s with a plain-text body (see TASK-007).
+    # The full OpenAI-compatible prefix the provider documents for embeddings —
+    # not just a bare host:port. Providers whose base_url is bare host:port for
+    # *chat* (llm_providers.ollama) still need the full prefix here: Ollama is
+    # "/v1", Google's Gemini API compat layer is "/v1beta/openai" — a bare host
+    # 404s with a plain-text body (see TASK-007).
     base_url: str | None = None
     model: str | None = None
     api_key: str | None = None
