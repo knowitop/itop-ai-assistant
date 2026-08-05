@@ -1,10 +1,12 @@
 import unittest
+from importlib.metadata import version as metadata_version
 from unittest.mock import AsyncMock, MagicMock
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from itop_ai_assistant.build_info import get_build_info
 from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.config_store import RedisConfigStore
 from itop_ai_assistant.deps import AppDeps
@@ -42,6 +44,18 @@ class TestHealth(AdminApiTestCase):
         response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok", "redis": True})
+
+
+class TestVersion(AdminApiTestCase):
+    def test_serves_the_baked_build_stamp(self):
+        response = self.client.get("/version")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(set(body), {"version", "commit", "built_at"})
+        # Whatever the build baked in — asserting a literal would pin the test
+        # to one release. It must agree with the distribution metadata.
+        self.assertEqual(body["version"], get_build_info().version)
+        self.assertEqual(body["version"], metadata_version("itop-ai-assistant"))
 
 
 class TestModules(AdminApiTestCase):
@@ -240,6 +254,9 @@ class TestAdminAuth(unittest.TestCase):
 
     def test_health_is_public(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
+
+    def test_version_is_public(self):
+        self.assertEqual(self.client.get("/version").status_code, 200)
 
 
 if __name__ == "__main__":

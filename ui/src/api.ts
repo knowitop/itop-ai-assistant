@@ -93,6 +93,17 @@ export function fetchHealth(): Promise<Health> {
   return request<Health>('/health');
 }
 
+// /version is public for the same reason as /health: it is read before a token exists.
+export interface BuildInfo {
+  version: string;
+  commit: string | null;
+  built_at: string | null;
+}
+
+export function fetchVersion(): Promise<BuildInfo> {
+  return request<BuildInfo>('/version');
+}
+
 export interface SetupStatus {
   configured: boolean;
   missing: string[];
