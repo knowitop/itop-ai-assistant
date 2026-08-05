@@ -140,7 +140,7 @@
     "llm_tool_choice_desc": "vLLM, LiteLLM и LM Studio его принимают, DeepSeek возвращает ошибку. Проверьте кнопкой «Проверить LLM».",
     "llm_tool_choice_rejected": "Эндпоинт отклонил форсированный tool_choice — выключите переключатель: {{error}}",
     "llm_no_tool_calling": "Эндпоинт отвечает, но модель не вызвала инструмент. Ассистенту нужна модель, надёжно вызывающая инструменты. {{error}}",
-    "embeddings_base_url_desc": "OpenAI-совместимый эндпоинт, например: http://localhost:1234/v1",
+    "embeddings_base_url_desc": "OpenAI-совместимый эндпоинт, обязательно с /v1, например: http://localhost:1234/v1. Для Ollama это http://localhost:11434/v1 — не тот голый host:port, что для LLM-чата.",
     "embeddings_model_desc": "Модель эмбеддингов, как она задана на эндпоинте; должна быть мультиязычной, например bge-m3",
     "embeddings_test_ok": "Модель {{model}} ответила — размерность {{dimension}}",
     "embeddings_dimension_mismatch": "Эндпоинт вернул размерность {{actual}}, а в конфигурации указано {{expected}} — исправьте поле «Размерность»",

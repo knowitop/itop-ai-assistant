@@ -174,7 +174,11 @@ class EmbeddingsConfig(RuntimeSectionConfig):
 
     SECRET_FIELDS: ClassVar[frozenset[str]] = frozenset({"api_key"})
 
-    base_url: str | None = None  # OpenAI-compatible, includes /v1 (like llm.base_url)
+    # OpenAI-compatible, must include /v1 (unlike llm_providers.ollama's base_url,
+    # which is the bare host:port — Ollama's native /api/* has no /v1/embeddings
+    # equivalent here, so this always goes through its OpenAI-compat layer).
+    # A bare host:port 404s with a plain-text body (see TASK-007).
+    base_url: str | None = None
     model: str | None = None
     api_key: str | None = None
     # Qdrant has no hard ceiling here; the bound is a sanity check, and ADR-006
