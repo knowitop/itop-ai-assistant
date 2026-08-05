@@ -218,6 +218,7 @@
     "col_status": "Status",
     "col_objects": "Objekte",
     "col_embedded": "Eingebettet",
+    "col_metadata": "Metadaten",
     "col_deleted": "Gelöscht",
     "col_duration": "Dauer",
     "btn_refresh": "Aktualisieren",

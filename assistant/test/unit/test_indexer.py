@@ -10,7 +10,7 @@ from itop_ai_assistant.vector.chunker import chunk_object
 from itop_ai_assistant.vector.index_journal import IndexJournal
 from itop_ai_assistant.vector.indexer import SWEEP_TASK, VectorIndexer, register_vector_sweep
 from itop_ai_assistant.vector.source import VectorRecord
-from itop_ai_assistant.vector.store import ChunkRecord, FingerprintMismatchError, IndexMeta
+from itop_ai_assistant.vector.store import ChunkDigest, ChunkMetadata, ChunkRecord, FingerprintMismatchError, IndexMeta
 from itop_ai_assistant.vector.sync_state import VectorSyncState
 
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
@@ -24,6 +24,13 @@ _VECTOR_CFG = VectorConfig(
     sweep_throttle_seconds=0,
 )
 _EMB_CFG = EmbeddingsConfig(base_url="http://emb/v1", model="test-model", dimension=4)
+
+
+def _flat(calls: list[list]) -> list:
+    """The indexer calls a write op once per pending object, empty list
+    included when that object had nothing for that particular bucket — flatten
+    to inspect what was actually written."""
+    return [item for call in calls for item in call]
 
 
 def _record(
@@ -75,8 +82,11 @@ class FakeChunkStore:
     def __init__(self, meta: IndexMeta = _META, *, configured: bool = True):
         self.configured = configured
         self._meta = meta
-        self.hashes: dict[tuple[str, int], dict[tuple[str, int], str]] = {}
+        # Mimics a real backend: writes land here too, so a second sweep
+        # pass over an unchanged object sees what the first one wrote.
+        self.digests: dict[tuple[str, int], dict[tuple[str, int], ChunkDigest]] = {}
         self.upsert_calls: list[list[ChunkRecord]] = []
+        self.update_metadata_calls: list[list[ChunkMetadata]] = []
         self.delete_chunks_calls: list[tuple[str, int, list[tuple[str, int]]]] = []
         self.delete_object_calls: list[tuple[str, int]] = []
         self.delete_object_return = 3  # matches the previous mock's fixed return value
@@ -94,10 +104,24 @@ class FakeChunkStore:
 
     async def upsert_chunks(self, chunks, *, model, dim) -> int:
         self.upsert_calls.append(list(chunks))
+        for c in chunks:
+            key = (c.meta.obj_class, c.meta.obj_id)
+            self.digests.setdefault(key, {})[(c.meta.chunk_kind, c.meta.chunk_n)] = ChunkDigest(
+                content_hash=c.meta.content_hash, meta_hash=c.meta.meta_hash
+            )
         return len(chunks)
 
-    async def get_chunk_hashes(self, obj_class, obj_id) -> dict[tuple[str, int], str]:
-        return self.hashes.get((obj_class, obj_id), {})
+    async def get_chunk_digests(self, obj_class, obj_id) -> dict[tuple[str, int], ChunkDigest]:
+        return self.digests.get((obj_class, obj_id), {})
+
+    async def update_chunk_metadata(self, chunks) -> int:
+        self.update_metadata_calls.append(list(chunks))
+        for c in chunks:
+            key = (c.obj_class, c.obj_id)
+            self.digests.setdefault(key, {})[(c.chunk_kind, c.chunk_n)] = ChunkDigest(
+                content_hash=c.content_hash, meta_hash=c.meta_hash
+            )
+        return len(chunks)
 
     async def delete_chunks(self, obj_class, obj_id, keys) -> int:
         self.delete_chunks_calls.append((obj_class, obj_id, list(keys)))
@@ -227,29 +251,33 @@ class TestSweep(IndexerTestCase):
         self.assertEqual(report.chunks_embedded, 1)
         self.assertEqual(source.prepare_calls, 1)
         records = store.upsert_calls[-1]
-        self.assertEqual(records[0].obj_id, 1)
-        self.assertEqual(records[0].chunk_kind, "body")
-        self.assertEqual(records[0].status, "resolved")
+        self.assertEqual(records[0].meta.obj_id, 1)
+        self.assertEqual(records[0].meta.chunk_kind, "body")
+        self.assertEqual(records[0].meta.status, "resolved")
 
     async def test_hash_guard_skips_unchanged(self):
         store = FakeChunkStore()
         source = FakeTicketSource([_record(1)])
         await self._run(_deps_mock(store=store), source)
-        stored = {(r.chunk_kind, r.chunk_n): r.content_hash for r in store.upsert_calls[-1]}
 
         store2 = FakeChunkStore()
-        store2.hashes[("UserRequest", 1)] = stored
+        store2.digests[("UserRequest", 1)] = dict(store.digests[("UserRequest", 1)])
         embedder2 = _embedder_mock()
         report = await self._run(_deps_mock(store=store2), FakeTicketSource([_record(1)]), embedder2)
 
         self.assertEqual(report.status, "ok")
         self.assertEqual(report.chunks_embedded, 0)
+        self.assertEqual(report.chunks_metadata_updated, 0)
         embedder2.embed.assert_not_awaited()
         self.assertEqual(store2.upsert_calls, [])
+        self.assertEqual(store2.update_metadata_calls, [])
 
     async def test_vanished_chunks_deleted(self):
         store = FakeChunkStore()
-        store.hashes[("UserRequest", 1)] = {("body", 0): "stale", ("body", 5): "gone"}
+        store.digests[("UserRequest", 1)] = {
+            ("body", 0): ChunkDigest(content_hash="stale", meta_hash=None),
+            ("body", 5): ChunkDigest(content_hash="gone", meta_hash=None),
+        }
         report = await self._run(_deps_mock(store=store), FakeTicketSource([_record(1)]))
 
         self.assertEqual(store.delete_chunks_calls, [("UserRequest", 1, [("body", 5)])])
@@ -327,6 +355,102 @@ class TestSweep(IndexerTestCase):
         self.assertEqual(report.status, "ok")
         self.assertEqual(report.chunks_embedded, 1)
         self.assertEqual(journal.finish_calls, 0)
+
+
+class TestMetadataFreshness(IndexerTestCase):
+    """R6/ADR-004: status (and the rest of the filterable payload) reaches
+    the index without a re-embed when only it — not the chunk text —
+    changed. See TASK-003."""
+
+    async def test_status_change_only_updates_metadata(self):
+        store = FakeChunkStore()
+        await self._run(_deps_mock(store=store), FakeTicketSource([_record(1, index_value="resolved")]))
+
+        store2 = FakeChunkStore()
+        store2.digests[("UserRequest", 1)] = dict(store.digests[("UserRequest", 1)])
+        embedder2 = _embedder_mock()
+        report = await self._run(
+            _deps_mock(store=store2), FakeTicketSource([_record(1, index_value="closed")]), embedder2
+        )
+
+        self.assertEqual(report.chunks_embedded, 0)
+        self.assertEqual(report.chunks_metadata_updated, 1)
+        embedder2.embed.assert_not_awaited()
+        self.assertEqual(_flat(store2.upsert_calls), [])
+        updated = _flat(store2.update_metadata_calls)
+        self.assertEqual(len(updated), 1)
+        self.assertEqual(updated[0].status, "closed")
+
+    async def test_text_change_only_embeds_metadata_not_rewritten_twice(self):
+        store = FakeChunkStore()
+        await self._run(_deps_mock(store=store), FakeTicketSource([_record(1, description="Broken.")]))
+
+        store2 = FakeChunkStore()
+        store2.digests[("UserRequest", 1)] = dict(store.digests[("UserRequest", 1)])
+        report = await self._run(_deps_mock(store=store2), FakeTicketSource([_record(1, description="Still broken.")]))
+
+        self.assertEqual(report.chunks_embedded, 1)
+        self.assertEqual(report.chunks_metadata_updated, 0)
+        self.assertEqual(_flat(store2.update_metadata_calls), [])
+
+    async def test_legacy_chunk_without_meta_hash_gets_one_metadata_rewrite(self):
+        store = FakeChunkStore()
+        await self._run(_deps_mock(store=store), FakeTicketSource([_record(1)]))
+        digest = store.digests[("UserRequest", 1)][("body", 0)]
+
+        store2 = FakeChunkStore()
+        store2.digests[("UserRequest", 1)] = {
+            ("body", 0): ChunkDigest(content_hash=digest.content_hash, meta_hash=None)
+        }
+        report = await self._run(_deps_mock(store=store2), FakeTicketSource([_record(1)]))
+
+        self.assertEqual(report.chunks_embedded, 0)
+        self.assertEqual(report.chunks_metadata_updated, 1)
+        self.assertEqual(_flat(store2.upsert_calls), [])
+
+    async def test_mixed_object_takes_both_paths_in_one_pass(self):
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.classes["UserRequest"].profile = {"body": ["description"], "solution": ["resolution"]}
+        original = VectorRecord(
+            obj_id=1,
+            index_value="resolved",
+            last_update=_NOW,
+            created_at=_NOW - timedelta(days=1),
+            payload={"description": "Broken.", "resolution": "Rebooted it."},
+        )
+        store = FakeChunkStore()
+        await self._run(_deps_mock(vector_cfg=cfg, store=store), FakeTicketSource([original]))
+
+        store2 = FakeChunkStore()
+        store2.digests[("UserRequest", 1)] = dict(store.digests[("UserRequest", 1)])
+        reopened = VectorRecord(
+            obj_id=1,
+            index_value="closed",
+            last_update=_NOW,
+            created_at=_NOW - timedelta(days=1),
+            payload={"description": "Still broken.", "resolution": "Rebooted it."},
+        )
+        report = await self._run(_deps_mock(vector_cfg=cfg, store=store2), FakeTicketSource([reopened]))
+
+        self.assertEqual(report.chunks_embedded, 1)
+        self.assertEqual(report.chunks_metadata_updated, 1)
+        self.assertEqual(store2.upsert_calls[-1][0].meta.chunk_kind, "body")
+        self.assertEqual(store2.update_metadata_calls[-1][0].chunk_kind, "solution")
+
+    async def test_idempotent_second_pass_writes_nothing(self):
+        store = FakeChunkStore()
+        await self._run(_deps_mock(store=store), FakeTicketSource([_record(1)]))
+
+        store2 = FakeChunkStore()
+        store2.digests[("UserRequest", 1)] = dict(store.digests[("UserRequest", 1)])
+        report = await self._run(_deps_mock(store=store2), FakeTicketSource([_record(1)]))
+
+        self.assertEqual(report.chunks_embedded, 0)
+        self.assertEqual(report.chunks_metadata_updated, 0)
+        self.assertEqual(report.chunks_deleted, 0)
+        self.assertEqual(store2.upsert_calls, [])
+        self.assertEqual(store2.update_metadata_calls, [])
+        self.assertEqual(store2.delete_chunks_calls, [])
 
 
 class TestSweepRegistration(unittest.IsolatedAsyncioTestCase):

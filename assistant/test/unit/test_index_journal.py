@@ -25,12 +25,20 @@ class TestIndexJournal(unittest.IsolatedAsyncioTestCase):
         journal = _make_journal()
         entry_id = await journal.start("backfill")
 
-        await journal.finish(entry_id, status="ok", objects_seen=7, chunks_embedded=3, chunks_deleted=1)
+        await journal.finish(
+            entry_id,
+            status="ok",
+            objects_seen=7,
+            chunks_embedded=3,
+            chunks_metadata_updated=2,
+            chunks_deleted=1,
+        )
 
         entry = (await journal.recent())[0]
         self.assertEqual(entry["status"], "ok")
         self.assertEqual(entry["objects_seen"], 7)
         self.assertEqual(entry["chunks_embedded"], 3)
+        self.assertEqual(entry["chunks_metadata_updated"], 2)
         self.assertEqual(entry["chunks_deleted"], 1)
         self.assertIsNotNone(entry["finished_at"])
 

@@ -16,7 +16,7 @@ MAX_ENTRIES = 50
 
 _ENTRY_PREFIX = "vector:run:"
 _INDEX_KEY = "vector:runs"
-_COUNTERS = ("objects_seen", "chunks_embedded", "chunks_deleted")
+_COUNTERS = ("objects_seen", "chunks_embedded", "chunks_metadata_updated", "chunks_deleted")
 
 
 class IndexJournal:
@@ -52,6 +52,7 @@ class IndexJournal:
         status: str,
         objects_seen: int = 0,
         chunks_embedded: int = 0,
+        chunks_metadata_updated: int = 0,
         chunks_deleted: int = 0,
         error: str | None = None,
     ) -> None:
@@ -64,6 +65,7 @@ class IndexJournal:
             finished_at=datetime.now(UTC).isoformat(),
             objects_seen=objects_seen,
             chunks_embedded=chunks_embedded,
+            chunks_metadata_updated=chunks_metadata_updated,
             chunks_deleted=chunks_deleted,
             error=error,
         )

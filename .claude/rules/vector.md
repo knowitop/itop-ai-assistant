@@ -36,3 +36,8 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
 - The whole vector unit test suite (`test/unit/test_qdrant_*.py` and friends)
   is collected by default — it runs against Qdrant's `:memory:` mode, no
   Docker needed.
+- **A payload field that filtering depends on must feed `ChunkMetadata.meta_hash`**
+  (`vector/store.py`). The sweep refreshes such a field without a re-embed
+  only through that hash (TASK-003); leave a new one out and it freezes at
+  whatever value the chunk had when it was first embedded, silently, until
+  the text changes for some unrelated reason.

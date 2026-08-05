@@ -218,6 +218,7 @@
     "col_status": "Статус",
     "col_objects": "Об'єкти",
     "col_embedded": "Векторизовано",
+    "col_metadata": "Метадані",
     "col_deleted": "Видалено",
     "col_duration": "Тривалість",
     "btn_refresh": "Оновити",

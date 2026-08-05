@@ -37,7 +37,7 @@ from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.vector.chunker import Chunk
 from itop_ai_assistant.vector.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.source import VectorRecord, VectorSource
-from itop_ai_assistant.vector.store import ChunkRecord, ChunkStore, FingerprintMismatchError, IndexMeta
+from itop_ai_assistant.vector.store import ChunkMetadata, ChunkRecord, ChunkStore, FingerprintMismatchError, IndexMeta
 from itop_ai_assistant.vector_sources.registry import build_vector_sources
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,7 @@ class SweepReport:
     skip_reason: str | None = None
     objects_seen: int = 0
     chunks_embedded: int = 0
+    chunks_metadata_updated: int = 0
     chunks_deleted: int = 0
     errors: list[str] = field(default_factory=list)
 
@@ -182,6 +183,7 @@ class VectorIndexer:
                 status=report.status,
                 objects_seen=report.objects_seen,
                 chunks_embedded=report.chunks_embedded,
+                chunks_metadata_updated=report.chunks_metadata_updated,
                 chunks_deleted=report.chunks_deleted,
                 error="; ".join(report.errors) or None,
             )
@@ -213,9 +215,12 @@ class VectorIndexer:
         page = 1
         while True:
             records = await source.find_modified_since(obj_class, since, page=page, page_size=cfg.sweep_page_size)
-            # (record, chunks to embed, vanished chunk keys) — embedding is
-            # batched per page: one embed() call for every changed chunk
-            pending: list[tuple[VectorRecord, list[Chunk], list[tuple[str, int]]]] = []
+            # (record, chunks to embed [with their metadata built], metadata-only
+            # rewrites, vanished chunk keys) — embedding is batched per page: one
+            # embed() call for every changed chunk
+            pending: list[
+                tuple[VectorRecord, list[tuple[Chunk, ChunkMetadata]], list[ChunkMetadata], list[tuple[str, int]]]
+            ] = []
             for record in records:
                 report.objects_seen += 1
                 if record.last_update and (max_seen is None or record.last_update > max_seen):
@@ -231,33 +236,30 @@ class VectorIndexer:
                     max_chunk_tokens=cfg.max_chunk_tokens,
                     log_entries_per_chunk=cfg.log_entries_per_chunk,
                 )
-                stored = await store.get_chunk_hashes(obj_class, record.obj_id)
-                changed = [c for c in chunks if stored.get((c.kind, c.n)) != c.content_hash]
+                stored = await store.get_chunk_digests(obj_class, record.obj_id)
+                # A chunk lands in exactly one bucket: content changed wins over
+                # metadata-only, since upsert_chunks rewrites the whole payload
+                # anyway (including a fresh meta_hash).
+                changed: list[tuple[Chunk, ChunkMetadata]] = []
+                stale_meta: list[ChunkMetadata] = []
+                for chunk in chunks:
+                    chunk_meta = _chunk_metadata(obj_class, record, chunk, started_at)
+                    digest = stored.get((chunk.kind, chunk.n))
+                    if digest is None or digest.content_hash != chunk.content_hash:
+                        changed.append((chunk, chunk_meta))
+                    elif digest.meta_hash != chunk_meta.meta_hash:
+                        stale_meta.append(chunk_meta)
                 current_keys = {(c.kind, c.n) for c in chunks}
                 vanished = [key for key in stored if key not in current_keys]
-                if changed or vanished:
-                    pending.append((record, changed, vanished))
+                if changed or stale_meta or vanished:
+                    pending.append((record, changed, stale_meta, vanished))
 
-            texts = [chunk.text for _, changed, _ in pending for chunk in changed]
+            texts = [chunk.text for _, changed, _, _ in pending for chunk, _ in changed]
             vectors = iter(await embedder.embed(texts) if texts else [])
-            for record, changed, vanished in pending:
-                chunk_records = [
-                    ChunkRecord(
-                        obj_class=obj_class,
-                        obj_id=record.obj_id,
-                        chunk_kind=chunk.kind,
-                        chunk_n=chunk.n,
-                        visibility=chunk.visibility,
-                        status=record.index_value,
-                        content_hash=chunk.content_hash,
-                        embedding=next(vectors),
-                        created_at=record.created_at or record.last_update or started_at,
-                        org_id=record.org_id,
-                        filters=record.filters,
-                    )
-                    for chunk in changed
-                ]
+            for record, changed, stale_meta, vanished in pending:
+                chunk_records = [ChunkRecord(meta=chunk_meta, embedding=next(vectors)) for _, chunk_meta in changed]
                 report.chunks_embedded += await store.upsert_chunks(chunk_records, model=meta.model, dim=meta.dim)
+                report.chunks_metadata_updated += await store.update_chunk_metadata(stale_meta)
                 report.chunks_deleted += await store.delete_chunks(obj_class, record.obj_id, vanished)
 
             if len(records) < cfg.sweep_page_size:
@@ -324,6 +326,21 @@ class VectorIndexer:
             await self._deps.vector_journal.finish(journal_id, **kwargs)
         except Exception as e:
             logger.warning(f"index journal finish failed (non-fatal): {e}")
+
+
+def _chunk_metadata(obj_class: str, record: VectorRecord, chunk: Chunk, started_at: datetime) -> ChunkMetadata:
+    return ChunkMetadata(
+        obj_class=obj_class,
+        obj_id=record.obj_id,
+        chunk_kind=chunk.kind,
+        chunk_n=chunk.n,
+        visibility=chunk.visibility,
+        status=record.index_value,
+        content_hash=chunk.content_hash,
+        created_at=record.created_at or record.last_update or started_at,
+        org_id=record.org_id,
+        filters=record.filters,
+    )
 
 
 def _dedupe(sources: Iterable[VectorSource]) -> list[VectorSource]:

@@ -218,6 +218,7 @@
     "col_status": "Status",
     "col_objects": "Objects",
     "col_embedded": "Embedded",
+    "col_metadata": "Metadata",
     "col_deleted": "Deleted",
     "col_duration": "Duration",
     "btn_refresh": "Refresh",

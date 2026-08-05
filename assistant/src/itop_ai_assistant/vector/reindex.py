@@ -27,7 +27,7 @@ def _print_report(report: SweepReport) -> None:
     print(f"{report.kind}: {report.status}" + (f" ({report.skip_reason})" if report.skip_reason else ""))
     print(
         f"  objects seen: {report.objects_seen}, chunks embedded: {report.chunks_embedded}, "
-        f"chunks deleted: {report.chunks_deleted}"
+        f"chunks metadata updated: {report.chunks_metadata_updated}, chunks deleted: {report.chunks_deleted}"
     )
     for error in report.errors:
         print(f"  error: {error}")

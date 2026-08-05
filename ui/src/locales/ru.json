@@ -218,6 +218,7 @@
     "col_status": "Статус",
     "col_objects": "Объекты",
     "col_embedded": "Векторизовано",
+    "col_metadata": "Метаданные",
     "col_deleted": "Удалено",
     "col_duration": "Длительность",
     "btn_refresh": "Обновить",

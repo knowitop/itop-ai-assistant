@@ -218,6 +218,7 @@
     "col_status": "Stav",
     "col_objects": "Objekty",
     "col_embedded": "Vektorizované",
+    "col_metadata": "Metadáta",
     "col_deleted": "Zmazané",
     "col_duration": "Trvanie",
     "btn_refresh": "Obnoviť",

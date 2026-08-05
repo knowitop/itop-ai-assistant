@@ -25,6 +25,8 @@ from datetime import datetime
 from qdrant_client import AsyncQdrantClient, models
 
 from itop_ai_assistant.vector.store import (
+    ChunkDigest,
+    ChunkMetadata,
     ChunkRecord,
     FingerprintMismatchError,
     IndexMeta,
@@ -121,21 +123,22 @@ class QdrantChunkStore:
         _check_fingerprint(meta, model, dim)
         points = [
             models.PointStruct(
-                id=_point_id(c.obj_class, c.obj_id, c.chunk_kind, c.chunk_n),
+                id=_point_id(c.meta.obj_class, c.meta.obj_id, c.meta.chunk_kind, c.meta.chunk_n),
                 vector={_DENSE: c.embedding},
-                payload=_payload(c),
+                payload=_payload(c.meta),
             )
             for c in chunks
         ]
         await self.client.upsert(collection_name=self.collection_name(meta.version), points=points, wait=True)
         return len(points)
 
-    async def get_chunk_hashes(self, obj_class: str, obj_id: int) -> dict[tuple[str, int], str]:
-        """Stored content hashes of one object, keyed by (chunk_kind, chunk_n)."""
+    async def get_chunk_digests(self, obj_class: str, obj_id: int) -> dict[tuple[str, int], ChunkDigest]:
+        """Stored digests of one object, keyed by (chunk_kind, chunk_n).
+        `meta_hash` is `None` for a point written before that field existed."""
         meta = await self.active_meta()
         if meta is None:
             return {}
-        hashes: dict[tuple[str, int], str] = {}
+        digests: dict[tuple[str, int], ChunkDigest] = {}
         offset = None
         while True:
             records, offset = await self.client.scroll(
@@ -143,14 +146,45 @@ class QdrantChunkStore:
                 scroll_filter=_object_filter(obj_class, obj_id),
                 limit=_SCROLL_PAGE,
                 offset=offset,
-                with_payload=["chunk_kind", "chunk_n", "content_hash"],
+                with_payload=["chunk_kind", "chunk_n", "content_hash", "meta_hash"],
                 with_vectors=False,
             )
             for record in records:
                 payload = record.payload
-                hashes[(payload["chunk_kind"], payload["chunk_n"])] = payload["content_hash"]
+                digests[(payload["chunk_kind"], payload["chunk_n"])] = ChunkDigest(
+                    content_hash=payload["content_hash"], meta_hash=payload.get("meta_hash")
+                )
             if offset is None:
-                return hashes
+                return digests
+
+    async def update_chunk_metadata(self, chunks: list[ChunkMetadata]) -> int:
+        """Overwrite the payload of already-embedded chunks — vector untouched.
+
+        One `OverwritePayloadOperation` per point: each chunk's payload
+        differs, so a single batched `overwrite_payload` (which applies one
+        payload to many points) cannot cover them. `overwrite_`, not
+        `set_payload` (merge): a key `filters` no longer sends must
+        disappear from the point, and the indexer already has the full
+        payload here, so a merge would leave stale keys behind forever.
+        """
+        if not chunks:
+            return 0
+        meta = await self.active_meta()
+        if meta is None:
+            return 0
+        operations = [
+            models.OverwritePayloadOperation(
+                overwrite_payload=models.SetPayload(
+                    payload=_payload(c),
+                    points=[_point_id(c.obj_class, c.obj_id, c.chunk_kind, c.chunk_n)],
+                )
+            )
+            for c in chunks
+        ]
+        await self.client.batch_update_points(
+            collection_name=self.collection_name(meta.version), update_operations=operations, wait=True
+        )
+        return len(operations)
 
     async def stats(self) -> IndexStats | None:
         meta = await self.active_meta()
@@ -310,7 +344,10 @@ def _point_id(obj_class: str, obj_id: int, chunk_kind: str, chunk_n: int) -> str
     return str(uuid.uuid5(_ID_NAMESPACE, f"{obj_class}:{obj_id}:{chunk_kind}:{chunk_n}"))
 
 
-def _payload(chunk: ChunkRecord) -> dict:
+def _payload(chunk: ChunkMetadata) -> dict:
+    """The one builder both write paths share (`upsert_chunks`,
+    `update_chunk_metadata`) — anything that goes into `meta_hash` must be
+    written here too, or it silently freezes at indexing-time forever."""
     payload = {
         "obj_class": chunk.obj_class,
         "obj_id": chunk.obj_id,
@@ -320,6 +357,7 @@ def _payload(chunk: ChunkRecord) -> dict:
         "status": chunk.status,
         "org_id": chunk.org_id,
         "content_hash": chunk.content_hash,
+        "meta_hash": chunk.meta_hash,
         "created_at": chunk.created_at.isoformat() if isinstance(chunk.created_at, datetime) else chunk.created_at,
     }
     # Source-defined pre-filter keys ride flat alongside the rest so they can

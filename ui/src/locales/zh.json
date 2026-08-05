@@ -218,6 +218,7 @@
     "col_status": "状态",
     "col_objects": "对象数",
     "col_embedded": "已向量化",
+    "col_metadata": "元数据",
     "col_deleted": "已删除",
     "col_duration": "耗时",
     "btn_refresh": "刷新",

@@ -218,6 +218,7 @@
     "col_status": "Status",
     "col_objects": "Obiekty",
     "col_embedded": "Zwektoryzowane",
+    "col_metadata": "Metadane",
     "col_deleted": "Usunięte",
     "col_duration": "Czas trwania",
     "btn_refresh": "Odśwież",

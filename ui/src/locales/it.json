@@ -218,6 +218,7 @@
     "col_status": "Stato",
     "col_objects": "Oggetti",
     "col_embedded": "Vettorizzati",
+    "col_metadata": "Metadati",
     "col_deleted": "Eliminati",
     "col_duration": "Durata",
     "btn_refresh": "Aggiorna",

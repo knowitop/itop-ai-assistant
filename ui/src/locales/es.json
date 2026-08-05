@@ -218,6 +218,7 @@
     "col_status": "Estado",
     "col_objects": "Objetos",
     "col_embedded": "Vectorizados",
+    "col_metadata": "Metadatos",
     "col_deleted": "Eliminados",
     "col_duration": "Duración",
     "btn_refresh": "Actualizar",
