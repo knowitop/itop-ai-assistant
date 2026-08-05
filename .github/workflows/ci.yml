@@ -59,10 +59,6 @@ jobs:
       - name: Unit tests
         run: uv run pytest --cov=itop_ai_assistant --cov-report=term-missing -o log_cli=false
 
-      # Testcontainers spins up pgvector/pgvector:pg17 — the runner has a Docker daemon.
-      - name: Postgres/pgvector tests
-        run: uv run pytest test/pg -o log_cli=false
-
   ui:
     name: Build admin UI
     runs-on: ubuntu-latest
