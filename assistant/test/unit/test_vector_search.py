@@ -8,19 +8,22 @@ from itop_ai_assistant.vector.search import ObjectHit, SimilarSearch
 from itop_ai_assistant.vector.store import SearchHit
 
 _NOW = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
+_FAMILY = "tickets"
 
 
 def _hit(obj_id: int, score: float, obj_class: str = "UserRequest") -> SearchHit:
     return SearchHit(obj_class=obj_class, obj_id=obj_id, score=score)
 
 
-def _search(hits: list[SearchHit], *, existing: set[int] | None = None) -> tuple[SimilarSearch, MagicMock, MagicMock]:
+def _search(
+    hits: list[SearchHit], *, existing: set[int] | None = None, family: str = _FAMILY
+) -> tuple[SimilarSearch, MagicMock, MagicMock]:
     store = MagicMock()
     store.search = AsyncMock(return_value=hits)
     embedder = MagicMock()
     embedder.embed = AsyncMock(return_value=[[1.0, 0.0]])
     resolve = AsyncMock(side_effect=lambda obj_class, ids: set(ids) if existing is None else existing & set(ids))
-    return SimilarSearch(store, embedder, resolve), store, embedder
+    return SimilarSearch(store, embedder, resolve, family=family), store, embedder
 
 
 class TestSimilarSearch(unittest.IsolatedAsyncioTestCase):
@@ -51,6 +54,7 @@ class TestSimilarSearch(unittest.IsolatedAsyncioTestCase):
         )
 
         kwargs = store.search.await_args.kwargs
+        self.assertEqual(kwargs["family"], _FAMILY)
         self.assertEqual(kwargs["classes"], ["UserRequest", "Incident"])
         self.assertEqual(kwargs["statuses"], ["resolved", "closed"])
         self.assertEqual(kwargs["visibilities"], ["public", "internal"])
@@ -117,3 +121,12 @@ class TestSimilarSearch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await search.find("q", classes=[], statuses=["resolved"]), [])
         embedder.embed.assert_not_awaited()
         store.search.assert_not_awaited()
+
+    async def test_the_constructed_family_reaches_every_call_regardless_of_find_args(self):
+        # `family` is bound once at construction (D5, TASK-008) — no `find()`
+        # argument can steer a search to a different collection
+        search, store, _ = _search([], family="kb_articles")
+
+        await search.find("q", classes=["UserRequest"], statuses=["resolved"])
+
+        self.assertEqual(store.search.await_args.kwargs["family"], "kb_articles")

@@ -23,14 +23,20 @@ import { useTranslation } from 'react-i18next';
 
 import { apiGet, apiSend } from './api';
 
-// Response of GET /api/vector/status (vector/router.py).
-interface IndexInfo {
-  active_version: number;
-  model: string;
-  dim: number;
+// Response of GET /api/vector/status (vector/router.py). One entry per
+// collection family (VectorSource.name, e.g. "tickets") — several sources
+// share the same status page, each with its own collection (TASK-008).
+interface FamilyIndexInfo {
+  family: string;
+  // false = a family Qdrant still has data for, but no source in the
+  // current registry claims anymore — a decommission candidate.
+  configured: boolean;
+  active_version: number | null;
+  model: string | null;
+  dim: number | null;
   // null = no embeddings model configured to compare against — not a warning
   fingerprint_match: boolean | null;
-  rows: number;
+  rows: number | null;
 }
 
 interface JournalRun {
@@ -51,7 +57,7 @@ interface VectorStatus {
   enabled: boolean;
   embeddings_configured: boolean;
   store: { configured: boolean; ok: boolean | null; error: string | null };
-  index: IndexInfo | null;
+  index: FamilyIndexInfo[] | null;
   sync: Record<string, string | null> | null;
   last_reconcile: string | null;
   runs: JournalRun[];
@@ -211,29 +217,40 @@ function VectorStatusPanel() {
           {db.error}
         </Alert>
       )}
-      {status.index ? (
+      {status.index && status.index.length > 0 ? (
         <>
-          {status.index.fingerprint_match === false && (
+          {status.index.some((f) => f.fingerprint_match === false) && (
             <Alert color="orange">{t('vector.fingerprint_mismatch')}</Alert>
           )}
-          <Table withTableBorder verticalSpacing={4} maw={420}>
+          <Table withTableBorder verticalSpacing={4}>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>{t('vector.col_family')}</Table.Th>
+                <Table.Th>{t('vector.index_version')}</Table.Th>
+                <Table.Th>{t('common.field_model')}</Table.Th>
+                <Table.Th>{t('common.field_dimension')}</Table.Th>
+                <Table.Th>{t('vector.index_rows')}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
             <Table.Tbody>
-              <Table.Tr>
-                <Table.Td c="dimmed">{t('vector.index_version')}</Table.Td>
-                <Table.Td>{status.index.active_version}</Table.Td>
-              </Table.Tr>
-              <Table.Tr>
-                <Table.Td c="dimmed">{t('common.field_model')}</Table.Td>
-                <Table.Td>{status.index.model}</Table.Td>
-              </Table.Tr>
-              <Table.Tr>
-                <Table.Td c="dimmed">{t('common.field_dimension')}</Table.Td>
-                <Table.Td>{status.index.dim}</Table.Td>
-              </Table.Tr>
-              <Table.Tr>
-                <Table.Td c="dimmed">{t('vector.index_rows')}</Table.Td>
-                <Table.Td>{status.index.rows}</Table.Td>
-              </Table.Tr>
+              {status.index.map((f) => (
+                <Table.Tr key={f.family} c={f.configured ? undefined : 'dimmed'}>
+                  <Table.Td>
+                    <Group gap={6} wrap="nowrap">
+                      <Text>{f.family}</Text>
+                      {!f.configured && (
+                        <Badge color="gray" variant="light" title={t('vector.family_not_configured_hint')}>
+                          {t('vector.badge_family_not_configured')}
+                        </Badge>
+                      )}
+                    </Group>
+                  </Table.Td>
+                  <Table.Td>{f.active_version ?? '—'}</Table.Td>
+                  <Table.Td>{f.model ?? '—'}</Table.Td>
+                  <Table.Td>{f.dim ?? '—'}</Table.Td>
+                  <Table.Td>{f.rows ?? '—'}</Table.Td>
+                </Table.Tr>
+              ))}
             </Table.Tbody>
           </Table>
         </>

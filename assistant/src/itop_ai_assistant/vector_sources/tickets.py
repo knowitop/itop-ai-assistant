@@ -19,6 +19,11 @@ from itop_ai_assistant.vector.source import VectorRecord
 if TYPE_CHECKING:
     from itop_ai_assistant.deps import AppDeps, ItopBundle
 
+# The collection family this source writes to (`TicketVectorSource.name`) and
+# the one `SimilarSearch` in `agents/intake/pipeline.py` reads from — one
+# constant so the two never drift apart (TASK-008).
+FAMILY = "tickets"
+
 
 class _CatalogNames:
     """Per-sweep memo of service/subcategory id → name (profile chunk text)."""
@@ -59,7 +64,7 @@ class TicketVectorSource:
     mapped for a class).
     """
 
-    name = "tickets"
+    name = FAMILY
 
     def __init__(self, deps: "AppDeps", *, classes: list[str]) -> None:
         self._deps = deps

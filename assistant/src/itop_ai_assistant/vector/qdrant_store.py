@@ -4,16 +4,22 @@ Why Qdrant and not a relational vector extension: filtering happens during
 the graph walk instead of after it, grouping by object is built in, and new
 filter keys need no migration (ADR-001 in dev-docs).
 
-Collection layout. One collection per index version, `chunks_v{N}`, with a
+Collection layout. One collection per (family, index version),
+`{family}_v{N}` — a family is a `VectorSource.name`, e.g. `tickets` — with a
 named dense vector and an empty named sparse slot. The sparse slot is
 created from the start and stays unused: reserving it costs nothing, adding
 it to a live collection of hundreds of thousands of points costs a rebuild
-(ADR-007).
+(ADR-007). Splitting by family, not by `obj_class`, keeps one HNSW graph per
+independent business scenario instead of one graph serving all of them
+(ADR-015) — a source with several classes (tickets: UserRequest, Incident)
+still shares one collection, since "similar past tickets" is asked across
+both at once.
 
-The (model, dim) fingerprint lives in a tiny `chunks_meta` collection rather
-than in Redis, so the guard against mixing incomparable vectors sits with
-the vectors it guards. Its points carry a 1-dimensional placeholder vector
-because Qdrant has no notion of a point without one.
+The (family, model, dim) fingerprint lives in a tiny `chunks_meta` collection
+rather than in Redis, so the guard against mixing incomparable vectors sits
+with the vectors it guards. It carries one active row per family
+simultaneously. Its points carry a 1-dimensional placeholder vector because
+Qdrant has no notion of a point without one.
 
 Payloads carry ids, filter metadata and the content hash — never the text
 of a ticket.
@@ -42,6 +48,9 @@ _SCROLL_PAGE = 256
 # re-indexing the same chunk must overwrite it, never add a twin.
 _ID_NAMESPACE = uuid.UUID("6f0f5f8e-6a1d-5c2b-9a3e-0c1d2e3f4a5b")
 
+# System keys only: `fields.*` (source-defined pre-filter keys, D6/TASK-008)
+# rides unindexed under its own nested key — indexing a specific `fields.*`
+# key waits for a real filtering scenario (ADR-005).
 _KEYWORD_FIELDS = ("obj_class", "chunk_kind", "visibility", "status", "org_id", "obj_key")
 
 
@@ -69,22 +78,20 @@ class QdrantChunkStore:
         return self._client
 
     @staticmethod
-    def collection_name(version: int) -> str:
-        return f"chunks_v{version}"
+    def collection_name(family: str, version: int) -> str:
+        return f"{family}_v{version}"
 
     async def aclose(self) -> None:
         if self._client is not None:
             await self._client.close()
             self._client = None
 
-    async def active_meta(self) -> IndexMeta | None:
+    async def active_meta(self, family: str) -> IndexMeta | None:
         if not await self.client.collection_exists(_META_COLLECTION):
             return None
         records, _ = await self.client.scroll(
             collection_name=_META_COLLECTION,
-            scroll_filter=models.Filter(
-                must=[models.FieldCondition(key="is_active", match=models.MatchValue(value=True))]
-            ),
+            scroll_filter=_family_filter(family),
             limit=1,
             with_payload=True,
             with_vectors=False,
@@ -92,39 +99,66 @@ class QdrantChunkStore:
         if not records:
             return None
         payload = records[0].payload
-        return IndexMeta(version=payload["version"], model=payload["model"], dim=payload["dim"])
+        return IndexMeta(family=family, version=payload["version"], model=payload["model"], dim=payload["dim"])
 
-    async def ensure_version(self, model: str, dim: int) -> IndexMeta:
-        meta = await self.active_meta()
+    async def list_families(self) -> list[str]:
+        """Every family with an active row in `chunks_meta`, read from
+        storage rather than from the currently-registered sources."""
+        if not await self.client.collection_exists(_META_COLLECTION):
+            return []
+        families: list[str] = []
+        seen: set[str] = set()
+        offset = None
+        while True:
+            records, offset = await self.client.scroll(
+                collection_name=_META_COLLECTION,
+                scroll_filter=models.Filter(
+                    must=[models.FieldCondition(key="is_active", match=models.MatchValue(value=True))]
+                ),
+                limit=_SCROLL_PAGE,
+                offset=offset,
+                with_payload=["family"],
+                with_vectors=False,
+            )
+            for record in records:
+                family = record.payload["family"]
+                if family not in seen:
+                    seen.add(family)
+                    families.append(family)
+            if offset is None:
+                return families
+
+    async def ensure_version(self, family: str, model: str, dim: int) -> IndexMeta:
+        meta = await self.active_meta(family)
         if meta is not None:
             _check_fingerprint(meta, model, dim)
             # Also for a collection that already exists: a payload index added
             # by a later release would otherwise never appear on a deployment
             # that was provisioned before it (a filter would still work, by
             # full scan). Creating an existing index is a no-op for Qdrant.
-            await self._ensure_payload_indexes(meta.version)
+            await self._ensure_payload_indexes(family, meta.version)
             return meta
         version = 1
         await self._create_meta_collection()
-        await self._create_chunk_collection(version, dim)
+        await self._create_chunk_collection(family, version, dim)
         await self.client.upsert(
             collection_name=_META_COLLECTION,
             points=[
                 models.PointStruct(
-                    id=version,
+                    id=_meta_point_id(family, version),
                     vector=[0.0],
-                    payload={"version": version, "model": model, "dim": dim, "is_active": True},
+                    payload={"family": family, "version": version, "model": model, "dim": dim, "is_active": True},
                 )
             ],
             wait=True,
         )
-        return IndexMeta(version=version, model=model, dim=dim)
+        return IndexMeta(family=family, version=version, model=model, dim=dim)
 
-    async def upsert_chunks(self, chunks: list[ChunkRecord], *, model: str, dim: int) -> int:
+    async def upsert_chunks(self, chunks: list[ChunkRecord], *, family: str, model: str, dim: int) -> int:
         """Idempotent insert-or-update by (obj_class, obj_id, chunk_kind, chunk_n)."""
         if not chunks:
             return 0
-        meta = _require_active(await self.active_meta())
+        meta = _require_active(await self.active_meta(family))
         _check_fingerprint(meta, model, dim)
         points = [
             models.PointStruct(
@@ -134,20 +168,20 @@ class QdrantChunkStore:
             )
             for c in chunks
         ]
-        await self.client.upsert(collection_name=self.collection_name(meta.version), points=points, wait=True)
+        await self.client.upsert(collection_name=self.collection_name(family, meta.version), points=points, wait=True)
         return len(points)
 
-    async def get_chunk_digests(self, obj_class: str, obj_id: int) -> dict[tuple[str, int], ChunkDigest]:
+    async def get_chunk_digests(self, family: str, obj_class: str, obj_id: int) -> dict[tuple[str, int], ChunkDigest]:
         """Stored digests of one object, keyed by (chunk_kind, chunk_n).
         `meta_hash` is `None` for a point written before that field existed."""
-        meta = await self.active_meta()
+        meta = await self.active_meta(family)
         if meta is None:
             return {}
         digests: dict[tuple[str, int], ChunkDigest] = {}
         offset = None
         while True:
             records, offset = await self.client.scroll(
-                collection_name=self.collection_name(meta.version),
+                collection_name=self.collection_name(family, meta.version),
                 scroll_filter=_object_filter(obj_class, obj_id),
                 limit=_SCROLL_PAGE,
                 offset=offset,
@@ -162,7 +196,7 @@ class QdrantChunkStore:
             if offset is None:
                 return digests
 
-    async def update_chunk_metadata(self, chunks: list[ChunkMetadata]) -> int:
+    async def update_chunk_metadata(self, chunks: list[ChunkMetadata], *, family: str) -> int:
         """Overwrite the payload of already-embedded chunks — vector untouched.
 
         One `OverwritePayloadOperation` per point: each chunk's payload
@@ -174,7 +208,7 @@ class QdrantChunkStore:
         """
         if not chunks:
             return 0
-        meta = await self.active_meta()
+        meta = await self.active_meta(family)
         if meta is None:
             return 0
         operations = [
@@ -187,23 +221,23 @@ class QdrantChunkStore:
             for c in chunks
         ]
         await self.client.batch_update_points(
-            collection_name=self.collection_name(meta.version), update_operations=operations, wait=True
+            collection_name=self.collection_name(family, meta.version), update_operations=operations, wait=True
         )
         return len(operations)
 
-    async def stats(self) -> IndexStats | None:
-        meta = await self.active_meta()
+    async def stats(self, family: str) -> IndexStats | None:
+        meta = await self.active_meta(family)
         if meta is None:
             return None
-        info = await self.client.get_collection(self.collection_name(meta.version))
-        return IndexStats(version=meta.version, rows=info.points_count or 0)
+        info = await self.client.get_collection(self.collection_name(family, meta.version))
+        return IndexStats(family=family, version=meta.version, rows=info.points_count or 0)
 
-    async def delete_object(self, obj_class: str, obj_id: int) -> int:
+    async def delete_object(self, family: str, obj_class: str, obj_id: int) -> int:
         """Delete every chunk of one object. Returns points deleted."""
-        meta = await self.active_meta()
+        meta = await self.active_meta(family)
         if meta is None:
             return 0
-        name = self.collection_name(meta.version)
+        name = self.collection_name(family, meta.version)
         selector = _object_filter(obj_class, obj_id)
         # Qdrant's delete does not report how much it removed, and the sweep
         # report counts deletions — so count first, then delete.
@@ -214,22 +248,22 @@ class QdrantChunkStore:
             )
         return removed
 
-    async def delete_chunks(self, obj_class: str, obj_id: int, keys: list[tuple[str, int]]) -> int:
+    async def delete_chunks(self, family: str, obj_class: str, obj_id: int, keys: list[tuple[str, int]]) -> int:
         """Delete specific chunks of one object (vanished kinds/ordinals)."""
         if not keys:
             return 0
-        meta = await self.active_meta()
+        meta = await self.active_meta(family)
         if meta is None:
             return 0
         point_ids = [_point_id(obj_class, obj_id, kind, n) for kind, n in keys]
         await self.client.delete(
-            collection_name=self.collection_name(meta.version),
+            collection_name=self.collection_name(family, meta.version),
             points_selector=models.PointIdsList(points=point_ids),
             wait=True,
         )
         return len(point_ids)
 
-    async def list_object_ids(self, obj_class: str, after: int = 0, limit: int = 1000) -> list[int]:
+    async def list_object_ids(self, family: str, obj_class: str, after: int = 0, limit: int = 1000) -> list[int]:
         """Distinct indexed obj_ids > `after`, ascending — keyset pagination
         for the reconciliation walk.
 
@@ -237,7 +271,7 @@ class QdrantChunkStore:
         as many times as it has chunks; pages are read until `limit` distinct
         ids are collected or the class runs out.
         """
-        meta = await self.active_meta()
+        meta = await self.active_meta(family)
         if meta is None:
             return []
         found: list[int] = []
@@ -245,7 +279,7 @@ class QdrantChunkStore:
         offset = None
         while len(found) < limit:
             records, offset = await self.client.scroll(
-                collection_name=self.collection_name(meta.version),
+                collection_name=self.collection_name(family, meta.version),
                 scroll_filter=models.Filter(
                     must=[
                         models.FieldCondition(key="obj_class", match=models.MatchValue(value=obj_class)),
@@ -273,6 +307,7 @@ class QdrantChunkStore:
         self,
         embedding: list[float],
         *,
+        family: str,
         classes: list[str],
         statuses: list[str],
         visibilities: list[str],
@@ -293,7 +328,7 @@ class QdrantChunkStore:
         The class of a hit is read from its best chunk's payload rather than
         parsed back out of the group id — one format less to keep in sync.
         """
-        meta = await self.active_meta()
+        meta = await self.active_meta(family)
         if meta is None:
             return []
         must: list[models.Condition] = [
@@ -313,7 +348,7 @@ class QdrantChunkStore:
                 models.FieldCondition(key="obj_key", match=models.MatchValue(value=f"{exclude[0]}:{exclude[1]}"))
             )
         response = await self.client.query_points_groups(
-            collection_name=self.collection_name(meta.version),
+            collection_name=self.collection_name(family, meta.version),
             query=embedding,
             using=_DENSE,
             query_filter=models.Filter(must=must, must_not=must_not or None),
@@ -344,18 +379,21 @@ class QdrantChunkStore:
         await self.client.create_payload_index(
             collection_name=_META_COLLECTION, field_name="is_active", field_schema=models.PayloadSchemaType.BOOL
         )
+        await self.client.create_payload_index(
+            collection_name=_META_COLLECTION, field_name="family", field_schema=models.PayloadSchemaType.KEYWORD
+        )
 
-    async def _create_chunk_collection(self, version: int, dim: int) -> None:
-        name = self.collection_name(version)
+    async def _create_chunk_collection(self, family: str, version: int, dim: int) -> None:
+        name = self.collection_name(family, version)
         await self.client.create_collection(
             collection_name=name,
             vectors_config={_DENSE: models.VectorParams(size=dim, distance=models.Distance.COSINE)},
             sparse_vectors_config={_SPARSE: models.SparseVectorParams(index=models.SparseIndexParams())},
         )
-        await self._ensure_payload_indexes(version)
+        await self._ensure_payload_indexes(family, version)
 
-    async def _ensure_payload_indexes(self, version: int) -> None:
-        name = self.collection_name(version)
+    async def _ensure_payload_indexes(self, family: str, version: int) -> None:
+        name = self.collection_name(family, version)
         for field in _KEYWORD_FIELDS:
             await self.client.create_payload_index(
                 collection_name=name, field_name=field, field_schema=models.PayloadSchemaType.KEYWORD
@@ -375,6 +413,22 @@ def _point_id(obj_class: str, obj_id: int, chunk_kind: str, chunk_n: int) -> str
     """Qdrant accepts a UUID or an unsigned int as a point id; the composite
     key becomes a deterministic UUID and stays in the payload for filtering."""
     return str(uuid.uuid5(_ID_NAMESPACE, f"{obj_class}:{obj_id}:{chunk_kind}:{chunk_n}"))
+
+
+def _meta_point_id(family: str, version: int) -> str:
+    """A bare `version` int collides across families (`tickets` v1 and
+    `kb_articles` v1 are different rows) — namespaced the same way chunk
+    point ids already are."""
+    return str(uuid.uuid5(_ID_NAMESPACE, f"{family}:{version}"))
+
+
+def _family_filter(family: str) -> models.Filter:
+    return models.Filter(
+        must=[
+            models.FieldCondition(key="is_active", match=models.MatchValue(value=True)),
+            models.FieldCondition(key="family", match=models.MatchValue(value=family)),
+        ]
+    )
 
 
 def _payload(chunk: ChunkMetadata) -> dict:
@@ -402,9 +456,10 @@ def _payload(chunk: ChunkMetadata) -> dict:
         payload["last_update"] = (
             chunk.last_update.isoformat() if isinstance(chunk.last_update, datetime) else chunk.last_update
         )
-    # Source-defined pre-filter keys ride flat alongside the rest so they can
-    # be indexed and filtered like any other field (see ADR-005).
-    payload.update(chunk.filters or {})
+    # Source-defined pre-filter keys nest under `fields` so a source's own key
+    # (e.g. `status`) can never shadow a system key of the same name (D6,
+    # TASK-008). Not indexed automatically — see `_KEYWORD_FIELDS` (ADR-005).
+    payload["fields"] = chunk.filters or {}
     return payload
 
 

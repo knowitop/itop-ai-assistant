@@ -7,6 +7,7 @@ from itop_ai_assistant.vector.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.store import ChunkDigest, ChunkMetadata, ChunkRecord, ChunkStore, FingerprintMismatchError
 
 _NOW = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
+_FAMILY = "tickets"
 
 
 def _meta(
@@ -69,7 +70,7 @@ def _chunk(
 class QdrantStoreCase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.store = QdrantChunkStore(":memory:")
-        self.meta = await self.store.ensure_version("test-model", 4)
+        self.meta = await self.store.ensure_version(_FAMILY, "test-model", 4)
 
     async def asyncTearDown(self):
         await self.store.aclose()
@@ -80,37 +81,69 @@ class TestVersioning(QdrantStoreCase):
         self.assertIsInstance(self.store, ChunkStore)
 
     async def test_first_use_creates_v1(self):
-        self.assertEqual((self.meta.version, self.meta.model, self.meta.dim), (1, "test-model", 4))
+        self.assertEqual(
+            (self.meta.family, self.meta.version, self.meta.model, self.meta.dim), (_FAMILY, 1, "test-model", 4)
+        )
 
     async def test_active_meta_survives_a_new_client(self):
-        self.assertEqual(await self.store.active_meta(), self.meta)
+        self.assertEqual(await self.store.active_meta(_FAMILY), self.meta)
 
     async def test_same_fingerprint_reuses_the_version(self):
-        self.assertEqual(await self.store.ensure_version("test-model", 4), self.meta)
+        self.assertEqual(await self.store.ensure_version(_FAMILY, "test-model", 4), self.meta)
 
     async def test_a_different_model_refuses_to_write(self):
         with self.assertRaises(FingerprintMismatchError):
-            await self.store.ensure_version("other-model", 4)
+            await self.store.ensure_version(_FAMILY, "other-model", 4)
 
     async def test_a_different_dimension_refuses_to_write(self):
         with self.assertRaises(FingerprintMismatchError):
-            await self.store.ensure_version("test-model", 8)
+            await self.store.ensure_version(_FAMILY, "test-model", 8)
+
+    async def test_two_families_coexist_as_different_collections(self):
+        other = await self.store.ensure_version("kb_articles", "test-model", 4)
+
+        self.assertEqual((other.family, other.version), ("kb_articles", 1))
+        self.assertEqual(await self.store.active_meta(_FAMILY), self.meta)
+        self.assertEqual(await self.store.active_meta("kb_articles"), other)
+
+        await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
+        await self.store.upsert_chunks(
+            [_chunk(1, obj_class="KnowledgeBaseArticle")], family="kb_articles", model="test-model", dim=4
+        )
+
+        self.assertEqual((await self.store.stats(_FAMILY)).rows, 1)
+        self.assertEqual((await self.store.stats("kb_articles")).rows, 1)
+        self.assertEqual(await self.store.list_object_ids("kb_articles", "UserRequest"), [])
+
+    async def test_list_families_reads_active_rows_from_storage(self):
+        await self.store.ensure_version("kb_articles", "test-model", 4)
+
+        self.assertEqual(set(await self.store.list_families()), {_FAMILY, "kb_articles"})
+
+    async def test_empty_store_has_no_families(self):
+        store = QdrantChunkStore(":memory:")
+        try:
+            self.assertEqual(await store.list_families(), [])
+        finally:
+            await store.aclose()
 
 
 class TestUpsert(QdrantStoreCase):
     async def test_chunks_are_written_and_counted(self):
-        written = await self.store.upsert_chunks([_chunk(1), _chunk(1, "solution")], model="test-model", dim=4)
+        written = await self.store.upsert_chunks(
+            [_chunk(1), _chunk(1, "solution")], family=_FAMILY, model="test-model", dim=4
+        )
 
         self.assertEqual(written, 2)
-        stats = await self.store.stats()
+        stats = await self.store.stats(_FAMILY)
         self.assertEqual(stats.rows, 2)
 
     async def test_rewriting_the_same_chunk_updates_it(self):
-        await self.store.upsert_chunks([_chunk(1, digest="old")], model="test-model", dim=4)
-        await self.store.upsert_chunks([_chunk(1, digest="new")], model="test-model", dim=4)
+        await self.store.upsert_chunks([_chunk(1, digest="old")], family=_FAMILY, model="test-model", dim=4)
+        await self.store.upsert_chunks([_chunk(1, digest="new")], family=_FAMILY, model="test-model", dim=4)
 
-        self.assertEqual((await self.store.stats()).rows, 1)
-        digests = await self.store.get_chunk_digests("UserRequest", 1)
+        self.assertEqual((await self.store.stats(_FAMILY)).rows, 1)
+        digests = await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1)
         self.assertEqual(digests[("body", 0)].content_hash, "new")
 
     async def test_hashes_are_keyed_by_kind_and_ordinal(self):
@@ -120,11 +153,12 @@ class TestUpsert(QdrantStoreCase):
                 _chunk(1, "body", 1, digest="b"),
                 _chunk(1, "solution", 0, digest="c"),
             ],
+            family=_FAMILY,
             model="test-model",
             dim=4,
         )
 
-        digests = await self.store.get_chunk_digests("UserRequest", 1)
+        digests = await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1)
         self.assertEqual(
             {key: digest.content_hash for key, digest in digests.items()},
             {("body", 0): "a", ("body", 1): "b", ("solution", 0): "c"},
@@ -133,93 +167,113 @@ class TestUpsert(QdrantStoreCase):
     async def test_upserted_chunks_carry_a_meta_hash(self):
         meta = _meta(1)
         await self.store.upsert_chunks(
-            [ChunkRecord(meta=meta, embedding=[1.0, 0.0, 0.0, 0.0])], model="test-model", dim=4
+            [ChunkRecord(meta=meta, embedding=[1.0, 0.0, 0.0, 0.0])], family=_FAMILY, model="test-model", dim=4
         )
 
-        digests = await self.store.get_chunk_digests("UserRequest", 1)
+        digests = await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1)
 
         self.assertEqual(digests[("body", 0)].meta_hash, meta.meta_hash)
 
     async def test_hashes_of_an_unknown_object_are_empty(self):
-        self.assertEqual(await self.store.get_chunk_digests("UserRequest", 999), {})
+        self.assertEqual(await self.store.get_chunk_digests(_FAMILY, "UserRequest", 999), {})
 
     async def test_writing_under_a_stale_fingerprint_is_refused(self):
         with self.assertRaises(FingerprintMismatchError):
-            await self.store.upsert_chunks([_chunk(1)], model="other-model", dim=4)
+            await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="other-model", dim=4)
 
     async def test_no_chunk_payload_carries_text(self):
         # The index is a derived cache; anything shown to a human is re-read from iTop
-        await self.store.upsert_chunks([_chunk(1)], model="test-model", dim=4)
+        await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
 
         records, _ = await self.store.client.scroll(
-            collection_name=self.store.collection_name(1), limit=10, with_payload=True
+            collection_name=self.store.collection_name(_FAMILY, 1), limit=10, with_payload=True
         )
         for record in records:
             self.assertNotIn("text", record.payload)
             self.assertNotIn("content", record.payload)
 
+    async def test_filters_land_nested_under_fields(self):
+        # D6/TASK-008: a source-defined key must not shadow a system key of
+        # the same name — `fields.*` is the fix, verified here directly.
+        await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
+
+        records, _ = await self.store.client.scroll(
+            collection_name=self.store.collection_name(_FAMILY, 1), limit=10, with_payload=True
+        )
+        self.assertEqual(records[0].payload["fields"], {"service_id": "5"})
+        self.assertNotIn("service_id", records[0].payload)
+
 
 class TestDeletion(QdrantStoreCase):
     async def test_deleting_an_object_removes_all_of_its_chunks(self):
         await self.store.upsert_chunks(
-            [_chunk(1, "body"), _chunk(1, "solution"), _chunk(2, "body")], model="test-model", dim=4
+            [_chunk(1, "body"), _chunk(1, "solution"), _chunk(2, "body")], family=_FAMILY, model="test-model", dim=4
         )
 
-        removed = await self.store.delete_object("UserRequest", 1)
+        removed = await self.store.delete_object(_FAMILY, "UserRequest", 1)
 
         self.assertEqual(removed, 2)
-        self.assertEqual((await self.store.stats()).rows, 1)
-        self.assertEqual(await self.store.get_chunk_digests("UserRequest", 1), {})
+        self.assertEqual((await self.store.stats(_FAMILY)).rows, 1)
+        self.assertEqual(await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1), {})
 
     async def test_deleting_an_absent_object_removes_nothing(self):
-        self.assertEqual(await self.store.delete_object("UserRequest", 999), 0)
+        self.assertEqual(await self.store.delete_object(_FAMILY, "UserRequest", 999), 0)
 
     async def test_named_chunks_are_deleted_and_the_rest_stay(self):
         await self.store.upsert_chunks(
             [_chunk(1, "body", 0), _chunk(1, "body", 1), _chunk(1, "solution", 0)],
+            family=_FAMILY,
             model="test-model",
             dim=4,
         )
 
-        removed = await self.store.delete_chunks("UserRequest", 1, [("body", 1)])
+        removed = await self.store.delete_chunks(_FAMILY, "UserRequest", 1, [("body", 1)])
 
         self.assertEqual(removed, 1)
-        self.assertEqual(set(await self.store.get_chunk_digests("UserRequest", 1)), {("body", 0), ("solution", 0)})
+        self.assertEqual(
+            set(await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1)), {("body", 0), ("solution", 0)}
+        )
 
     async def test_deleting_an_empty_list_touches_nothing(self):
-        await self.store.upsert_chunks([_chunk(1)], model="test-model", dim=4)
+        await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
 
-        self.assertEqual(await self.store.delete_chunks("UserRequest", 1, []), 0)
-        self.assertEqual((await self.store.stats()).rows, 1)
+        self.assertEqual(await self.store.delete_chunks(_FAMILY, "UserRequest", 1, []), 0)
+        self.assertEqual((await self.store.stats(_FAMILY)).rows, 1)
 
 
 class TestReconciliationWalk(QdrantStoreCase):
     async def test_object_ids_come_back_ascending_and_deduplicated(self):
         await self.store.upsert_chunks(
             [_chunk(3, "body"), _chunk(1, "body"), _chunk(1, "solution"), _chunk(2, "body")],
+            family=_FAMILY,
             model="test-model",
             dim=4,
         )
 
-        self.assertEqual(await self.store.list_object_ids("UserRequest"), [1, 2, 3])
+        self.assertEqual(await self.store.list_object_ids(_FAMILY, "UserRequest"), [1, 2, 3])
 
     async def test_the_walk_resumes_after_the_last_id_seen(self):
-        await self.store.upsert_chunks([_chunk(1), _chunk(2), _chunk(3)], model="test-model", dim=4)
+        await self.store.upsert_chunks([_chunk(1), _chunk(2), _chunk(3)], family=_FAMILY, model="test-model", dim=4)
 
-        self.assertEqual(await self.store.list_object_ids("UserRequest", after=1), [2, 3])
+        self.assertEqual(await self.store.list_object_ids(_FAMILY, "UserRequest", after=1), [2, 3])
 
     async def test_the_walk_respects_its_limit(self):
-        await self.store.upsert_chunks([_chunk(1), _chunk(2), _chunk(3)], model="test-model", dim=4)
+        await self.store.upsert_chunks([_chunk(1), _chunk(2), _chunk(3)], family=_FAMILY, model="test-model", dim=4)
 
-        self.assertEqual(await self.store.list_object_ids("UserRequest", limit=2), [1, 2])
+        self.assertEqual(await self.store.list_object_ids(_FAMILY, "UserRequest", limit=2), [1, 2])
 
     async def test_another_class_is_not_walked(self):
-        await self.store.upsert_chunks([_chunk(1)], model="test-model", dim=4)
+        await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
 
-        self.assertEqual(await self.store.list_object_ids("Incident"), [])
+        self.assertEqual(await self.store.list_object_ids(_FAMILY, "Incident"), [])
 
 
-_ALL = {"classes": ["UserRequest"], "statuses": ["resolved", "closed"], "visibilities": ["public", "internal"]}
+_ALL = {
+    "family": _FAMILY,
+    "classes": ["UserRequest"],
+    "statuses": ["resolved", "closed"],
+    "visibilities": ["public", "internal"],
+}
 
 
 class TestSearch(QdrantStoreCase):
@@ -229,6 +283,7 @@ class TestSearch(QdrantStoreCase):
     async def test_hits_come_back_by_descending_score(self):
         await self.store.upsert_chunks(
             [_chunk(1, vector=[1.0, 0.0, 0.0, 0.0]), _chunk(2, vector=[0.0, 1.0, 0.0, 0.0])],
+            family=_FAMILY,
             model="test-model",
             dim=4,
         )
@@ -246,6 +301,7 @@ class TestSearch(QdrantStoreCase):
                 _chunk(1, "body", vector=[1.0, 0.0, 0.0, 0.0]),
                 _chunk(1, "solution", vector=[0.99, 0.01, 0.0, 0.0]),
             ],
+            family=_FAMILY,
             model="test-model",
             dim=4,
         )
@@ -254,13 +310,36 @@ class TestSearch(QdrantStoreCase):
 
         self.assertEqual([hit.obj_id for hit in hits], [1])
 
-    async def test_status_filter_excludes_the_rest(self):
+    async def test_a_search_never_crosses_into_another_family(self):
+        await self.store.ensure_version("kb_articles", "test-model", 4)
         await self.store.upsert_chunks(
-            [_chunk(1, status="resolved"), _chunk(2, status="closed")], model="test-model", dim=4
+            [_chunk(1, vector=[1.0, 0.0, 0.0, 0.0])], family=_FAMILY, model="test-model", dim=4
+        )
+        await self.store.upsert_chunks(
+            [_chunk(1, obj_class="KnowledgeBaseArticle", vector=[1.0, 0.0, 0.0, 0.0])],
+            family="kb_articles",
+            model="test-model",
+            dim=4,
         )
 
         hits = await self.store.search(
             [1.0, 0.0, 0.0, 0.0],
+            family=_FAMILY,
+            classes=["UserRequest", "KnowledgeBaseArticle"],
+            statuses=["resolved", "closed"],
+            visibilities=["public", "internal"],
+        )
+
+        self.assertEqual([(hit.obj_class, hit.obj_id) for hit in hits], [("UserRequest", 1)])
+
+    async def test_status_filter_excludes_the_rest(self):
+        await self.store.upsert_chunks(
+            [_chunk(1, status="resolved"), _chunk(2, status="closed")], family=_FAMILY, model="test-model", dim=4
+        )
+
+        hits = await self.store.search(
+            [1.0, 0.0, 0.0, 0.0],
+            family=_FAMILY,
             classes=["UserRequest"],
             statuses=["closed"],
             visibilities=["public", "internal"],
@@ -270,11 +349,15 @@ class TestSearch(QdrantStoreCase):
 
     async def test_visibility_filter_excludes_internal(self):
         await self.store.upsert_chunks(
-            [_chunk(1, visibility="public"), _chunk(2, visibility="internal")], model="test-model", dim=4
+            [_chunk(1, visibility="public"), _chunk(2, visibility="internal")],
+            family=_FAMILY,
+            model="test-model",
+            dim=4,
         )
 
         hits = await self.store.search(
             [1.0, 0.0, 0.0, 0.0],
+            family=_FAMILY,
             classes=["UserRequest"],
             statuses=["resolved", "closed"],
             visibilities=["public"],
@@ -283,21 +366,25 @@ class TestSearch(QdrantStoreCase):
         self.assertEqual([hit.obj_id for hit in hits], [1])
 
     async def test_allowed_orgs_none_means_unrestricted(self):
-        await self.store.upsert_chunks([_chunk(1, org_id="1"), _chunk(2, org_id="2")], model="test-model", dim=4)
+        await self.store.upsert_chunks(
+            [_chunk(1, org_id="1"), _chunk(2, org_id="2")], family=_FAMILY, model="test-model", dim=4
+        )
 
         hits = await self.store.search([1.0, 0.0, 0.0, 0.0], allowed_orgs=None, **_ALL)
 
         self.assertEqual({hit.obj_id for hit in hits}, {1, 2})
 
     async def test_allowed_orgs_narrows_the_candidates(self):
-        await self.store.upsert_chunks([_chunk(1, org_id="1"), _chunk(2, org_id="2")], model="test-model", dim=4)
+        await self.store.upsert_chunks(
+            [_chunk(1, org_id="1"), _chunk(2, org_id="2")], family=_FAMILY, model="test-model", dim=4
+        )
 
         hits = await self.store.search([1.0, 0.0, 0.0, 0.0], allowed_orgs=["2"], **_ALL)
 
         self.assertEqual([hit.obj_id for hit in hits], [2])
 
     async def test_the_asking_ticket_can_be_excluded(self):
-        await self.store.upsert_chunks([_chunk(1), _chunk(2)], model="test-model", dim=4)
+        await self.store.upsert_chunks([_chunk(1), _chunk(2)], family=_FAMILY, model="test-model", dim=4)
 
         hits = await self.store.search([1.0, 0.0, 0.0, 0.0], exclude=("UserRequest", 1), **_ALL)
 
@@ -307,11 +394,12 @@ class TestSearch(QdrantStoreCase):
         # `Ticket` subclasses share one numbering, but root hierarchies do not:
         # excluding UserRequest 1 must not silence some other class's id 1
         await self.store.upsert_chunks(
-            [_chunk(1), _chunk(1, obj_class="KnowledgeBaseArticle")], model="test-model", dim=4
+            [_chunk(1), _chunk(1, obj_class="KnowledgeBaseArticle")], family=_FAMILY, model="test-model", dim=4
         )
 
         hits = await self.store.search(
             [1.0, 0.0, 0.0, 0.0],
+            family=_FAMILY,
             classes=["UserRequest", "KnowledgeBaseArticle"],
             statuses=["resolved", "closed"],
             visibilities=["public", "internal"],
@@ -322,11 +410,12 @@ class TestSearch(QdrantStoreCase):
 
     async def test_the_same_id_in_two_hierarchies_stays_two_objects(self):
         await self.store.upsert_chunks(
-            [_chunk(1), _chunk(1, obj_class="KnowledgeBaseArticle")], model="test-model", dim=4
+            [_chunk(1), _chunk(1, obj_class="KnowledgeBaseArticle")], family=_FAMILY, model="test-model", dim=4
         )
 
         hits = await self.store.search(
             [1.0, 0.0, 0.0, 0.0],
+            family=_FAMILY,
             classes=["UserRequest", "KnowledgeBaseArticle"],
             statuses=["resolved", "closed"],
             visibilities=["public", "internal"],
@@ -342,6 +431,7 @@ class TestSearch(QdrantStoreCase):
                 _chunk(1, last_update=datetime(2026, 7, 1, tzinfo=UTC)),
                 _chunk(2, last_update=datetime(2024, 1, 1, tzinfo=UTC)),
             ],
+            family=_FAMILY,
             model="test-model",
             dim=4,
         )
@@ -353,7 +443,7 @@ class TestSearch(QdrantStoreCase):
     async def test_an_object_without_a_date_never_passes_the_window(self):
         # "Unknown" must not read as "recent" — the payload key is absent, and
         # an absent key matches no range condition
-        await self.store.upsert_chunks([_chunk(1, last_update=None)], model="test-model", dim=4)
+        await self.store.upsert_chunks([_chunk(1, last_update=None)], family=_FAMILY, model="test-model", dim=4)
 
         found = await self.store.search([1.0, 0.0, 0.0, 0.0], **_ALL)
         self.assertEqual([hit.obj_id for hit in found], [1])
@@ -362,43 +452,43 @@ class TestSearch(QdrantStoreCase):
         )
 
     async def test_limit_caps_the_number_of_objects(self):
-        await self.store.upsert_chunks([_chunk(1), _chunk(2), _chunk(3)], model="test-model", dim=4)
+        await self.store.upsert_chunks([_chunk(1), _chunk(2), _chunk(3)], family=_FAMILY, model="test-model", dim=4)
 
         self.assertEqual(len(await self.store.search([1.0, 0.0, 0.0, 0.0], limit=2, **_ALL)), 2)
 
 
 class TestMetadataUpdate(QdrantStoreCase):
     async def test_changes_status_without_touching_the_vector(self):
-        await self.store.upsert_chunks([_chunk(1, status="new")], model="test-model", dim=4)
+        await self.store.upsert_chunks([_chunk(1, status="new")], family=_FAMILY, model="test-model", dim=4)
         before, _ = await self.store.client.scroll(
-            collection_name=self.store.collection_name(1), limit=10, with_payload=False, with_vectors=True
+            collection_name=self.store.collection_name(_FAMILY, 1), limit=10, with_payload=False, with_vectors=True
         )
 
         new_meta = _meta(1, status="resolved")
-        updated = await self.store.update_chunk_metadata([new_meta])
+        updated = await self.store.update_chunk_metadata([new_meta], family=_FAMILY)
 
         self.assertEqual(updated, 1)
-        digests = await self.store.get_chunk_digests("UserRequest", 1)
+        digests = await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1)
         self.assertEqual(digests[("body", 0)].meta_hash, new_meta.meta_hash)
         after, _ = await self.store.client.scroll(
-            collection_name=self.store.collection_name(1), limit=10, with_payload=False, with_vectors=True
+            collection_name=self.store.collection_name(_FAMILY, 1), limit=10, with_payload=False, with_vectors=True
         )
         self.assertEqual(before[0].vector, after[0].vector)
 
     async def test_a_dropped_filter_key_is_removed_not_merged(self):
-        await self.store.upsert_chunks([_chunk(1)], model="test-model", dim=4)
+        await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
 
-        await self.store.update_chunk_metadata([_meta(1, filters=None)])
+        await self.store.update_chunk_metadata([_meta(1, filters=None)], family=_FAMILY)
 
         records, _ = await self.store.client.scroll(
-            collection_name=self.store.collection_name(1), limit=10, with_payload=True
+            collection_name=self.store.collection_name(_FAMILY, 1), limit=10, with_payload=True
         )
-        self.assertNotIn("service_id", records[0].payload)
+        self.assertEqual(records[0].payload["fields"], {})
 
     async def test_digest_of_a_point_written_outside_upsert_has_no_meta_hash(self):
         # Simulates a chunk indexed before this field existed.
         await self.store.client.upsert(
-            collection_name=self.store.collection_name(1),
+            collection_name=self.store.collection_name(_FAMILY, 1),
             points=[
                 models.PointStruct(
                     id=1,
@@ -417,14 +507,14 @@ class TestMetadataUpdate(QdrantStoreCase):
             wait=True,
         )
 
-        digests = await self.store.get_chunk_digests("UserRequest", 99)
+        digests = await self.store.get_chunk_digests(_FAMILY, "UserRequest", 99)
 
         self.assertEqual(digests[("body", 0)], ChunkDigest(content_hash="legacy", meta_hash=None))
 
     async def test_without_an_active_version_returns_zero(self):
         store = QdrantChunkStore(":memory:")
         try:
-            self.assertEqual(await store.update_chunk_metadata([_meta(1)]), 0)
+            self.assertEqual(await store.update_chunk_metadata([_meta(1)], family=_FAMILY), 0)
         finally:
             await store.aclose()
 

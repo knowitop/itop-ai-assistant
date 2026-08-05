@@ -98,6 +98,39 @@ class TestVectorStatus(VectorStatusTestCase):
 
         self.assertTrue(body["enabled"])
 
+    def test_index_is_a_list_of_families(self):
+        # `tickets` is always in the registry (registry.py), so it appears
+        # `configured: true` even with no active version yet — same "no
+        # index" case the old single-block response used to report.
+        deps = _make_deps(self.redis, store_url=":memory:")
+        self.client.app.state.deps = deps
+
+        body = self.client.get("/api/vector/status").json()
+
+        self.assertEqual(len(body["index"]), 1)
+        entry = body["index"][0]
+        self.assertEqual(entry["family"], "tickets")
+        self.assertTrue(entry["configured"])
+        self.assertIsNone(entry["active_version"])
+        self.assertIsNone(entry["rows"])
+
+    def test_a_family_no_longer_in_the_registry_is_reported_as_unconfigured(self):
+        # list_families() (Qdrant) knows about `kb_articles`; build_vector_sources()
+        # (code) does not — the union still surfaces it, flagged instead of dropped.
+        deps = _make_deps(self.redis, store_url=":memory:")
+        asyncio.run(deps.vector_store.ensure_version("kb_articles", "bge-m3", 4))
+        self.client.app.state.deps = deps
+
+        body = self.client.get("/api/vector/status").json()
+
+        families = {entry["family"]: entry for entry in body["index"]}
+        self.assertEqual(set(families), {"tickets", "kb_articles"})
+        self.assertTrue(families["tickets"]["configured"])
+        self.assertFalse(families["kb_articles"]["configured"])
+        self.assertEqual(families["kb_articles"]["active_version"], 1)
+        self.assertEqual(families["kb_articles"]["model"], "bge-m3")
+        self.assertEqual(families["kb_articles"]["rows"], 0)
+
     def test_requires_admin_token_when_set(self):
         self.client.app.state.deps = _make_deps(self.redis, admin_token=SecretStr("s3cret"))
 

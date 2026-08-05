@@ -12,6 +12,7 @@ from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
 from itop_ai_assistant.deps import AppDeps
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.vector.indexer import SWEEP_TASK
+from itop_ai_assistant.vector_sources.registry import build_vector_sources
 
 logger = logging.getLogger(__name__)
 
@@ -26,30 +27,48 @@ async def vector_status(request: Request) -> dict:
     embeddings_cfg = await deps.config_store.get("embeddings", EmbeddingsConfig)
 
     store_status: dict = {"configured": deps.vector_store.configured, "ok": None, "error": None}
-    index_info: dict | None = None
+    index_info: list[dict] | None = None
     sync: dict | None = None
     last_reconcile = None
     reindex_pending = False
     runs: list[dict] = []
     if deps.vector_store.configured:
         try:
-            meta = await deps.vector_store.active_meta()
+            # Union of what code registers today and what Qdrant actually has
+            # (TASK-008): a family dropped from the registry stays visible
+            # here — `configured: false` — until its collection is dropped,
+            # instead of silently disappearing from observability.
+            configured_families = {s.name for s in build_vector_sources(deps, vector_cfg)}
+            known_families = set(await deps.vector_store.list_families())
             store_status["ok"] = True
-            if meta is not None:
-                stats = await deps.vector_store.stats()
-                # None when no embeddings model is configured to compare against
-                fingerprint_match = (
-                    (meta.model, meta.dim) == (embeddings_cfg.model, embeddings_cfg.dimension)
-                    if embeddings_cfg.model
-                    else None
-                )
-                index_info = {
-                    "active_version": meta.version,
-                    "model": meta.model,
-                    "dim": meta.dim,
-                    "fingerprint_match": fingerprint_match,
-                    "rows": stats.rows if stats else 0,
+            index_info = []
+            for family in sorted(configured_families | known_families):
+                meta = await deps.vector_store.active_meta(family)
+                entry: dict = {
+                    "family": family,
+                    "configured": family in configured_families,
+                    "active_version": None,
+                    "model": None,
+                    "dim": None,
+                    "fingerprint_match": None,
+                    "rows": None,
                 }
+                if meta is not None:
+                    stats = await deps.vector_store.stats(family)
+                    # None when no embeddings model is configured to compare against
+                    fingerprint_match = (
+                        (meta.model, meta.dim) == (embeddings_cfg.model, embeddings_cfg.dimension)
+                        if embeddings_cfg.model
+                        else None
+                    )
+                    entry.update(
+                        active_version=meta.version,
+                        model=meta.model,
+                        dim=meta.dim,
+                        fingerprint_match=fingerprint_match,
+                        rows=stats.rows if stats else 0,
+                    )
+                index_info.append(entry)
             sync = await deps.vector_sync.list_cursors()
             last_reconcile = await deps.vector_sync.get_reconcile()
             reindex_pending = await deps.vector_sync.reindex_pending()

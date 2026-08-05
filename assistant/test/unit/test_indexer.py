@@ -14,7 +14,8 @@ from itop_ai_assistant.vector.store import ChunkDigest, ChunkMetadata, ChunkReco
 from itop_ai_assistant.vector.sync_state import VectorSyncState
 
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
-_META = IndexMeta(version=1, model="test-model", dim=4)
+_FAMILY = "tickets"
+_META = IndexMeta(family=_FAMILY, version=1, model="test-model", dim=4)
 _LOCK_KEY = "vector:sweep:lock"
 
 _VECTOR_CFG = VectorConfig(
@@ -48,7 +49,14 @@ def _record(
 class FakeTicketSource:
     """Stand-in for TicketVectorSource: same VectorSource contract, no iTop."""
 
-    def __init__(self, records: list[VectorRecord] | None = None, *, classes: tuple[str, ...] = ("UserRequest",)):
+    def __init__(
+        self,
+        records: list[VectorRecord] | None = None,
+        *,
+        classes: tuple[str, ...] = ("UserRequest",),
+        name: str = _FAMILY,
+    ):
+        self.name = name
         self.classes = list(classes)
         self._records = records or []
         self.prepare_calls = 0
@@ -77,70 +85,79 @@ class FakeTicketSource:
 
 
 class FakeChunkStore:
-    """In-memory ChunkStore: the indexer's contract, none of the storage."""
+    """In-memory ChunkStore: the indexer's contract, none of the storage.
+
+    State keyed by `(family, obj_class, obj_id)` throughout — a family is
+    just another dimension of the key, the same way `obj_class` already was
+    (TASK-008)."""
 
     def __init__(self, meta: IndexMeta = _META, *, configured: bool = True):
         self.configured = configured
         self._meta = meta
         # Mimics a real backend: writes land here too, so a second sweep
         # pass over an unchanged object sees what the first one wrote.
-        self.digests: dict[tuple[str, int], dict[tuple[str, int], ChunkDigest]] = {}
+        self.digests: dict[tuple[str, str, int], dict[tuple[str, int], ChunkDigest]] = {}
         self.upsert_calls: list[list[ChunkRecord]] = []
         self.update_metadata_calls: list[list[ChunkMetadata]] = []
-        self.delete_chunks_calls: list[tuple[str, int, list[tuple[str, int]]]] = []
-        self.delete_object_calls: list[tuple[str, int]] = []
+        self.delete_chunks_calls: list[tuple[str, str, int, list[tuple[str, int]]]] = []
+        self.delete_object_calls: list[tuple[str, str, int]] = []
         self.delete_object_return = 3  # matches the previous mock's fixed return value
         self.list_object_ids_calls = 0
         self.list_object_ids_side_effect = None
         self.ensure_version_error: Exception | None = None
+        # Per-family override — lets a test fail one family's fingerprint
+        # check without touching another's in the same pass.
+        self.ensure_version_errors: dict[str, Exception] = {}
 
-    async def ensure_version(self, model, dim) -> IndexMeta:
+    async def ensure_version(self, family, model, dim) -> IndexMeta:
+        if family in self.ensure_version_errors:
+            raise self.ensure_version_errors[family]
         if self.ensure_version_error:
             raise self.ensure_version_error
-        return self._meta
+        return IndexMeta(family=family, version=self._meta.version, model=self._meta.model, dim=self._meta.dim)
 
-    async def active_meta(self) -> IndexMeta | None:
-        return self._meta
+    async def active_meta(self, family) -> IndexMeta | None:
+        return IndexMeta(family=family, version=self._meta.version, model=self._meta.model, dim=self._meta.dim)
 
-    async def upsert_chunks(self, chunks, *, model, dim) -> int:
+    async def upsert_chunks(self, chunks, *, family, model, dim) -> int:
         self.upsert_calls.append(list(chunks))
         for c in chunks:
-            key = (c.meta.obj_class, c.meta.obj_id)
+            key = (family, c.meta.obj_class, c.meta.obj_id)
             self.digests.setdefault(key, {})[(c.meta.chunk_kind, c.meta.chunk_n)] = ChunkDigest(
                 content_hash=c.meta.content_hash, meta_hash=c.meta.meta_hash
             )
         return len(chunks)
 
-    async def get_chunk_digests(self, obj_class, obj_id) -> dict[tuple[str, int], ChunkDigest]:
-        return self.digests.get((obj_class, obj_id), {})
+    async def get_chunk_digests(self, family, obj_class, obj_id) -> dict[tuple[str, int], ChunkDigest]:
+        return self.digests.get((family, obj_class, obj_id), {})
 
-    async def update_chunk_metadata(self, chunks) -> int:
+    async def update_chunk_metadata(self, chunks, *, family) -> int:
         self.update_metadata_calls.append(list(chunks))
         for c in chunks:
-            key = (c.obj_class, c.obj_id)
+            key = (family, c.obj_class, c.obj_id)
             self.digests.setdefault(key, {})[(c.chunk_kind, c.chunk_n)] = ChunkDigest(
                 content_hash=c.content_hash, meta_hash=c.meta_hash
             )
         return len(chunks)
 
-    async def delete_chunks(self, obj_class, obj_id, keys) -> int:
-        self.delete_chunks_calls.append((obj_class, obj_id, list(keys)))
+    async def delete_chunks(self, family, obj_class, obj_id, keys) -> int:
+        self.delete_chunks_calls.append((family, obj_class, obj_id, list(keys)))
         return len(keys)
 
-    async def delete_object(self, obj_class, obj_id) -> int:
-        self.delete_object_calls.append((obj_class, obj_id))
+    async def delete_object(self, family, obj_class, obj_id) -> int:
+        self.delete_object_calls.append((family, obj_class, obj_id))
         return self.delete_object_return
 
-    async def list_object_ids(self, obj_class, after=0, limit=1000) -> list[int]:
+    async def list_object_ids(self, family, obj_class, after=0, limit=1000) -> list[int]:
         self.list_object_ids_calls += 1
         if self.list_object_ids_side_effect:
-            return self.list_object_ids_side_effect(obj_class, after, limit)
+            return self.list_object_ids_side_effect(family, obj_class, after, limit)
         return []
 
     async def search(self, embedding, **kwargs):
         return []
 
-    async def stats(self):
+    async def stats(self, family):
         return None
 
     async def aclose(self) -> None:
@@ -190,7 +207,10 @@ def _deps_mock(
 
 class IndexerTestCase(unittest.IsolatedAsyncioTestCase):
     async def _run(self, deps, source, embedder=None):
-        indexer = VectorIndexer(deps, sources=[source])
+        return await self._run_sources(deps, [source], embedder=embedder)
+
+    async def _run_sources(self, deps, sources, embedder=None):
+        indexer = VectorIndexer(deps, sources=sources)
         self.indexer = indexer
         embedder = embedder or _embedder_mock()
         self.embedder = embedder
@@ -239,6 +259,43 @@ class TestSkips(IndexerTestCase):
         self.assertEqual(source.prepare_calls, 0)
 
 
+class TestMultiFamily(IndexerTestCase):
+    """D1/D4, TASK-008: each `VectorSource.name` is its own collection, and a
+    fingerprint mismatch (or any other failure) in one family isolates to
+    that family's classes, the same way a single class's failure already
+    isolated to that class."""
+
+    async def test_two_sources_claiming_the_same_class_is_an_error(self):
+        a = FakeTicketSource([_record(1)], classes=("UserRequest",), name="tickets")
+        b = FakeTicketSource([_record(2)], classes=("UserRequest",), name="tickets2")
+        report = await self._run_sources(_deps_mock(), [a, b])
+
+        self.assertEqual(report.status, "error")
+        self.assertIn("UserRequest", report.errors[0])
+        self.assertIn("tickets", report.errors[0])
+        self.assertIn("tickets2", report.errors[0])
+        self.assertEqual(a.prepare_calls, 0)
+
+    async def test_fingerprint_mismatch_of_one_family_does_not_block_another(self):
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.classes["KnowledgeBaseArticle"] = VectorClassConfig(index_values=[], profile={"body": ["description"]})
+        store = FakeChunkStore()
+        store.ensure_version_errors = {"kb_articles": FingerprintMismatchError("dim changed")}
+        tickets = FakeTicketSource([_record(1)], classes=("UserRequest",), name="tickets")
+        kb = FakeTicketSource([_record(2)], classes=("KnowledgeBaseArticle",), name="kb_articles")
+        deps = _deps_mock(vector_cfg=cfg, store=store)
+
+        report = await self._run_sources(deps, [tickets, kb])
+
+        self.assertEqual(report.status, "error")
+        self.assertIn("rebuild required", "; ".join(report.errors))
+        self.assertEqual(tickets.prepare_calls, 1)
+        self.assertEqual(kb.prepare_calls, 1)
+        # tickets synced despite kb_articles' fingerprint mismatch
+        self.assertEqual(report.chunks_embedded, 1)
+        self.assertEqual(store.upsert_calls[-1][0].meta.obj_class, "UserRequest")
+
+
 class TestSweep(IndexerTestCase):
     async def test_embeds_and_upserts_new_ticket(self):
         store = FakeChunkStore()
@@ -261,7 +318,7 @@ class TestSweep(IndexerTestCase):
         await self._run(_deps_mock(store=store), source)
 
         store2 = FakeChunkStore()
-        store2.digests[("UserRequest", 1)] = dict(store.digests[("UserRequest", 1)])
+        store2.digests[(_FAMILY, "UserRequest", 1)] = dict(store.digests[(_FAMILY, "UserRequest", 1)])
         embedder2 = _embedder_mock()
         report = await self._run(_deps_mock(store=store2), FakeTicketSource([_record(1)]), embedder2)
 
@@ -274,13 +331,13 @@ class TestSweep(IndexerTestCase):
 
     async def test_vanished_chunks_deleted(self):
         store = FakeChunkStore()
-        store.digests[("UserRequest", 1)] = {
+        store.digests[(_FAMILY, "UserRequest", 1)] = {
             ("body", 0): ChunkDigest(content_hash="stale", meta_hash=None),
             ("body", 5): ChunkDigest(content_hash="gone", meta_hash=None),
         }
         report = await self._run(_deps_mock(store=store), FakeTicketSource([_record(1)]))
 
-        self.assertEqual(store.delete_chunks_calls, [("UserRequest", 1, [("body", 5)])])
+        self.assertEqual(store.delete_chunks_calls, [(_FAMILY, "UserRequest", 1, [("body", 5)])])
         self.assertEqual(report.chunks_deleted, 1)
         self.assertEqual(report.chunks_embedded, 1)  # ("body", 0) hash mismatch → re-embedded
 
@@ -288,7 +345,7 @@ class TestSweep(IndexerTestCase):
         store = FakeChunkStore()
         report = await self._run(_deps_mock(store=store), FakeTicketSource([_record(1, index_value="new")]))
 
-        self.assertEqual(store.delete_object_calls, [("UserRequest", 1)])
+        self.assertEqual(store.delete_object_calls, [(_FAMILY, "UserRequest", 1)])
         self.assertEqual(report.chunks_deleted, 3)
         self.assertEqual(store.upsert_calls, [])
 
@@ -367,7 +424,7 @@ class TestMetadataFreshness(IndexerTestCase):
         await self._run(_deps_mock(store=store), FakeTicketSource([_record(1, index_value="resolved")]))
 
         store2 = FakeChunkStore()
-        store2.digests[("UserRequest", 1)] = dict(store.digests[("UserRequest", 1)])
+        store2.digests[(_FAMILY, "UserRequest", 1)] = dict(store.digests[(_FAMILY, "UserRequest", 1)])
         embedder2 = _embedder_mock()
         report = await self._run(
             _deps_mock(store=store2), FakeTicketSource([_record(1, index_value="closed")]), embedder2
@@ -396,7 +453,7 @@ class TestMetadataFreshness(IndexerTestCase):
         await self._run(_deps_mock(store=store), FakeTicketSource([_record(1)]))
 
         store2 = FakeChunkStore()
-        store2.digests[("UserRequest", 1)] = dict(store.digests[("UserRequest", 1)])
+        store2.digests[(_FAMILY, "UserRequest", 1)] = dict(store.digests[(_FAMILY, "UserRequest", 1)])
         later = _NOW + timedelta(days=30)
         embedder2 = _embedder_mock()
         report = await self._run(_deps_mock(store=store2), FakeTicketSource([_record(1, last_update=later)]), embedder2)
@@ -411,7 +468,7 @@ class TestMetadataFreshness(IndexerTestCase):
         await self._run(_deps_mock(store=store), FakeTicketSource([_record(1, description="Broken.")]))
 
         store2 = FakeChunkStore()
-        store2.digests[("UserRequest", 1)] = dict(store.digests[("UserRequest", 1)])
+        store2.digests[(_FAMILY, "UserRequest", 1)] = dict(store.digests[(_FAMILY, "UserRequest", 1)])
         report = await self._run(_deps_mock(store=store2), FakeTicketSource([_record(1, description="Still broken.")]))
 
         self.assertEqual(report.chunks_embedded, 1)
@@ -421,10 +478,10 @@ class TestMetadataFreshness(IndexerTestCase):
     async def test_legacy_chunk_without_meta_hash_gets_one_metadata_rewrite(self):
         store = FakeChunkStore()
         await self._run(_deps_mock(store=store), FakeTicketSource([_record(1)]))
-        digest = store.digests[("UserRequest", 1)][("body", 0)]
+        digest = store.digests[(_FAMILY, "UserRequest", 1)][("body", 0)]
 
         store2 = FakeChunkStore()
-        store2.digests[("UserRequest", 1)] = {
+        store2.digests[(_FAMILY, "UserRequest", 1)] = {
             ("body", 0): ChunkDigest(content_hash=digest.content_hash, meta_hash=None)
         }
         report = await self._run(_deps_mock(store=store2), FakeTicketSource([_record(1)]))
@@ -447,7 +504,7 @@ class TestMetadataFreshness(IndexerTestCase):
         await self._run(_deps_mock(vector_cfg=cfg, store=store), FakeTicketSource([original]))
 
         store2 = FakeChunkStore()
-        store2.digests[("UserRequest", 1)] = dict(store.digests[("UserRequest", 1)])
+        store2.digests[(_FAMILY, "UserRequest", 1)] = dict(store.digests[(_FAMILY, "UserRequest", 1)])
         reopened = VectorRecord(
             obj_id=1,
             index_value="closed",
@@ -467,7 +524,7 @@ class TestMetadataFreshness(IndexerTestCase):
         await self._run(_deps_mock(store=store), FakeTicketSource([_record(1)]))
 
         store2 = FakeChunkStore()
-        store2.digests[("UserRequest", 1)] = dict(store.digests[("UserRequest", 1)])
+        store2.digests[(_FAMILY, "UserRequest", 1)] = dict(store.digests[(_FAMILY, "UserRequest", 1)])
         report = await self._run(_deps_mock(store=store2), FakeTicketSource([_record(1)]))
 
         self.assertEqual(report.chunks_embedded, 0)
@@ -538,30 +595,36 @@ class TestReindex(IndexerTestCase):
         kinds = [e["kind"] for e in await deps.vector_journal.recent()]
         self.assertIn("backfill", kinds)
 
-    async def test_request_survives_a_failed_attempt(self):
+    async def test_a_totally_broken_store_still_resets_cursors(self):
+        # ensure_version moved inside the per-class loop (D4, TASK-008): the
+        # cursor reset that defines a backfill now runs before any family's
+        # fingerprint is checked, since it is no longer gated by one upfront
+        # global call. A class whose family fails still loses its cursor —
+        # that costs the "backfill" label on the retry, not correctness: a
+        # dropped cursor already reads as "sweep everything" on its own.
         store = FakeChunkStore()
         store.ensure_version_error = RuntimeError("pg down")
         deps = _deps_mock(store=store)
         await deps.vector_sync.set_cursor("UserRequest", _NOW)
         await deps.vector_sync.request_reindex()
-        await self._run(deps, FakeTicketSource([_record(1)]))
+        report = await self._run(deps, FakeTicketSource([_record(1)]))
 
-        # Cursors untouched, so the pending flag stands and the next tick retries
-        self.assertEqual(await deps.vector_sync.get_cursor("UserRequest"), _NOW)
-        self.assertTrue(await deps.vector_sync.reindex_pending())
+        self.assertEqual(report.status, "error")
+        self.assertIsNone(await deps.vector_sync.get_cursor("UserRequest"))
+        self.assertFalse(await deps.vector_sync.reindex_pending())
 
 
 class TestReconciliation(IndexerTestCase):
     async def test_due_when_never_ran_and_deletes_orphans(self):
         store = FakeChunkStore()
-        store.list_object_ids_side_effect = lambda cls, after, limit: [1, 2] if after == 0 else []
+        store.list_object_ids_side_effect = lambda family, cls, after, limit: [1, 2] if after == 0 else []
         source = FakeTicketSource([])
         source.find_existing_ids_result = {1}
         deps = _deps_mock(store=store)
         report = await self._run(deps, source)
 
         self.assertEqual(report.status, "ok")
-        self.assertEqual(store.delete_object_calls, [("UserRequest", 2)])
+        self.assertEqual(store.delete_object_calls, [(_FAMILY, "UserRequest", 2)])
         kinds = [e["kind"] for e in await deps.vector_journal.recent()]
         self.assertIn("reconcile", kinds)
         self.assertIsNotNone(await deps.vector_sync.get_reconcile())

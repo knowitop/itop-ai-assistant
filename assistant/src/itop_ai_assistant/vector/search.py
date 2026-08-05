@@ -39,12 +39,23 @@ class ObjectHit:
 
 
 class SimilarSearch:
-    """One search over the vector index, resolved against its source."""
+    """One search over the vector index, resolved against its source.
 
-    def __init__(self, store: ChunkStore, embedder: EmbeddingsClient, resolve: Resolver) -> None:
+    `family` is fixed at construction, not passed to `find()`: the caller
+    that builds a `SimilarSearch` already commits to one business scenario
+    (the same place `resolve` gets bound, e.g. `ticket_repo.find_existing_ids`
+    in `pipeline.py`) — a wrong `family` becomes a mistake at that one
+    construction site instead of a risk on every call (D5, TASK-008). No
+    registry checks that `classes` actually belongs to `family`: building one
+    here would duplicate `vector_sources/registry.py`, the very duplication
+    D1/D2 avoid.
+    """
+
+    def __init__(self, store: ChunkStore, embedder: EmbeddingsClient, resolve: Resolver, *, family: str) -> None:
         self._store = store
         self._embedder = embedder
         self._resolve = resolve
+        self._family = family
 
     async def find(
         self,
@@ -70,6 +81,7 @@ class SimilarSearch:
         embedding = (await self._embedder.embed([text]))[0]
         hits = await self._store.search(
             embedding,
+            family=self._family,
             classes=classes,
             statuses=statuses,
             visibilities=list(visibilities),

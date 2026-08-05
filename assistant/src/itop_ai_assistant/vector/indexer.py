@@ -137,24 +137,34 @@ class VectorIndexer:
         journal_id = await self._journal_start(report.kind)
         embedder = EmbeddingsClient(emb_cfg)
         try:
-            meta = await store.ensure_version(model, emb_cfg.dimension)
             if full:
                 # Drops the pending-reindex flag along with the cursors — an
                 # attempt that fails earlier leaves the request standing
                 await self._deps.vector_sync.reset_cursors()
             sources = self._sources if self._sources is not None else build_vector_sources(self._deps, cfg)
-            class_to_source = {obj_class: source for source in sources for obj_class in source.classes}
+            class_to_source = _class_to_source(sources)
             active_sources = _dedupe(s for c in cfg.classes if (s := class_to_source.get(c)) is not None)
             for active_source in active_sources:
                 await active_source.prepare()
+            # One IndexMeta per family, resolved lazily on that family's first
+            # class in this pass — not once for the whole sweep (D3/D4,
+            # TASK-008): several classes can share a family (tickets), and a
+            # fingerprint mismatch on one family must not block the others.
+            meta_by_family: dict[str, IndexMeta] = {}
             for obj_class in cfg.classes:
                 source = class_to_source.get(obj_class)
                 if source is None:
                     logger.warning(f"vector sweep: no source registered for class {obj_class!r} — skipping the class")
                     continue
+                family = source.name
                 try:
+                    meta = meta_by_family.get(family)
+                    if meta is None:
+                        meta = await store.ensure_version(family, model, emb_cfg.dimension)
+                        meta_by_family[family] = meta
                     await self._sweep_class(
                         obj_class,
+                        family=family,
                         source=source,
                         store=store,
                         meta=meta,
@@ -163,15 +173,15 @@ class VectorIndexer:
                         report=report,
                         started_at=started_at,
                     )
+                except FingerprintMismatchError as e:
+                    logger.error(f"vector sweep: index rebuild required for family {family!r}: {e}")
+                    report.errors.append(f"rebuild required: {e}")
                 except Exception as e:
                     # Class isolation: this class's cursor stays put, others proceed
                     logger.exception(f"vector sweep: class {obj_class} failed")
                     report.errors.append(f"{obj_class}: {e}")
             if not report.errors and await self._reconcile_due(cfg):
                 await self._reconcile(store, class_to_source, cfg, report)
-        except FingerprintMismatchError as e:
-            logger.error(f"vector sweep: index rebuild required: {e}")
-            report.errors.append(f"rebuild required: {e}")
         except Exception as e:
             logger.exception("vector sweep failed")
             report.errors.append(str(e))
@@ -194,6 +204,7 @@ class VectorIndexer:
         self,
         obj_class: str,
         *,
+        family: str,
         source: VectorSource,
         store: ChunkStore,
         meta: IndexMeta,
@@ -227,7 +238,7 @@ class VectorIndexer:
                     max_seen = record.last_update
                 if class_cfg.index_values and record.index_value not in class_cfg.index_values:
                     # Left the indexable scope (e.g. reopened) — drop its chunks
-                    report.chunks_deleted += await store.delete_object(obj_class, record.obj_id)
+                    report.chunks_deleted += await store.delete_object(family, obj_class, record.obj_id)
                     continue
                 chunks = await source.chunk(
                     obj_class,
@@ -236,7 +247,7 @@ class VectorIndexer:
                     max_chunk_tokens=cfg.max_chunk_tokens,
                     log_entries_per_chunk=cfg.log_entries_per_chunk,
                 )
-                stored = await store.get_chunk_digests(obj_class, record.obj_id)
+                stored = await store.get_chunk_digests(family, obj_class, record.obj_id)
                 # A chunk lands in exactly one bucket: content changed wins over
                 # metadata-only, since upsert_chunks rewrites the whole payload
                 # anyway (including a fresh meta_hash).
@@ -258,9 +269,11 @@ class VectorIndexer:
             vectors = iter(await embedder.embed(texts) if texts else [])
             for record, changed, stale_meta, vanished in pending:
                 chunk_records = [ChunkRecord(meta=chunk_meta, embedding=next(vectors)) for _, chunk_meta in changed]
-                report.chunks_embedded += await store.upsert_chunks(chunk_records, model=meta.model, dim=meta.dim)
-                report.chunks_metadata_updated += await store.update_chunk_metadata(stale_meta)
-                report.chunks_deleted += await store.delete_chunks(obj_class, record.obj_id, vanished)
+                report.chunks_embedded += await store.upsert_chunks(
+                    chunk_records, family=family, model=meta.model, dim=meta.dim
+                )
+                report.chunks_metadata_updated += await store.update_chunk_metadata(stale_meta, family=family)
+                report.chunks_deleted += await store.delete_chunks(family, obj_class, record.obj_id, vanished)
 
             if len(records) < cfg.sweep_page_size:
                 break
@@ -288,15 +301,16 @@ class VectorIndexer:
                 source = class_to_source.get(obj_class)
                 if source is None:
                     continue
+                family = source.name
                 after = 0
                 while True:
-                    ids = await store.list_object_ids(obj_class, after=after, limit=_RECONCILE_BATCH)
+                    ids = await store.list_object_ids(family, obj_class, after=after, limit=_RECONCILE_BATCH)
                     if not ids:
                         break
                     seen += len(ids)
                     existing = await source.find_existing_ids(obj_class, ids)
                     for orphan in sorted(set(ids) - existing):
-                        deleted += await store.delete_object(obj_class, orphan)
+                        deleted += await store.delete_object(family, obj_class, orphan)
                     after = ids[-1]
                     await asyncio.sleep(cfg.sweep_throttle_seconds)
             await self._deps.vector_sync.set_reconcile(datetime.now(UTC))
@@ -345,6 +359,20 @@ def _chunk_metadata(obj_class: str, record: VectorRecord, chunk: Chunk, started_
         # every sweep. A source without it opts out of `updated_after`.
         last_update=record.last_update,
     )
+
+
+def _class_to_source(sources: Sequence[VectorSource]) -> dict[str, VectorSource]:
+    """Map each claimed class to its one source, refusing a class claimed
+    twice instead of letting a later source silently shadow an earlier one
+    (today impossible — one source per class — but not guarded against)."""
+    class_to_source: dict[str, VectorSource] = {}
+    for source in sources:
+        for obj_class in source.classes:
+            existing = class_to_source.get(obj_class)
+            if existing is not None:
+                raise ValueError(f"class {obj_class!r} is claimed by both {existing.name!r} and {source.name!r}")
+            class_to_source[obj_class] = source
+    return class_to_source
 
 
 def _dedupe(sources: Iterable[VectorSource]) -> list[VectorSource]:

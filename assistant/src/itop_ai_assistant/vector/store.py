@@ -6,6 +6,11 @@ pending-backfill flag, the run journal, cross-replica exclusion — is
 operational state and lives in Redis (`vector/sync_state.py`,
 `vector/index_journal.py`), never here. See ADR-002 in dev-docs.
 
+`family` selects which collection a call goes to (one per `VectorSource`,
+see ADR-015) — it is never stored on `ChunkMetadata` or written to a chunk's
+payload, since it names *where* an object lives, not a property of the
+object itself.
+
 Two hashes travel with a chunk, not one. `content_hash` guards the chunk's
 text — it comes from the chunker and changes only when the source text does.
 `ChunkMetadata.meta_hash` guards everything else the payload carries that
@@ -32,6 +37,7 @@ from typing import Protocol, runtime_checkable
 class IndexMeta:
     """The active index version and its model fingerprint (model, dim)."""
 
+    family: str
     version: int
     model: str
     dim: int
@@ -39,6 +45,7 @@ class IndexMeta:
 
 @dataclass(frozen=True)
 class IndexStats:
+    family: str
     version: int
     rows: int
 
@@ -148,30 +155,40 @@ class ChunkStore(Protocol):
         """False when no connection is configured — the deployment runs without vectors."""
         ...
 
-    async def ensure_version(self, model: str, dim: int) -> IndexMeta: ...
+    async def ensure_version(self, family: str, model: str, dim: int) -> IndexMeta: ...
 
-    async def active_meta(self) -> IndexMeta | None: ...
+    async def active_meta(self, family: str) -> IndexMeta | None: ...
 
-    async def upsert_chunks(self, chunks: list[ChunkRecord], *, model: str, dim: int) -> int: ...
+    async def list_families(self) -> list[str]:
+        """Every family that has ever had an active version, read from
+        storage itself — not from whatever sources are registered in code
+        today. A family a deployment stopped indexing stays observable here
+        until its collection is dropped."""
+        ...
 
-    async def get_chunk_digests(self, obj_class: str, obj_id: int) -> dict[tuple[str, int], ChunkDigest]: ...
+    async def upsert_chunks(self, chunks: list[ChunkRecord], *, family: str, model: str, dim: int) -> int: ...
 
-    async def update_chunk_metadata(self, chunks: list[ChunkMetadata]) -> int:
+    async def get_chunk_digests(
+        self, family: str, obj_class: str, obj_id: int
+    ) -> dict[tuple[str, int], ChunkDigest]: ...
+
+    async def update_chunk_metadata(self, chunks: list[ChunkMetadata], *, family: str) -> int:
         """Overwrite the payload of already-embedded chunks — no vector write.
         Returns 0 when there is no active index version, like the other
         write operations do."""
         ...
 
-    async def delete_chunks(self, obj_class: str, obj_id: int, keys: list[tuple[str, int]]) -> int: ...
+    async def delete_chunks(self, family: str, obj_class: str, obj_id: int, keys: list[tuple[str, int]]) -> int: ...
 
-    async def delete_object(self, obj_class: str, obj_id: int) -> int: ...
+    async def delete_object(self, family: str, obj_class: str, obj_id: int) -> int: ...
 
-    async def list_object_ids(self, obj_class: str, after: int = 0, limit: int = 1000) -> list[int]: ...
+    async def list_object_ids(self, family: str, obj_class: str, after: int = 0, limit: int = 1000) -> list[int]: ...
 
     async def search(
         self,
         embedding: list[float],
         *,
+        family: str,
         classes: list[str],
         statuses: list[str],
         visibilities: list[str],
@@ -185,6 +202,6 @@ class ChunkStore(Protocol):
         an object indexed without a `last_update` never passes it."""
         ...
 
-    async def stats(self) -> IndexStats | None: ...
+    async def stats(self, family: str) -> IndexStats | None: ...
 
     async def aclose(self) -> None: ...

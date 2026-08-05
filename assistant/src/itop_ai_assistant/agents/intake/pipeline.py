@@ -18,6 +18,7 @@ from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, Trigg
 from itop_ai_assistant.pipelines.shell import TicketRun
 from itop_ai_assistant.vector.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.search import SimilarSearch
+from itop_ai_assistant.vector_sources.tickets import FAMILY as TICKETS_FAMILY
 from itop_ai_assistant.webhook.models import TicketEvent
 
 from .agent import TERMINAL_TOOLS, build_intake_agent
@@ -91,7 +92,9 @@ class IntakeRun(TicketRun):
         prompts = build_intake_prompts(await self.deps.prompt_store.get("intake"))
         vector_cfg, embedder = await self._similar_search_parts()
         similar = (
-            SimilarSearch(self.deps.vector_store, embedder, self.bundle.ticket_repo.find_existing_ids)
+            SimilarSearch(
+                self.deps.vector_store, embedder, self.bundle.ticket_repo.find_existing_ids, family=TICKETS_FAMILY
+            )
             if embedder is not None
             else None
         )
