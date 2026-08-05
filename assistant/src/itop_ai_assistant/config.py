@@ -174,7 +174,12 @@ class EmbeddingsConfig(RuntimeSectionConfig):
 
     SECRET_FIELDS: ClassVar[frozenset[str]] = frozenset({"api_key"})
 
-    base_url: str | None = None  # OpenAI-compatible, includes /v1 (like llm.base_url)
+    # The full OpenAI-compatible prefix the provider documents for embeddings —
+    # not just a bare host:port. Providers whose base_url is bare host:port for
+    # *chat* (llm_providers.ollama) still need the full prefix here: Ollama is
+    # "/v1", Google's Gemini API compat layer is "/v1beta/openai" — a bare host
+    # 404s with a plain-text body (see TASK-007).
+    base_url: str | None = None
     model: str | None = None
     api_key: str | None = None
     # Qdrant has no hard ceiling here; the bound is a sanity check, and ADR-006

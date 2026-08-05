@@ -30,7 +30,7 @@ A full `.env` template with examples is in [`docker/.env.dist`](../docker/.env.d
 | `STATE_TTL_DAYS` | default `30` | How long per-ticket AI state lives in Redis |
 | `RUN_TTL_DAYS` | default `7` | How long the run journal keeps a processing run |
 | `QDRANT_URL` | optional | Qdrant URL for the vector index (`http://host:6333`), env-only. Unset = Redis-only — see [Vector index](#vector-index) |
-| `EMBEDDINGS_BASE_URL` / `EMBEDDINGS_MODEL` / `EMBEDDINGS_API_KEY` | optional | OpenAI-compatible `/v1/embeddings` endpoint for the vector index |
+| `EMBEDDINGS_BASE_URL` / `EMBEDDINGS_MODEL` / `EMBEDDINGS_API_KEY` | optional | OpenAI-compatible embeddings endpoint for the vector index. `EMBEDDINGS_BASE_URL` must be the full prefix your provider documents, not a bare host:port — for Ollama that's `http://localhost:11434/v1` (not the bare `host:port` used for the LLM chat connection), for Google's Gemini API it's `https://generativelanguage.googleapis.com/v1beta/openai` |
 | `EMBEDDINGS_DIMENSION` | default `1024` | Vector dimension — must match what the model returns |
 | `EMBEDDINGS_BATCH_SIZE` | default `32` | Texts per embeddings request |
 | `PROMPTS_DIR` | optional | Directory with prompt file overrides (env-only) — see [Customizing prompts](prompts.md) |
