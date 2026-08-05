@@ -1,14 +1,17 @@
 import unittest
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 from langchain_core.messages import AIMessage, ToolMessage
 
 from itop_ai_assistant.agents.intake import tools
+from itop_ai_assistant.agents.intake.agent import TERMINAL_TOOLS
 from itop_ai_assistant.agents.intake.tools import ToolRejection
-from itop_ai_assistant.config import IntakeConfig
+from itop_ai_assistant.config import IntakeConfig, VectorConfig
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.state.ticket_state import TicketState
+from itop_ai_assistant.vector.search import ObjectHit
 
 
 def _ticket(**overrides) -> Ticket:
@@ -100,6 +103,22 @@ class TestToolSchemas(unittest.TestCase):
                 "finish_handoff",
             ],
         )
+
+    def test_without_a_vector_store_the_search_tool_is_absent(self):
+        # A tool that would answer "not configured" every time is worse than
+        # no tool: the model has to spend a call to learn that
+        for ticket in (_ticket(), _ticket(service_id="10", subcategory_id="101")):
+            self.assertNotIn("find_similar_resolved_tickets", [t.name for t in tools.tools_for(ticket)])
+
+    def test_the_search_tool_is_offered_in_both_sets(self):
+        # A run ends in a note whether or not it had to classify first
+        for ticket in (_ticket(), _ticket(service_id="10", subcategory_id="101")):
+            offered = [t.name for t in tools.tools_for(ticket, similar=True)]
+            self.assertEqual(offered[-1], "find_similar_resolved_tickets")
+
+    def test_the_search_tool_is_not_terminal(self):
+        # It informs the note; the session still ends with a question or a handoff
+        self.assertNotIn("find_similar_resolved_tickets", TERMINAL_TOOLS)
 
 
 class TestGetServiceCatalog(unittest.IsolatedAsyncioTestCase):
@@ -309,6 +328,80 @@ class TestFinishHandoff(unittest.IsolatedAsyncioTestCase):
 
         runtime.context.ticket_repo.append_private_log.assert_not_called()
         runtime.context.state_manager.mark_done.assert_not_called()
+
+
+class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
+    def _runtime(self, hits: list[ObjectHit], **kwargs) -> MagicMock:
+        runtime = _make_runtime(**kwargs)
+        runtime.context.vector = VectorConfig()
+        runtime.context.similar.find = AsyncMock(return_value=hits)
+        return runtime
+
+    async def test_references_come_back_as_copyable_tokens(self):
+        runtime = self._runtime(
+            [ObjectHit("UserRequest", 12, 0.9), ObjectHit("Incident", 7, 0.8), ObjectHit("UserRequest", 3, 0.7)]
+        )
+
+        result = await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
+
+        self.assertIn("[[UserRequest:12]]\n[[Incident:7]]\n[[UserRequest:3]]", result)
+
+    async def test_the_query_is_the_ticket_itself(self):
+        # The model does not phrase the search: the tool takes no arguments
+        runtime = self._runtime([], ticket=_ticket(title="Printer is dead", description="<p>Cannot print</p>"))
+
+        await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
+
+        text = runtime.context.similar.find.await_args.args[0]
+        self.assertIn("Printer is dead", text)
+        self.assertIn("Cannot print", text)
+        self.assertNotIn("<p>", text)
+
+    async def test_the_search_is_scoped_by_config(self):
+        cfg = VectorConfig()
+        cfg.classes["UserRequest"].index_values = ["resolved"]
+        cfg.classes["Incident"].index_values = ["closed"]
+        runtime = self._runtime([], ticket=_ticket(obj_class="Incident", id="42"))
+        runtime.context.vector = cfg
+        runtime.context.intake = IntakeConfig(similar_max_age_days=30, similar_candidates=11, similar_top=3)
+
+        await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
+
+        kwargs = runtime.context.similar.find.await_args.kwargs
+        self.assertEqual(sorted(kwargs["classes"]), ["Incident", "UserRequest"])
+        # The statuses that mean "solved" are the indexer's, not a second copy
+        self.assertEqual(kwargs["statuses"], ["closed", "resolved"])
+        self.assertEqual(kwargs["exclude"], ("Incident", 42))
+        self.assertEqual(kwargs["candidates"], 11)
+        self.assertEqual(kwargs["top"], 3)
+        age = datetime.now(UTC) - kwargs["updated_after"]
+        self.assertAlmostEqual(age.total_seconds(), timedelta(days=30).total_seconds(), delta=60)
+
+    async def test_finding_nothing_is_an_answer_not_a_refusal(self):
+        runtime = self._runtime([])
+
+        result = await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
+
+        self.assertIn("No similar solved tickets", result)
+        self.assertNotIn("[[", result)
+
+    async def test_a_repeat_call_is_refused_with_the_previous_answer(self):
+        runtime = self._runtime([ObjectHit("UserRequest", 12, 0.9)])
+        runtime.state = {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[{"id": "earlier", "name": "find_similar_resolved_tickets", "args": {}}],
+                ),
+                ToolMessage(content="[[UserRequest:12]]", tool_call_id="earlier"),
+            ]
+        }
+
+        with self.assertRaises(ToolRejection) as ctx:
+            await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
+
+        self.assertIn("[[UserRequest:12]]", str(ctx.exception))
+        runtime.context.similar.find.assert_not_awaited()
 
 
 if __name__ == "__main__":

@@ -232,14 +232,23 @@ class IntakeConfig(BaseModel):
     max_classify_rounds: int = 2
     # Budget of model calls per run; without it a looping agent burns tokens
     # until the ticket is abandoned. Catalog + subcategories + classify +
-    # question/handoff + slack.
-    max_iterations: int = 8
+    # similar tickets + question/handoff + slack.
+    max_iterations: int = 9
     # One override for the whole module (the agent has a single loop); None
     # falls back to the global llm_model. It must be a reliable tool-caller —
     # a model that answers in prose instead of calling a tool burns the run.
     model: str | None = None
     classify_fallback_note: str = "Could not determine the request category. Manual classification required."
     handoff_fallback_note: str = "AI intake finished without a summary. Manual review required."
+    # Similar solved tickets quoted in the handoff note (only when the vector
+    # store and the embeddings endpoint are configured). The window is a range
+    # over the modification date, never a substitute for the status filter —
+    # a reopened ticket keeps its old resolution date (ADR-005, rule 2).
+    similar_max_age_days: int = Field(default=365, gt=0)
+    # Asked of the index; more than `similar_top` because candidates the
+    # requester's iTop no longer returns are dropped afterwards (ADR-003)
+    similar_candidates: int = Field(default=15, gt=0)
+    similar_top: int = Field(default=5, gt=0)
     classify_service_oql: str = _CLASSIFY_SERVICE_OQL
     classify_subcategory_oql: str = _CLASSIFY_SUBCATEGORY_OQL
 

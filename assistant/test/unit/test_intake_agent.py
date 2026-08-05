@@ -15,12 +15,13 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 from itop_ai_assistant.agents.intake.pipeline import IntakeRun
-from itop_ai_assistant.config import IntakeConfig, LlmConfig
+from itop_ai_assistant.config import EmbeddingsConfig, IntakeConfig, LlmConfig, VectorConfig
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
 from itop_ai_assistant.state.ticket_state import TicketState
+from itop_ai_assistant.vector.store import SearchHit
 from itop_ai_assistant.webhook.models import WebhookPayload
 
 _PROMPT_FILES = read_prompt_dir(PACKAGED_PROMPTS_DIR / "intake")
@@ -38,8 +39,12 @@ class FakeToolCallingModel(BaseChatModel):
     def _llm_type(self) -> str:
         return "fake-tool-calling"
 
+    # Names of the tools handed to the model, per bind_tools call
+    bound_tools: list[list[str]] = []
+
     def bind_tools(self, tools, **kwargs) -> Any:
         self.bindings.append(kwargs)
+        self.bound_tools.append([t.name for t in tools])
         return self
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
@@ -91,9 +96,19 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
         self.deps.prompt_store.get = AsyncMock(return_value=_PROMPT_FILES)
 
         self.llm_cfg = LlmConfig(base_url="http://x", model="m")
+        self.vector_cfg = VectorConfig()
+        self.embeddings_cfg = EmbeddingsConfig()
+        # Default deployment for these tests: no vector store, hence no
+        # similar-ticket tool. The wiring of the tool has its own case below.
+        self.deps.vector_store.configured = False
 
         async def config_get(module, model):
-            return self.intake_cfg if module == "intake" else self.llm_cfg
+            return {
+                "intake": self.intake_cfg,
+                "llm": self.llm_cfg,
+                "vector": self.vector_cfg,
+                "embeddings": self.embeddings_cfg,
+            }[module]
 
         self.deps.config_store.get = AsyncMock(side_effect=config_get)
 
@@ -410,6 +425,80 @@ class TestTerminalTools(IntakeAgentTestCase):
         )
         self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
         self.assertNotIn("epilogue", [node for node, _ in self.journal_steps()])
+
+
+class TestSimilarTicketsWiring(IntakeAgentTestCase):
+    """Whether the run can search at all is decided here, once, by the shell —
+    the tool is either given or withheld, never given and then apologetic."""
+
+    def enable_vectors(self) -> MagicMock:
+        self.deps.vector_store.configured = True
+        self.deps.vector_store.search = AsyncMock(return_value=[SearchHit("UserRequest", 12, 0.9)])
+        self.bundle.ticket_repo.find_existing_ids = AsyncMock(return_value={12})
+        self.vector_cfg = VectorConfig(enabled=True)
+        self.embeddings_cfg = EmbeddingsConfig(base_url="http://emb/v1", model="e5")
+        embedder = MagicMock()
+        embedder.embed = AsyncMock(return_value=[[1.0, 0.0]])
+        embedder.aclose = AsyncMock()
+        patcher = patch("itop_ai_assistant.agents.intake.pipeline.EmbeddingsClient", return_value=embedder)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return embedder
+
+    async def test_the_tool_is_given_when_everything_is_configured(self):
+        self.enable_vectors()
+
+        model = await self.run_agent([ai([call("finish_handoff", {"note": "Printer is dead."})])])
+
+        self.assertIn("find_similar_resolved_tickets", model.bound_tools[0])
+
+    async def test_no_vector_store_no_tool(self):
+        model = await self.run_agent([ai([call("finish_handoff", {"note": "Printer is dead."})])])
+
+        self.assertNotIn("find_similar_resolved_tickets", model.bound_tools[0])
+
+    async def test_indexing_switched_off_means_no_tool(self):
+        # The index is there but nobody refreshes it — quoting it as current
+        # is worse than quoting nothing
+        self.enable_vectors()
+        self.vector_cfg = VectorConfig(enabled=False)
+
+        model = await self.run_agent([ai([call("finish_handoff", {"note": "Printer is dead."})])])
+
+        self.assertNotIn("find_similar_resolved_tickets", model.bound_tools[0])
+
+    async def test_no_embeddings_endpoint_means_no_tool(self):
+        self.enable_vectors()
+        self.embeddings_cfg = EmbeddingsConfig()
+
+        model = await self.run_agent([ai([call("finish_handoff", {"note": "Printer is dead."})])])
+
+        self.assertNotIn("find_similar_resolved_tickets", model.bound_tools[0])
+
+    async def test_a_call_reaches_the_index_and_the_source(self):
+        self.enable_vectors()
+
+        await self.run_agent(
+            [
+                ai([call("find_similar_resolved_tickets", {}, "s1")]),
+                ai([call("finish_handoff", {"note": "Printer is dead.\n[[UserRequest:12]]"}, "h1")]),
+            ]
+        )
+
+        self.deps.vector_store.search.assert_awaited_once()
+        self.bundle.ticket_repo.find_existing_ids.assert_awaited_once_with("UserRequest", [12])
+        self.bundle.ticket_repo.append_private_log.assert_awaited_once_with(
+            self.ticket, "Printer is dead.\n[[UserRequest:12]]"
+        )
+
+    async def test_the_embeddings_client_is_closed_even_when_the_run_fails(self):
+        embedder = self.enable_vectors()
+        self.bundle.ticket_repo.append_private_log = AsyncMock(side_effect=RuntimeError("iTop is down"))
+
+        with self.assertRaises(RuntimeError):
+            await self.run_agent([ai([call("finish_handoff", {"note": "Printer is dead."})])])
+
+        embedder.aclose.assert_awaited_once()
 
 
 if __name__ == "__main__":

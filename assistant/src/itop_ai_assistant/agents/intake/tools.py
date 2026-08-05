@@ -11,6 +11,7 @@ the run.
 """
 
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import TypeAlias
 
 from langchain.tools import ToolRuntime
@@ -18,7 +19,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import BaseTool, tool
 
 from itop_ai_assistant.domain.ticket import Ticket
-from itop_ai_assistant.text_utils import bind_oql
+from itop_ai_assistant.text_utils import bind_oql, html_to_markdown
 
 from .context import IntakeContext
 from .prompt import format_options
@@ -164,6 +165,50 @@ async def set_classification(service_id: int, subcategory_id: int, runtime: Inta
 
 
 @tool
+async def find_similar_resolved_tickets(runtime: IntakeToolRuntime) -> str:
+    """Find tickets similar to this one that have already been solved.
+
+    Call this once, before finish_handoff, and put every reference it returns
+    into your note — an engineer who sees how a similar case was solved starts
+    from an answer instead of from scratch. It takes no arguments: the search
+    runs on this ticket's own title and description.
+
+    What comes back is a list of references in the form [[Class:Id]]. Copy them
+    into the note character for character. Never write a reference of your own:
+    these are the only ones that exist, and anything else points at nothing.
+    """
+    ctx = runtime.context
+    ticket = ctx.ticket
+    # Both are guaranteed by `tools_for`, which withholds this tool otherwise
+    assert ctx.similar is not None and ctx.vector is not None
+    _reject_if_repeated(runtime, "find_similar_resolved_tickets", {})
+
+    classes = list(ctx.vector.classes)
+    # The statuses that mean "solved" for this deployment are already declared
+    # per class for the indexer — the same list, not a second copy of it
+    statuses = sorted({value for obj_class in classes for value in ctx.vector.classes[obj_class].index_values})
+    hits = await ctx.similar.find(
+        f"{ticket.title}\n\n{html_to_markdown(ticket.description)}",
+        classes=classes,
+        statuses=statuses,
+        exclude=(ticket.obj_class, int(ticket.id)),
+        updated_after=datetime.now(UTC) - timedelta(days=ctx.intake.similar_max_age_days),
+        candidates=ctx.intake.similar_candidates,
+        top=ctx.intake.similar_top,
+    )
+    logger.info(f"{ticket.label}: similar resolved tickets found: {len(hits)}")
+    if not hits:
+        # Not a rejection: "nothing similar" is an answer, and a rejection
+        # would send the model looking for another way to ask.
+        return "No similar solved tickets were found. Write the handoff note without references."
+    references = "\n".join(f"[[{hit.obj_class}:{hit.obj_id}]]" for hit in hits)
+    return (
+        "Solved tickets similar to this one, most similar first. "
+        "Copy these references into your note exactly as written:\n" + references
+    )
+
+
+@tool
 async def post_public_question(question: str, runtime: IntakeToolRuntime) -> str:
     """Ask the requester one clarifying message, visible to them in the portal.
 
@@ -246,7 +291,7 @@ _HANDOFF_TOOLS: list[BaseTool] = [post_public_question, finish_handoff]
 TOOLS: list[BaseTool] = [*_CLASSIFICATION_TOOLS, *_HANDOFF_TOOLS]
 
 
-def tools_for(ticket: Ticket) -> list[BaseTool]:
+def tools_for(ticket: Ticket, *, similar: bool = False) -> list[BaseTool]:
     """The tools this run may use — classification ones only while it is needed.
 
     An already classified ticket must not be classified again. Left to its
@@ -259,7 +304,12 @@ def tools_for(ticket: Ticket) -> list[BaseTool]:
     Taking the tools away enforces the rule rather than requesting it: the
     model cannot call what it was never given. The subcategory description —
     the checklist the ticket is judged against — is in the prompt either way.
+
+    `similar` says the deployment can actually search (a vector store, an
+    embeddings endpoint, indexing switched on). The same reasoning applies:
+    a tool that would answer "not configured" every time is better absent,
+    and the prompt already tells the model to use only what it was given.
     """
-    if ticket.has_service and ticket.has_subcategory:
-        return _HANDOFF_TOOLS
-    return TOOLS
+    tools = _HANDOFF_TOOLS if ticket.has_service and ticket.has_subcategory else TOOLS
+    # Useful in both sets: whichever way the run goes, it may end in a note
+    return [*tools, find_similar_resolved_tickets] if similar else list(tools)

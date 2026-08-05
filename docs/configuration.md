@@ -81,10 +81,16 @@ Set in the [Admin UI → Modules](admin-ui.md#modules) or via `PUT /api/config/i
 | `classes` | `["UserRequest", "Incident"]` | Ticket classes to process |
 | `max_rounds` | `2` | Max completeness clarifying questions per ticket |
 | `max_classify_rounds` | `2` | Max classification clarifying questions per ticket |
-| `max_iterations` | `8` | Budget of model calls per ticket; on exhaustion the run is closed with the fallback note |
+| `max_iterations` | `9` | Budget of model calls per ticket; on exhaustion the run is closed with the fallback note |
 | `model` | _(global LLM model)_ | Override model for the whole module — the agent needs reliable tool calling |
 | `classify_fallback_note` | `Could not determine the request category. Manual classification required.` | Internal note when the ticket stays unclassified |
 | `handoff_fallback_note` | `AI intake finished without a summary. Manual review required.` | Internal note when the agent ends without a question or a handoff |
+| `similar_max_age_days` | `365` | How far back solved tickets may be quoted in the handoff note |
+| `similar_candidates` | `15` | Candidates read from the index before iTop is asked which of them the run may see |
+| `similar_top` | `5` | Max references in one handoff note |
+
+> [!NOTE]
+> The three `similar_*` settings only do something when the [vector index](#vector-index) is switched on and an embeddings endpoint is configured. Without that, the agent is not given the search tool at all and the handoff note carries no references.
 
 > [!IMPORTANT]
 > `enabled` and `classes` are read at **startup**, not per ticket: changing them in the admin UI does not re-route webhooks until the service restarts. Every other setting applies from the next ticket.
