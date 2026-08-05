@@ -81,35 +81,18 @@ opened it yet.
 The whole architecture in one document — the seams, the three trigger types, the
 identity model, the extension points: `dev-docs/architecture/platform.md`.
 
+## Searching code
+
+Use the `ast-grep` skill for structural code search (finding functions, classes,
+call sites, patterns) instead of plain `grep`/`rg`. Plain text search is fine for
+non-code lookups (docs, config values, strings).
+
 ## Development Commands
 
-All commands run from `assistant/` unless noted.
-
-```bash
-uv sync                                # deps (--no-dev for production)
-uv run uvicorn itop_ai_assistant.main:app --host 0.0.0.0 --port 8001 --reload
-uv run pytest                          # unit tests (the default suite)
-uv run pytest -k "test_name"           # one test
-uv run ruff check . && uv run ruff format .
-cd ../docker && docker-compose up -d   # full stack: iTop + assistant + Redis
-```
-
-**Before pushing**, run what CI runs: `uv run pre-commit run --all-files` and
-`uv run pytest`. Note that `pre-commit run mypy --all-files` is the **strict**
-type gate — `uv run mypy src/` is not the same check and passing it proves
-less. CI (`.github/workflows/ci.yml`) runs on every push to `main` and every PR
-and gates the image publish; it adds `pytest test/pg` and `npm run build` for the
-UI. `test/integration` needs a real model endpoint and is excluded there.
+See `assistant/CLAUDE.md`.
 
 ## Configuration
 
-Priority (high → low): Redis runtime overrides (setup/admin API) → env vars →
-`.env` → `config.yaml` → field defaults. Every variable is tabulated in
+Priority and startup nuances: `.claude/rules/config.md` (loads when you touch
+`config.py`, `config_store.py`, or `admin/`). Every variable is tabulated in
 `docs/configuration.md`; `docker/.env.dist` is the full template.
-
-**No field is required at startup** — the app always boots. Until the `itop` and
-`llm` sections are complete, `/webhook` returns 503 and the admin API stays open
-for the setup wizard. Connection edits apply from the next run without a
-restart; the exceptions are `intake.enabled` / `intake.classes` and
-`selfcheck.enabled`, which are read at startup because the trigger registry is
-built from them.
