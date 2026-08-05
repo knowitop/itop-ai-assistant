@@ -25,7 +25,7 @@ def _mock_deps(security: SecurityConfig | None = None, configured: bool = True) 
     deps.state_manager.mark_done = AsyncMock()
     bundle = MagicMock()
     bundle.ticket_repo.fetch = AsyncMock(return_value=None)  # "not found" → the agent is skipped
-    deps.itop.get = AsyncMock(return_value=bundle)
+    deps.itop.for_principal = AsyncMock(return_value=bundle)
     return deps
 
 

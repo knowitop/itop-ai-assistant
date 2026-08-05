@@ -24,7 +24,6 @@ from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
 from itop_ai_assistant.config import IntakeConfig
-from itop_ai_assistant.text_utils import strip_thinking
 
 from .context import IntakeContext
 from .tools import ToolRejection
@@ -173,16 +172,3 @@ def build_intake_agent(
         ModelCallLimitMiddleware(run_limit=cfg.max_iterations, exit_behavior="end"),
     ]
     return create_agent(model=llm, tools=tools, context_schema=IntakeContext, middleware=middleware)
-
-
-def is_terminal_result(message: ToolMessage) -> bool:
-    return message.name in TERMINAL_TOOLS and message.status == "success"
-
-
-def describe_ai_message(message: AIMessage, think_tags: tuple[str, ...]) -> str:
-    """One journal line for a model turn: which tools, with which arguments."""
-    if message.tool_calls:
-        calls = "; ".join(f"{call['name']}({call['args']})" for call in message.tool_calls)
-        return f"calls: {calls}"
-    # strip_thinking touches displayed text only — never tool-call arguments
-    return f"no tool call: {strip_thinking(message.content, think_tags)[:300]}"

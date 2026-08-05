@@ -8,12 +8,12 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from itop_ai_assistant.admin.router import router as admin_router
+from itop_ai_assistant.background import build_background_tasks
 from itop_ai_assistant.build_info import get_build_info
 from itop_ai_assistant.config import ItopConfig, LlmConfig, SecurityConfig, get_settings, missing_setup
 from itop_ai_assistant.deps import build_deps
 from itop_ai_assistant.pipelines.registry import build_registry
 from itop_ai_assistant.vector.db import run_migrations
-from itop_ai_assistant.vector.indexer import VectorIndexer
 from itop_ai_assistant.webhook.router import router
 
 settings = get_settings()
@@ -64,21 +64,20 @@ async def lifespan(app: FastAPI):
             "/webhook is disabled until configured via the admin API (/api/setup)"
         )
 
-    # Background sweep exists only alongside Postgres; whether it actually
-    # indexes is re-checked every tick from the runtime config (vector.enabled)
-    indexer: VectorIndexer | None = None
-    if settings.database_url:
-        indexer = VectorIndexer(deps)
-        indexer.start()
+    # Every periodic loop in the process: the vector sweep (infrastructure) and
+    # one per registered schedule trigger. What each of them does is re-checked
+    # per tick from the runtime config, so nothing here decides that.
+    tasks = build_background_tasks(deps, registry)
+    tasks.start()
 
     app.state.deps = deps
     app.state.registry = registry
-    app.state.vector_indexer = indexer
+    app.state.tasks = tasks
     try:
         yield
     finally:
-        if indexer is not None:
-            await indexer.stop()
+        # Loops hold the Postgres engine and the iTop client — stop them first
+        await tasks.stop()
         await deps.aclose()
 
 

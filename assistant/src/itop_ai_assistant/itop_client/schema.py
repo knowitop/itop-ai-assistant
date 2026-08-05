@@ -9,6 +9,14 @@ class Schema:
         self.itop = itop
         self.name = name
 
+    def _comment(self, action: str) -> str:
+        """What iTop records in the object's change history for this operation.
+
+        The client's own comment wins when it carries one; otherwise the
+        library's default names the operation, as it always has.
+        """
+        return getattr(self.itop, "comment", None) or f"{action} {self.name}"
+
     def to_oql(self, query: Dict[str, Any]) -> str:
         oql = f"SELECT {self.name}"
         if query:
@@ -48,7 +56,7 @@ class Schema:
 
         data = {
             "operation": "core/get",
-            "comment": f"Get {self.name}",
+            "comment": self._comment("Get"),
             "class": self.name,
             "key": query if isinstance(query, str) else self.__make_key(query),
             # Request only the projected fields — asking for everything ("*+")
@@ -87,6 +95,7 @@ class Schema:
 
         data = {
             "operation": "core/get_related",
+            "comment": self._comment("Get related"),
             "class": self.name,
             "key": query if isinstance(query, str) else self.__make_key(query),
             "relation": relation,
@@ -112,7 +121,7 @@ class Schema:
             return await self.itop.request(
                 {
                     "operation": "core/create",
-                    "comment": f"Create {self.name}",
+                    "comment": self._comment("Create"),
                     "class": self.name,
                     "output_fields": "*",
                     "fields": obj,
@@ -141,7 +150,7 @@ class Schema:
 
         data = {
             "operation": "core/update",
-            "comment": f"Update {self.name}",
+            "comment": self._comment("Update"),
             "class": self.name,
             "output_fields": "*",
             "fields": update,
@@ -176,7 +185,7 @@ class Schema:
         output = await self.itop.request(
             {
                 "operation": "core/delete",
-                "comment": f"Delete {self.name}",
+                "comment": self._comment("Delete"),
                 "class": self.name,
                 "key": query if isinstance(query, str) else self.__make_key(query),
             }
@@ -232,7 +241,7 @@ class Schema:
         return await self.itop.request(
             {
                 "operation": "core/apply_stimulus",
-                "comment": f"Apply Stimulus {self.name}",
+                "comment": self._comment("Apply Stimulus"),
                 "class": self.name,
                 "output_fields": "*",
                 "fields": stimulus_data,

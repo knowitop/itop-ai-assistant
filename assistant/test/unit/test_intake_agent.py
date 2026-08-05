@@ -14,12 +14,14 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from itop_ai_assistant.agents.intake.pipeline import _run_intake_agent
+from itop_ai_assistant.agents.intake.pipeline import IntakeRun
 from itop_ai_assistant.config import IntakeConfig, LlmConfig
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
+from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
 from itop_ai_assistant.state.ticket_state import TicketState
+from itop_ai_assistant.webhook.models import WebhookPayload
 
 _PROMPT_FILES = read_prompt_dir(PACKAGED_PROMPTS_DIR / "intake")
 
@@ -108,10 +110,18 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
         self.bundle.catalog_repo.get_service = AsyncMock(return_value=None)
         self.bundle.catalog_repo.get_subcategory = AsyncMock(return_value=None)
 
+    def intake_run(self) -> IntakeRun:
+        """A run whose body is called directly — `execute()` is the shell's job
+        and is covered in `test_intake_pipeline.py`, so `bundle` is set by hand."""
+        payload = WebhookPayload.model_validate({"id": "123", "class": "Incident", "event": "created"})
+        run = IntakeRun(payload, RunContext(processing_id=uuid4(), module="intake"), self.deps)
+        run.bundle = self.bundle
+        return run
+
     async def run_agent(self, responses: list[AIMessage]) -> FakeToolCallingModel:
         model = FakeToolCallingModel(responses=responses)
         with patch("itop_ai_assistant.agents.intake.pipeline.create_llm", return_value=model):
-            await _run_intake_agent(self.ticket, "ai-assistant", self.bundle, uuid4(), self.deps)
+            await self.intake_run().body(self.ticket, "ai-assistant")
         return model
 
     def journal_steps(self) -> list[tuple[str, str]]:
@@ -329,7 +339,7 @@ class TestClassifiedTicket(IntakeAgentTestCase):
 
         model = Recording(responses=[ai([call("finish_handoff", {"note": "n"}, "h1")])])
         with patch("itop_ai_assistant.agents.intake.pipeline.create_llm", return_value=model):
-            await _run_intake_agent(self.ticket, "ai-assistant", self.bundle, uuid4(), self.deps)
+            await self.intake_run().body(self.ticket, "ai-assistant")
 
         self.assertEqual(captured[0], ["post_public_question", "finish_handoff"])
 

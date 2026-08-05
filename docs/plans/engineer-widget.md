@@ -384,7 +384,7 @@ it from reading as an opaque chat:
   the tools it used ("🔍 similar tickets → 📄 service context"), so the
   engineer can tell "the model decided this from these sources" from the output
   of a deterministic command. The response needs a `tools_used` field for this;
-  `describe_ai_message` (`agents/intake/agent.py`) is the existing precedent for
+  `describe_ai_message` (`pipelines/agent_run.py`) is the existing precedent for
   turning a model turn into a readable line.
 - **`/help` from the registry.** The console lists commands (and their
   descriptions) from `GET /api/widget/commands`, so a newly registered command

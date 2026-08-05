@@ -68,6 +68,10 @@ class TicketVectorSource:
         self._names: _CatalogNames | None = None
 
     async def prepare(self) -> None:
+        # The plain connection, not a principal's view of it: the sweep is not a
+        # run — no journal entry, nobody to act for — and the index it builds is
+        # global by design (`dev-docs/architecture/platform.md` §3.5). What a searcher may see
+        # is decided later, by resolving hits under their own token.
         self._bundle = await self._deps.itop.get()
         self._names = _CatalogNames(self._bundle.catalog_repo)
 

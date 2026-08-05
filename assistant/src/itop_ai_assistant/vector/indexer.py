@@ -8,9 +8,14 @@ sources page independently and may not guarantee ordering, so the cursor
 advances once per *completed class pass* (max last_update seen), never per
 page; a crashed pass simply re-reads, which the hash-guard makes cheap.
 
-Backfill is the same code path with cursors reset. A weekly reconciliation
+Backfill is the same code path with cursors reset, requested by a row in
+`vector_sync_state` rather than by a flag in memory. A weekly reconciliation
 pass deletes chunks of objects that vanished from their source. Cross-replica
 exclusion is a Postgres session-level advisory lock.
+
+The sweep is **infrastructure, not a business module**: it claims no trigger
+route and writes no `RunJournal` entry — `register_vector_sweep` puts it under
+the process scheduler and that is the whole of its relationship with the core.
 
 This module is source-agnostic: it knows `VectorSource`/`VectorRecord`, never
 `Ticket` or `ItopBundle` — those live in `vector_sources/tickets.py`.
@@ -22,12 +27,12 @@ snapshot on every tick, so enabling the feature at runtime needs no restart.
 import asyncio
 import logging
 from collections.abc import Iterable, Sequence
-from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
 from itop_ai_assistant.deps import AppDeps
+from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.vector.chunker import Chunk
 from itop_ai_assistant.vector.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.index import (
@@ -56,10 +61,38 @@ class SweepReport:
     errors: list[str] = field(default_factory=list)
 
 
+SWEEP_TASK = "vector-sweep"
+
+
+def register_vector_sweep(tasks: PeriodicTasks, deps: AppDeps) -> None:
+    """Put the sweep under the process-wide scheduler.
+
+    Infrastructure, not a business module: no `ModuleInfo`, no trigger route
+    and no `RunJournal` entry — the sweep keeps its own `index_journal` in
+    Postgres. What it needs from the core is pacing, and that is all it takes.
+    """
+    if not deps.vector_db.configured:
+        logger.info("Vector store is not configured (database_url), the sweep will not run")
+        return
+
+    async def interval() -> float:
+        return (await deps.config_store.get("vector", VectorConfig)).sweep_interval_seconds
+
+    tasks.add(
+        SWEEP_TASK,
+        VectorIndexer(deps).tick,
+        interval=interval,
+        default_interval=VectorConfig().sweep_interval_seconds,
+    )
+
+
 class VectorIndexer:
-    """The background sweep task (started from the FastAPI lifespan when
-    `database_url` is set). `sweep_once` is the testable core; `run_forever`
-    just paces it and reacts to `request_reindex` wake-ups.
+    """One incremental sync pass. `sweep_once` is the whole thing — the
+    scheduler (`pipelines/scheduler.py`) paces it, the CLI calls it directly.
+
+    Nothing survives between passes in this object: a pending backfill is a
+    row in `vector_sync_state`, so the request is honoured whatever process
+    or replica ends up serving the next tick.
 
     `sources` overrides the registered `VectorSource`s (built by
     `build_vector_sources` when omitted) — tests inject fakes here instead of
@@ -69,47 +102,18 @@ class VectorIndexer:
     def __init__(self, deps: AppDeps, sources: Sequence[VectorSource] | None = None) -> None:
         self._deps = deps
         self._sources = list(sources) if sources is not None else None
-        self._wake = asyncio.Event()
-        self._full_requested = False
-        self._task: asyncio.Task | None = None
 
-    @property
-    def running(self) -> bool:
-        return self._task is not None and not self._task.done()
+    async def tick(self) -> SweepReport:
+        report = await self.sweep_once()
+        if report.status == "error":
+            logger.warning(f"vector sweep finished with errors: {'; '.join(report.errors)}")
+        return report
 
-    def start(self) -> None:
-        self._task = asyncio.create_task(self.run_forever(), name="vector-indexer")
-
-    async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-
-    def request_reindex(self) -> None:
+    async def request_reindex(self) -> None:
         """Schedule a full backfill: the next sweep resets all cursors and
         runs as kind="backfill". No truncate — unchanged chunks are cheap
         thanks to the hash-guard, and reconciliation cleans orphans."""
-        self._full_requested = True
-        self._wake.set()
-
-    async def run_forever(self) -> None:
-        while True:
-            self._wake.clear()
-            try:
-                report = await self.sweep_once()
-                if report.status == "error":
-                    logger.warning(f"vector sweep finished with errors: {'; '.join(report.errors)}")
-            except Exception:
-                logger.exception("vector sweep tick failed")
-            try:
-                cfg = await self._deps.config_store.get("vector", VectorConfig)
-                interval = cfg.sweep_interval_seconds
-            except Exception:
-                interval = VectorConfig().sweep_interval_seconds
-            with suppress(TimeoutError):
-                await asyncio.wait_for(self._wake.wait(), timeout=interval)
+        await VectorIndex(self._deps.vector_db).request_reindex()
 
     async def sweep_once(self) -> SweepReport:
         deps = self._deps
@@ -133,15 +137,16 @@ class VectorIndexer:
         self, index: VectorIndex, cfg: VectorConfig, emb_cfg: EmbeddingsConfig, model: str
     ) -> SweepReport:
         started_at = datetime.now(UTC)
-        full = self._full_requested
+        full = await index.reindex_pending()
         report = SweepReport(kind="backfill" if full else "sweep", status="ok")
         journal_id = await self._journal_start(index, report.kind)
         embedder = EmbeddingsClient(emb_cfg)
         try:
             meta = await index.ensure_version(model, emb_cfg.dimension)
             if full:
+                # Drops the pending-reindex row along with the cursors — an
+                # attempt that fails earlier leaves the request standing
                 await index.reset_cursors()
-                self._full_requested = False
             sources = self._sources if self._sources is not None else build_vector_sources(self._deps, cfg)
             class_to_source = {obj_class: source for source in sources for obj_class in source.classes}
             active_sources = _dedupe(s for c in cfg.classes if (s := class_to_source.get(c)) is not None)

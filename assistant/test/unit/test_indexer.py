@@ -4,9 +4,10 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from itop_ai_assistant.config import EmbeddingsConfig, VectorClassConfig, VectorConfig
+from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.vector.chunker import chunk_object
 from itop_ai_assistant.vector.index import RECONCILE_SENTINEL, FingerprintMismatchError, IndexMeta
-from itop_ai_assistant.vector.indexer import VectorIndexer
+from itop_ai_assistant.vector.indexer import SWEEP_TASK, VectorIndexer, register_vector_sweep
 from itop_ai_assistant.vector.source import VectorRecord
 
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
@@ -64,7 +65,7 @@ class FakeTicketSource:
         )
 
 
-def _index_mock(*, locked: bool = True) -> MagicMock:
+def _index_mock(*, locked: bool = True, reindex_pending: bool = False) -> MagicMock:
     index = MagicMock()
 
     @asynccontextmanager
@@ -75,6 +76,8 @@ def _index_mock(*, locked: bool = True) -> MagicMock:
     index.ensure_version = AsyncMock(return_value=_META)
     index.get_cursor = AsyncMock(return_value=None)
     index.set_cursor = AsyncMock()
+    index.reindex_pending = AsyncMock(return_value=reindex_pending)
+    index.request_reindex = AsyncMock()
     index.reset_cursors = AsyncMock()
     index.get_chunk_hashes = AsyncMock(return_value={})
     index.upsert_chunks = AsyncMock(side_effect=lambda records, **kw: len(records))
@@ -268,40 +271,59 @@ class TestSweep(IndexerTestCase):
         index.journal_finish.assert_not_awaited()
 
 
-class TestReindex(IndexerTestCase):
-    async def test_request_reindex_resets_cursors_and_runs_backfill(self):
-        index = _index_mock()
-        deps = _deps_mock()
-        indexer = VectorIndexer(deps, sources=[FakeTicketSource([_record(1)])])
-        indexer.request_reindex()
-        self.assertTrue(indexer._wake.is_set())
+class TestSweepRegistration(unittest.IsolatedAsyncioTestCase):
+    """Infrastructure, not a module: the sweep takes pacing from the scheduler
+    and claims no trigger route."""
 
-        with (
-            patch("itop_ai_assistant.vector.indexer.VectorIndex", return_value=index),
-            patch("itop_ai_assistant.vector.indexer.EmbeddingsClient", return_value=_embedder_mock()),
-        ):
-            report = await indexer.sweep_once()
+    async def test_registers_a_loop_when_the_database_is_configured(self):
+        tasks = PeriodicTasks()
+        register_vector_sweep(tasks, _deps_mock())
+
+        self.assertEqual(tasks.names, [SWEEP_TASK])
+
+    async def test_no_loop_without_a_database(self):
+        tasks = PeriodicTasks()
+        register_vector_sweep(tasks, _deps_mock(configured=False))
+
+        self.assertEqual(tasks.names, [])
+
+    async def test_interval_comes_from_the_runtime_config(self):
+        tasks = PeriodicTasks()
+        deps = _deps_mock(vector_cfg=_VECTOR_CFG.model_copy(update={"sweep_interval_seconds": 42}))
+        register_vector_sweep(tasks, deps)
+
+        self.assertEqual(await tasks._entries[SWEEP_TASK].interval(), 42)
+
+
+class TestReindex(IndexerTestCase):
+    """The pending backfill lives in Postgres, not in the sweeping process:
+    the request survives a restart and is honoured by whichever replica wins
+    the advisory lock."""
+
+    async def test_request_reindex_marks_it_in_the_index(self):
+        index = _index_mock()
+        indexer = VectorIndexer(_deps_mock())
+        with patch("itop_ai_assistant.vector.indexer.VectorIndex", return_value=index):
+            await indexer.request_reindex()
+
+        index.request_reindex.assert_awaited_once()
+
+    async def test_pending_request_resets_cursors_and_runs_backfill(self):
+        index = _index_mock(reindex_pending=True)
+        report = await self._run(_deps_mock(), index, FakeTicketSource([_record(1)]))
 
         self.assertEqual(report.kind, "backfill")
+        # reset_cursors drops the sentinel row too — that is what clears it
         index.reset_cursors.assert_awaited_once()
         index.journal_start.assert_any_await("backfill")
-        self.assertFalse(indexer._full_requested)
 
-    async def test_full_flag_survives_failed_attempt(self):
-        index = _index_mock()
+    async def test_request_survives_a_failed_attempt(self):
+        index = _index_mock(reindex_pending=True)
         index.ensure_version = AsyncMock(side_effect=RuntimeError("pg down"))
-        deps = _deps_mock()
-        indexer = VectorIndexer(deps, sources=[FakeTicketSource([_record(1)])])
-        indexer.request_reindex()
+        await self._run(_deps_mock(), index, FakeTicketSource([_record(1)]))
 
-        with (
-            patch("itop_ai_assistant.vector.indexer.VectorIndex", return_value=index),
-            patch("itop_ai_assistant.vector.indexer.EmbeddingsClient", return_value=_embedder_mock()),
-        ):
-            await indexer.sweep_once()
-
+        # Cursors untouched, so the sentinel stands and the next tick retries
         index.reset_cursors.assert_not_awaited()
-        self.assertTrue(indexer._full_requested)  # next tick retries the backfill
 
 
 class TestReconciliation(IndexerTestCase):

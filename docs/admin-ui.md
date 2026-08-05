@@ -75,6 +75,13 @@ Per-module business settings. Currently the **Intake** module exposes:
 
 Changes apply from the next processed ticket — no restart needed, **except Enabled and Classes**, which are read at startup. Each module can be reset to its defaults.
 
+Below the settings a module shows what may start it besides an iTop event:
+
+- **Schedule** — what the clock runs on its own, with the period taken from the module's own settings. Read-only here.
+- **Run manually** — a synchronous run started from this screen; the answer comes back into the page.
+
+The **Selfcheck** module (disabled by default, `selfcheck.enabled`) has both. It writes nothing anywhere: it reads the service catalog through the iTop connection, asks the model to say hello, and records both in the run journal. Turn it on when you want proof that a deployment's iTop and model connections work under real module code rather than under a wizard probe.
+
 ---
 
 ## Prompts
@@ -98,9 +105,9 @@ Placeholder validation runs on save: if a template references an unknown variabl
 
 ## Runs
 
-The processing journal — a filterable list of every ticket the assistant has handled.
+The processing journal — a filterable list of every run the assistant has made, whatever started it.
 
-- **Filter by ticket** — enter a ticket reference like `UserRequest::123` (exact match)
+- **Filter by subject** — what the run was about: a ticket reference like `UserRequest::123`, or a module's own subject for a scheduled run like `selfcheck` (exact match)
 - **Filter by status** — `running`, `done`, or `failed`
 - The list auto-refreshes every 5 seconds while any run is in progress
 

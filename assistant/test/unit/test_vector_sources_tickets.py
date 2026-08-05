@@ -139,5 +139,17 @@ class TestToConversation(unittest.TestCase):
         self.assertEqual([e.speaker for e in result], ["caller", "agent"])
 
 
+class TestNoPrincipal(unittest.IsolatedAsyncioTestCase):
+    async def test_the_sweep_takes_the_plain_connection(self):
+        """No run, no principal: the sweep is infrastructure, and the index it
+        builds is global on purpose. Acting as somebody would be the mistake."""
+        deps, _ = _deps_with_bundle()
+
+        await TicketVectorSource(deps, classes=["UserRequest"]).prepare()
+
+        deps.itop.get.assert_awaited_once_with()
+        deps.itop.for_principal.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

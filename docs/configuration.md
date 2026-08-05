@@ -93,6 +93,24 @@ Every run leaves a trace in [Admin UI → Runs](admin-ui.md#runs) (`GET /api/run
 
 ---
 
+## Selfcheck module settings
+
+`selfcheck` is the platform's smoke module. It touches nothing: one run reads the service catalog over the configured iTop connection, asks the model to say hello, and records both in the run journal. Use it to confirm that a deployment's iTop and model connections work under real module code — on a timer, or on demand from [Admin UI → Modules](admin-ui.md#modules).
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enabled` | `false` | Enable the module (a timer that calls a model is opt-in) |
+| `interval_seconds` | `900` | How often the scheduled run fires |
+| `probe_oql` | `SELECT Service` | The catalog read used as the iTop probe |
+| `model` | _(global LLM model)_ | Override model for this module |
+
+> [!IMPORTANT]
+> `enabled` is read at **startup**, like intake's: the module registers its triggers or it does not. `interval_seconds` is re-read before every tick.
+
+The scheduled run is journalled with `kind: schedule` and `subject: selfcheck` — a run's subject is whatever it is about, and only for ticket-scoped triggers is that a ticket reference.
+
+---
+
 ## Supported LLM providers
 
 `LLM_PROVIDER` (or the **Provider** dropdown in [Connections](admin-ui.md)) decides which of the other LLM fields matter. The UI hides the ones the provider does not use.

@@ -1,5 +1,6 @@
 import {
   Alert,
+  Badge,
   Button,
   Group,
   JsonInput,
@@ -19,11 +20,25 @@ import { useTranslation } from 'react-i18next';
 
 import { apiGet, apiSend } from './api';
 
+interface RequestAction {
+  action: string;
+  summary: string;
+  input_schema: Schema;
+}
+
+interface ScheduleInfo {
+  name: string;
+  summary: string;
+  default_interval: number;
+}
+
 interface ModuleInfo {
   name: string;
   description: string;
   has_config: boolean;
   prompts: string[];
+  requests: RequestAction[];
+  schedules: ScheduleInfo[];
 }
 
 // The subset of JSON Schema that pydantic emits for our config models.
@@ -90,6 +105,32 @@ export default function Modules() {
                 <ModuleConfigForm module={m.name} />
               ) : (
                 <Text c="dimmed">{t('modules.no_config')}</Text>
+              )}
+              {m.schedules.length > 0 && (
+                <>
+                  <Title order={4} mt="md">
+                    {t('modules.schedules_title')}
+                  </Title>
+                  {m.schedules.map((sch) => (
+                    <Group key={sch.name} gap="xs">
+                      <Badge variant="light">{sch.name}</Badge>
+                      <Text size="sm">{sch.summary}</Text>
+                      <Text size="sm" c="dimmed">
+                        {t('modules.schedule_interval', { seconds: sch.default_interval })}
+                      </Text>
+                    </Group>
+                  ))}
+                </>
+              )}
+              {m.requests.length > 0 && (
+                <>
+                  <Title order={4} mt="md">
+                    {t('modules.requests_title')}
+                  </Title>
+                  {m.requests.map((r) => (
+                    <RequestActionForm key={r.action} module={m.name} action={r} />
+                  ))}
+                </>
               )}
             </Stack>
           </Tabs.Panel>
@@ -204,6 +245,68 @@ function ModuleConfigForm({ module }: { module: string }) {
         </Button>
         <Button variant="subtle" color="red" onClick={reset}>
           {t('common.btn_reset_defaults')}
+        </Button>
+      </Group>
+    </Stack>
+  );
+}
+
+interface RunResult {
+  processing_id: string;
+  status: string;
+  detail: string;
+}
+
+// A synchronous run of the module, triggered by hand. The form comes from the
+// schema the registry published, so this component knows no module by name.
+function RequestActionForm({ module, action }: { module: string; action: RequestAction }) {
+  const { t } = useTranslation();
+  const [values, setValues] = useState<Record<string, unknown>>({});
+  const [result, setResult] = useState<RunResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const run = async () => {
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      setResult(await apiSend<RunResult>('POST', `/modules/${module}/${action.action}`, values));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Stack gap="xs">
+      <Text size="sm" c="dimmed">
+        {action.summary}
+      </Text>
+      {Object.entries(action.input_schema.properties ?? {}).map(([name, prop]) => (
+        <ConfigField
+          key={name}
+          name={name}
+          prop={prop}
+          value={values[name] ?? ''}
+          onChange={(value) => setValues((current) => ({ ...current, [name]: value }))}
+        />
+      ))}
+      {error && <Alert color="red">{error}</Alert>}
+      {result && (
+        <Alert color={result.status === 'done' ? 'green' : 'yellow'}>
+          <Text size="sm">
+            {result.detail ? `${result.status} — ${result.detail}` : result.status}
+          </Text>
+          <Text size="xs" c="dimmed">
+            {t('modules.run_id', { id: result.processing_id })}
+          </Text>
+        </Alert>
+      )}
+      <Group>
+        <Button onClick={run} loading={busy}>
+          {t('modules.run_action')}
         </Button>
       </Group>
     </Stack>

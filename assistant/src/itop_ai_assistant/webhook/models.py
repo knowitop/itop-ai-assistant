@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from itop_ai_assistant.pipelines.models import ObjectRef
 
 
 class TicketEvent(StrEnum):
@@ -9,9 +9,7 @@ class TicketEvent(StrEnum):
     ASSIGNED = "assigned"
 
 
-class WebhookPayload(BaseModel):
-    obj_class: str = Field(alias="class")
-    id: str
-    event: TicketEvent
+class WebhookPayload(ObjectRef):
+    """What iTop posts: an object reference plus the event that fired."""
 
-    model_config = {"populate_by_name": True}
+    event: TicketEvent

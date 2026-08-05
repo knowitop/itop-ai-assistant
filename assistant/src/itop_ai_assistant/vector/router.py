@@ -10,7 +10,9 @@ from fastapi import APIRouter, HTTPException, Request
 
 from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
 from itop_ai_assistant.deps import AppDeps
+from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.vector.index import RECONCILE_SENTINEL, VectorIndex
+from itop_ai_assistant.vector.indexer import SWEEP_TASK
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,7 @@ router = APIRouter(prefix="/vector")
 @router.get("/status")
 async def vector_status(request: Request) -> dict:
     deps: AppDeps = request.app.state.deps
-    indexer = getattr(request.app.state, "vector_indexer", None)
+    tasks: PeriodicTasks = request.app.state.tasks
     vector_cfg = await deps.config_store.get("vector", VectorConfig)
     embeddings_cfg = await deps.config_store.get("embeddings", EmbeddingsConfig)
 
@@ -28,6 +30,7 @@ async def vector_status(request: Request) -> dict:
     index_info: dict | None = None
     sync: dict | None = None
     last_reconcile = None
+    reindex_pending = False
     runs: list[dict] = []
     if deps.vector_db.configured:
         index = VectorIndex(deps.vector_db)
@@ -52,6 +55,7 @@ async def vector_status(request: Request) -> dict:
                 }
             sync = await index.list_cursors()
             last_reconcile = await index.get_cursor(RECONCILE_SENTINEL)
+            reindex_pending = await index.reindex_pending()
             runs = await index.journal_recent(10)
         except Exception as e:  # Postgres down, tables missing (migrations never ran) …
             database["ok"] = False
@@ -64,20 +68,31 @@ async def vector_status(request: Request) -> dict:
         "index": index_info,
         "sync": sync,
         "last_reconcile": last_reconcile,
+        "reindex_pending": reindex_pending,
         "runs": runs,
-        "indexer_running": indexer is not None and indexer.running,
+        "indexer_running": tasks.is_running(SWEEP_TASK),
     }
 
 
 @router.post("/reindex", status_code=202)
 async def vector_reindex(request: Request) -> dict:
-    """Schedule a full backfill: cursor reset + an immediate sweep tick."""
+    """Schedule a full backfill: cursor reset + an immediate sweep tick.
+
+    The request is a row in Postgres, not a flag in this process — whichever
+    replica wins the advisory lock acts on it; waking the local loop only makes
+    it happen sooner here.
+    """
     deps: AppDeps = request.app.state.deps
-    indexer = getattr(request.app.state, "vector_indexer", None)
-    if indexer is None:
+    tasks: PeriodicTasks = request.app.state.tasks
+    if not deps.vector_db.configured:
         raise HTTPException(status_code=409, detail="Vector store is not configured (database_url is not set)")
     vector_cfg = await deps.config_store.get("vector", VectorConfig)
     if not vector_cfg.enabled:
         raise HTTPException(status_code=409, detail="Vector indexing is disabled (vector: enabled)")
-    indexer.request_reindex()
+    try:
+        await VectorIndex(deps.vector_db).request_reindex()
+    except Exception as e:  # Postgres down, tables missing (migrations never ran) …
+        logger.warning(f"reindex request could not be stored: {e}")
+        raise HTTPException(status_code=503, detail=f"Vector store is unavailable: {type(e).__name__}: {e}") from e
+    tasks.wake(SWEEP_TASK)
     return {"status": "scheduled"}
