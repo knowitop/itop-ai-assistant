@@ -42,7 +42,7 @@ _SCROLL_PAGE = 256
 # re-indexing the same chunk must overwrite it, never add a twin.
 _ID_NAMESPACE = uuid.UUID("6f0f5f8e-6a1d-5c2b-9a3e-0c1d2e3f4a5b")
 
-_KEYWORD_FIELDS = ("obj_class", "chunk_kind", "visibility", "status", "org_id")
+_KEYWORD_FIELDS = ("obj_class", "chunk_kind", "visibility", "status", "org_id", "obj_key")
 
 
 class QdrantNotConfigured(RuntimeError):
@@ -98,6 +98,11 @@ class QdrantChunkStore:
         meta = await self.active_meta()
         if meta is not None:
             _check_fingerprint(meta, model, dim)
+            # Also for a collection that already exists: a payload index added
+            # by a later release would otherwise never appear on a deployment
+            # that was provisioned before it (a filter would still work, by
+            # full scan). Creating an existing index is a no-op for Qdrant.
+            await self._ensure_payload_indexes(meta.version)
             return meta
         version = 1
         await self._create_meta_collection()
@@ -272,7 +277,8 @@ class QdrantChunkStore:
         statuses: list[str],
         visibilities: list[str],
         allowed_orgs: list[str] | None = None,
-        exclude_obj_id: int | None = None,
+        exclude: tuple[str, int] | None = None,
+        updated_after: datetime | None = None,
         limit: int = 30,
     ) -> list[SearchHit]:
         """Filtered nearest neighbours aggregated to objects: the score of an
@@ -281,6 +287,11 @@ class QdrantChunkStore:
         Filters are applied during the walk, not over its result — the
         property the backend was chosen for (ADR-001, R1). `allowed_orgs=None`
         means unrestricted. Returns [] when no index version exists yet.
+
+        Grouping is by `obj_key`, not by `obj_id`: the id is unique only
+        within one root class hierarchy, and a search spans several classes.
+        The class of a hit is read from its best chunk's payload rather than
+        parsed back out of the group id — one format less to keep in sync.
         """
         meta = await self.active_meta()
         if meta is None:
@@ -292,21 +303,33 @@ class QdrantChunkStore:
         ]
         if allowed_orgs is not None:
             must.append(models.FieldCondition(key="org_id", match=models.MatchAny(any=allowed_orgs)))
+        if updated_after is not None:
+            must.append(
+                models.FieldCondition(key="last_update", range=models.DatetimeRange(gte=updated_after.isoformat()))
+            )
         must_not: list[models.Condition] = []
-        if exclude_obj_id is not None:
-            must_not.append(models.FieldCondition(key="obj_id", match=models.MatchValue(value=exclude_obj_id)))
+        if exclude is not None:
+            must_not.append(
+                models.FieldCondition(key="obj_key", match=models.MatchValue(value=f"{exclude[0]}:{exclude[1]}"))
+            )
         response = await self.client.query_points_groups(
             collection_name=self.collection_name(meta.version),
             query=embedding,
             using=_DENSE,
             query_filter=models.Filter(must=must, must_not=must_not or None),
-            group_by="obj_id",
+            group_by="obj_key",
             group_size=1,
             limit=limit,
-            with_payload=False,
+            with_payload=["obj_class", "obj_id"],
         )
         return [
-            SearchHit(obj_id=int(group.id), score=float(group.hits[0].score)) for group in response.groups if group.hits
+            SearchHit(
+                obj_class=group.hits[0].payload["obj_class"],
+                obj_id=int(group.hits[0].payload["obj_id"]),
+                score=float(group.hits[0].score),
+            )
+            for group in response.groups
+            if group.hits
         ]
 
     async def _create_meta_collection(self) -> None:
@@ -329,12 +352,22 @@ class QdrantChunkStore:
             vectors_config={_DENSE: models.VectorParams(size=dim, distance=models.Distance.COSINE)},
             sparse_vectors_config={_SPARSE: models.SparseVectorParams(index=models.SparseIndexParams())},
         )
+        await self._ensure_payload_indexes(version)
+
+    async def _ensure_payload_indexes(self, version: int) -> None:
+        name = self.collection_name(version)
         for field in _KEYWORD_FIELDS:
             await self.client.create_payload_index(
                 collection_name=name, field_name=field, field_schema=models.PayloadSchemaType.KEYWORD
             )
         await self.client.create_payload_index(
             collection_name=name, field_name="obj_id", field_schema=models.PayloadSchemaType.INTEGER
+        )
+        # DATETIME, not KEYWORD: this is the field range conditions are built
+        # on ("modified within the last year"), and Qdrant parses RFC-3339 and
+        # compares in UTC itself.
+        await self.client.create_payload_index(
+            collection_name=name, field_name="last_update", field_schema=models.PayloadSchemaType.DATETIME
         )
 
 
@@ -351,6 +384,8 @@ def _payload(chunk: ChunkMetadata) -> dict:
     payload = {
         "obj_class": chunk.obj_class,
         "obj_id": chunk.obj_id,
+        # Grouping key of a search: obj_id repeats across root class hierarchies
+        "obj_key": chunk.obj_key,
         "chunk_kind": chunk.chunk_kind,
         "chunk_n": chunk.chunk_n,
         "visibility": chunk.visibility,
@@ -360,6 +395,13 @@ def _payload(chunk: ChunkMetadata) -> dict:
         "meta_hash": chunk.meta_hash,
         "created_at": chunk.created_at.isoformat() if isinstance(chunk.created_at, datetime) else chunk.created_at,
     }
+    if chunk.last_update is not None:
+        # Absent rather than null when the source has no such date: a null
+        # would sort as a value in a range condition, an absent key never
+        # matches one — and "unknown" must not read as "recent".
+        payload["last_update"] = (
+            chunk.last_update.isoformat() if isinstance(chunk.last_update, datetime) else chunk.last_update
+        )
     # Source-defined pre-filter keys ride flat alongside the rest so they can
     # be indexed and filtered like any other field (see ADR-005).
     payload.update(chunk.filters or {})

@@ -381,6 +381,31 @@ class TestMetadataFreshness(IndexerTestCase):
         self.assertEqual(len(updated), 1)
         self.assertEqual(updated[0].status, "closed")
 
+    async def test_last_update_reaches_the_chunk(self):
+        # The date the "solved within the last year" filter runs on — it comes
+        # from the source and used to stop at the indexer (TASK-004)
+        store = FakeChunkStore()
+        await self._run(_deps_mock(store=store), FakeTicketSource([_record(1)]))
+
+        self.assertEqual(_flat(store.upsert_calls)[0].meta.last_update, _NOW)
+
+    async def test_a_moved_last_update_alone_updates_metadata(self):
+        # The reopen-and-close-again case: same text, newer date. Without the
+        # rewrite the window filter would answer from the first indexing forever
+        store = FakeChunkStore()
+        await self._run(_deps_mock(store=store), FakeTicketSource([_record(1)]))
+
+        store2 = FakeChunkStore()
+        store2.digests[("UserRequest", 1)] = dict(store.digests[("UserRequest", 1)])
+        later = _NOW + timedelta(days=30)
+        embedder2 = _embedder_mock()
+        report = await self._run(_deps_mock(store=store2), FakeTicketSource([_record(1, last_update=later)]), embedder2)
+
+        self.assertEqual(report.chunks_embedded, 0)
+        self.assertEqual(report.chunks_metadata_updated, 1)
+        embedder2.embed.assert_not_awaited()
+        self.assertEqual(_flat(store2.update_metadata_calls)[0].last_update, later)
+
     async def test_text_change_only_embeds_metadata_not_rewritten_twice(self):
         store = FakeChunkStore()
         await self._run(_deps_mock(store=store), FakeTicketSource([_record(1, description="Broken.")]))

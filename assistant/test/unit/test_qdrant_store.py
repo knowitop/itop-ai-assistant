@@ -14,14 +14,16 @@ def _meta(
     kind: str = "body",
     n: int = 0,
     *,
+    obj_class="UserRequest",
     digest="hash",
     status="resolved",
     org_id: str | None = "1",
     visibility="public",
     filters: dict[str, str] | None = {"service_id": "5"},
+    last_update: datetime | None = _NOW,
 ) -> ChunkMetadata:
     return ChunkMetadata(
-        obj_class="UserRequest",
+        obj_class=obj_class,
         obj_id=obj_id,
         chunk_kind=kind,
         chunk_n=n,
@@ -31,6 +33,7 @@ def _meta(
         created_at=_NOW,
         org_id=org_id,
         filters=filters,
+        last_update=last_update,
     )
 
 
@@ -39,14 +42,26 @@ def _chunk(
     kind: str = "body",
     n: int = 0,
     *,
+    obj_class="UserRequest",
     vector=None,
     digest="hash",
     status="resolved",
     org_id: str | None = "1",
     visibility="public",
+    last_update: datetime | None = _NOW,
 ) -> ChunkRecord:
     return ChunkRecord(
-        meta=_meta(obj_id, kind, n, digest=digest, status=status, org_id=org_id, visibility=visibility),
+        meta=_meta(
+            obj_id,
+            kind,
+            n,
+            obj_class=obj_class,
+            digest=digest,
+            status=status,
+            org_id=org_id,
+            visibility=visibility,
+            last_update=last_update,
+        ),
         embedding=vector or [1.0, 0.0, 0.0, 0.0],
     )
 
@@ -284,9 +299,67 @@ class TestSearch(QdrantStoreCase):
     async def test_the_asking_ticket_can_be_excluded(self):
         await self.store.upsert_chunks([_chunk(1), _chunk(2)], model="test-model", dim=4)
 
-        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], exclude_obj_id=1, **_ALL)
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], exclude=("UserRequest", 1), **_ALL)
 
         self.assertEqual([hit.obj_id for hit in hits], [2])
+
+    async def test_exclusion_is_by_class_and_id_together(self):
+        # `Ticket` subclasses share one numbering, but root hierarchies do not:
+        # excluding UserRequest 1 must not silence some other class's id 1
+        await self.store.upsert_chunks(
+            [_chunk(1), _chunk(1, obj_class="KnowledgeBaseArticle")], model="test-model", dim=4
+        )
+
+        hits = await self.store.search(
+            [1.0, 0.0, 0.0, 0.0],
+            classes=["UserRequest", "KnowledgeBaseArticle"],
+            statuses=["resolved", "closed"],
+            visibilities=["public", "internal"],
+            exclude=("UserRequest", 1),
+        )
+
+        self.assertEqual([(hit.obj_class, hit.obj_id) for hit in hits], [("KnowledgeBaseArticle", 1)])
+
+    async def test_the_same_id_in_two_hierarchies_stays_two_objects(self):
+        await self.store.upsert_chunks(
+            [_chunk(1), _chunk(1, obj_class="KnowledgeBaseArticle")], model="test-model", dim=4
+        )
+
+        hits = await self.store.search(
+            [1.0, 0.0, 0.0, 0.0],
+            classes=["UserRequest", "KnowledgeBaseArticle"],
+            statuses=["resolved", "closed"],
+            visibilities=["public", "internal"],
+        )
+
+        self.assertEqual(
+            {(hit.obj_class, hit.obj_id) for hit in hits}, {("UserRequest", 1), ("KnowledgeBaseArticle", 1)}
+        )
+
+    async def test_updated_after_keeps_only_the_recent(self):
+        await self.store.upsert_chunks(
+            [
+                _chunk(1, last_update=datetime(2026, 7, 1, tzinfo=UTC)),
+                _chunk(2, last_update=datetime(2024, 1, 1, tzinfo=UTC)),
+            ],
+            model="test-model",
+            dim=4,
+        )
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], updated_after=datetime(2026, 1, 1, tzinfo=UTC), **_ALL)
+
+        self.assertEqual([hit.obj_id for hit in hits], [1])
+
+    async def test_an_object_without_a_date_never_passes_the_window(self):
+        # "Unknown" must not read as "recent" — the payload key is absent, and
+        # an absent key matches no range condition
+        await self.store.upsert_chunks([_chunk(1, last_update=None)], model="test-model", dim=4)
+
+        found = await self.store.search([1.0, 0.0, 0.0, 0.0], **_ALL)
+        self.assertEqual([hit.obj_id for hit in found], [1])
+        self.assertEqual(
+            await self.store.search([1.0, 0.0, 0.0, 0.0], updated_after=datetime(2000, 1, 1, tzinfo=UTC), **_ALL), []
+        )
 
     async def test_limit_caps_the_number_of_objects(self):
         await self.store.upsert_chunks([_chunk(1), _chunk(2), _chunk(3)], model="test-model", dim=4)

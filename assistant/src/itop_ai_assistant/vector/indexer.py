@@ -340,6 +340,10 @@ def _chunk_metadata(obj_class: str, record: VectorRecord, chunk: Chunk, started_
         created_at=record.created_at or record.last_update or started_at,
         org_id=record.org_id,
         filters=record.filters,
+        # No fallback, unlike `created_at`: this one feeds `meta_hash`, and a
+        # fallback that moves between passes would rewrite every payload on
+        # every sweep. A source without it opts out of `updated_after`.
+        last_update=record.last_update,
     )
 
 
