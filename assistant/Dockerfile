@@ -21,6 +21,14 @@ WORKDIR /app
 COPY assistant/pyproject.toml assistant/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project --no-editable
 
+# The build stamp, baked into the package by hatch_build.py and readable at
+# run time through importlib.metadata and _build_info.py. No git here: the
+# tag is something CI already knows, so it is handed over rather than
+# rediscovered from history. Unset (a local build) yields the 0.0.0 fallback.
+ARG APP_VERSION=""
+ARG BUILD_COMMIT=""
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${APP_VERSION} BUILD_COMMIT=${BUILD_COMMIT}
+
 # Install the application itself. --no-editable puts the package inside the
 # venv, so the runtime image needs nothing but /app/.venv.
 COPY assistant/ ./
@@ -34,8 +42,9 @@ LABEL org.opencontainers.image.licenses="AGPL-3.0"
 
 WORKDIR /app
 
-# The venv already contains the application, its default prompts and config.yaml
-COPY --from=builder /app/.venv /app/.venv
+# The venv already contains the application, its build stamp, default prompts
+# and config.yaml — no source, and no .git, reaches the runtime image
+COPY --from=builder /app/.venv ./.venv
 
 # The admin SPA is not a Python artifact — it is copied alongside
 COPY --from=ui-builder /ui/dist ./ui/dist

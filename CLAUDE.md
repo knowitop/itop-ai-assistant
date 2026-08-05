@@ -139,6 +139,7 @@ and `uv run pytest`.
 |-------------------------------------------------|----------------------------------------------------------------------------------------------|
 | `main.py`                                       | FastAPI app init, lifespan (builds `AppDeps`)                                                |
 | `config.py`                                     | `Settings` — centralized config (pydantic-settings)                                          |
+| `build_info.py`                                 | Build stamp baked at build time: version, commit, build date                                 |
 | `deps.py`                                       | Composition root: `AppDeps`, `build_deps`, `create_llm`                                      |
 | `config_store.py`                               | `RedisConfigStore` — runtime-editable module config                                          |
 | `journal.py`                                    | `RunJournal` — per-run status/steps in Redis                                                 |
@@ -471,7 +472,7 @@ simplicity beats elegance. These constraints are mandatory:
   no CORS. The admin token lives in `localStorage`; 401 shows the token
   entry screen.
 
-**Commands** (run from `ui/`; the dev server proxies `/api` and `/health`
+**Commands** (run from `ui/`; the dev server proxies `/api`, `/health` and `/version`
 to the assistant on `:8001`, so run the backend alongside):
 
 ```bash
