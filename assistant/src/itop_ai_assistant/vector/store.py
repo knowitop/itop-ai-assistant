@@ -14,20 +14,20 @@ object itself.
 Two hashes travel with a chunk, not one. `content_hash` guards the chunk's
 text — it comes from the chunker and changes only when the source text does.
 `ChunkMetadata.meta_hash` guards everything else the payload carries that
-filtering depends on (`visibility`, `status`, `org_id`, `filters`,
-`last_update`) — it lets the sweep tell "the object was reopened, only
-status moved" apart from "the text changed", and refresh the former without
-paying for a re-embed (ADR-004, `update_chunk_metadata`). `created_at`
-deliberately does not feed `meta_hash`: the indexer falls back to the
-sweep's `started_at` when a source has no creation date, and that fallback
-is not deterministic across passes — folding it into the hash would make
-metadata churn on every sweep for such objects. `last_update` has no such
-fallback and does feed it, which is what keeps the "resolved within the last
-year" filter honest. See `dev-docs/architecture/vector.md`.
+filtering depends on (`visibility`, `filters`, `updated_at`) — it lets the
+sweep tell "the object was reopened" apart from "the text changed", and
+refresh the former without paying for a re-embed (ADR-004,
+`update_chunk_metadata`). `created_at` deliberately does not feed `meta_hash`:
+the indexer falls back to the sweep's `started_at` when a source has no
+creation date, and that fallback is not deterministic across passes — folding
+it into the hash would make metadata churn on every sweep for such objects.
+`updated_at` has no such fallback and does feed it, which is what keeps the
+"resolved within the last year" filter honest. See `dev-docs/architecture/vector.md`.
 """
 
 import hashlib
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol, runtime_checkable
@@ -65,16 +65,14 @@ class ChunkMetadata:
     chunk_kind: str  # profile / description / solution / log:public …
     chunk_n: int
     visibility: str  # public / internal
-    status: str
     content_hash: str
     created_at: datetime  # object creation time (time-window KNN later)
-    org_id: str | None = None
     filters: dict[str, str] | None = None
     # Last modification of the source object — the range filter behind "solved
     # within the last year". None when the source has no such date: such an
     # object is then invisible to every `updated_after` search, which is the
     # honest answer (see the module docstring on why there is no fallback).
-    last_update: datetime | None = None
+    updated_at: datetime | None = None
 
     @property
     def obj_key(self) -> str:
@@ -90,11 +88,9 @@ class ChunkMetadata:
     def meta_hash(self) -> str:
         canonical = json.dumps(
             {
-                "visibility": self.visibility,
-                "status": self.status,
-                "org_id": self.org_id,
                 "filters": self.filters,
-                "last_update": self.last_update.isoformat() if self.last_update else None,
+                "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+                "visibility": self.visibility,
             },
             sort_keys=True,
             ensure_ascii=False,
@@ -155,7 +151,9 @@ class ChunkStore(Protocol):
         """False when no connection is configured — the deployment runs without vectors."""
         ...
 
-    async def ensure_version(self, family: str, model: str, dim: int) -> IndexMeta: ...
+    async def ensure_version(
+        self, family: str, model: str, dim: int, *, filter_keys: Sequence[str] = ()
+    ) -> IndexMeta: ...
 
     async def active_meta(self, family: str) -> IndexMeta | None: ...
 
@@ -189,17 +187,16 @@ class ChunkStore(Protocol):
         embedding: list[float],
         *,
         family: str,
-        classes: list[str],
-        statuses: list[str],
+        classes: list[str] | None = None,
         visibilities: list[str],
-        allowed_orgs: list[str] | None = None,
+        filters: dict[str, list[str]] | None = None,
         exclude: tuple[str, int] | None = None,
         updated_after: datetime | None = None,
         limit: int = 30,
     ) -> list[SearchHit]:
         """`exclude` is one (obj_class, obj_id) pair — the asking object
         itself. `updated_after` keeps objects modified at/after that moment;
-        an object indexed without a `last_update` never passes it."""
+        an object indexed without an `updated_at` never passes it."""
         ...
 
     async def stats(self, family: str) -> IndexStats | None: ...
