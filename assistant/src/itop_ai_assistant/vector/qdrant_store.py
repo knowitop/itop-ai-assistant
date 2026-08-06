@@ -26,6 +26,7 @@ of a ticket.
 """
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
 
 from qdrant_client import AsyncQdrantClient, models
@@ -49,9 +50,11 @@ _SCROLL_PAGE = 256
 _ID_NAMESPACE = uuid.UUID("6f0f5f8e-6a1d-5c2b-9a3e-0c1d2e3f4a5b")
 
 # System keys only: `fields.*` (source-defined pre-filter keys, D6/TASK-008)
-# rides unindexed under its own nested key — indexing a specific `fields.*`
-# key waits for a real filtering scenario (ADR-005).
-_KEYWORD_FIELDS = ("obj_class", "chunk_kind", "visibility", "status", "org_id", "obj_key")
+# rides unindexed under its own nested key by default — indexing a specific
+# `fields.*` key waits for a real filtering scenario (ADR-005). A source opts
+# its own generic keys (e.g. `status`, `org_id`) into indexing by declaring
+# them in `VectorSource.indexed_filter_keys`, passed here as `filter_keys`.
+_KEYWORD_FIELDS = ("obj_class", "chunk_kind", "visibility", "obj_key")
 
 
 class QdrantNotConfigured(RuntimeError):
@@ -128,7 +131,7 @@ class QdrantChunkStore:
             if offset is None:
                 return families
 
-    async def ensure_version(self, family: str, model: str, dim: int) -> IndexMeta:
+    async def ensure_version(self, family: str, model: str, dim: int, *, filter_keys: Sequence[str] = ()) -> IndexMeta:
         meta = await self.active_meta(family)
         if meta is not None:
             _check_fingerprint(meta, model, dim)
@@ -136,11 +139,11 @@ class QdrantChunkStore:
             # by a later release would otherwise never appear on a deployment
             # that was provisioned before it (a filter would still work, by
             # full scan). Creating an existing index is a no-op for Qdrant.
-            await self._ensure_payload_indexes(family, meta.version)
+            await self._ensure_payload_indexes(family, meta.version, filter_keys)
             return meta
         version = 1
         await self._create_meta_collection()
-        await self._create_chunk_collection(family, version, dim)
+        await self._create_chunk_collection(family, version, dim, filter_keys)
         await self.client.upsert(
             collection_name=_META_COLLECTION,
             points=[
@@ -308,10 +311,9 @@ class QdrantChunkStore:
         embedding: list[float],
         *,
         family: str,
-        classes: list[str],
-        statuses: list[str],
+        classes: list[str] | None = None,
         visibilities: list[str],
-        allowed_orgs: list[str] | None = None,
+        filters: dict[str, list[str]] | None = None,
         exclude: tuple[str, int] | None = None,
         updated_after: datetime | None = None,
         limit: int = 30,
@@ -320,8 +322,11 @@ class QdrantChunkStore:
         object is its best chunk's, computed server-side by `group_by`.
 
         Filters are applied during the walk, not over its result — the
-        property the backend was chosen for (ADR-001, R1). `allowed_orgs=None`
-        means unrestricted. Returns [] when no index version exists yet.
+        property the backend was chosen for (ADR-001, R1). `classes=None`
+        searches the whole family; an absent key in `filters` means
+        unrestricted for that key — an empty list under either is a caller
+        mistake, not "no results", and is rejected loudly. Returns [] when
+        no index version exists yet.
 
         Grouping is by `obj_key`, not by `obj_id`: the id is unique only
         within one root class hierarchy, and a search spans several classes.
@@ -332,15 +337,21 @@ class QdrantChunkStore:
         if meta is None:
             return []
         must: list[models.Condition] = [
-            models.FieldCondition(key="obj_class", match=models.MatchAny(any=classes)),
-            models.FieldCondition(key="status", match=models.MatchAny(any=statuses)),
             models.FieldCondition(key="visibility", match=models.MatchAny(any=visibilities)),
         ]
-        if allowed_orgs is not None:
-            must.append(models.FieldCondition(key="org_id", match=models.MatchAny(any=allowed_orgs)))
+        if classes is not None:
+            if not classes:
+                raise ValueError('search classes got an empty list — omit the argument for "whole family", not []')
+            must.append(models.FieldCondition(key="obj_class", match=models.MatchAny(any=classes)))
+        for key, values in (filters or {}).items():
+            if not values:
+                raise ValueError(
+                    f'search filter {key!r} got an empty value list — omit the key for "unrestricted", not []'
+                )
+            must.append(models.FieldCondition(key=f"fields.{key}", match=models.MatchAny(any=values)))
         if updated_after is not None:
             must.append(
-                models.FieldCondition(key="last_update", range=models.DatetimeRange(gte=updated_after.isoformat()))
+                models.FieldCondition(key="updated_at", range=models.DatetimeRange(gte=updated_after.isoformat()))
             )
         must_not: list[models.Condition] = []
         if exclude is not None:
@@ -383,20 +394,26 @@ class QdrantChunkStore:
             collection_name=_META_COLLECTION, field_name="family", field_schema=models.PayloadSchemaType.KEYWORD
         )
 
-    async def _create_chunk_collection(self, family: str, version: int, dim: int) -> None:
+    async def _create_chunk_collection(
+        self, family: str, version: int, dim: int, filter_keys: Sequence[str] = ()
+    ) -> None:
         name = self.collection_name(family, version)
         await self.client.create_collection(
             collection_name=name,
             vectors_config={_DENSE: models.VectorParams(size=dim, distance=models.Distance.COSINE)},
             sparse_vectors_config={_SPARSE: models.SparseVectorParams(index=models.SparseIndexParams())},
         )
-        await self._ensure_payload_indexes(family, version)
+        await self._ensure_payload_indexes(family, version, filter_keys)
 
-    async def _ensure_payload_indexes(self, family: str, version: int) -> None:
+    async def _ensure_payload_indexes(self, family: str, version: int, filter_keys: Sequence[str] = ()) -> None:
         name = self.collection_name(family, version)
         for field in _KEYWORD_FIELDS:
             await self.client.create_payload_index(
                 collection_name=name, field_name=field, field_schema=models.PayloadSchemaType.KEYWORD
+            )
+        for key in filter_keys:
+            await self.client.create_payload_index(
+                collection_name=name, field_name=f"fields.{key}", field_schema=models.PayloadSchemaType.KEYWORD
             )
         await self.client.create_payload_index(
             collection_name=name, field_name="obj_id", field_schema=models.PayloadSchemaType.INTEGER
@@ -405,7 +422,7 @@ class QdrantChunkStore:
         # on ("modified within the last year"), and Qdrant parses RFC-3339 and
         # compares in UTC itself.
         await self.client.create_payload_index(
-            collection_name=name, field_name="last_update", field_schema=models.PayloadSchemaType.DATETIME
+            collection_name=name, field_name="updated_at", field_schema=models.PayloadSchemaType.DATETIME
         )
 
 
@@ -443,22 +460,21 @@ def _payload(chunk: ChunkMetadata) -> dict:
         "chunk_kind": chunk.chunk_kind,
         "chunk_n": chunk.chunk_n,
         "visibility": chunk.visibility,
-        "status": chunk.status,
-        "org_id": chunk.org_id,
         "content_hash": chunk.content_hash,
         "meta_hash": chunk.meta_hash,
         "created_at": chunk.created_at.isoformat() if isinstance(chunk.created_at, datetime) else chunk.created_at,
     }
-    if chunk.last_update is not None:
+    if chunk.updated_at is not None:
         # Absent rather than null when the source has no such date: a null
         # would sort as a value in a range condition, an absent key never
         # matches one — and "unknown" must not read as "recent".
-        payload["last_update"] = (
-            chunk.last_update.isoformat() if isinstance(chunk.last_update, datetime) else chunk.last_update
+        payload["updated_at"] = (
+            chunk.updated_at.isoformat() if isinstance(chunk.updated_at, datetime) else chunk.updated_at
         )
-    # Source-defined pre-filter keys nest under `fields` so a source's own key
-    # (e.g. `status`) can never shadow a system key of the same name (D6,
-    # TASK-008). Not indexed automatically — see `_KEYWORD_FIELDS` (ADR-005).
+    # Source-defined pre-filter keys (e.g. `status`, `org_id` for tickets) nest
+    # under `fields` so a source's own key can never shadow a system key of
+    # the same name (D6, TASK-008). Not indexed automatically — a source opts
+    # specific keys in via `indexed_filter_keys` (see `_KEYWORD_FIELDS`, ADR-005).
     payload["fields"] = chunk.filters or {}
     return payload
 

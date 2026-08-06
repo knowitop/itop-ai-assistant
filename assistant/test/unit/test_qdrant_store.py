@@ -1,5 +1,6 @@
 import unittest
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 from qdrant_client import models
 
@@ -20,8 +21,8 @@ def _meta(
     status="resolved",
     org_id: str | None = "1",
     visibility="public",
-    filters: dict[str, str] | None = {"service_id": "5"},
-    last_update: datetime | None = _NOW,
+    extra_filters: dict[str, str] | None = {"service_id": "5"},
+    updated_at: datetime | None = _NOW,
 ) -> ChunkMetadata:
     return ChunkMetadata(
         obj_class=obj_class,
@@ -29,12 +30,10 @@ def _meta(
         chunk_kind=kind,
         chunk_n=n,
         visibility=visibility,
-        status=status,
         content_hash=digest,
         created_at=_NOW,
-        org_id=org_id,
-        filters=filters,
-        last_update=last_update,
+        filters={**(extra_filters or {}), "status": status, **({"org_id": org_id} if org_id else {})},
+        updated_at=updated_at,
     )
 
 
@@ -49,7 +48,7 @@ def _chunk(
     status="resolved",
     org_id: str | None = "1",
     visibility="public",
-    last_update: datetime | None = _NOW,
+    updated_at: datetime | None = _NOW,
 ) -> ChunkRecord:
     return ChunkRecord(
         meta=_meta(
@@ -61,7 +60,7 @@ def _chunk(
             status=status,
             org_id=org_id,
             visibility=visibility,
-            last_update=last_update,
+            updated_at=updated_at,
         ),
         embedding=vector or [1.0, 0.0, 0.0, 0.0],
     )
@@ -126,6 +125,20 @@ class TestVersioning(QdrantStoreCase):
             self.assertEqual(await store.list_families(), [])
         finally:
             await store.aclose()
+
+    async def test_indexed_filter_keys_are_created(self):
+        # Local (`:memory:`) Qdrant does not persist payload-index metadata —
+        # `get_collection().payload_schema` is always {} there, so the only
+        # observable signal is the call itself; the spy still goes through
+        # the real client, it only records what it was asked to index.
+        with patch.object(
+            self.store.client, "create_payload_index", wraps=self.store.client.create_payload_index
+        ) as spy:
+            await self.store.ensure_version(_FAMILY, "test-model", 4, filter_keys=("status", "org_id"))
+
+        field_names = {call.kwargs["field_name"] for call in spy.await_args_list}
+        self.assertIn("fields.status", field_names)
+        self.assertIn("fields.org_id", field_names)
 
 
 class TestUpsert(QdrantStoreCase):
@@ -195,13 +208,18 @@ class TestUpsert(QdrantStoreCase):
     async def test_filters_land_nested_under_fields(self):
         # D6/TASK-008: a source-defined key must not shadow a system key of
         # the same name — `fields.*` is the fix, verified here directly.
+        # `status`/`org_id` are now just source-declared filter keys like any
+        # other, so they land under `fields` too — there is no system-level
+        # "status"/"org_id" payload key anymore.
         await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
 
         records, _ = await self.store.client.scroll(
             collection_name=self.store.collection_name(_FAMILY, 1), limit=10, with_payload=True
         )
-        self.assertEqual(records[0].payload["fields"], {"service_id": "5"})
+        self.assertEqual(records[0].payload["fields"], {"service_id": "5", "status": "resolved", "org_id": "1"})
         self.assertNotIn("service_id", records[0].payload)
+        self.assertNotIn("status", records[0].payload)
+        self.assertNotIn("org_id", records[0].payload)
 
 
 class TestDeletion(QdrantStoreCase):
@@ -271,7 +289,7 @@ class TestReconciliationWalk(QdrantStoreCase):
 _ALL = {
     "family": _FAMILY,
     "classes": ["UserRequest"],
-    "statuses": ["resolved", "closed"],
+    "filters": {"status": ["resolved", "closed"]},
     "visibilities": ["public", "internal"],
 }
 
@@ -326,7 +344,7 @@ class TestSearch(QdrantStoreCase):
             [1.0, 0.0, 0.0, 0.0],
             family=_FAMILY,
             classes=["UserRequest", "KnowledgeBaseArticle"],
-            statuses=["resolved", "closed"],
+            filters={"status": ["resolved", "closed"]},
             visibilities=["public", "internal"],
         )
 
@@ -341,7 +359,7 @@ class TestSearch(QdrantStoreCase):
             [1.0, 0.0, 0.0, 0.0],
             family=_FAMILY,
             classes=["UserRequest"],
-            statuses=["closed"],
+            filters={"status": ["closed"]},
             visibilities=["public", "internal"],
         )
 
@@ -359,7 +377,7 @@ class TestSearch(QdrantStoreCase):
             [1.0, 0.0, 0.0, 0.0],
             family=_FAMILY,
             classes=["UserRequest"],
-            statuses=["resolved", "closed"],
+            filters={"status": ["resolved", "closed"]},
             visibilities=["public"],
         )
 
@@ -370,7 +388,8 @@ class TestSearch(QdrantStoreCase):
             [_chunk(1, org_id="1"), _chunk(2, org_id="2")], family=_FAMILY, model="test-model", dim=4
         )
 
-        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], allowed_orgs=None, **_ALL)
+        # No "org_id" key in filters — unrestricted, unlike a present-but-empty one
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], **_ALL)
 
         self.assertEqual({hit.obj_id for hit in hits}, {1, 2})
 
@@ -379,7 +398,13 @@ class TestSearch(QdrantStoreCase):
             [_chunk(1, org_id="1"), _chunk(2, org_id="2")], family=_FAMILY, model="test-model", dim=4
         )
 
-        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], allowed_orgs=["2"], **_ALL)
+        hits = await self.store.search(
+            [1.0, 0.0, 0.0, 0.0],
+            family=_FAMILY,
+            classes=["UserRequest"],
+            filters={"status": ["resolved", "closed"], "org_id": ["2"]},
+            visibilities=["public", "internal"],
+        )
 
         self.assertEqual([hit.obj_id for hit in hits], [2])
 
@@ -401,7 +426,7 @@ class TestSearch(QdrantStoreCase):
             [1.0, 0.0, 0.0, 0.0],
             family=_FAMILY,
             classes=["UserRequest", "KnowledgeBaseArticle"],
-            statuses=["resolved", "closed"],
+            filters={"status": ["resolved", "closed"]},
             visibilities=["public", "internal"],
             exclude=("UserRequest", 1),
         )
@@ -417,7 +442,7 @@ class TestSearch(QdrantStoreCase):
             [1.0, 0.0, 0.0, 0.0],
             family=_FAMILY,
             classes=["UserRequest", "KnowledgeBaseArticle"],
-            statuses=["resolved", "closed"],
+            filters={"status": ["resolved", "closed"]},
             visibilities=["public", "internal"],
         )
 
@@ -428,8 +453,8 @@ class TestSearch(QdrantStoreCase):
     async def test_updated_after_keeps_only_the_recent(self):
         await self.store.upsert_chunks(
             [
-                _chunk(1, last_update=datetime(2026, 7, 1, tzinfo=UTC)),
-                _chunk(2, last_update=datetime(2024, 1, 1, tzinfo=UTC)),
+                _chunk(1, updated_at=datetime(2026, 7, 1, tzinfo=UTC)),
+                _chunk(2, updated_at=datetime(2024, 1, 1, tzinfo=UTC)),
             ],
             family=_FAMILY,
             model="test-model",
@@ -443,7 +468,7 @@ class TestSearch(QdrantStoreCase):
     async def test_an_object_without_a_date_never_passes_the_window(self):
         # "Unknown" must not read as "recent" — the payload key is absent, and
         # an absent key matches no range condition
-        await self.store.upsert_chunks([_chunk(1, last_update=None)], family=_FAMILY, model="test-model", dim=4)
+        await self.store.upsert_chunks([_chunk(1, updated_at=None)], family=_FAMILY, model="test-model", dim=4)
 
         found = await self.store.search([1.0, 0.0, 0.0, 0.0], **_ALL)
         self.assertEqual([hit.obj_id for hit in found], [1])
@@ -455,6 +480,37 @@ class TestSearch(QdrantStoreCase):
         await self.store.upsert_chunks([_chunk(1), _chunk(2), _chunk(3)], family=_FAMILY, model="test-model", dim=4)
 
         self.assertEqual(len(await self.store.search([1.0, 0.0, 0.0, 0.0], limit=2, **_ALL)), 2)
+
+    async def test_empty_filter_value_list_is_rejected(self):
+        # A present-but-empty value list is almost certainly a caller mistake
+        # (a config field that resolved to []), not "no results" — see the
+        # module's design note on why this fails loudly instead of silently
+        # zeroing the query.
+        with self.assertRaises(ValueError):
+            await self.store.search(
+                [1.0, 0.0, 0.0, 0.0], family=_FAMILY, filters={"status": []}, visibilities=["public"]
+            )
+
+    async def test_empty_classes_list_is_rejected(self):
+        with self.assertRaises(ValueError):
+            await self.store.search([1.0, 0.0, 0.0, 0.0], family=_FAMILY, classes=[], visibilities=["public"])
+
+    async def test_classes_none_searches_whole_family(self):
+        await self.store.upsert_chunks(
+            [
+                _chunk(1, obj_class="UserRequest", vector=[1.0, 0.0, 0.0, 0.0]),
+                _chunk(1, obj_class="Incident", vector=[0.0, 1.0, 0.0, 0.0]),
+            ],
+            family=_FAMILY,
+            model="test-model",
+            dim=4,
+        )
+
+        hits = await self.store.search(
+            [1.0, 0.0, 0.0, 0.0], family=_FAMILY, classes=None, visibilities=["public", "internal"]
+        )
+
+        self.assertEqual({(hit.obj_class, hit.obj_id) for hit in hits}, {("UserRequest", 1), ("Incident", 1)})
 
 
 class TestMetadataUpdate(QdrantStoreCase):
@@ -476,9 +532,22 @@ class TestMetadataUpdate(QdrantStoreCase):
         self.assertEqual(before[0].vector, after[0].vector)
 
     async def test_a_dropped_filter_key_is_removed_not_merged(self):
+        # `_meta`'s `status`/`org_id` kwargs always land in `filters` now, so
+        # a bare `ChunkMetadata` (not the helper) is what exercises "no
+        # filters at all" — the helper can't express that state.
         await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
+        bare = ChunkMetadata(
+            obj_class="UserRequest",
+            obj_id=1,
+            chunk_kind="body",
+            chunk_n=0,
+            visibility="public",
+            content_hash="hash",
+            created_at=_NOW,
+            filters=None,
+        )
 
-        await self.store.update_chunk_metadata([_meta(1, filters=None)], family=_FAMILY)
+        await self.store.update_chunk_metadata([bare], family=_FAMILY)
 
         records, _ = await self.store.client.scroll(
             collection_name=self.store.collection_name(_FAMILY, 1), limit=10, with_payload=True
