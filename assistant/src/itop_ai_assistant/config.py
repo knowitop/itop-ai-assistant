@@ -258,6 +258,13 @@ class IntakeConfig(BaseModel):
     # requester's iTop no longer returns are dropped afterwards (ADR-003)
     similar_candidates: int = Field(default=15, gt=0)
     similar_top: int = Field(default=5, gt=0)
+    # Absolute floor on the Qdrant cosine score (range [-1, 1]) below which a
+    # candidate is dropped regardless of rank — top-N alone does not
+    # guarantee relevance, only relative rank among whatever `candidates`
+    # happened to return (TASK-011). 0.5 is an engineering guess, not
+    # calibrated against this deployment's embeddings model; tune it after a
+    # live check against real similar/unrelated pairs.
+    similar_min_score: float = Field(default=0.5, ge=-1.0, le=1.0)
     classify_service_oql: str = _CLASSIFY_SERVICE_OQL
     classify_subcategory_oql: str = _CLASSIFY_SUBCATEGORY_OQL
 

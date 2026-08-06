@@ -88,9 +88,10 @@ Set in the [Admin UI → Modules](admin-ui.md#modules) or via `PUT /api/config/i
 | `similar_max_age_days` | `365` | How far back solved tickets may be quoted in the handoff note |
 | `similar_candidates` | `15` | Candidates read from the index before iTop is asked which of them the run may see |
 | `similar_top` | `5` | Max references in one handoff note |
+| `similar_min_score` | `0.5` | Minimum Qdrant cosine score a candidate must reach to be quoted, regardless of rank; a conservative starting value, not calibrated to any specific embeddings model — tune it per deployment |
 
 > [!NOTE]
-> The three `similar_*` settings only do something when the [vector index](#vector-index) is switched on and an embeddings endpoint is configured. Without that, the agent is not given the search tool at all and the handoff note carries no references.
+> The four `similar_*` settings only do something when the [vector index](#vector-index) is switched on and an embeddings endpoint is configured. Without that, the agent is not given the search tool at all and the handoff note carries no references.
 
 > [!IMPORTANT]
 > `enabled` and `classes` are read at **startup**, not per ticket: changing them in the admin UI does not re-route webhooks until the service restarts. Every other setting applies from the next ticket.

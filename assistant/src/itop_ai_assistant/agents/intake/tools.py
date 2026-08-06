@@ -188,6 +188,7 @@ async def find_similar_resolved_tickets(runtime: IntakeToolRuntime) -> str:
         filters={"status": ctx.intake.resolved_statuses},
         exclude=(ticket.obj_class, int(ticket.id)),
         updated_after=datetime.now(UTC) - timedelta(days=ctx.intake.similar_max_age_days),
+        min_score=ctx.intake.similar_min_score,
         candidates=ctx.intake.similar_candidates,
         top=ctx.intake.similar_top,
     )

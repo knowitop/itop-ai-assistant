@@ -62,6 +62,20 @@ class TestSimilarSearch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["updated_after"], _NOW)
         self.assertEqual(kwargs["limit"], 15)
 
+    async def test_min_score_reaches_the_store_as_score_threshold(self):
+        search, store, _ = _search([])
+
+        await search.find("q", classes=["UserRequest"], filters={"status": ["resolved"]}, min_score=0.5)
+
+        self.assertEqual(store.search.await_args.kwargs["score_threshold"], 0.5)
+
+    async def test_min_score_defaults_to_no_floor(self):
+        search, store, _ = _search([_hit(1, 0.9)])
+
+        await search.find("q", classes=["UserRequest"], filters={"status": ["resolved"]})
+
+        self.assertIsNone(store.search.await_args.kwargs["score_threshold"])
+
     async def test_candidates_the_source_no_longer_returns_are_dropped(self):
         # The pre-filter is deliberately over-permissive (ADR-003); the source
         # is the authority on what may be quoted

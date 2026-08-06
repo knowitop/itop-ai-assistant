@@ -192,11 +192,15 @@ class ChunkStore(Protocol):
         filters: dict[str, list[str]] | None = None,
         exclude: tuple[str, int] | None = None,
         updated_after: datetime | None = None,
+        score_threshold: float | None = None,
         limit: int = 30,
     ) -> list[SearchHit]:
         """`exclude` is one (obj_class, obj_id) pair — the asking object
         itself. `updated_after` keeps objects modified at/after that moment;
-        an object indexed without an `updated_at` never passes it."""
+        an object indexed without an `updated_at` never passes it.
+        `score_threshold` drops a hit below that similarity score regardless
+        of rank — top-N alone does not mean relevant (TASK-011); `None`
+        applies no such floor."""
         ...
 
     async def stats(self, family: str) -> IndexStats | None: ...

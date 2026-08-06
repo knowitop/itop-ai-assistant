@@ -311,6 +311,32 @@ class TestSearch(QdrantStoreCase):
         self.assertEqual([hit.obj_id for hit in hits], [1, 2])
         self.assertGreater(hits[0].score, hits[1].score)
 
+    async def test_score_threshold_drops_a_candidate_below_it(self):
+        # chunk 1 is an exact match (score 1.0), chunk 2 is orthogonal
+        # (score 0.0) — top-N alone would keep both, the threshold must not
+        await self.store.upsert_chunks(
+            [_chunk(1, vector=[1.0, 0.0, 0.0, 0.0]), _chunk(2, vector=[0.0, 1.0, 0.0, 0.0])],
+            family=_FAMILY,
+            model="test-model",
+            dim=4,
+        )
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], score_threshold=0.5, **_ALL)
+
+        self.assertEqual([hit.obj_id for hit in hits], [1])
+
+    async def test_score_threshold_none_applies_no_floor(self):
+        await self.store.upsert_chunks(
+            [_chunk(1, vector=[1.0, 0.0, 0.0, 0.0]), _chunk(2, vector=[0.0, 1.0, 0.0, 0.0])],
+            family=_FAMILY,
+            model="test-model",
+            dim=4,
+        )
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], **_ALL)
+
+        self.assertEqual({hit.obj_id for hit in hits}, {1, 2})
+
     async def test_an_object_matching_twice_appears_once(self):
         # A ticket similar in both its description and its solution is one result,
         # scored by its best chunk — not two results

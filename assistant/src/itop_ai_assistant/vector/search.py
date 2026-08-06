@@ -66,6 +66,7 @@ class SimilarSearch:
         visibilities: Sequence[str] = ("public", "internal"),
         exclude: tuple[str, int] | None = None,
         updated_after: datetime | None = None,
+        min_score: float | None = None,
         candidates: int = 15,
         top: int = 5,
     ) -> list[ObjectHit]:
@@ -73,6 +74,11 @@ class SimilarSearch:
 
         Returns [] for empty text and for an index that has nothing to say —
         a caller with no results is a normal outcome here, not a failure.
+        `min_score` drops a candidate below that similarity score regardless
+        of rank — top-N alone does not mean relevant (TASK-011); `None`
+        applies no floor. Named `min_score` rather than the backend's own
+        `score_threshold` (`ChunkStore.search()`) to keep this port
+        backend-agnostic, same as `candidates` translating to `limit`.
         """
         if not text.strip():
             return []
@@ -85,6 +91,7 @@ class SimilarSearch:
             visibilities=list(visibilities),
             exclude=exclude,
             updated_after=updated_after,
+            score_threshold=min_score,
             limit=candidates,
         )
         if not hits:

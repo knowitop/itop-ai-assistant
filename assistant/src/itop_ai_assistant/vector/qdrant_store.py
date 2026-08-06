@@ -316,6 +316,7 @@ class QdrantChunkStore:
         filters: dict[str, list[str]] | None = None,
         exclude: tuple[str, int] | None = None,
         updated_after: datetime | None = None,
+        score_threshold: float | None = None,
         limit: int = 30,
     ) -> list[SearchHit]:
         """Filtered nearest neighbours aggregated to objects: the score of an
@@ -325,8 +326,11 @@ class QdrantChunkStore:
         property the backend was chosen for (ADR-001, R1). `classes=None`
         searches the whole family; an absent key in `filters` means
         unrestricted for that key — an empty list under either is a caller
-        mistake, not "no results", and is rejected loudly. Returns [] when
-        no index version exists yet.
+        mistake, not "no results", and is rejected loudly. `score_threshold`
+        is the same idea applied to the score itself, native to
+        `query_points_groups` — a candidate below it never reaches the
+        result, so it costs nothing extra beyond a plain top-N walk. Returns
+        [] when no index version exists yet.
 
         Grouping is by `obj_key`, not by `obj_id`: the id is unique only
         within one root class hierarchy, and a search spans several classes.
@@ -366,6 +370,7 @@ class QdrantChunkStore:
             group_by="obj_key",
             group_size=1,
             limit=limit,
+            score_threshold=score_threshold,
             with_payload=["obj_class", "obj_id"],
         )
         return [
