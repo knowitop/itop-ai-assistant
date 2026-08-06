@@ -179,18 +179,13 @@ async def find_similar_resolved_tickets(runtime: IntakeToolRuntime) -> str:
     """
     ctx = runtime.context
     ticket = ctx.ticket
-    # Both are guaranteed by `tools_for`, which withholds this tool otherwise
-    assert ctx.similar is not None and ctx.vector is not None
+    # Guaranteed by `tools_for`, which withholds this tool otherwise
+    assert ctx.similar is not None
     _reject_if_repeated(runtime, "find_similar_resolved_tickets", {})
 
-    classes = list(ctx.vector.classes)
-    # The statuses that mean "solved" for this deployment are already declared
-    # per class for the indexer — the same list, not a second copy of it
-    statuses = sorted({value for obj_class in classes for value in ctx.vector.classes[obj_class].index_values})
     hits = await ctx.similar.find(
         f"{ticket.title}\n\n{html_to_markdown(ticket.description)}",
-        classes=classes,
-        statuses=statuses,
+        filters={"status": ctx.intake.resolved_statuses},
         exclude=(ticket.obj_class, int(ticket.id)),
         updated_after=datetime.now(UTC) - timedelta(days=ctx.intake.similar_max_age_days),
         candidates=ctx.intake.similar_candidates,

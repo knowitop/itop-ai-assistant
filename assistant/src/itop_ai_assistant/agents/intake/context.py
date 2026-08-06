@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from itop_ai_assistant.catalog_repository import CatalogRepository
-from itop_ai_assistant.config import IntakeConfig, VectorConfig
+from itop_ai_assistant.config import IntakeConfig
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.ticket_repository import TicketRepository
@@ -26,8 +26,7 @@ class IntakeContext:
     state_manager: TicketStateManager
     intake: IntakeConfig
     ai_name: str
-    # Both None on a deployment without vectors — the tool that needs them is
-    # then not in the run's tool set at all (`tools_for`), so no tool reads
-    # them expecting a value.
+    # `similar` is None on a deployment without vectors — the tool that needs
+    # it is then not in the run's tool set at all (`tools_for`), so no tool
+    # reads it expecting a value.
     similar: SimilarSearch | None = None
-    vector: VectorConfig | None = None

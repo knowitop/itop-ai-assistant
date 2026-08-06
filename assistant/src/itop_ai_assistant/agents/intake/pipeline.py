@@ -90,7 +90,7 @@ class IntakeRun(TicketRun):
         cfg = await self.deps.config_store.get("intake", IntakeConfig)
         llm_cfg = await self.deps.config_store.get("llm", LlmConfig)
         prompts = build_intake_prompts(await self.deps.prompt_store.get("intake"))
-        vector_cfg, embedder = await self._similar_search_parts()
+        embedder = await self._similar_search_parts()
         similar = (
             SimilarSearch(
                 self.deps.vector_store, embedder, self.bundle.ticket_repo.find_existing_ids, family=TICKETS_FAMILY
@@ -107,7 +107,6 @@ class IntakeRun(TicketRun):
             intake=cfg,
             ai_name=ai_name,
             similar=similar,
-            vector=vector_cfg,
         )
         agent = build_intake_agent(
             create_llm(llm_cfg, cfg.model),
@@ -131,9 +130,8 @@ class IntakeRun(TicketRun):
             if embedder is not None:
                 await embedder.aclose()
 
-    async def _similar_search_parts(self) -> tuple[VectorConfig | None, EmbeddingsClient | None]:
-        """The vector config and an embeddings client, or (config, None) when
-        this deployment cannot search.
+    async def _similar_search_parts(self) -> EmbeddingsClient | None:
+        """An embeddings client, or None when this deployment cannot search.
 
         Three conditions, all necessary: a vector store to search, indexing
         switched on — a stale index quoted as current is worse than no
@@ -141,12 +139,12 @@ class IntakeRun(TicketRun):
         a query with. The client is per run and closed by the caller.
         """
         if not self.deps.vector_store.configured:
-            return None, None
+            return None
         vector_cfg = await self.deps.config_store.get("vector", VectorConfig)
         emb_cfg = await self.deps.config_store.get("embeddings", EmbeddingsConfig)
         if not vector_cfg.enabled or not emb_cfg.base_url or not emb_cfg.model:
-            return vector_cfg, None
-        return vector_cfg, EmbeddingsClient(emb_cfg)
+            return None
+        return EmbeddingsClient(emb_cfg)
 
 
 class IntakeAgentRun(AgentRun[IntakeContext]):

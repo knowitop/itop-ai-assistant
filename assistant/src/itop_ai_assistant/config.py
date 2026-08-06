@@ -250,6 +250,10 @@ class IntakeConfig(BaseModel):
     # over the modification date, never a substitute for the status filter —
     # a reopened ticket keeps its old resolution date (ADR-005, rule 2).
     similar_max_age_days: int = Field(default=365, gt=0)
+    # Business parameter of the "similar solved" scenario — not tied to
+    # `VectorClassConfig.index_values` (the matching default is a coincidence
+    # for tickets, not a shared source of truth, see ADR-017).
+    resolved_statuses: list[str] = ["resolved", "closed"]
     # Asked of the index; more than `similar_top` because candidates the
     # requester's iTop no longer returns are dropped afterwards (ADR-003)
     similar_candidates: int = Field(default=15, gt=0)

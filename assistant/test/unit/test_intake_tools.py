@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from itop_ai_assistant.agents.intake import tools
 from itop_ai_assistant.agents.intake.agent import TERMINAL_TOOLS
 from itop_ai_assistant.agents.intake.tools import ToolRejection
-from itop_ai_assistant.config import IntakeConfig, VectorConfig
+from itop_ai_assistant.config import IntakeConfig
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.state.ticket_state import TicketState
@@ -333,7 +333,6 @@ class TestFinishHandoff(unittest.IsolatedAsyncioTestCase):
 class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
     def _runtime(self, hits: list[ObjectHit], **kwargs) -> MagicMock:
         runtime = _make_runtime(**kwargs)
-        runtime.context.vector = VectorConfig()
         runtime.context.similar.find = AsyncMock(return_value=hits)
         return runtime
 
@@ -357,20 +356,18 @@ class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Cannot print", text)
         self.assertNotIn("<p>", text)
 
-    async def test_the_search_is_scoped_by_config(self):
-        cfg = VectorConfig()
-        cfg.classes["UserRequest"].index_values = ["resolved"]
-        cfg.classes["Incident"].index_values = ["closed"]
+    async def test_the_search_is_scoped_by_resolved_statuses(self):
         runtime = self._runtime([], ticket=_ticket(obj_class="Incident", id="42"))
-        runtime.context.vector = cfg
-        runtime.context.intake = IntakeConfig(similar_max_age_days=30, similar_candidates=11, similar_top=3)
+        runtime.context.intake = IntakeConfig(
+            resolved_statuses=["closed", "resolved"], similar_max_age_days=30, similar_candidates=11, similar_top=3
+        )
 
         await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
 
         kwargs = runtime.context.similar.find.await_args.kwargs
-        self.assertEqual(sorted(kwargs["classes"]), ["Incident", "UserRequest"])
-        # The statuses that mean "solved" are the indexer's, not a second copy
-        self.assertEqual(kwargs["statuses"], ["closed", "resolved"])
+        # The tool no longer scopes by class at all — not the same as passing classes=None
+        self.assertNotIn("classes", kwargs)
+        self.assertEqual(kwargs["filters"], {"status": ["closed", "resolved"]})
         self.assertEqual(kwargs["exclude"], ("Incident", 42))
         self.assertEqual(kwargs["candidates"], 11)
         self.assertEqual(kwargs["top"], 3)
