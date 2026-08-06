@@ -61,10 +61,9 @@ class SimilarSearch:
         self,
         text: str,
         *,
-        classes: list[str],
-        statuses: list[str],
+        classes: list[str] | None = None,
+        filters: dict[str, list[str]] | None = None,
         visibilities: Sequence[str] = ("public", "internal"),
-        allowed_orgs: list[str] | None = None,
         exclude: tuple[str, int] | None = None,
         updated_after: datetime | None = None,
         candidates: int = 15,
@@ -72,20 +71,18 @@ class SimilarSearch:
     ) -> list[ObjectHit]:
         """Objects most similar to `text`, best first, at most `top` of them.
 
-        Returns [] for empty text, for an empty class list and for an index
-        that has nothing to say — a caller with no results is a normal
-        outcome here, not a failure.
+        Returns [] for empty text and for an index that has nothing to say —
+        a caller with no results is a normal outcome here, not a failure.
         """
-        if not text.strip() or not classes:
+        if not text.strip():
             return []
         embedding = (await self._embedder.embed([text]))[0]
         hits = await self._store.search(
             embedding,
             family=self._family,
             classes=classes,
-            statuses=statuses,
+            filters=filters,
             visibilities=list(visibilities),
-            allowed_orgs=allowed_orgs,
             exclude=exclude,
             updated_after=updated_after,
             limit=candidates,

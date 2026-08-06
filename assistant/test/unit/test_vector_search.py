@@ -30,14 +30,14 @@ class TestSimilarSearch(unittest.IsolatedAsyncioTestCase):
     async def test_returns_hits_best_first(self):
         search, _, _ = _search([_hit(1, 0.9), _hit(2, 0.7)])
 
-        found = await search.find("printer is dead", classes=["UserRequest"], statuses=["resolved"])
+        found = await search.find("printer is dead", classes=["UserRequest"], filters={"status": ["resolved"]})
 
         self.assertEqual(found, [ObjectHit("UserRequest", 1, 0.9), ObjectHit("UserRequest", 2, 0.7)])
 
     async def test_the_query_is_embedded_once(self):
         search, _, embedder = _search([_hit(1, 0.9)])
 
-        await search.find("printer is dead", classes=["UserRequest"], statuses=["resolved"])
+        await search.find("printer is dead", classes=["UserRequest"], filters={"status": ["resolved"]})
 
         embedder.embed.assert_awaited_once_with(["printer is dead"])
 
@@ -47,7 +47,7 @@ class TestSimilarSearch(unittest.IsolatedAsyncioTestCase):
         await search.find(
             "q",
             classes=["UserRequest", "Incident"],
-            statuses=["resolved", "closed"],
+            filters={"status": ["resolved", "closed"]},
             exclude=("UserRequest", 7),
             updated_after=_NOW,
             candidates=15,
@@ -56,7 +56,7 @@ class TestSimilarSearch(unittest.IsolatedAsyncioTestCase):
         kwargs = store.search.await_args.kwargs
         self.assertEqual(kwargs["family"], _FAMILY)
         self.assertEqual(kwargs["classes"], ["UserRequest", "Incident"])
-        self.assertEqual(kwargs["statuses"], ["resolved", "closed"])
+        self.assertEqual(kwargs["filters"], {"status": ["resolved", "closed"]})
         self.assertEqual(kwargs["visibilities"], ["public", "internal"])
         self.assertEqual(kwargs["exclude"], ("UserRequest", 7))
         self.assertEqual(kwargs["updated_after"], _NOW)
@@ -67,7 +67,7 @@ class TestSimilarSearch(unittest.IsolatedAsyncioTestCase):
         # is the authority on what may be quoted
         search, _, _ = _search([_hit(1, 0.9), _hit(2, 0.8), _hit(3, 0.7)], existing={1, 3})
 
-        found = await search.find("q", classes=["UserRequest"], statuses=["resolved"])
+        found = await search.find("q", classes=["UserRequest"], filters={"status": ["resolved"]})
 
         self.assertEqual([hit.obj_id for hit in found], [1, 3])
 
@@ -75,7 +75,7 @@ class TestSimilarSearch(unittest.IsolatedAsyncioTestCase):
         search, _, _ = _search([_hit(1, 0.9), _hit(2, 0.8), _hit(3, 0.7, obj_class="Incident")])
         resolve = search._resolve
 
-        await search.find("q", classes=["UserRequest", "Incident"], statuses=["resolved"])
+        await search.find("q", classes=["UserRequest", "Incident"], filters={"status": ["resolved"]})
 
         self.assertEqual(
             sorted((call.args[0], sorted(call.args[1])) for call in resolve.await_args_list),
@@ -89,21 +89,23 @@ class TestSimilarSearch(unittest.IsolatedAsyncioTestCase):
             side_effect=lambda obj_class, ids: set(ids) if obj_class == "UserRequest" else set()
         )
 
-        found = await search.find("q", classes=["UserRequest", "KnowledgeBaseArticle"], statuses=["resolved"])
+        found = await search.find(
+            "q", classes=["UserRequest", "KnowledgeBaseArticle"], filters={"status": ["resolved"]}
+        )
 
         self.assertEqual([(hit.obj_class, hit.obj_id) for hit in found], [("UserRequest", 1)])
 
     async def test_top_caps_what_survives_resolution(self):
         search, _, _ = _search([_hit(i, 1.0 - i / 10) for i in range(1, 8)])
 
-        found = await search.find("q", classes=["UserRequest"], statuses=["resolved"], top=5)
+        found = await search.find("q", classes=["UserRequest"], filters={"status": ["resolved"]}, top=5)
 
         self.assertEqual([hit.obj_id for hit in found], [1, 2, 3, 4, 5])
 
     async def test_an_empty_index_answers_without_asking_the_source(self):
         search, _, _ = _search([])
 
-        found = await search.find("q", classes=["UserRequest"], statuses=["resolved"])
+        found = await search.find("q", classes=["UserRequest"], filters={"status": ["resolved"]})
 
         self.assertEqual(found, [])
         search._resolve.assert_not_awaited()
@@ -111,22 +113,24 @@ class TestSimilarSearch(unittest.IsolatedAsyncioTestCase):
     async def test_empty_text_costs_nothing(self):
         search, store, embedder = _search([_hit(1, 0.9)])
 
-        self.assertEqual(await search.find("   ", classes=["UserRequest"], statuses=["resolved"]), [])
+        self.assertEqual(await search.find("   ", classes=["UserRequest"], filters={"status": ["resolved"]}), [])
         embedder.embed.assert_not_awaited()
         store.search.assert_not_awaited()
 
-    async def test_no_classes_costs_nothing(self):
-        search, store, embedder = _search([_hit(1, 0.9)])
+    async def test_no_classes_searches_the_whole_family(self):
+        # classes=None is a valid "whole family" query, not a no-op — the
+        # empty-list guard lives in the store, not here (D3, TASK-010)
+        search, store, _ = _search([_hit(1, 0.9)])
 
-        self.assertEqual(await search.find("q", classes=[], statuses=["resolved"]), [])
-        embedder.embed.assert_not_awaited()
-        store.search.assert_not_awaited()
+        await search.find("q", filters={"status": ["resolved"]})
+
+        self.assertIsNone(store.search.await_args.kwargs["classes"])
 
     async def test_the_constructed_family_reaches_every_call_regardless_of_find_args(self):
         # `family` is bound once at construction (D5, TASK-008) — no `find()`
         # argument can steer a search to a different collection
         search, store, _ = _search([], family="kb_articles")
 
-        await search.find("q", classes=["UserRequest"], statuses=["resolved"])
+        await search.find("q", classes=["UserRequest"], filters={"status": ["resolved"]})
 
         self.assertEqual(store.search.await_args.kwargs["family"], "kb_articles")
