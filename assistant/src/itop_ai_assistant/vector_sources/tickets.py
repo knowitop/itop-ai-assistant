@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from itop_ai_assistant.catalog_repository import CatalogRepository
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.vector.chunker import Chunk, ConversationEntry, chunk_object
-from itop_ai_assistant.vector.source import VectorRecord
+from itop_ai_assistant.vector.source import VectorRecord, VectorSource
 
 if TYPE_CHECKING:
     from itop_ai_assistant.deps import AppDeps, ItopBundle
@@ -50,7 +50,7 @@ class _CatalogNames:
         return self._subcategories[ticket.subcategory_id]
 
 
-class TicketVectorSource:
+class TicketVectorSource(VectorSource):
     """VectorSource implementation for iTop tickets.
 
     `classes` is taken verbatim from `vector.classes` at construction time —
@@ -65,6 +65,7 @@ class TicketVectorSource:
     """
 
     name = FAMILY
+    indexed_filter_keys = ("status", "org_id")
 
     def __init__(self, deps: "AppDeps", *, classes: list[str]) -> None:
         self._deps = deps
@@ -89,8 +90,8 @@ class TicketVectorSource:
             VectorRecord(
                 obj_id=int(ticket.id),
                 index_value=ticket.status,
-                last_update=ticket.last_update,
-                created_at=ticket.created_at,
+                updated_at=ticket.last_update,
+                created_at=ticket.start_date,
                 org_id=ticket.org_id,
                 filters={"service_id": ticket.service_id} if ticket.has_service else None,
                 payload=ticket,

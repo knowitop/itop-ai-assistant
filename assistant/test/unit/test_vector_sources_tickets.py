@@ -22,7 +22,7 @@ def _ticket(**overrides) -> Ticket:
         "org_id": "org1",
         "caller_name": "John Doe",
         "last_update": _NOW,
-        "created_at": _NOW,
+        "start_date": _NOW,
     }
     fields.update(overrides)
     return Ticket(**fields)

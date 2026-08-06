@@ -85,7 +85,7 @@ class TestToTicket(unittest.TestCase):
 
         self.assertEqual(ticket.solution, "<p>Replaced cartridge.</p>")
         self.assertEqual(ticket.last_update, datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
-        self.assertEqual(ticket.created_at, datetime(2026, 7, 1, 9, 30, tzinfo=UTC))
+        self.assertEqual(ticket.start_date, datetime(2026, 7, 1, 9, 30, tzinfo=UTC))
 
     def test_missing_timestamps_are_none(self):
         repo, _ = _make_repo()
@@ -94,7 +94,7 @@ class TestToTicket(unittest.TestCase):
         ticket = repo.to_ticket("UserRequest", raw)
 
         self.assertIsNone(ticket.last_update)
-        self.assertIsNone(ticket.created_at)
+        self.assertIsNone(ticket.start_date)
         self.assertEqual(ticket.solution, "")
 
 
