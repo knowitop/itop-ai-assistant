@@ -9,10 +9,10 @@ writes the resulting `Chunk`s through the `ChunkStore` port. Adding a new source
 `vector_sources/registry.py` — no change needed here or in `vector/indexer.py`.
 
 The contract: every indexed class must expose (a) a last-modification
-datetime (`VectorRecord.last_update` — drives the sweep cursor) and (b) a
+datetime (`VectorRecord.updated_at` — drives the sweep cursor) and (b) a
 "relevance" attribute whose current value (`VectorRecord.index_value`) tells
 whether the object belongs in the index. Which attributes those are is the
-source's own mapping concern (for tickets: semantic `status`/`last_update`
+source's own mapping concern (for tickets: semantic `status`/`updated_at`
 via `ticket_mapping`); the per-class value lists live in
 `vector.classes[<class>].index_values`.
 """
@@ -38,7 +38,7 @@ class VectorRecord:
     # Current value of the class's relevance attribute (status for tickets) —
     # compared against `vector.classes[<class>].index_values` by the indexer
     index_value: str
-    last_update: datetime | None
+    updated_at: datetime | None
     created_at: datetime | None
     org_id: str | None = None
     # Source-defined pre-filter keys stored as-is in the chunk rows' `filters`
@@ -53,6 +53,9 @@ class VectorSource(Protocol):
 
     name: str
     classes: Sequence[str]  # obj_class values this source currently owns
+    # Which keys from VectorRecord.filters this source wants indexed in Qdrant
+    # (fields.<key>), see qdrant_store.py::_ensure_payload_indexes.
+    indexed_filter_keys: Sequence[str] = ()
 
     async def prepare(self) -> None:
         """Called once per sweep pass, before any of this source's classes
