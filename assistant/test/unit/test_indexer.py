@@ -35,12 +35,12 @@ def _flat(calls: list[list]) -> list:
 
 
 def _record(
-    obj_id: int, *, index_value: str = "resolved", description: str = "Broken.", last_update: datetime = _NOW
+    obj_id: int, *, index_value: str = "resolved", description: str = "Broken.", updated_at: datetime = _NOW
 ) -> VectorRecord:
     return VectorRecord(
         obj_id=obj_id,
         index_value=index_value,
-        last_update=last_update,
+        updated_at=updated_at,
         created_at=_NOW - timedelta(days=1),
         payload={"description": description},
     )
@@ -58,6 +58,7 @@ class FakeTicketSource:
     ):
         self.name = name
         self.classes = list(classes)
+        self.indexed_filter_keys: tuple[str, ...] = ()
         self._records = records or []
         self.prepare_calls = 0
         self.find_modified_since_calls: list[tuple] = []
@@ -109,7 +110,7 @@ class FakeChunkStore:
         # check without touching another's in the same pass.
         self.ensure_version_errors: dict[str, Exception] = {}
 
-    async def ensure_version(self, family, model, dim) -> IndexMeta:
+    async def ensure_version(self, family, model, dim, *, filter_keys=()) -> IndexMeta:
         if family in self.ensure_version_errors:
             raise self.ensure_version_errors[family]
         if self.ensure_version_error:
@@ -310,7 +311,7 @@ class TestSweep(IndexerTestCase):
         records = store.upsert_calls[-1]
         self.assertEqual(records[0].meta.obj_id, 1)
         self.assertEqual(records[0].meta.chunk_kind, "body")
-        self.assertEqual(records[0].meta.status, "resolved")
+        self.assertEqual(records[0].meta.filters["status"], "resolved")
 
     async def test_hash_guard_skips_unchanged(self):
         store = FakeChunkStore()
@@ -363,7 +364,7 @@ class TestSweep(IndexerTestCase):
     async def test_cursor_set_to_max_last_update(self):
         newest = _NOW + timedelta(hours=2)
         deps = _deps_mock()
-        source = FakeTicketSource([_record(1, last_update=_NOW), _record(2, last_update=newest)])
+        source = FakeTicketSource([_record(1, updated_at=_NOW), _record(2, updated_at=newest)])
         await self._run(deps, source)
 
         self.assertEqual(await deps.vector_sync.get_cursor("UserRequest"), newest)
@@ -436,7 +437,7 @@ class TestMetadataFreshness(IndexerTestCase):
         self.assertEqual(_flat(store2.upsert_calls), [])
         updated = _flat(store2.update_metadata_calls)
         self.assertEqual(len(updated), 1)
-        self.assertEqual(updated[0].status, "closed")
+        self.assertEqual(updated[0].filters["status"], "closed")
 
     async def test_last_update_reaches_the_chunk(self):
         # The date the "solved within the last year" filter runs on — it comes
@@ -444,7 +445,7 @@ class TestMetadataFreshness(IndexerTestCase):
         store = FakeChunkStore()
         await self._run(_deps_mock(store=store), FakeTicketSource([_record(1)]))
 
-        self.assertEqual(_flat(store.upsert_calls)[0].meta.last_update, _NOW)
+        self.assertEqual(_flat(store.upsert_calls)[0].meta.updated_at, _NOW)
 
     async def test_a_moved_last_update_alone_updates_metadata(self):
         # The reopen-and-close-again case: same text, newer date. Without the
@@ -456,12 +457,12 @@ class TestMetadataFreshness(IndexerTestCase):
         store2.digests[(_FAMILY, "UserRequest", 1)] = dict(store.digests[(_FAMILY, "UserRequest", 1)])
         later = _NOW + timedelta(days=30)
         embedder2 = _embedder_mock()
-        report = await self._run(_deps_mock(store=store2), FakeTicketSource([_record(1, last_update=later)]), embedder2)
+        report = await self._run(_deps_mock(store=store2), FakeTicketSource([_record(1, updated_at=later)]), embedder2)
 
         self.assertEqual(report.chunks_embedded, 0)
         self.assertEqual(report.chunks_metadata_updated, 1)
         embedder2.embed.assert_not_awaited()
-        self.assertEqual(_flat(store2.update_metadata_calls)[0].last_update, later)
+        self.assertEqual(_flat(store2.update_metadata_calls)[0].updated_at, later)
 
     async def test_text_change_only_embeds_metadata_not_rewritten_twice(self):
         store = FakeChunkStore()
@@ -496,7 +497,7 @@ class TestMetadataFreshness(IndexerTestCase):
         original = VectorRecord(
             obj_id=1,
             index_value="resolved",
-            last_update=_NOW,
+            updated_at=_NOW,
             created_at=_NOW - timedelta(days=1),
             payload={"description": "Broken.", "resolution": "Rebooted it."},
         )
@@ -508,7 +509,7 @@ class TestMetadataFreshness(IndexerTestCase):
         reopened = VectorRecord(
             obj_id=1,
             index_value="closed",
-            last_update=_NOW,
+            updated_at=_NOW,
             created_at=_NOW - timedelta(days=1),
             payload={"description": "Still broken.", "resolution": "Rebooted it."},
         )

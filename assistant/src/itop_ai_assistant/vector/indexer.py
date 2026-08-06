@@ -160,7 +160,9 @@ class VectorIndexer:
                 try:
                     meta = meta_by_family.get(family)
                     if meta is None:
-                        meta = await store.ensure_version(family, model, emb_cfg.dimension)
+                        meta = await store.ensure_version(
+                            family, model, emb_cfg.dimension, filter_keys=source.indexed_filter_keys
+                        )
                         meta_by_family[family] = meta
                     await self._sweep_class(
                         obj_class,
@@ -234,8 +236,8 @@ class VectorIndexer:
             ] = []
             for record in records:
                 report.objects_seen += 1
-                if record.last_update and (max_seen is None or record.last_update > max_seen):
-                    max_seen = record.last_update
+                if record.updated_at and (max_seen is None or record.updated_at > max_seen):
+                    max_seen = record.updated_at
                 if class_cfg.index_values and record.index_value not in class_cfg.index_values:
                     # Left the indexable scope (e.g. reopened) — drop its chunks
                     report.chunks_deleted += await store.delete_object(family, obj_class, record.obj_id)
@@ -343,21 +345,23 @@ class VectorIndexer:
 
 
 def _chunk_metadata(obj_class: str, record: VectorRecord, chunk: Chunk, started_at: datetime) -> ChunkMetadata:
+    filters = dict(record.filters or {})
+    filters["status"] = record.index_value
+    if record.org_id is not None:
+        filters["org_id"] = record.org_id
     return ChunkMetadata(
         obj_class=obj_class,
         obj_id=record.obj_id,
         chunk_kind=chunk.kind,
         chunk_n=chunk.n,
         visibility=chunk.visibility,
-        status=record.index_value,
         content_hash=chunk.content_hash,
-        created_at=record.created_at or record.last_update or started_at,
-        org_id=record.org_id,
-        filters=record.filters,
+        created_at=record.created_at or record.updated_at or started_at,
+        filters=filters,
         # No fallback, unlike `created_at`: this one feeds `meta_hash`, and a
         # fallback that moves between passes would rewrite every payload on
         # every sweep. A source without it opts out of `updated_after`.
-        last_update=record.last_update,
+        updated_at=record.updated_at,
     )
 
 
