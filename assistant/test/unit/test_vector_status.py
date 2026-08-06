@@ -1,6 +1,7 @@
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
@@ -16,7 +17,46 @@ from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.vector.index_journal import IndexJournal
 from itop_ai_assistant.vector.indexer import SWEEP_TASK
 from itop_ai_assistant.vector.qdrant_store import QdrantChunkStore
+from itop_ai_assistant.vector.store import ChunkMetadata, ChunkRecord
 from itop_ai_assistant.vector.sync_state import VectorSyncState
+
+_NOW = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
+
+
+def _chunk(obj_id: int, *, obj_class: str = "UserRequest") -> ChunkRecord:
+    return ChunkRecord(
+        meta=ChunkMetadata(
+            obj_class=obj_class,
+            obj_id=obj_id,
+            chunk_kind="body",
+            chunk_n=0,
+            visibility="public",
+            content_hash="hash",
+            created_at=_NOW,
+            filters={"status": "resolved"},
+            updated_at=_NOW,
+        ),
+        embedding=[1.0, 0.0, 0.0, 0.0],
+    )
+
+
+class _FakeSource:
+    """Stands in for `TicketVectorSource` — the real one needs a live iTop
+    bundle from `deps.itop.get()`, which `_make_deps`'s `MagicMock()` can't
+    provide."""
+
+    name = "tickets"
+    classes = ["UserRequest"]
+
+    def __init__(self, existing: set[int]) -> None:
+        self._existing = existing
+
+    async def prepare(self) -> None:
+        pass
+
+    async def find_existing_ids(self, obj_class: str, ids: list[int]) -> set[int]:
+        return self._existing & set(ids)
+
 
 _BLANK = {
     "admin_token": None,
@@ -184,6 +224,118 @@ class TestReindex(VectorStatusTestCase):
         self.assertEqual(response.json(), {"status": "scheduled"})
         self.assertTrue(asyncio.run(deps.vector_sync.reindex_pending()))
         self.tasks.wake.assert_called_once_with(SWEEP_TASK)
+
+
+class TestSearch(VectorStatusTestCase):
+    def test_409_when_database_not_configured(self):
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+
+        response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("qdrant_url", response.json()["detail"])
+
+    def test_409_when_vector_disabled(self):
+        self.client.app.state.deps = _make_deps(self.redis, store_url=":memory:")
+
+        response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("disabled", response.json()["detail"])
+
+    def test_409_when_embeddings_not_configured(self):
+        self.client.app.state.deps = _make_deps(self.redis, store_url=":memory:")
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+
+        response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Embeddings", response.json()["detail"])
+
+    def test_404_for_an_unknown_family(self):
+        self.client.app.state.deps = _make_deps(
+            self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+        )
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+
+        response = self.client.post("/api/vector/search", json={"family": "kb_articles", "text": "printer"})
+
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("kb_articles", response.json()["detail"])
+
+    def test_no_active_index_answers_empty_without_asking_the_source(self):
+        deps = _make_deps(
+            self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+        )
+        self.client.app.state.deps = deps
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+        embedder = MagicMock()
+        embedder.embed = AsyncMock(return_value=[[1.0, 0.0, 0.0, 0.0]])
+        embedder.aclose = AsyncMock()
+        source = _FakeSource(existing=set())
+        source.find_existing_ids = AsyncMock(side_effect=source.find_existing_ids)
+
+        with (
+            patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.router.build_vector_sources", return_value=[source]),
+        ):
+            response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+        embedder.aclose.assert_awaited_once()
+        source.find_existing_ids.assert_not_awaited()
+
+    def test_returns_hits_confirmed_by_the_source(self):
+        deps = _make_deps(
+            self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+        )
+        self.client.app.state.deps = deps
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+
+        async def _seed() -> None:
+            await deps.vector_store.ensure_version("tickets", "bge-m3", 4)
+            await deps.vector_store.upsert_chunks(
+                [_chunk(1), _chunk(2), _chunk(3)], family="tickets", model="bge-m3", dim=4
+            )
+
+        asyncio.run(_seed())
+        embedder = MagicMock()
+        embedder.embed = AsyncMock(return_value=[[1.0, 0.0, 0.0, 0.0]])
+        embedder.aclose = AsyncMock()
+        # The source only confirms 1 and 3 — 2 must be dropped from the answer
+        source = _FakeSource(existing={1, 3})
+
+        with (
+            patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.router.build_vector_sources", return_value=[source]),
+        ):
+            response = self.client.post(
+                "/api/vector/search",
+                json={
+                    "family": "tickets",
+                    "text": "printer is on fire",
+                    "classes": ["UserRequest"],
+                    "filters": {"status": ["resolved"]},
+                    "top": 5,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        hits = response.json()
+        # Order isn't asserted here — all three chunks share one embedding, so
+        # score ties leave ranking unspecified; that ordering is `SimilarSearch`'s
+        # own concern, covered by test_vector_search.py.
+        self.assertEqual({h["obj_id"] for h in hits}, {1, 3})
+        embedder.embed.assert_awaited_once_with(["printer is on fire"])
+        embedder.aclose.assert_awaited_once()
+
+    def test_requires_admin_token_when_set(self):
+        self.client.app.state.deps = _make_deps(self.redis, admin_token=SecretStr("s3cret"))
+
+        response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
+
+        self.assertEqual(response.status_code, 401)
 
 
 if __name__ == "__main__":
