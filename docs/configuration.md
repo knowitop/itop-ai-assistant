@@ -89,7 +89,7 @@ Set in the [Admin UI → Modules](admin-ui.md#modules) or via `PUT /api/config/i
 | `similar_max_age_days` | `365` | How far back solved tickets may be quoted in the handoff note |
 | `similar_candidates` | `15` | Candidates read from the index before iTop is asked which of them the run may see |
 | `similar_top` | `5` | Max references in one handoff note |
-| `similar_min_score` | `0.5` | Minimum Qdrant cosine score a candidate must reach to be quoted, regardless of rank; a conservative starting value, not calibrated to any specific embeddings model — tune it per deployment |
+| `similar_min_score` | `0.6` | Minimum Qdrant cosine score a candidate must reach to be quoted, regardless of rank; a conservative starting value, not calibrated to any specific embeddings model — tune it per deployment |
 | `similar_chunk_kinds` | `["profile", "body"]` | Which chunk kinds the query (title + description) is matched against; `solution` is left out by default — a match there means "the solution reads like the problem", usually noise |
 
 > [!NOTE]

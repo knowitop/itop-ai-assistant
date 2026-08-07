@@ -261,10 +261,10 @@ class IntakeConfig(BaseModel):
     # Absolute floor on the Qdrant cosine score (range [-1, 1]) below which a
     # candidate is dropped regardless of rank — top-N alone does not
     # guarantee relevance, only relative rank among whatever `candidates`
-    # happened to return (TASK-011). 0.5 is an engineering guess, not
+    # happened to return (TASK-011). 0.6 is an engineering guess, not
     # calibrated against this deployment's embeddings model; tune it after a
     # live check against real similar/unrelated pairs.
-    similar_min_score: float = Field(default=0.5, ge=-1.0, le=1.0)
+    similar_min_score: float = Field(default=0.6, ge=-1.0, le=1.0)
     # Which chunk kinds the query text is matched against. The query is the new
     # ticket's title and description, so a match against `solution` means "the
     # solution reads like the problem" — usually noise, sometimes a genuine
