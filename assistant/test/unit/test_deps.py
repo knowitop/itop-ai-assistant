@@ -29,6 +29,7 @@ class TestItopProvider(unittest.IsolatedAsyncioTestCase):
         b2 = await self.provider.get()
         self.assertIs(b1, b2)
         self.assertIs(b1.ticket_repo, b2.ticket_repo)
+        self.assertIs(b1.access_repo, b2.access_repo)
         await self.provider.aclose()
 
     async def test_config_change_rebuilds_and_closes_old_client(self):
@@ -95,6 +96,7 @@ class TestForPrincipal(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(bundle.ticket_repo._itop, bundle.client)
         self.assertIs(bundle.catalog_repo._itop, bundle.client)
+        self.assertIs(bundle.access_repo._itop, bundle.client)
 
 
 class TestAiPersonName(unittest.IsolatedAsyncioTestCase):

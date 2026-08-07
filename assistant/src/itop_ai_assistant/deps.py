@@ -6,6 +6,7 @@ import redis.asyncio as aioredis
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
 
+from itop_ai_assistant.access_repository import AccessRepository
 from itop_ai_assistant.catalog_repository import CatalogRepository
 from itop_ai_assistant.config import ItopConfig, LlmConfig, Settings, TicketMappingConfig
 from itop_ai_assistant.config_store import ConfigStore, RedisConfigStore
@@ -38,6 +39,7 @@ class ItopBundle:
     client: Itop
     ticket_repo: TicketRepository
     catalog_repo: CatalogRepository
+    access_repo: AccessRepository
 
 
 class ItopProvider:
@@ -70,6 +72,7 @@ class ItopProvider:
                     client=client,
                     ticket_repo=TicketRepository(client, mapping),
                     catalog_repo=CatalogRepository(client),
+                    access_repo=AccessRepository(client),
                 )
                 self._fingerprint = fingerprint
                 self._ai_person_name = None
@@ -96,6 +99,7 @@ class ItopProvider:
             client=client,
             ticket_repo=TicketRepository(client, base.ticket_repo.mapping),
             catalog_repo=CatalogRepository(client),
+            access_repo=AccessRepository(client),
         )
 
     async def ai_person_name(self) -> str:

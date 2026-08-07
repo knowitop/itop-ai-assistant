@@ -25,12 +25,13 @@ happens not to use**. Application-specific logic belongs in
 ## Nothing outside the repositories touches iTop
 
 Tools and agents never see the raw client or an iTop attribute name. All access
-goes through `TicketRepository` / `CatalogRepository`, which are the only place
-semantic fields are translated to attributes (driven by the `ticket_mapping`
-config section: `fields`, `class_overrides`, `active_statuses`). OQL templates
-use semantic `:this->field` placeholders bound from `ticket.model_dump()`.
-Adapting to a customized iTop datamodel must stay a config change, not a code
-change.
+goes through a `*_repository.py` — `TicketRepository` and `CatalogRepository`
+translate semantic fields to attributes (driven by the `ticket_mapping` config
+section: `fields`, `class_overrides`, `active_statuses`); `AccessRepository` is
+narrower, one read of the calling principal's own access scope, not a
+class/attribute mapping. OQL templates use semantic `:this->field` placeholders
+bound from `ticket.model_dump()`. Adapting to a customized iTop datamodel must
+stay a config change, not a code change.
 
 Processing code works with the semantic `Ticket` model (`domain/ticket.py`) —
 `subcategory_id`, `caller_name`, `ticket.label`, `ticket.has_service` — never
