@@ -4,7 +4,7 @@ import unittest
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
-from itop_ai_assistant.vector.search import ObjectHit, SimilarSearch
+from itop_ai_assistant.vector.search import FindStats, ObjectHit, SimilarSearch
 from itop_ai_assistant.vector.store import SearchHit
 
 _NOW = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
@@ -164,3 +164,67 @@ class TestSimilarSearch(unittest.IsolatedAsyncioTestCase):
         await search.find("q", classes=["UserRequest"], filters={"status": ["resolved"]})
 
         self.assertEqual(store.search.await_args.kwargs["family"], "kb_articles")
+
+
+class TestFindWithStats(unittest.IsolatedAsyncioTestCase):
+    """TASK-014: the counts the run journal needs, alongside the same hits."""
+
+    async def test_nothing_dropped_by_resolve(self):
+        search, _, _ = _search([_hit(1, 0.9), _hit(2, 0.7)])
+
+        hits, stats = await search.find_with_stats(
+            "q", classes=["UserRequest"], filters={"status": ["resolved"]}, candidates=15
+        )
+
+        self.assertEqual([hit.obj_id for hit in hits], [1, 2])
+        self.assertEqual(stats, FindStats(requested=15, found=2, dropped_by_resolve=0))
+
+    async def test_some_dropped_by_resolve(self):
+        search, _, _ = _search([_hit(1, 0.9), _hit(2, 0.8), _hit(3, 0.7)], existing={1, 3})
+
+        hits, stats = await search.find_with_stats(
+            "q", classes=["UserRequest"], filters={"status": ["resolved"]}, candidates=10
+        )
+
+        self.assertEqual([hit.obj_id for hit in hits], [1, 3])
+        self.assertEqual(stats, FindStats(requested=10, found=3, dropped_by_resolve=1))
+
+    async def test_empty_store_result(self):
+        search, _, _ = _search([], family=_FAMILY)
+
+        hits, stats = await search.find_with_stats(
+            "q", classes=["UserRequest"], filters={"status": ["resolved"]}, candidates=15
+        )
+
+        self.assertEqual(hits, [])
+        self.assertEqual(stats, FindStats(requested=15, found=0, dropped_by_resolve=0))
+
+    async def test_empty_text_still_reports_requested(self):
+        search, store, embedder = _search([_hit(1, 0.9)])
+
+        hits, stats = await search.find_with_stats(
+            "   ", classes=["UserRequest"], filters={"status": ["resolved"]}, candidates=15
+        )
+
+        self.assertEqual(hits, [])
+        self.assertEqual(stats, FindStats(requested=15, found=0, dropped_by_resolve=0))
+        embedder.embed.assert_not_awaited()
+        store.search.assert_not_awaited()
+
+    async def test_top_caps_hits_but_stats_count_before_the_cap(self):
+        search, _, _ = _search([_hit(i, 1.0 - i / 10) for i in range(1, 8)])
+
+        hits, stats = await search.find_with_stats(
+            "q", classes=["UserRequest"], filters={"status": ["resolved"]}, candidates=15, top=5
+        )
+
+        self.assertEqual(len(hits), 5)
+        self.assertEqual(stats, FindStats(requested=15, found=7, dropped_by_resolve=0))
+
+    async def test_find_itself_is_unaffected(self):
+        # find() stays the plain list contract every existing caller relies on
+        search, _, _ = _search([_hit(1, 0.9), _hit(2, 0.8), _hit(3, 0.7)], existing={1, 3})
+
+        found = await search.find("q", classes=["UserRequest"], filters={"status": ["resolved"]})
+
+        self.assertEqual([hit.obj_id for hit in found], [1, 3])

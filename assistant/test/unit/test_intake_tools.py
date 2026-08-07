@@ -11,7 +11,7 @@ from itop_ai_assistant.config import IntakeConfig
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.state.ticket_state import TicketState
-from itop_ai_assistant.vector.search import ObjectHit
+from itop_ai_assistant.vector.search import FindStats, ObjectHit
 
 
 def _ticket(**overrides) -> Ticket:
@@ -331,9 +331,11 @@ class TestFinishHandoff(unittest.IsolatedAsyncioTestCase):
 
 
 class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
-    def _runtime(self, hits: list[ObjectHit], **kwargs) -> MagicMock:
+    def _runtime(self, hits: list[ObjectHit], *, stats: FindStats | None = None, **kwargs) -> MagicMock:
         runtime = _make_runtime(**kwargs)
-        runtime.context.similar.find = AsyncMock(return_value=hits)
+        runtime.context.similar.find_with_stats = AsyncMock(
+            return_value=(hits, stats or FindStats(requested=15, found=len(hits), dropped_by_resolve=0))
+        )
         return runtime
 
     async def test_references_come_back_as_copyable_tokens(self):
@@ -341,7 +343,7 @@ class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
             [ObjectHit("UserRequest", 12, 0.9), ObjectHit("Incident", 7, 0.8), ObjectHit("UserRequest", 3, 0.7)]
         )
 
-        result = await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
+        result, _note = await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
 
         self.assertIn("[[UserRequest:12]]\n[[Incident:7]]\n[[UserRequest:3]]", result)
 
@@ -351,7 +353,7 @@ class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
 
         await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
 
-        text = runtime.context.similar.find.await_args.args[0]
+        text = runtime.context.similar.find_with_stats.await_args.args[0]
         self.assertIn("Printer is dead", text)
         self.assertIn("Cannot print", text)
         self.assertNotIn("<p>", text)
@@ -369,7 +371,7 @@ class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
 
         await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
 
-        kwargs = runtime.context.similar.find.await_args.kwargs
+        kwargs = runtime.context.similar.find_with_stats.await_args.kwargs
         # The tool no longer scopes by class at all — not the same as passing classes=None
         self.assertNotIn("classes", kwargs)
         self.assertEqual(kwargs["filters"], {"status": ["closed", "resolved"]})
@@ -387,7 +389,7 @@ class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
     async def test_finding_nothing_is_an_answer_not_a_refusal(self):
         runtime = self._runtime([])
 
-        result = await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
+        result, _note = await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
 
         self.assertIn("No similar solved tickets", result)
         self.assertNotIn("[[", result)
@@ -408,7 +410,32 @@ class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
             await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
 
         self.assertIn("[[UserRequest:12]]", str(ctx.exception))
-        runtime.context.similar.find.assert_not_awaited()
+        runtime.context.similar.find_with_stats.assert_not_awaited()
+
+    async def test_the_journal_note_reports_counts_and_scores_even_when_empty(self):
+        runtime = self._runtime([], stats=FindStats(requested=15, found=4, dropped_by_resolve=1))
+
+        _result, note = await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
+
+        self.assertIn("requested=15", note)
+        self.assertIn("found=4", note)
+        self.assertIn("kept=0", note)
+        self.assertIn("dropped_by_resolve=1", note)
+        self.assertIn("scores=[]", note)
+
+    async def test_the_journal_note_reports_scores_of_kept_hits(self):
+        runtime = self._runtime(
+            [ObjectHit("UserRequest", 12, 0.912), ObjectHit("Incident", 7, 0.834)],
+            stats=FindStats(requested=15, found=5, dropped_by_resolve=3),
+        )
+
+        _result, note = await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
+
+        self.assertIn("requested=15", note)
+        self.assertIn("found=5", note)
+        self.assertIn("kept=2", note)
+        self.assertIn("dropped_by_resolve=3", note)
+        self.assertIn("scores=[0.912, 0.834]", note)
 
 
 if __name__ == "__main__":

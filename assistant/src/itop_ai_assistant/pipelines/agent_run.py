@@ -135,6 +135,13 @@ class AgentRun(Generic[ContextT]):
                     usage.add(message)
                     await self.step("agent", describe_ai_message(message, self.think_tags))
                 elif isinstance(message, ToolMessage):
-                    await self.step(f"tool:{message.name}", f"[{message.status}] {message.text[:300]}")
+                    detail = f"[{message.status}] {message.text[:300]}"
+                    # `artifact` never reaches the model (unlike `content`) — a
+                    # tool built with response_format="content_and_artifact"
+                    # uses it to hand the journal something more precise than
+                    # its own truncated prose (TASK-014).
+                    if isinstance(message.artifact, str) and message.artifact:
+                        detail = f"{detail} | {message.artifact}"
+                    await self.step(f"tool:{message.name}", detail)
                     terminal |= self.is_terminal(message)
         return terminal

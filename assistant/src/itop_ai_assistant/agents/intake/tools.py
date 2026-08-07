@@ -164,8 +164,8 @@ async def set_classification(service_id: int, subcategory_id: int, runtime: Inta
     )
 
 
-@tool
-async def find_similar_resolved_tickets(runtime: IntakeToolRuntime) -> str:
+@tool(response_format="content_and_artifact")
+async def find_similar_resolved_tickets(runtime: IntakeToolRuntime) -> tuple[str, str]:
     """Find tickets similar to this one that have already been solved.
 
     Call this once, before finish_handoff, and put every reference it returns
@@ -183,7 +183,7 @@ async def find_similar_resolved_tickets(runtime: IntakeToolRuntime) -> str:
     assert ctx.similar is not None
     _reject_if_repeated(runtime, "find_similar_resolved_tickets", {})
 
-    hits = await ctx.similar.find(
+    hits, stats = await ctx.similar.find_with_stats(
         f"{ticket.title}\n\n{html_to_markdown(ticket.description)}",
         filters={"status": ctx.intake.resolved_statuses},
         chunk_kinds=ctx.intake.similar_chunk_kinds,
@@ -197,16 +197,23 @@ async def find_similar_resolved_tickets(runtime: IntakeToolRuntime) -> str:
         candidates=ctx.intake.similar_candidates,
         top=ctx.intake.similar_top,
     )
-    logger.info(f"{ticket.label}: similar resolved tickets found: {len(hits)}")
+    # Not sent to the model — an artifact, picked up by AgentRun._journal_update
+    # for the run journal (TASK-014). "requested vs found" is the closest cheap
+    # proxy for "cut by the score threshold" available without a second query.
+    note = (
+        f"requested={stats.requested} found={stats.found} kept={len(hits)} "
+        f"dropped_by_resolve={stats.dropped_by_resolve} scores={[round(hit.score, 3) for hit in hits]}"
+    )
+    logger.info(f"{ticket.label}: similar resolved tickets found: {len(hits)} ({note})")
     if not hits:
         # Not a rejection: "nothing similar" is an answer, and a rejection
         # would send the model looking for another way to ask.
-        return "No similar solved tickets were found. Write the handoff note without references."
+        return "No similar solved tickets were found. Write the handoff note without references.", note
     references = "\n".join(f"[[{hit.obj_class}:{hit.obj_id}]]" for hit in hits)
     return (
         "Solved tickets similar to this one, most similar first. "
         "Copy these references into your note exactly as written:\n" + references
-    )
+    ), note
 
 
 @tool

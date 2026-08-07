@@ -38,6 +38,23 @@ class ObjectHit:
     score: float
 
 
+@dataclass(frozen=True)
+class FindStats:
+    """What a `find()` call actually saw, for the run journal (TASK-014).
+
+    `found < requested` is a signal, not proof: it happens both when
+    `min_score` cut candidates and when the index/filter combination has
+    fewer matching objects than `requested` to begin with — Qdrant's
+    `query_points_groups` applies `score_threshold` natively and returns no
+    count of what it dropped, so telling the two apart exactly would need a
+    second query. `dropped_by_resolve` is the ADR-003 metric.
+    """
+
+    requested: int
+    found: int
+    dropped_by_resolve: int
+
+
 class SimilarSearch:
     """One search over the vector index, resolved against its source.
 
@@ -81,8 +98,64 @@ class SimilarSearch:
         `score_threshold` (`ChunkStore.search()`) to keep this port
         backend-agnostic, same as `candidates` translating to `limit`.
         """
+        hits, _ = await self._find(
+            text,
+            classes=classes,
+            chunk_kinds=chunk_kinds,
+            filters=filters,
+            visibilities=visibilities,
+            exclude=exclude,
+            updated_after=updated_after,
+            min_score=min_score,
+            candidates=candidates,
+            top=top,
+        )
+        return hits
+
+    async def find_with_stats(
+        self,
+        text: str,
+        *,
+        classes: list[str] | None = None,
+        chunk_kinds: list[str] | None = None,
+        filters: dict[str, list[str]] | None = None,
+        visibilities: Sequence[str] = ("public", "internal"),
+        exclude: tuple[str, int] | None = None,
+        updated_after: datetime | None = None,
+        min_score: float | None = None,
+        candidates: int = 15,
+        top: int = 5,
+    ) -> tuple[list[ObjectHit], FindStats]:
+        """Same as `find()`, plus the counts a caller needs to journal (TASK-014)."""
+        return await self._find(
+            text,
+            classes=classes,
+            chunk_kinds=chunk_kinds,
+            filters=filters,
+            visibilities=visibilities,
+            exclude=exclude,
+            updated_after=updated_after,
+            min_score=min_score,
+            candidates=candidates,
+            top=top,
+        )
+
+    async def _find(
+        self,
+        text: str,
+        *,
+        classes: list[str] | None,
+        chunk_kinds: list[str] | None,
+        filters: dict[str, list[str]] | None,
+        visibilities: Sequence[str],
+        exclude: tuple[str, int] | None,
+        updated_after: datetime | None,
+        min_score: float | None,
+        candidates: int,
+        top: int,
+    ) -> tuple[list[ObjectHit], FindStats]:
         if not text.strip():
-            return []
+            return [], FindStats(requested=candidates, found=0, dropped_by_resolve=0)
         embedding = (await self._embedder.embed([text]))[0]
         hits = await self._store.search(
             embedding,
@@ -97,15 +170,20 @@ class SimilarSearch:
             limit=candidates,
         )
         if not hits:
-            return []
-        return await self._keep_resolvable(hits, top)
+            return [], FindStats(requested=candidates, found=0, dropped_by_resolve=0)
+        kept = await self._keep_resolvable(hits)
+        stats = FindStats(requested=candidates, found=len(hits), dropped_by_resolve=len(hits) - len(kept))
+        return kept[:top], stats
 
-    async def _keep_resolvable(self, hits: list[SearchHit], top: int) -> list[ObjectHit]:
+    async def _keep_resolvable(self, hits: list[SearchHit]) -> list[ObjectHit]:
         """Drop candidates the source no longer returns, keeping the order.
 
         One call per class rather than one per object: the probe takes a
         list of ids. The share dropped here is the metric ADR-003 asks for —
         it says how far the pre-filter has drifted from the real rights.
+        Capping to `top` is the caller's job — this only tells resolved apart
+        from dropped, which `FindStats.dropped_by_resolve` (TASK-014) needs
+        uncontaminated by the separate, later top-N cut.
         """
         by_class: dict[str, list[int]] = {}
         for hit in hits:
@@ -121,4 +199,4 @@ class SimilarSearch:
         ]
         if len(kept) < len(hits):
             logger.info(f"similar search: {len(hits) - len(kept)} of {len(hits)} candidates dropped by the source")
-        return kept[:top]
+        return kept
