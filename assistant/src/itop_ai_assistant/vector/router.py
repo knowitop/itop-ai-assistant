@@ -13,10 +13,12 @@ from pydantic import BaseModel, Field
 from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
 from itop_ai_assistant.deps import AppDeps
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
+from itop_ai_assistant.principal import Principal
 from itop_ai_assistant.vector.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.indexer import SWEEP_TASK
-from itop_ai_assistant.vector.search import ObjectHit, SimilarSearch
+from itop_ai_assistant.vector.search import FindStats, ObjectHit, SimilarSearch
 from itop_ai_assistant.vector_sources.registry import build_vector_sources
+from itop_ai_assistant.vector_sources.tickets import FAMILY as TICKETS_FAMILY
 
 logger = logging.getLogger(__name__)
 
@@ -175,17 +177,37 @@ class SearchRequest(BaseModel):
         description="Max number of resolved hits to return, best-first. Kept lower than `candidates` "
         "because some candidates get dropped when the source no longer confirms them.",
     )
+    principal_token: str | None = Field(
+        default=None,
+        description="An iTop personal/application token to resolve candidates under and to read the "
+        "R4 org pre-filter from, instead of the service account (TASK-015) — paste an engineer's own "
+        "token to check what `AccessRepository.allowed_org_ids()` returns for them and whether the "
+        "org pre-filter and the source's own resolve agree (`stats.dropped_by_resolve`). When given, "
+        "it also fills `filters['org_id']` unless the request already sets that key. Only supported "
+        "for the 'tickets' family today — 501 otherwise.",
+    )
+
+
+class SearchResponse(BaseModel):
+    hits: list[ObjectHit]
+    stats: FindStats
+    allowed_org_ids: list[str] | None = Field(
+        default=None,
+        description="Set only when `principal_token` was given: that principal's iTop 'Allowed "
+        "Organizations', or None meaning iTop itself reports no restriction (empty list).",
+    )
 
 
 @router.post("/search")
-async def vector_search(request: Request, body: SearchRequest) -> list[ObjectHit]:
-    """Debug endpoint: run one `SimilarSearch.find()` and return the hits.
+async def vector_search(request: Request, body: SearchRequest) -> SearchResponse:
+    """Debug endpoint: run one `SimilarSearch.find_with_stats()` and return the hits.
 
     Resolves candidates under the service account (`VectorSource.prepare()`),
-    not the caller's own iTop identity — results reflect what the index and
-    the service account can see, not what any particular operator could see
-    through `/webhook` (`.claude/rules/vector.md`: search returns candidates,
-    resolved against a principal's own token in production callers).
+    not the caller's own iTop identity, unless `principal_token` is given
+    (`.claude/rules/vector.md`: search returns candidates, resolved against a
+    principal's own token in production callers) — R4 has no production
+    caller yet (TASK-015), this is how its two layers get exercised against a
+    real iTop before one exists.
     """
     deps: AppDeps = request.app.state.deps
     if not deps.vector_store.configured:
@@ -203,14 +225,30 @@ async def vector_search(request: Request, body: SearchRequest) -> list[ObjectHit
         raise HTTPException(status_code=404, detail=f"Unknown family {body.family!r}; known: {sorted(sources)}")
     await source.prepare()
 
+    resolve = source.find_existing_ids
+    filters = body.filters
+    allowed_org_ids: list[str] | None = None
+    if body.principal_token:
+        if body.family != TICKETS_FAMILY:
+            raise HTTPException(
+                status_code=501,
+                detail=f"principal_token is only supported for family {TICKETS_FAMILY!r} today (TASK-015)",
+            )
+        principal = Principal.delegated(body.principal_token, login="debug", name="debug")
+        bundle = await deps.itop.for_principal(principal, comment="vector debug search (TASK-015)")
+        resolve = bundle.ticket_repo.find_existing_ids
+        allowed_org_ids = await bundle.access_repo.allowed_org_ids()
+        if allowed_org_ids is not None and (filters is None or "org_id" not in filters):
+            filters = {**(filters or {}), "org_id": allowed_org_ids}
+
     embedder = EmbeddingsClient(embeddings_cfg)
     try:
-        search = SimilarSearch(deps.vector_store, embedder, source.find_existing_ids, family=body.family)
-        return await search.find(
+        search = SimilarSearch(deps.vector_store, embedder, resolve, family=body.family)
+        hits, stats = await search.find_with_stats(
             body.text,
             classes=body.classes,
             chunk_kinds=body.chunk_kinds,
-            filters=body.filters,
+            filters=filters,
             visibilities=body.visibilities,
             exclude=body.exclude,
             updated_after=body.updated_after,
@@ -218,5 +256,6 @@ async def vector_search(request: Request, body: SearchRequest) -> list[ObjectHit
             candidates=body.candidates,
             top=body.top,
         )
+        return SearchResponse(hits=hits, stats=stats, allowed_org_ids=allowed_org_ids)
     finally:
         await embedder.aclose()

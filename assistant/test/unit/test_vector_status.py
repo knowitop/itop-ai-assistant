@@ -282,7 +282,7 @@ class TestSearch(VectorStatusTestCase):
             response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), [])
+        self.assertEqual(response.json()["hits"], [])
         embedder.aclose.assert_awaited_once()
         source.find_existing_ids.assert_not_awaited()
 
@@ -322,11 +322,13 @@ class TestSearch(VectorStatusTestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        hits = response.json()
+        body = response.json()
         # Order isn't asserted here — all three chunks share one embedding, so
         # score ties leave ranking unspecified; that ordering is `SimilarSearch`'s
         # own concern, covered by test_vector_search.py.
-        self.assertEqual({h["obj_id"] for h in hits}, {1, 3})
+        self.assertEqual({h["obj_id"] for h in body["hits"]}, {1, 3})
+        self.assertEqual(body["stats"], {"requested": 15, "found": 3, "dropped_by_resolve": 1})
+        self.assertIsNone(body["allowed_org_ids"])
         embedder.embed.assert_awaited_once_with(["printer is on fire"])
         embedder.aclose.assert_awaited_once()
 
@@ -336,6 +338,143 @@ class TestSearch(VectorStatusTestCase):
         response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
 
         self.assertEqual(response.status_code, 401)
+
+
+class TestSearchAsPrincipal(VectorStatusTestCase):
+    """TASK-015: `principal_token` resolves and org-prefilters under a given
+    iTop identity instead of the service account — the only live-testable
+    path for R4 before there is a console to call it in production."""
+
+    def _seed_and_patch(self, deps, *, existing, allowed_org_ids):
+        async def _seed() -> None:
+            await deps.vector_store.ensure_version("tickets", "bge-m3", 4)
+            await deps.vector_store.upsert_chunks([_chunk(1), _chunk(2)], family="tickets", model="bge-m3", dim=4)
+
+        asyncio.run(_seed())
+        embedder = MagicMock()
+        embedder.embed = AsyncMock(return_value=[[1.0, 0.0, 0.0, 0.0]])
+        embedder.aclose = AsyncMock()
+        source = _FakeSource(existing=set())  # must not be asked — see assertion below
+        source.find_existing_ids = AsyncMock(side_effect=source.find_existing_ids)
+        bundle = MagicMock()
+        bundle.ticket_repo.find_existing_ids = AsyncMock(side_effect=lambda _cls, ids: existing & set(ids))
+        bundle.access_repo.allowed_org_ids = AsyncMock(return_value=allowed_org_ids)
+        deps.itop.for_principal = AsyncMock(return_value=bundle)
+        return embedder, source, bundle
+
+    def test_resolves_under_the_given_principal_not_the_service_account(self):
+        deps = _make_deps(
+            self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+        )
+        self.client.app.state.deps = deps
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+        # Unrestricted org scope here — the seeded chunks carry no `org_id`
+        # filter value, so an org pre-filter would (correctly) match nothing;
+        # that interaction is covered separately below.
+        embedder, source, bundle = self._seed_and_patch(deps, existing={1}, allowed_org_ids=None)
+
+        with (
+            patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.router.build_vector_sources", return_value=[source]),
+        ):
+            response = self.client.post(
+                "/api/vector/search",
+                json={"family": "tickets", "text": "printer", "principal_token": "engineer-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual({h["obj_id"] for h in body["hits"]}, {1})
+        self.assertIsNone(body["allowed_org_ids"])
+        source.find_existing_ids.assert_not_awaited()
+        bundle.ticket_repo.find_existing_ids.assert_awaited()
+        deps.itop.for_principal.assert_awaited_once()
+        principal = deps.itop.for_principal.await_args.args[0]
+        self.assertEqual(principal.auth.token, "engineer-token")
+
+    def test_allowed_org_ids_fill_the_org_filter_by_default(self):
+        deps = _make_deps(
+            self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+        )
+        self.client.app.state.deps = deps
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+        embedder, source, _ = self._seed_and_patch(deps, existing={1, 2}, allowed_org_ids=["3", "9"])
+        store_search = AsyncMock(wraps=deps.vector_store.search)
+        with (
+            patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.router.build_vector_sources", return_value=[source]),
+            patch.object(deps.vector_store, "search", store_search),
+        ):
+            self.client.post(
+                "/api/vector/search",
+                json={"family": "tickets", "text": "printer", "principal_token": "engineer-token"},
+            )
+
+        self.assertEqual(store_search.await_args.kwargs["filters"], {"org_id": ["3", "9"]})
+
+    def test_an_explicit_org_filter_is_not_overridden(self):
+        deps = _make_deps(
+            self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+        )
+        self.client.app.state.deps = deps
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+        embedder, source, _ = self._seed_and_patch(deps, existing={1, 2}, allowed_org_ids=["3"])
+        store_search = AsyncMock(wraps=deps.vector_store.search)
+        with (
+            patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.router.build_vector_sources", return_value=[source]),
+            patch.object(deps.vector_store, "search", store_search),
+        ):
+            self.client.post(
+                "/api/vector/search",
+                json={
+                    "family": "tickets",
+                    "text": "printer",
+                    "principal_token": "engineer-token",
+                    "filters": {"org_id": ["7"]},
+                },
+            )
+
+        self.assertEqual(store_search.await_args.kwargs["filters"], {"org_id": ["7"]})
+
+    def test_unrestricted_principal_adds_no_org_filter(self):
+        deps = _make_deps(
+            self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+        )
+        self.client.app.state.deps = deps
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+        embedder, source, _ = self._seed_and_patch(deps, existing={1, 2}, allowed_org_ids=None)
+        store_search = AsyncMock(wraps=deps.vector_store.search)
+        with (
+            patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.router.build_vector_sources", return_value=[source]),
+            patch.object(deps.vector_store, "search", store_search),
+        ):
+            response = self.client.post(
+                "/api/vector/search",
+                json={"family": "tickets", "text": "printer", "principal_token": "engineer-token"},
+            )
+
+        self.assertIsNone(store_search.await_args.kwargs["filters"])
+        self.assertIsNone(response.json()["allowed_org_ids"])
+
+    def test_other_families_are_not_supported_yet(self):
+        deps = _make_deps(
+            self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+        )
+        self.client.app.state.deps = deps
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+        source = MagicMock()
+        source.name = "kb_articles"
+        source.prepare = AsyncMock()
+
+        with patch("itop_ai_assistant.vector.router.build_vector_sources", return_value=[source]):
+            response = self.client.post(
+                "/api/vector/search",
+                json={"family": "kb_articles", "text": "printer", "principal_token": "engineer-token"},
+            )
+
+        self.assertEqual(response.status_code, 501)
 
 
 if __name__ == "__main__":
