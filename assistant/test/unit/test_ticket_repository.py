@@ -18,6 +18,7 @@ _RAW_TICKET = {
     "org_id": "7",
     "request_type": "incident",
     "public_log": {"entries": [{"user_login": "John Doe", "message": "Help!"}]},
+    "private_log": {"entries": [{"user_login": "engineer", "message": "Ordered a replacement part."}]},
     "solution": "<p>Replaced cartridge.</p>",
     "last_update": "2026-07-10 12:00:00",
     "start_date": "2026-07-01 09:30:00",
@@ -49,6 +50,8 @@ class TestToTicket(unittest.TestCase):
         self.assertEqual(ticket.request_type, "incident")
         self.assertEqual(len(ticket.public_log), 1)
         self.assertEqual(ticket.public_log[0].user_login, "John Doe")
+        self.assertEqual(len(ticket.private_log), 1)
+        self.assertEqual(ticket.private_log[0].user_login, "engineer")
 
     def test_incident_has_no_request_type_by_default(self):
         repo, _ = _make_repo()
@@ -179,6 +182,15 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
         self.assertIn("id", projection)
         self.assertIn("last_update", projection)
         self.assertNotIn("private_log", projection)
+
+    async def test_projection_includes_private_log_when_flagged(self):
+        repo, schema = _make_repo()
+        schema.find.return_value = []
+
+        await repo.find_modified_since("UserRequest", None, page=1, page_size=100, include_private_log=True)
+
+        projection = schema.find.await_args.kwargs["projection"]
+        self.assertIn("private_log", projection)
 
     async def test_unmapped_last_update_raises(self):
         repo, _ = _make_repo(TicketMappingConfig(fields={"last_update": None}))

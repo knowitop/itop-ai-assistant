@@ -120,6 +120,8 @@ def chunk_object(
     chunks: list[Chunk] = []
     for kind, sources in profile.items():
         if kind.startswith("log:"):
+            if logs is None or kind not in logs:
+                logger.warning(f"chunker: profile kind {kind!r} has no matching log in the source — treated as empty")
             entries = (logs or {}).get(kind, [])
             chunks.extend(_log_chunks(kind, entries, budget=budget, per_chunk=log_entries_per_chunk))
             continue

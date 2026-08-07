@@ -163,6 +163,17 @@ class TestLogChunks(unittest.TestCase):
         self.assertEqual(by_kind["log:private"], "internal")
         self.assertEqual(by_kind["log:public"], "public")
 
+    def test_missing_log_kind_warns_and_is_treated_as_empty(self):
+        with self.assertLogs("itop_ai_assistant.vector.chunker", level="WARNING"):
+            chunks = self._log_chunks({"log:public": self._entries(1)})
+
+        self.assertNotIn("log:private", {c.kind for c in chunks})
+
+    def test_present_but_empty_log_kind_does_not_warn(self):
+        with self.assertRaises(AssertionError):  # assertLogs raises when nothing was logged
+            with self.assertLogs("itop_ai_assistant.vector.chunker", level="WARNING"):
+                self._log_chunks({"log:public": self._entries(1), "log:private": []})
+
     def test_entries_truncated_to_share_of_budget(self):
         # budget = 10 tokens * 3 = 30 chars; per entry = 30 // 5 = 6 chars
         entries = [ConversationEntry(speaker="agent", message="a" * 100)]

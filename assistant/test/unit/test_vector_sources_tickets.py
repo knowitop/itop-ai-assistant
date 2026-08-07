@@ -56,6 +56,18 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.filters, {"service_id": "5"})
         self.assertEqual(record.payload.id, "1")
 
+    async def test_requests_private_log_from_the_repository(self):
+        deps, bundle = _deps_with_bundle()
+        bundle.ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket()])
+        source = TicketVectorSource(deps, classes=["UserRequest"])
+        await source.prepare()
+
+        await source.find_modified_since("UserRequest", None, page=1, page_size=100)
+
+        bundle.ticket_repo.find_modified_since.assert_awaited_once_with(
+            "UserRequest", None, page=1, page_size=100, include_private_log=True
+        )
+
     async def test_filters_none_when_no_service(self):
         deps, bundle = _deps_with_bundle()
         bundle.ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket(service_id="0")])
@@ -125,6 +137,21 @@ class TestChunk(unittest.IsolatedAsyncioTestCase):
         log_chunk = next(c for c in chunks if c.kind == "log:public")
         self.assertIn("caller: I have a problem", log_chunk.text)
         self.assertIn("agent: Looking into it", log_chunk.text)
+
+    async def test_private_log_entries_labeled_by_caller_name(self):
+        deps, bundle = _deps_with_bundle()
+        ticket = _ticket(private_log=[LogEntry(user_login="Jane Agent", message="Ordered a replacement part")])
+        bundle.ticket_repo.find_modified_since = AsyncMock(return_value=[ticket])
+        source = TicketVectorSource(deps, classes=["UserRequest"])
+        await source.prepare()
+        [record] = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
+
+        profile = {**_PROFILE, "log:private": []}
+        chunks = await source.chunk("UserRequest", record, profile, max_chunk_tokens=100, log_entries_per_chunk=5)
+
+        log_chunk = next(c for c in chunks if c.kind == "log:private")
+        self.assertIn("agent: Ordered a replacement part", log_chunk.text)
+        self.assertEqual(log_chunk.visibility, "internal")
 
 
 class TestToConversation(unittest.TestCase):

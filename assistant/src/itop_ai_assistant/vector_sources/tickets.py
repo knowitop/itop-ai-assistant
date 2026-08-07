@@ -85,7 +85,9 @@ class TicketVectorSource(VectorSource):
         self, obj_class: str, since: datetime | None, *, page: int, page_size: int
     ) -> list[VectorRecord]:
         assert self._bundle is not None, "prepare() must run before find_modified_since()"
-        tickets = await self._bundle.ticket_repo.find_modified_since(obj_class, since, page=page, page_size=page_size)
+        tickets = await self._bundle.ticket_repo.find_modified_since(
+            obj_class, since, page=page, page_size=page_size, include_private_log=True
+        )
         return [
             VectorRecord(
                 obj_id=int(ticket.id),
@@ -121,7 +123,10 @@ class TicketVectorSource(VectorSource):
             "service": await self._names.service(ticket),
             "subcategory": await self._names.subcategory(ticket),
         }
-        logs = {"log:public": _to_conversation(ticket.public_log, ticket.caller_name)}
+        logs = {
+            "log:public": _to_conversation(ticket.public_log, ticket.caller_name),
+            "log:private": _to_conversation(ticket.private_log, ticket.caller_name),
+        }
         return chunk_object(
             fields,
             profile,

@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 ITOP_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
+def _parse_log_entries(log_raw: dict | None) -> list[LogEntry]:
+    return [LogEntry(user_login=e["user_login"], message=e["message"]) for e in ((log_raw or {}).get("entries") or [])]
+
+
 def _parse_dt(value) -> datetime | None:
     """Parse an iTop timestamp, tolerating garbage (None on failure).
 
@@ -57,8 +61,8 @@ class TicketRepository:
             attr_code = fields.get(semantic)
             return raw.get(attr_code) if attr_code else None
 
-        log_raw = attr("public_log") or {}
-        entries = [LogEntry(user_login=e["user_login"], message=e["message"]) for e in (log_raw.get("entries") or [])]
+        entries = _parse_log_entries(attr("public_log"))
+        private_entries = _parse_log_entries(attr("private_log"))
 
         return Ticket(
             obj_class=obj_class,
@@ -73,13 +77,20 @@ class TicketRepository:
             org_id=attr("org_id"),
             request_type=attr("request_type"),
             public_log=entries,
+            private_log=private_entries,
             solution=attr("solution") or "",
             last_update=_parse_dt(attr("last_update")),
             start_date=_parse_dt(attr("created_at")),
         )
 
     async def find_modified_since(
-        self, obj_class: str, since: datetime | None, *, page: int, page_size: int
+        self,
+        obj_class: str,
+        since: datetime | None,
+        *,
+        page: int,
+        page_size: int,
+        include_private_log: bool = False,
     ) -> list[Ticket]:
         """One page of tickets modified at/after `since` (None = full scan).
 
@@ -87,6 +98,9 @@ class TicketRepository:
         statuses must still be seen so its chunks can be deleted. iTop OQL has
         no ORDER BY, so pages come in internal order — callers must consume
         all pages before trusting a cursor built from the results.
+
+        `include_private_log` opts into the field `fetch()` always excludes —
+        only the vector sweep needs it, intake never does.
         """
         fields = self.mapping.for_class(obj_class)
         last_update_attr = fields.get("last_update")
@@ -99,7 +113,8 @@ class TicketRepository:
                 f"SELECT {obj_class} WHERE {last_update_attr} >= :this->since",
                 {"since": since.strftime(ITOP_DATETIME_FORMAT)},
             )
-        attrs = [attr for semantic, attr in fields.items() if attr and semantic != "private_log"]
+        excluded = set() if include_private_log else {"private_log"}
+        attrs = [attr for semantic, attr in fields.items() if attr and semantic not in excluded]
         rows = await self._itop.schema(obj_class).find(
             oql, projection=["id", *attrs], limit=str(page_size), page=str(page)
         )

@@ -28,6 +28,7 @@ class Ticket(BaseModel):
     org_id: str | None = None
     request_type: str | None = None
     public_log: list[LogEntry] = []
+    private_log: list[LogEntry] = []
     solution: str = ""  # raw HTML, filled on resolved/closed tickets
     # iTop timestamps carry a nominal UTC tzinfo — see ticket_repository._parse_dt
     last_update: datetime | None = None
