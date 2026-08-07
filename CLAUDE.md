@@ -83,9 +83,13 @@ identity model, the extension points: `dev-docs/architecture/platform.md`.
 
 ## Searching code
 
-Use the `ast-grep` skill for structural code search (finding functions, classes,
-call sites, patterns) instead of plain `grep`/`rg`. Plain text search is fine for
-non-code lookups (docs, config values, strings).
+Ast-grep is installed in this environment. For any code search that requires
+understanding of syntax or structure — finding functions, classes, call sites,
+patterns — default to `ast-grep run --pattern '<pattern>' --lang <language>
+<path>` (adjust `--lang` per file); reach for the `ast-grep` skill only when the
+query needs a full YAML rule (relational/composite logic ast-grep run can't
+express). Avoid plain `grep`/`rg` for code unless a plain-text search is
+explicitly what's wanted (docs, config values, strings).
 
 ## Development Commands
 
