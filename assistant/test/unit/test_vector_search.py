@@ -62,6 +62,22 @@ class TestSimilarSearch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["updated_after"], _NOW)
         self.assertEqual(kwargs["limit"], 15)
 
+    async def test_chunk_kinds_reaches_the_store_under_the_same_name(self):
+        search, store, _ = _search([])
+
+        await search.find(
+            "q", classes=["UserRequest"], filters={"status": ["resolved"]}, chunk_kinds=["profile", "body"]
+        )
+
+        self.assertEqual(store.search.await_args.kwargs["chunk_kinds"], ["profile", "body"])
+
+    async def test_chunk_kinds_defaults_to_none(self):
+        search, store, _ = _search([_hit(1, 0.9)])
+
+        await search.find("q", classes=["UserRequest"], filters={"status": ["resolved"]})
+
+        self.assertIsNone(store.search.await_args.kwargs["chunk_kinds"])
+
     async def test_min_score_reaches_the_store_as_score_threshold(self):
         search, store, _ = _search([])
 

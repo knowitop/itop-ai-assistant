@@ -313,6 +313,7 @@ class QdrantChunkStore:
         family: str,
         classes: list[str] | None = None,
         visibilities: list[str],
+        chunk_kinds: list[str] | None = None,
         filters: dict[str, list[str]] | None = None,
         exclude: tuple[str, int] | None = None,
         updated_after: datetime | None = None,
@@ -324,9 +325,10 @@ class QdrantChunkStore:
 
         Filters are applied during the walk, not over its result — the
         property the backend was chosen for (ADR-001, R1). `classes=None`
-        searches the whole family; an absent key in `filters` means
-        unrestricted for that key — an empty list under either is a caller
-        mistake, not "no results", and is rejected loudly. `score_threshold`
+        searches the whole family, `chunk_kinds=None` matches any chunk kind;
+        an absent key in `filters` means unrestricted for that key — an empty
+        list under any of these is a caller mistake, not "no results", and is
+        rejected loudly. `score_threshold`
         is the same idea applied to the score itself, native to
         `query_points_groups` — a candidate below it never reaches the
         result, so it costs nothing extra beyond a plain top-N walk. Returns
@@ -347,6 +349,10 @@ class QdrantChunkStore:
             if not classes:
                 raise ValueError('search classes got an empty list — omit the argument for "whole family", not []')
             must.append(models.FieldCondition(key="obj_class", match=models.MatchAny(any=classes)))
+        if chunk_kinds is not None:
+            if not chunk_kinds:
+                raise ValueError('search chunk_kinds got an empty list — omit the argument for "any kind", not []')
+            must.append(models.FieldCondition(key="chunk_kind", match=models.MatchAny(any=chunk_kinds)))
         for key, values in (filters or {}).items():
             if not values:
                 raise ValueError(

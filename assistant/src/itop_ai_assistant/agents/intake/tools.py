@@ -186,6 +186,11 @@ async def find_similar_resolved_tickets(runtime: IntakeToolRuntime) -> str:
     hits = await ctx.similar.find(
         f"{ticket.title}\n\n{html_to_markdown(ticket.description)}",
         filters={"status": ctx.intake.resolved_statuses},
+        chunk_kinds=ctx.intake.similar_chunk_kinds,
+        # Explicit, not the port's default: the index gets private log chunks in
+        # TASK-013, and intake must not start quoting internal correspondence
+        # without a change here.
+        visibilities=["public"],
         exclude=(ticket.obj_class, int(ticket.id)),
         updated_after=datetime.now(UTC) - timedelta(days=ctx.intake.similar_max_age_days),
         min_score=ctx.intake.similar_min_score,

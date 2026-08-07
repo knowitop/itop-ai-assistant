@@ -359,7 +359,12 @@ class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
     async def test_the_search_is_scoped_by_resolved_statuses(self):
         runtime = self._runtime([], ticket=_ticket(obj_class="Incident", id="42"))
         runtime.context.intake = IntakeConfig(
-            resolved_statuses=["closed", "resolved"], similar_max_age_days=30, similar_candidates=11, similar_top=3
+            resolved_statuses=["closed", "resolved"],
+            similar_max_age_days=30,
+            similar_candidates=11,
+            similar_top=3,
+            similar_min_score=0.6,
+            similar_chunk_kinds=["profile", "solution"],
         )
 
         await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
@@ -371,6 +376,11 @@ class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["exclude"], ("Incident", 42))
         self.assertEqual(kwargs["candidates"], 11)
         self.assertEqual(kwargs["top"], 3)
+        self.assertEqual(kwargs["min_score"], 0.6)
+        self.assertEqual(kwargs["chunk_kinds"], ["profile", "solution"])
+        # Explicit, not the port's default — a safeguard against TASK-013
+        # silently widening intake's search into internal chunks
+        self.assertEqual(kwargs["visibilities"], ["public"])
         age = datetime.now(UTC) - kwargs["updated_after"]
         self.assertAlmostEqual(age.total_seconds(), timedelta(days=30).total_seconds(), delta=60)
 

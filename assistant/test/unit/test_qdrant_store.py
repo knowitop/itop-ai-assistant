@@ -538,6 +538,40 @@ class TestSearch(QdrantStoreCase):
 
         self.assertEqual({(hit.obj_class, hit.obj_id) for hit in hits}, {("UserRequest", 1), ("Incident", 1)})
 
+    async def test_chunk_kinds_filter_excludes_other_kinds(self):
+        await self.store.upsert_chunks(
+            [
+                _chunk(1, "body", vector=[1.0, 0.0, 0.0, 0.0]),
+                _chunk(2, "solution", vector=[1.0, 0.0, 0.0, 0.0]),
+            ],
+            family=_FAMILY,
+            model="test-model",
+            dim=4,
+        )
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], chunk_kinds=["body"], **_ALL)
+
+        self.assertEqual([hit.obj_id for hit in hits], [1])
+
+    async def test_empty_chunk_kinds_list_is_rejected(self):
+        with self.assertRaises(ValueError):
+            await self.store.search([1.0, 0.0, 0.0, 0.0], family=_FAMILY, chunk_kinds=[], visibilities=["public"])
+
+    async def test_chunk_kinds_none_does_not_narrow(self):
+        await self.store.upsert_chunks(
+            [
+                _chunk(1, "body", vector=[1.0, 0.0, 0.0, 0.0]),
+                _chunk(2, "solution", vector=[1.0, 0.0, 0.0, 0.0]),
+            ],
+            family=_FAMILY,
+            model="test-model",
+            dim=4,
+        )
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], chunk_kinds=None, **_ALL)
+
+        self.assertEqual({hit.obj_id for hit in hits}, {1, 2})
+
 
 class TestMetadataUpdate(QdrantStoreCase):
     async def test_changes_status_without_touching_the_vector(self):

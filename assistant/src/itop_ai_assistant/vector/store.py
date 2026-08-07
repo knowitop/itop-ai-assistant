@@ -62,7 +62,7 @@ class ChunkMetadata:
 
     obj_class: str
     obj_id: int
-    chunk_kind: str  # profile / description / solution / log:public …
+    chunk_kind: str  # profile / body / solution / log:public …
     chunk_n: int
     visibility: str  # public / internal
     content_hash: str
@@ -189,6 +189,7 @@ class ChunkStore(Protocol):
         family: str,
         classes: list[str] | None = None,
         visibilities: list[str],
+        chunk_kinds: list[str] | None = None,
         filters: dict[str, list[str]] | None = None,
         exclude: tuple[str, int] | None = None,
         updated_after: datetime | None = None,
@@ -200,7 +201,8 @@ class ChunkStore(Protocol):
         an object indexed without an `updated_at` never passes it.
         `score_threshold` drops a hit below that similarity score regardless
         of rank — top-N alone does not mean relevant (TASK-011); `None`
-        applies no such floor."""
+        applies no such floor. `chunk_kinds`: `None` matches any kind, an
+        empty list is a caller error."""
         ...
 
     async def stats(self, family: str) -> IndexStats | None: ...

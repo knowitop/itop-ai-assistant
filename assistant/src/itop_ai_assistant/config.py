@@ -265,6 +265,13 @@ class IntakeConfig(BaseModel):
     # calibrated against this deployment's embeddings model; tune it after a
     # live check against real similar/unrelated pairs.
     similar_min_score: float = Field(default=0.5, ge=-1.0, le=1.0)
+    # Which chunk kinds the query text is matched against. The query is the new
+    # ticket's title and description, so a match against `solution` means "the
+    # solution reads like the problem" — usually noise, sometimes a genuine
+    # restatement (TASK-012). Configurable because that call needs live tickets,
+    # not a release. Non-empty: `search()` rejects an empty list loudly, and a
+    # config value must not become a crash mid-run.
+    similar_chunk_kinds: list[str] = Field(default=["profile", "body"], min_length=1)
     classify_service_oql: str = _CLASSIFY_SERVICE_OQL
     classify_subcategory_oql: str = _CLASSIFY_SUBCATEGORY_OQL
 

@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from itop_ai_assistant.config import (
     EmbeddingsConfig,
+    IntakeConfig,
     ItopConfig,
     LlmConfig,
     Settings,
@@ -181,6 +182,15 @@ class TestVectorConfig(unittest.TestCase):
         with patch.dict(os.environ, _REQUIRED, clear=True):
             s = Settings(_env_file=None)
         self.assertFalse(s.vector.enabled)
+
+
+class TestIntakeConfig(unittest.TestCase):
+    def test_similar_chunk_kinds_default(self):
+        self.assertEqual(IntakeConfig().similar_chunk_kinds, ["profile", "body"])
+
+    def test_similar_chunk_kinds_rejects_empty_list(self):
+        with self.assertRaises(ValidationError):
+            IntakeConfig(similar_chunk_kinds=[])
 
 
 class TestMissingSetup(unittest.TestCase):

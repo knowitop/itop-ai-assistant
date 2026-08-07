@@ -144,6 +144,12 @@ class SearchRequest(BaseModel):
         description="Chunk visibility levels to include — 'public' is caller-facing text, 'internal' is "
         "engineer-only notes.",
     )
+    chunk_kinds: list[str] | None = Field(
+        default=None,
+        description="Restrict to these chunk kinds (e.g. ['profile', 'body'] vs. ['solution']) — a chunk's "
+        "kind is part of its identity, not a business filter. None (default) matches any kind; an empty "
+        "list is rejected, not treated as 'no results'.",
+    )
     exclude: tuple[str, int] | None = Field(
         default=None,
         description="One (obj_class, obj_id) pair to drop from the results — typically the ticket the "
@@ -203,6 +209,7 @@ async def vector_search(request: Request, body: SearchRequest) -> list[ObjectHit
         return await search.find(
             body.text,
             classes=body.classes,
+            chunk_kinds=body.chunk_kinds,
             filters=body.filters,
             visibilities=body.visibilities,
             exclude=body.exclude,
