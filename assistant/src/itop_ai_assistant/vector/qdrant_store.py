@@ -27,7 +27,7 @@ of a ticket.
 
 import uuid
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 
 from qdrant_client import AsyncQdrantClient, models
 
@@ -68,6 +68,15 @@ class QdrantChunkStore:
     def __init__(self, url: str | None) -> None:
         self._url = url
         self._client: AsyncQdrantClient | None = None
+        # Every operation needs the active version to build a collection name,
+        # so `active_meta` used to cost two round-trips per store call — and
+        # the sweep calls the store once per *object* (TASK-020). This is a
+        # cache, not operational state: it decides nothing, dies with the
+        # process and is rebuilt from `chunks_meta` itself, so the rule that
+        # keeps cursors and journals out of the port (`.claude/rules/vector.md`)
+        # does not reach it. `ensure_version` is the only writer of
+        # `chunks_meta` and the only thing that invalidates an entry.
+        self._meta_cache: dict[str, IndexMeta] = {}
 
     @property
     def configured(self) -> bool:
@@ -86,11 +95,21 @@ class QdrantChunkStore:
         return f"{family}_v{version}"
 
     async def aclose(self) -> None:
+        self._meta_cache.clear()
         if self._client is not None:
             await self._client.close()
             self._client = None
 
     async def active_meta(self, family: str) -> IndexMeta | None:
+        """The family's active version, read once per process and remembered.
+
+        A miss is deliberately *not* cached: "no active version yet" is the
+        state `ensure_version` exists to leave, and caching it would freeze
+        the store into "there is no index" for the rest of the process.
+        """
+        cached = self._meta_cache.get(family)
+        if cached is not None:
+            return cached
         if not await self.client.collection_exists(_META_COLLECTION):
             return None
         records, _ = await self.client.scroll(
@@ -103,7 +122,9 @@ class QdrantChunkStore:
         if not records:
             return None
         payload = records[0].payload
-        return IndexMeta(family=family, version=payload["version"], model=payload["model"], dim=payload["dim"])
+        meta = IndexMeta(family=family, version=payload["version"], model=payload["model"], dim=payload["dim"])
+        self._meta_cache[family] = meta
+        return meta
 
     async def list_families(self) -> list[str]:
         """Every family with an active row in `chunks_meta`, read from
@@ -133,6 +154,10 @@ class QdrantChunkStore:
                 return families
 
     async def ensure_version(self, family: str, model: str, dim: int, *, filter_keys: Sequence[str] = ()) -> IndexMeta:
+        # The only writer of `chunks_meta`, hence the only place the memoized
+        # fingerprint can go stale — dropped before the write, refilled by the
+        # `active_meta` below or by the next reader.
+        self._meta_cache.pop(family, None)
         meta = await self.active_meta(family)
         if meta is not None:
             _check_fingerprint(meta, model, dim)
@@ -156,7 +181,9 @@ class QdrantChunkStore:
             ],
             wait=True,
         )
-        return IndexMeta(family=family, version=version, model=model, dim=dim)
+        meta = IndexMeta(family=family, version=version, model=model, dim=dim)
+        self._meta_cache[family] = meta
+        return meta
 
     async def upsert_chunks(self, chunks: list[ChunkRecord], *, family: str, model: str, dim: int) -> int:
         """Idempotent insert-or-update by (obj_class, obj_id, chunk_kind, chunk_n)."""
@@ -189,13 +216,15 @@ class QdrantChunkStore:
                 scroll_filter=_object_filter(obj_class, obj_id),
                 limit=_SCROLL_PAGE,
                 offset=offset,
-                with_payload=["chunk_kind", "chunk_n", "content_hash", "meta_hash"],
+                with_payload=["chunk_kind", "chunk_n", "content_hash", "meta_hash", "created_at"],
                 with_vectors=False,
             )
             for record in records:
                 payload = record.payload
                 digests[(payload["chunk_kind"], payload["chunk_n"])] = ChunkDigest(
-                    content_hash=payload["content_hash"], meta_hash=payload.get("meta_hash")
+                    content_hash=payload["content_hash"],
+                    meta_hash=payload.get("meta_hash"),
+                    created_at=_parse_datetime(payload.get("created_at")),
                 )
             if offset is None:
                 return digests
@@ -497,6 +526,27 @@ def _payload(chunk: ChunkMetadata) -> dict:
     # specific keys in via `indexed_filter_keys` (see `_KEYWORD_FIELDS`, ADR-005).
     payload["fields"] = chunk.filters or {}
     return payload
+
+
+def _parse_datetime(raw: object) -> datetime | None:
+    """A payload date back as a `datetime`, or `None` if it cannot be read.
+
+    Unreadable rather than fatal on purpose: this feeds the indexer's
+    "inherit the stored creation date" path, and one malformed point must
+    degrade to "nothing to inherit" instead of failing the object's whole
+    class for the pass. A naive value — nothing this code writes, but a point
+    put here by hand might be — reads as UTC for the same reason: the
+    indexer compares these dates to each other, and one naive sibling among
+    aware ones would raise instead of degrading.
+    """
+    if isinstance(raw, str):
+        try:
+            raw = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+    if not isinstance(raw, datetime):
+        return None
+    return raw if raw.tzinfo is not None else raw.replace(tzinfo=UTC)
 
 
 def _date_condition(key: str, window: DateRange) -> models.FieldCondition:

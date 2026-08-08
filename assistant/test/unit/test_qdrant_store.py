@@ -76,6 +76,11 @@ def _chunk(
     )
 
 
+def _meta_reads(scroll_spy) -> int:
+    """How many of the spied scrolls went to the fingerprint collection."""
+    return sum(1 for call in scroll_spy.call_args_list if call.kwargs.get("collection_name") == "chunks_meta")
+
+
 class QdrantStoreCase(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.store = QdrantChunkStore(":memory:")
@@ -94,7 +99,12 @@ class TestVersioning(QdrantStoreCase):
             (self.meta.family, self.meta.version, self.meta.model, self.meta.dim), (_FAMILY, 1, "test-model", 4)
         )
 
-    async def test_active_meta_survives_a_new_client(self):
+    async def test_active_meta_is_read_back_from_storage(self):
+        # Cache dropped on purpose: reading the memo back proves nothing about
+        # what `chunks_meta` holds, and the memo is exactly what asyncSetUp
+        # filled (TASK-020).
+        self.store._meta_cache.clear()
+
         self.assertEqual(await self.store.active_meta(_FAMILY), self.meta)
 
     async def test_same_fingerprint_reuses_the_version(self):
@@ -123,6 +133,34 @@ class TestVersioning(QdrantStoreCase):
         self.assertEqual((await self.store.stats(_FAMILY)).rows, 1)
         self.assertEqual((await self.store.stats("kb_articles")).rows, 1)
         self.assertEqual(await self.store.list_object_ids("kb_articles", "UserRequest"), [])
+
+    async def test_the_fingerprint_is_not_re_read_for_every_operation(self):
+        # The sweep calls the store once per object, and every call needs the
+        # active version to build a collection name — before TASK-020 that was
+        # two Qdrant round-trips per object for a value that never changes.
+        with patch.object(self.store.client, "scroll", wraps=self.store.client.scroll) as scroll:
+            await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
+            await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1)
+            await self.store.update_chunk_metadata([_meta(1)], family=_FAMILY)
+            await self.store.delete_object(_FAMILY, "UserRequest", 1)
+
+        self.assertEqual(_meta_reads(scroll), 0)
+
+    async def test_ensure_version_refreshes_the_fingerprint(self):
+        # The only writer of `chunks_meta` is the only thing that may
+        # invalidate the memo — otherwise a version bump would go unnoticed
+        # for the life of the process.
+        with patch.object(self.store.client, "scroll", wraps=self.store.client.scroll) as scroll:
+            self.assertEqual(await self.store.ensure_version(_FAMILY, "test-model", 4), self.meta)
+
+        self.assertEqual(_meta_reads(scroll), 1)
+
+    async def test_an_absent_family_is_not_remembered_as_absent(self):
+        self.assertIsNone(await self.store.active_meta("kb_articles"))
+
+        created = await self.store.ensure_version("kb_articles", "test-model", 4)
+
+        self.assertEqual(await self.store.active_meta("kb_articles"), created)
 
     async def test_list_families_reads_active_rows_from_storage(self):
         await self.store.ensure_version("kb_articles", "test-model", 4)
@@ -213,6 +251,22 @@ class TestUpsert(QdrantStoreCase):
         digests = await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1)
 
         self.assertEqual(digests[("body", 0)].meta_hash, meta.meta_hash)
+
+    async def test_the_digest_carries_the_stored_creation_date_back(self):
+        # What the indexer inherits instead of the sweep's clock for a source
+        # with no creation date of its own (TASK-020).
+        created = datetime(2020, 1, 2, 3, 4, tzinfo=UTC)
+        await self.store.upsert_chunks([_chunk(1, created_at=created)], family=_FAMILY, model="test-model", dim=4)
+
+        digests = await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1)
+
+        self.assertEqual(digests[("body", 0)].created_at, created)
+
+    async def test_the_creation_date_feeds_the_meta_hash(self):
+        earlier = _meta(1, created_at=datetime(2020, 1, 2, 3, 4, tzinfo=UTC))
+        later = _meta(1, created_at=datetime(2021, 1, 2, 3, 4, tzinfo=UTC))
+
+        self.assertNotEqual(earlier.meta_hash, later.meta_hash)
 
     async def test_hashes_of_an_unknown_object_are_empty(self):
         self.assertEqual(await self.store.get_chunk_digests(_FAMILY, "UserRequest", 999), {})

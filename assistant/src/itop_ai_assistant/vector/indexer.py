@@ -37,7 +37,14 @@ from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.vector.chunker import Chunk
 from itop_ai_assistant.vector.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.source import VectorRecord, VectorSource
-from itop_ai_assistant.vector.store import ChunkMetadata, ChunkRecord, ChunkStore, FingerprintMismatchError, IndexMeta
+from itop_ai_assistant.vector.store import (
+    ChunkDigest,
+    ChunkMetadata,
+    ChunkRecord,
+    ChunkStore,
+    FingerprintMismatchError,
+    IndexMeta,
+)
 from itop_ai_assistant.vector_sources.registry import build_vector_sources
 
 logger = logging.getLogger(__name__)
@@ -249,13 +256,17 @@ class VectorIndexer:
                     log_entries_per_chunk=cfg.log_entries_per_chunk,
                 )
                 stored = await store.get_chunk_digests(family, obj_class, record.obj_id)
+                # Object-level once, chunk-level per chunk — `stored` is read
+                # first because the creation date may have to be inherited
+                # from it (`_creation_date`).
+                object_meta = _object_metadata(obj_class, record, stored, started_at)
                 # A chunk lands in exactly one bucket: content changed wins over
                 # metadata-only, since upsert_chunks rewrites the whole payload
                 # anyway (including a fresh meta_hash).
                 changed: list[tuple[Chunk, ChunkMetadata]] = []
                 stale_meta: list[ChunkMetadata] = []
                 for chunk in chunks:
-                    chunk_meta = _chunk_metadata(obj_class, record, chunk, started_at)
+                    chunk_meta = object_meta.for_chunk(chunk)
                     digest = stored.get((chunk.kind, chunk.n))
                     if digest is None or digest.content_hash != chunk.content_hash:
                         changed.append((chunk, chunk_meta))
@@ -343,25 +354,86 @@ class VectorIndexer:
             logger.warning(f"index journal finish failed (non-fatal): {e}")
 
 
-def _chunk_metadata(obj_class: str, record: VectorRecord, chunk: Chunk, started_at: datetime) -> ChunkMetadata:
+@dataclass(frozen=True)
+class _ObjectMetadata:
+    """The half of `ChunkMetadata` that describes the object, not the chunk.
+
+    Built once per record rather than once per chunk — which is not only
+    cheaper but the thing that makes freezing `created_at` possible at all:
+    the question "when did this object come into being" has one answer, and
+    every chunk of the object has to land on it. Computing it per chunk is
+    how the chunks of one object drifted apart in the first place (TASK-020).
+    """
+
+    obj_class: str
+    obj_id: int
+    filters: dict[str, str]
+    created_at: datetime
+    updated_at: datetime | None
+
+    def for_chunk(self, chunk: Chunk) -> ChunkMetadata:
+        return ChunkMetadata(
+            obj_class=self.obj_class,
+            obj_id=self.obj_id,
+            chunk_kind=chunk.kind,
+            chunk_n=chunk.n,
+            visibility=chunk.visibility,
+            content_hash=chunk.content_hash,
+            created_at=self.created_at,
+            filters=self.filters,
+            # No fallback, unlike `created_at`: a source without a
+            # modification date opts out of the `updated` window, which is the
+            # honest answer — there is nothing to freeze, since the field is
+            # supposed to move.
+            updated_at=self.updated_at,
+        )
+
+
+def _object_metadata(
+    obj_class: str,
+    record: VectorRecord,
+    stored: dict[tuple[str, int], ChunkDigest],
+    started_at: datetime,
+) -> _ObjectMetadata:
     filters = dict(record.filters or {})
     filters["status"] = record.index_value
     if record.org_id is not None:
         filters["org_id"] = record.org_id
-    return ChunkMetadata(
+    return _ObjectMetadata(
         obj_class=obj_class,
         obj_id=record.obj_id,
-        chunk_kind=chunk.kind,
-        chunk_n=chunk.n,
-        visibility=chunk.visibility,
-        content_hash=chunk.content_hash,
-        created_at=record.created_at or record.updated_at or started_at,
         filters=filters,
-        # No fallback, unlike `created_at`: this one feeds `meta_hash`, and a
-        # fallback that moves between passes would rewrite every payload on
-        # every sweep. A source without it opts out of the `updated` window.
+        created_at=_creation_date(record, stored, started_at),
         updated_at=record.updated_at,
     )
+
+
+def _creation_date(record: VectorRecord, stored: dict[tuple[str, int], ChunkDigest], started_at: datetime) -> datetime:
+    """When the object came into being, as the index will remember it.
+
+    The source's own date if it has one. Otherwise whatever the object's
+    already-indexed chunks say — that is what freezes the value: the last two
+    fallbacks fire once, at first indexing, and every pass afterwards
+    inherits. Without that step a fresh `started_at` would enter the payload
+    on every rewrite, and since rewrites are per-chunk, the chunks of one
+    object would end up claiming different creation dates — visible as an
+    object matching a `created` window through some of its chunks and not
+    others (TASK-020).
+
+    `min` over the stored values, not "this chunk's own": a chunk added later
+    (a new log window) has nothing stored and would otherwise take the current
+    clock while its siblings keep the old one. Earliest-known also cannot
+    creep forward from pass to pass.
+
+    Stored beats `record.updated_at` deliberately — a modification date moves
+    with every edit, so as a fallback it is no better than the sweep's clock.
+    """
+    if record.created_at is not None:
+        return record.created_at
+    indexed = [digest.created_at for digest in stored.values() if digest.created_at is not None]
+    if indexed:
+        return min(indexed)
+    return record.updated_at or started_at
 
 
 def _class_to_source(sources: Sequence[VectorSource]) -> dict[str, VectorSource]:

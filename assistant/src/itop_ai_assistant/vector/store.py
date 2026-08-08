@@ -14,19 +14,21 @@ object itself.
 Two hashes travel with a chunk, not one. `content_hash` guards the chunk's
 text — it comes from the chunker and changes only when the source text does.
 `ChunkMetadata.meta_hash` guards everything else the payload carries that
-filtering depends on (`visibility`, `filters`, `updated_at`) — it lets the
-sweep tell "the object was reopened" apart from "the text changed", and
-refresh the former without paying for a re-embed (ADR-004,
-`update_chunk_metadata`). `created_at` deliberately does not feed `meta_hash`:
-the indexer falls back to the sweep's `started_at` when a source has no
-creation date, and that fallback is not deterministic across passes — folding
-it into the hash would make metadata churn on every sweep for such objects.
-`updated_at` has no such fallback and does feed it, which is what keeps the
-"resolved within the last year" filter honest. Making `created_at` filterable
-(`DateRange`, TASK-018) does not change that: the general rule is "a payload
-field filtering depends on must feed `meta_hash`", and this one field is the
-documented exception, bought at the price spelled out in `DateRange`. See
-`dev-docs/architecture/vector.md`.
+filtering depends on (`visibility`, `filters`, both dates) — it lets the sweep
+tell "the object was reopened" apart from "the text changed", and refresh the
+former without paying for a re-embed (ADR-004, `update_chunk_metadata`). The
+rule has no exceptions: a payload field filtering depends on feeds the hash,
+or it freezes at indexing time and no one notices.
+
+`created_at` used to be that exception, because the indexer fell back to the
+sweep's own clock for a source with no creation date and a fallback that moves
+between passes would rewrite every payload on every sweep. It is in the hash
+now because the value no longer moves: the indexer freezes it at first
+indexing (`ChunkDigest.created_at` carries the stored value back, TASK-020),
+so the fallback fires exactly once per object and the hash stays stable. What
+that buys, beyond consistency, is repair — correcting a source's creation date
+(mapping `created_at` where it was absent) now reaches the index instead of
+losing to a value written years earlier. See `dev-docs/architecture/vector.md`.
 """
 
 import hashlib
@@ -68,9 +70,19 @@ class ChunkMetadata:
     obj_id: int
     chunk_kind: str  # profile / body / solution / log:public …
     chunk_n: int
+    # Fixed by the source per fragment kind (`FragmentSpec`, ADR-018) and
+    # therefore a pure function of `chunk_kind`, which is part of the point's
+    # identity — so it cannot change at runtime, and feeding `meta_hash` looks
+    # pointless. It is not: a *release* that flips a fragment's declared
+    # visibility keeps the same point identity and the same text, and without
+    # this field in the hash the index would serve internal chunks as public
+    # until their text happened to change. Cheap insurance on an access
+    # control, not a runtime concern (TASK-020).
     visibility: str  # public / internal
     content_hash: str
-    created_at: datetime  # object creation time (time-window KNN later)
+    # Object creation time, frozen at first indexing when the source has none
+    # of its own — see the module docstring and `vector/indexer.py`.
+    created_at: datetime
     filters: dict[str, str] | None = None
     # Last modification of the source object — the range filter behind "solved
     # within the last year". None when the source has no such date: such an
@@ -92,6 +104,7 @@ class ChunkMetadata:
     def meta_hash(self) -> str:
         canonical = json.dumps(
             {
+                "created_at": self.created_at.isoformat(),
                 "filters": self.filters,
                 "updated_at": self.updated_at.isoformat() if self.updated_at else None,
                 "visibility": self.visibility,
@@ -108,10 +121,17 @@ class ChunkDigest:
 
     `meta_hash` is `None` for a chunk written before this field existed —
     that reads as "metadata stale", triggering one cheap payload rewrite.
+
+    `created_at` travels back to the indexer rather than being compared here:
+    it is what a source with no creation date of its own inherits instead of
+    the sweep's current clock, which is what keeps one object's chunks from
+    drifting apart (TASK-020). `None` when the stored payload has no readable
+    date — then there is nothing to inherit and the fallback runs as before.
     """
 
     content_hash: str
     meta_hash: str | None
+    created_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -161,10 +181,10 @@ class DateRange:
     one made of a single upper bound: an absent key matches no range
     condition, and "unknown" must read neither as "recent" nor as "old".
     That is the real case for `updated_at`, which a source may leave unset.
-    `created_at` is always present, but for a source that reports no creation
-    date the indexer falls back to the sweep's own clock — filtering such an
-    object by `created` filters by when it was last written to the index, not
-    by when it came into being (`vector/indexer.py`, module docstring above).
+    `created_at` is always present; for a source that reports no creation date
+    it holds the moment the object first entered the index — an approximation,
+    but a stable one, identical across the object's chunks and unchanged by
+    later sweeps (`vector/indexer.py`).
     """
 
     after: datetime | None = None

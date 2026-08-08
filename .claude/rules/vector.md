@@ -46,4 +46,17 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   (`vector/store.py`). The sweep refreshes such a field without a re-embed
   only through that hash (TASK-003); leave a new one out and it freezes at
   whatever value the chunk had when it was first embedded, silently, until
-  the text changes for some unrelated reason.
+  the text changes for some unrelated reason. The rule has no exceptions —
+  `created_at` was one until TASK-020 and no longer is.
+- **What describes the object is computed once per record, not per chunk**
+  (`_ObjectMetadata`, `vector/indexer.py`). Rewrites are per-chunk, so an
+  object-level value recomputed per chunk drifts apart between the chunks of
+  one object — that is exactly how `created_at` broke. A source with no
+  creation date inherits the one already in the index (`ChunkDigest.created_at`);
+  the fallback to the sweep's clock fires once, at first indexing, and never
+  again.
+- `QdrantChunkStore._meta_cache` is a cache, not the operational state the
+  rule above bans: every store call needs the active version to build a
+  collection name, and the sweep calls the store once per object. It dies
+  with the process and is rebuilt from `chunks_meta`; `ensure_version` is the
+  only writer and the only thing that invalidates it.

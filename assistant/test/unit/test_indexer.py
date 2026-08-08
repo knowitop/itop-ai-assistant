@@ -40,14 +40,20 @@ def _flat(calls: list[list]) -> list:
 
 
 def _record(
-    obj_id: int, *, index_value: str = "resolved", description: str = "Broken.", updated_at: datetime = _NOW
+    obj_id: int,
+    *,
+    index_value: str = "resolved",
+    description: str = "Broken.",
+    updated_at: datetime = _NOW,
+    created_at: datetime | None = _NOW - timedelta(days=1),
+    payload: dict | None = None,
 ) -> VectorRecord:
     return VectorRecord(
         obj_id=obj_id,
         index_value=index_value,
         updated_at=updated_at,
-        created_at=_NOW - timedelta(days=1),
-        payload={"body": description},
+        created_at=created_at,
+        payload=payload if payload is not None else {"body": description},
     )
 
 
@@ -136,7 +142,7 @@ class FakeChunkStore:
         for c in chunks:
             key = (family, c.meta.obj_class, c.meta.obj_id)
             self.digests.setdefault(key, {})[(c.meta.chunk_kind, c.meta.chunk_n)] = ChunkDigest(
-                content_hash=c.meta.content_hash, meta_hash=c.meta.meta_hash
+                content_hash=c.meta.content_hash, meta_hash=c.meta.meta_hash, created_at=c.meta.created_at
             )
         return len(chunks)
 
@@ -148,7 +154,7 @@ class FakeChunkStore:
         for c in chunks:
             key = (family, c.obj_class, c.obj_id)
             self.digests.setdefault(key, {})[(c.chunk_kind, c.chunk_n)] = ChunkDigest(
-                content_hash=c.content_hash, meta_hash=c.meta_hash
+                content_hash=c.content_hash, meta_hash=c.meta_hash, created_at=c.created_at
             )
         return len(chunks)
 
@@ -548,6 +554,94 @@ class TestMetadataFreshness(IndexerTestCase):
         self.assertEqual(store2.upsert_calls, [])
         self.assertEqual(store2.update_metadata_calls, [])
         self.assertEqual(store2.delete_chunks_calls, [])
+
+
+class TestCreationDate(IndexerTestCase):
+    """`created_at` belongs to the object, so every chunk of it must carry the
+    same value — and a source that has no creation date must not get a fresh
+    one on every rewrite (TASK-020)."""
+
+    @staticmethod
+    def _carry_over(store: FakeChunkStore) -> FakeChunkStore:
+        """A second pass against what the first one wrote."""
+        nxt = FakeChunkStore()
+        nxt.digests[(_FAMILY, "UserRequest", 1)] = dict(store.digests[(_FAMILY, "UserRequest", 1)])
+        return nxt
+
+    async def test_the_sources_own_date_wins(self):
+        store = FakeChunkStore()
+        await self._run(_deps_mock(store=store), FakeTicketSource([_record(1)]))
+
+        self.assertEqual(_flat(store.upsert_calls)[0].meta.created_at, _NOW - timedelta(days=1))
+
+    async def test_a_dateless_object_keeps_its_first_creation_date(self):
+        # Both dates absent, so the first pass falls back to its own clock —
+        # the value that used to be recomputed on every rewrite.
+        dateless = _record(1, created_at=None, updated_at=None, description="Broken.")
+        store = FakeChunkStore()
+        await self._run(_deps_mock(store=store), FakeTicketSource([dateless]))
+        frozen = _flat(store.upsert_calls)[0].meta.created_at
+
+        store2 = self._carry_over(store)
+        await self._run(
+            _deps_mock(store=store2),
+            FakeTicketSource([_record(1, created_at=None, updated_at=None, description="Still broken.")]),
+        )
+
+        self.assertEqual(_flat(store2.upsert_calls)[0].meta.created_at, frozen)
+
+    async def test_a_dateless_object_does_not_churn_on_an_idle_pass(self):
+        # The reason `created_at` stayed out of `meta_hash` before the freeze:
+        # a moving fallback would rewrite every payload on every sweep.
+        store = FakeChunkStore()
+        await self._run(_deps_mock(store=store), FakeTicketSource([_record(1, created_at=None, updated_at=None)]))
+
+        store2 = self._carry_over(store)
+        report = await self._run(
+            _deps_mock(store=store2), FakeTicketSource([_record(1, created_at=None, updated_at=None)])
+        )
+
+        self.assertEqual((report.chunks_embedded, report.chunks_metadata_updated), (0, 0))
+        self.assertEqual(store2.update_metadata_calls, [])
+
+    async def test_a_chunk_added_later_inherits_the_objects_date(self):
+        # The case per-chunk resolution could not get right: a new chunk has
+        # nothing stored of its own and would take the current clock while its
+        # siblings keep the old one.
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.classes["UserRequest"].chunks = {
+            "body": ChunkFragmentConfig(fields=["description"]),
+            "solution": ChunkFragmentConfig(fields=["resolution"]),
+        }
+        store = FakeChunkStore()
+        await self._run(
+            _deps_mock(vector_cfg=cfg, store=store),
+            FakeTicketSource([_record(1, created_at=None, updated_at=None, payload={"body": "Broken."})]),
+        )
+        frozen = _flat(store.upsert_calls)[0].meta.created_at
+
+        store2 = self._carry_over(store)
+        resolved = _record(1, created_at=None, updated_at=None, payload={"body": "Broken.", "solution": "Rebooted it."})
+        await self._run(_deps_mock(vector_cfg=cfg, store=store2), FakeTicketSource([resolved]))
+
+        written = _flat(store2.upsert_calls)
+        self.assertEqual([c.meta.chunk_kind for c in written], ["solution"])
+        self.assertEqual(written[0].meta.created_at, frozen)
+
+    async def test_a_date_arriving_late_replaces_the_frozen_one(self):
+        # Mapping `created_at` where it was absent must reach the index —
+        # this is what putting the field into `meta_hash` buys.
+        store = FakeChunkStore()
+        await self._run(_deps_mock(store=store), FakeTicketSource([_record(1, created_at=None, updated_at=None)]))
+
+        store2 = self._carry_over(store)
+        real = _NOW - timedelta(days=400)
+        report = await self._run(
+            _deps_mock(store=store2), FakeTicketSource([_record(1, created_at=real, updated_at=None)])
+        )
+
+        self.assertEqual((report.chunks_embedded, report.chunks_metadata_updated), (0, 1))
+        self.assertEqual(_flat(store2.update_metadata_calls)[0].created_at, real)
 
 
 class TestSweepRegistration(unittest.IsolatedAsyncioTestCase):

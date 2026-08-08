@@ -17,3 +17,9 @@ type gate — `uv run mypy src/` is not the same check and passing it proves
 less. CI (`.github/workflows/ci.yml`) runs on every push to `main` and every PR
 and gates the image publish; it adds `pytest test/pg` and `npm run build` for the
 UI. `test/integration` needs a real model endpoint and is excluded there.
+
+**Live verification on the stand** (`docker-compose up`, manual checks against
+the running stack) happens only after the user confirms — don't start the
+stack or poke it unprompted, even to "just double-check" a change. Unit tests
+and `pre-commit` are enough to report work as done; note in the summary that
+live verification is still pending.

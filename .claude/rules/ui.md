@@ -26,6 +26,10 @@ instinct to reach for a library is exactly what they forbid:
 - Builds into `ui/dist`, served by FastAPI at `/ui` (API stays under `/api`). In
   dev use the vite proxy to `:8001` — no CORS. The admin token lives in
   `localStorage`; 401 shows the token entry screen.
+- **New user-facing strings: add only to `locales/en.json` by default.** The
+  other locales (`cs`, `de`, `es`, `fr`, `it`, `kk`, `pl`, `ru`, `sk`, `uk`,
+  `zh`) are translated on request, not automatically on every UI change — ask
+  before touching them.
 
 ```bash
 npm ci          # install pinned dependencies
