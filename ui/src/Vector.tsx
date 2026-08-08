@@ -6,8 +6,8 @@ import {
   CloseButton,
   Divider,
   Group,
-  JsonInput,
   Loader,
+  MultiSelect,
   NumberInput,
   Stack,
   Switch,
@@ -70,12 +70,72 @@ interface SectionData {
   secrets: Record<string, boolean>;
 }
 
-// One entry of vector.classes: per-class relevance values + chunking profile
-// (profile kept as text — the JsonInput owns formatting until save).
+// GET /api/vector/sources — the chunking vocabulary, declared by the sources
+// themselves (ADR-018). Never hardcode any of this here: a second source would
+// silently make a TypeScript copy wrong.
+interface FragmentSpec {
+  kind: string;
+  visibility: string; // public | internal — fixed by the source
+  // false: always indexed, the admin only picks its fields.
+  // true: no fields of its own, the admin switches it on or off.
+  optional: boolean;
+}
+
+interface SourceInfo {
+  name: string;
+  classes: string[];
+  fields: string[];
+  fragments: FragmentSpec[];
+}
+
+// One fragment's settings as stored in vector.classes[<class>].chunks.
+interface ChunkCfg {
+  fields?: string[];
+  enabled?: boolean;
+}
+
+// One entry of vector.classes: per-class relevance values + fragment settings.
 interface ClassCfg {
   name: string;
   indexValues: string[];
-  profileText: string;
+  chunks: Record<string, ChunkCfg>;
+}
+
+// Everything wrong with one class's chunk settings that the admin must fix
+// before saving — values no source can explain, so writing them back would
+// mean keeping a config nobody can act on.
+interface ClassProblems {
+  unknownKinds: string[];
+  unknownFields: string[];
+}
+
+function sourceForClass(sources: SourceInfo[], className: string): SourceInfo | null {
+  const owner = sources.find((s) => s.classes.includes(className));
+  if (owner) return owner;
+  // A class added but not saved yet is claimed by nobody. With a single
+  // registered source the answer is not in doubt; with several it is, and
+  // guessing would put the wrong vocabulary in front of the admin.
+  return sources.length === 1 ? sources[0] : null;
+}
+
+function classProblems(cfg: ClassCfg, source: SourceInfo | null): ClassProblems {
+  if (!source) return { unknownKinds: [], unknownFields: [] };
+  const known = new Set(source.fragments.map((f) => f.kind));
+  const fields = new Set(source.fields);
+  const unknownFields = new Set<string>();
+  for (const [kind, entry] of Object.entries(cfg.chunks)) {
+    if (!known.has(kind)) continue; // reported as an unknown kind instead
+    for (const field of entry.fields ?? []) if (!fields.has(field)) unknownFields.add(field);
+  }
+  return {
+    unknownKinds: Object.keys(cfg.chunks).filter((kind) => !known.has(kind)),
+    unknownFields: [...unknownFields],
+  };
+}
+
+// i18next reads ':' as a namespace separator, and fragment kinds contain one.
+function labelKey(prefix: string, name: string): string {
+  return `vector.${prefix}.${name.replace(':', '_')}`;
 }
 
 async function resetSection(section: string, confirmMsg: string): Promise<boolean> {
@@ -352,13 +412,19 @@ function VectorSettingsForm() {
   const [reconcileDays, setReconcileDays] = useState<number | string>('');
   const [maxChunkTokens, setMaxChunkTokens] = useState<number | string>('');
   const [logEntries, setLogEntries] = useState<number | string>('');
-  // Tickets source settings (the only source so far; the backend keys config
-  // by class, so a new source will add another subsection here)
+  // Per-class settings. Which source owns a class — and therefore which
+  // fragments and fields it offers — comes from /vector/sources, never from
+  // a list kept here.
   const [classCfgs, setClassCfgs] = useState<ClassCfg[]>([]);
+  const [sources, setSources] = useState<SourceInfo[]>([]);
   const [newClass, setNewClass] = useState('');
 
   const load = async () => {
-    const data = await apiGet<SectionData>('/setup/vector');
+    const [data, vocab] = await Promise.all([
+      apiGet<SectionData>('/setup/vector'),
+      apiGet<{ sources: SourceInfo[] }>('/vector/sources'),
+    ]);
+    setSources(vocab.sources);
     setEnabled(Boolean(data.values.enabled));
     setSweepInterval((data.values.sweep_interval_seconds as number) ?? '');
     setSweepPageSize((data.values.sweep_page_size as number) ?? '');
@@ -367,12 +433,15 @@ function VectorSettingsForm() {
     setMaxChunkTokens((data.values.max_chunk_tokens as number) ?? '');
     setLogEntries((data.values.log_entries_per_chunk as number) ?? '');
     const classes =
-      (data.values.classes as Record<string, { index_values?: string[]; profile?: unknown }>) ?? {};
+      (data.values.classes as Record<
+        string,
+        { index_values?: string[]; chunks?: Record<string, ChunkCfg> }
+      >) ?? {};
     setClassCfgs(
       Object.entries(classes).map(([name, cfg]) => ({
         name,
         indexValues: cfg.index_values ?? [],
-        profileText: JSON.stringify(cfg.profile ?? {}, null, 2),
+        chunks: cfg.chunks ?? {},
       })),
     );
     setLoaded(true);
@@ -390,22 +459,28 @@ function VectorSettingsForm() {
   const addClass = () => {
     const name = newClass.trim();
     if (!name || classCfgs.some((c) => c.name === name)) return;
-    setClassCfgs((prev) => [...prev, { name, indexValues: [], profileText: '{}' }]);
+    setClassCfgs((prev) => [...prev, { name, indexValues: [], chunks: {} }]);
     setNewClass('');
   };
+
+  const setChunk = (i: number, kind: string, entry: ChunkCfg | null) =>
+    setClassCfgs((prev) =>
+      prev.map((c, j) => {
+        if (j !== i) return c;
+        const chunks = { ...c.chunks };
+        if (entry === null) delete chunks[kind];
+        else chunks[kind] = entry;
+        return { ...c, chunks };
+      }),
+    );
+
+  const problems = classCfgs.map((c) => classProblems(c, sourceForClass(sources, c.name)));
+  const blocked = problems.some((p) => p.unknownKinds.length > 0 || p.unknownFields.length > 0);
 
   const save = async () => {
     const classes: Record<string, unknown> = {};
     for (const c of classCfgs) {
-      let profile: unknown;
-      try {
-        profile = JSON.parse(c.profileText);
-      } catch {
-        setError(t('vector.invalid_profile_json', { class: c.name }));
-        setSuccess(null);
-        return;
-      }
-      classes[c.name] = { index_values: c.indexValues, profile };
+      classes[c.name] = { index_values: c.indexValues, chunks: c.chunks };
     }
     // The classes dict is always sent — an empty dict is a meaningful value
     // under PATCH-merge (removes all classes); empty numbers keep the stored
@@ -501,32 +576,20 @@ function VectorSettingsForm() {
         />
       </Group>
       <Divider />
-      <Title order={4}>{t('vector.section_source_tickets')}</Title>
+      <Title order={4}>{t('vector.section_classes')}</Title>
+      <Text c="dimmed" size="sm">
+        {t('vector.fragments_explainer')}
+      </Text>
       {classCfgs.map((c, i) => (
-        <Card withBorder key={c.name}>
-          <Stack gap="xs">
-            <Group justify="space-between">
-              <Text fw={600}>{c.name}</Text>
-              <CloseButton onClick={() => removeClass(i)} />
-            </Group>
-            <TagsInput
-              label={t('vector.field_index_values')}
-              description={t('vector.field_index_values_desc')}
-              value={c.indexValues}
-              onChange={(values) => updateClass(i, { indexValues: values })}
-            />
-            <JsonInput
-              label={t('vector.field_profile')}
-              description={t('vector.field_profile_desc')}
-              value={c.profileText}
-              onChange={(value) => updateClass(i, { profileText: value })}
-              autosize
-              minRows={6}
-              formatOnBlur
-              validationError={t('common.invalid_json')}
-            />
-          </Stack>
-        </Card>
+        <ClassCard
+          key={c.name}
+          cfg={c}
+          source={sourceForClass(sources, c.name)}
+          problems={problems[i]}
+          onIndexValues={(values) => updateClass(i, { indexValues: values })}
+          onChunk={(kind, entry) => setChunk(i, kind, entry)}
+          onRemove={() => removeClass(i)}
+        />
       ))}
       <Group align="flex-end">
         <TextInput
@@ -540,7 +603,7 @@ function VectorSettingsForm() {
         </Button>
       </Group>
       <Group>
-        <Button onClick={save} loading={busy}>
+        <Button onClick={save} loading={busy} disabled={blocked}>
           {t('common.btn_save')}
         </Button>
         <Button variant="subtle" color="red" onClick={reset}>
@@ -548,5 +611,139 @@ function VectorSettingsForm() {
         </Button>
       </Group>
     </Stack>
+  );
+}
+
+function ClassCard({
+  cfg,
+  source,
+  problems,
+  onIndexValues,
+  onChunk,
+  onRemove,
+}: {
+  cfg: ClassCfg;
+  source: SourceInfo | null;
+  problems: ClassProblems;
+  onIndexValues: (values: string[]) => void;
+  onChunk: (kind: string, entry: ChunkCfg | null) => void;
+  onRemove: () => void;
+}) {
+  const { t } = useTranslation();
+  const nothingIndexed =
+    source !== null &&
+    source.fragments.every((f) =>
+      f.optional ? !cfg.chunks[f.kind]?.enabled : !(cfg.chunks[f.kind]?.fields ?? []).length,
+    );
+
+  return (
+    <Card withBorder>
+      <Stack gap="xs">
+        <Group justify="space-between">
+          <Group gap={6}>
+            <Text fw={600}>{cfg.name}</Text>
+            {source && (
+              <Badge variant="light" color="gray">
+                {t(labelKey('source', source.name), { defaultValue: source.name })}
+              </Badge>
+            )}
+          </Group>
+          <CloseButton onClick={onRemove} />
+        </Group>
+        <TagsInput
+          label={t('vector.field_index_values')}
+          description={t('vector.field_index_values_desc')}
+          value={cfg.indexValues}
+          onChange={onIndexValues}
+        />
+        {source === null ? (
+          <Alert color="orange">{t('vector.class_source_unknown')}</Alert>
+        ) : (
+          source.fragments.map((fragment) => (
+            <FragmentRow
+              key={fragment.kind}
+              fragment={fragment}
+              fields={source.fields}
+              entry={cfg.chunks[fragment.kind]}
+              onChange={(entry) => onChunk(fragment.kind, entry)}
+            />
+          ))
+        )}
+        {problems.unknownKinds.map((kind) => (
+          <Alert key={kind} color="red" p="xs">
+            <Group justify="space-between" wrap="nowrap">
+              <Text size="sm">{t('vector.unknown_fragment', { kind })}</Text>
+              <Button size="compact-xs" variant="light" color="red" onClick={() => onChunk(kind, null)}>
+                {t('vector.btn_remove_fragment')}
+              </Button>
+            </Group>
+          </Alert>
+        ))}
+        {problems.unknownFields.length > 0 && (
+          <Alert color="red" p="xs">
+            <Text size="sm">
+              {t('vector.unknown_fields', { fields: problems.unknownFields.join(', ') })}
+            </Text>
+          </Alert>
+        )}
+        {nothingIndexed && <Alert color="yellow">{t('vector.nothing_indexed')}</Alert>}
+      </Stack>
+    </Card>
+  );
+}
+
+function FragmentRow({
+  fragment,
+  fields,
+  entry,
+  onChange,
+}: {
+  fragment: FragmentSpec;
+  fields: string[];
+  entry: ChunkCfg | undefined;
+  onChange: (entry: ChunkCfg | null) => void;
+}) {
+  const { t } = useTranslation();
+  const name = t(labelKey('kind', fragment.kind), { defaultValue: fragment.kind });
+  const badge = fragment.visibility === 'internal' && (
+    <Badge color="orange" variant="light" title={t('vector.visibility_internal_hint')}>
+      {t('vector.badge_internal')}
+    </Badge>
+  );
+
+  if (fragment.optional) {
+    return (
+      <Group gap="xs">
+        <Switch
+          checked={Boolean(entry?.enabled)}
+          onChange={(e) => onChange(e.currentTarget.checked ? { enabled: true } : null)}
+          label={name}
+          description={t('vector.fragment_source_defined')}
+        />
+        {badge}
+      </Group>
+    );
+  }
+  const selected = entry?.fields ?? [];
+  return (
+    <MultiSelect
+      label={
+        <Group gap={6} component="span">
+          <span>{name}</span>
+          {badge}
+        </Group>
+      }
+      // Values the source no longer knows stay visible instead of vanishing
+      // from the picker — losing them silently on the next save is worse.
+      data={[...new Set([...fields, ...selected])].map((field) => ({
+        value: field,
+        label: t(labelKey('field', field), { defaultValue: field }),
+      }))}
+      value={selected}
+      onChange={(values) => onChange({ fields: values })}
+      placeholder={selected.length ? undefined : t('vector.fragment_off')}
+      clearable
+      searchable
+    />
   );
 }

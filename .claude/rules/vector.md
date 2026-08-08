@@ -22,6 +22,12 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   protocol; which iTop attributes a record maps to is the source's concern.
   Adding a source = a new `vector_sources/<name>.py` plus one line in
   `vector_sources/registry.py`, and **no change under `vector/`**.
+- **The source declares its fragments (`fields`, `fragments`) and their
+  `visibility`; the config only picks fields and toggles opt-in fragments**
+  (ADR-018). `chunker.py` sees `TextContent`/`SequenceContent` and no domain
+  names at all — it must never grow a rule keyed on a chunk kind. Text handed
+  to it is expected canonical: `clean_text` is **not idempotent** (markdownify
+  escapes markdown), so the source calls it exactly once.
 - The whole subsystem is off when `qdrant_url` is unset — every code path must
   survive a Redis-only deployment.
 - Sweep cursors, the reindex flag and the run journal live in Redis

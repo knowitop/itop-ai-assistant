@@ -216,9 +216,8 @@ class VectorIndexer:
         started_at: datetime,
     ) -> None:
         class_cfg = cfg.classes[obj_class]
-        profile = class_cfg.profile
-        if not profile:
-            logger.warning(f"vector sweep: no chunking profile for {obj_class} — skipping the class")
+        if not class_cfg.chunks:
+            logger.warning(f"vector sweep: no chunk fragments configured for {obj_class} — skipping the class")
             return
         cursor = await self._deps.vector_sync.get_cursor(obj_class)
         # Overlap covers pages drifting while a previous pass ran; derived
@@ -245,7 +244,7 @@ class VectorIndexer:
                 chunks = await source.chunk(
                     obj_class,
                     record,
-                    profile,
+                    class_cfg,
                     max_chunk_tokens=cfg.max_chunk_tokens,
                     log_entries_per_chunk=cfg.log_entries_per_chunk,
                 )

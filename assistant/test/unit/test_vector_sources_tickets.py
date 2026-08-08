@@ -2,12 +2,25 @@ import unittest
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
+from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
-from itop_ai_assistant.vector_sources.tickets import TicketVectorSource, _to_conversation
+from itop_ai_assistant.vector_sources.tickets import FIELDS, FRAGMENTS, TicketVectorSource, _conversation
 
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
-_PROFILE = {"profile": ["title", "service", "subcategory"], "body": ["description"], "log:public": []}
+
+
+def _cfg(fragments: dict[str, ChunkFragmentConfig]) -> VectorClassConfig:
+    return VectorClassConfig(chunks=fragments)
+
+
+_CFG = _cfg(
+    {
+        "profile": ChunkFragmentConfig(fields=["title", "service", "subcategory"]),
+        "body": ChunkFragmentConfig(fields=["description"]),
+        "log:public": ChunkFragmentConfig(),
+    }
+)
 
 
 def _ticket(**overrides) -> Ticket:
@@ -100,7 +113,7 @@ class TestChunk(unittest.IsolatedAsyncioTestCase):
         await source.prepare()
         [record] = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
 
-        chunks = await source.chunk("UserRequest", record, _PROFILE, max_chunk_tokens=100, log_entries_per_chunk=5)
+        chunks = await source.chunk("UserRequest", record, _CFG, max_chunk_tokens=100, log_entries_per_chunk=5)
 
         by_kind = {c.kind: c for c in chunks}
         self.assertIn("Printing", by_kind["profile"].text)
@@ -115,7 +128,7 @@ class TestChunk(unittest.IsolatedAsyncioTestCase):
         records = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
 
         for record in records:
-            await source.chunk("UserRequest", record, _PROFILE, max_chunk_tokens=100, log_entries_per_chunk=5)
+            await source.chunk("UserRequest", record, _CFG, max_chunk_tokens=100, log_entries_per_chunk=5)
 
         bundle.catalog_repo.get_service.assert_awaited_once()
 
@@ -132,7 +145,7 @@ class TestChunk(unittest.IsolatedAsyncioTestCase):
         await source.prepare()
         [record] = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
 
-        chunks = await source.chunk("UserRequest", record, _PROFILE, max_chunk_tokens=100, log_entries_per_chunk=5)
+        chunks = await source.chunk("UserRequest", record, _CFG, max_chunk_tokens=100, log_entries_per_chunk=5)
 
         log_chunk = next(c for c in chunks if c.kind == "log:public")
         self.assertIn("caller: I have a problem", log_chunk.text)
@@ -146,24 +159,99 @@ class TestChunk(unittest.IsolatedAsyncioTestCase):
         await source.prepare()
         [record] = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
 
-        profile = {**_PROFILE, "log:private": []}
-        chunks = await source.chunk("UserRequest", record, profile, max_chunk_tokens=100, log_entries_per_chunk=5)
+        cfg = _cfg({"log:private": ChunkFragmentConfig()})
+        chunks = await source.chunk("UserRequest", record, cfg, max_chunk_tokens=100, log_entries_per_chunk=5)
 
         log_chunk = next(c for c in chunks if c.kind == "log:private")
         self.assertIn("agent: Ordered a replacement part", log_chunk.text)
         self.assertEqual(log_chunk.visibility, "internal")
 
 
-class TestToConversation(unittest.TestCase):
+class TestDeclaration(unittest.IsolatedAsyncioTestCase):
+    """The vocabulary served to the admin UI (ADR-018) must describe what the
+    source can actually do — a stale declaration would put fields and
+    fragments in the editor that quietly produce nothing."""
+
+    async def _chunk(self, cfg: VectorClassConfig, ticket: Ticket | None = None):
+        deps, bundle = _deps_with_bundle()
+        bundle.ticket_repo.find_modified_since = AsyncMock(return_value=[ticket or _ticket()])
+        source = TicketVectorSource(deps, classes=["UserRequest"])
+        await source.prepare()
+        [record] = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
+        return await source.chunk("UserRequest", record, cfg, max_chunk_tokens=100, log_entries_per_chunk=5)
+
+    async def test_declared_fields_are_exactly_the_chunkable_ones(self):
+        deps, _ = _deps_with_bundle()
+        source = TicketVectorSource(deps, classes=["UserRequest"])
+        await source.prepare()
+
+        fields = await source._semantic_fields(_ticket())
+
+        self.assertEqual(set(FIELDS), set(fields))
+
+    async def test_every_declared_fragment_can_be_produced(self):
+        ticket = _ticket(
+            solution="Replaced the cartridge.",
+            public_log=[LogEntry(user_login="John Doe", message="hi")],
+            private_log=[LogEntry(user_login="Jane Agent", message="ordered a part")],
+        )
+        cfg = _cfg(
+            {spec.kind: ChunkFragmentConfig(fields=list(FIELDS) if not spec.optional else []) for spec in FRAGMENTS}
+        )
+
+        chunks = await self._chunk(cfg, ticket)
+
+        self.assertEqual({c.kind for c in chunks}, {spec.kind for spec in FRAGMENTS})
+
+    async def test_declared_visibility_reaches_the_chunk(self):
+        ticket = _ticket(private_log=[LogEntry(user_login="Jane Agent", message="ordered a part")])
+        cfg = _cfg({"log:private": ChunkFragmentConfig(), "body": ChunkFragmentConfig(fields=["description"])})
+
+        chunks = await self._chunk(cfg, ticket)
+
+        by_kind = {c.kind: c.visibility for c in chunks}
+        self.assertEqual(by_kind, {"log:private": "internal", "body": "public"})
+
+    async def test_optional_fragment_absent_from_config_is_off(self):
+        ticket = _ticket(private_log=[LogEntry(user_login="Jane Agent", message="ordered a part")])
+
+        chunks = await self._chunk(_cfg({"body": ChunkFragmentConfig(fields=["description"])}), ticket)
+
+        self.assertEqual({c.kind for c in chunks}, {"body"})
+
+    async def test_optional_fragment_switched_off_explicitly(self):
+        ticket = _ticket(private_log=[LogEntry(user_login="Jane Agent", message="ordered a part")])
+        cfg = _cfg({"log:private": ChunkFragmentConfig(enabled=False)})
+
+        self.assertEqual(await self._chunk(cfg, ticket), [])
+
+    async def test_required_fragment_without_fields_produces_nothing(self):
+        self.assertEqual(await self._chunk(_cfg({"body": ChunkFragmentConfig(fields=[])})), [])
+
+    async def test_unknown_field_warns_and_is_treated_as_empty(self):
+        cfg = _cfg({"body": ChunkFragmentConfig(fields=["description", "no_such_field"])})
+
+        with self.assertLogs("itop_ai_assistant.vector_sources.tickets", level="WARNING"):
+            chunks = await self._chunk(cfg)
+
+        self.assertEqual([c.text for c in chunks], ["Not printing."])
+
+    async def test_unknown_fragment_kind_in_config_is_ignored(self):
+        cfg = _cfg({"no_such_fragment": ChunkFragmentConfig(fields=["description"])})
+
+        self.assertEqual(await self._chunk(cfg), [])
+
+
+class TestConversation(unittest.TestCase):
     def test_labels_matching_login_as_caller(self):
         entries = [
             LogEntry(user_login="John Doe", message="hi"),
             LogEntry(user_login="Support Bot", message="hello"),
         ]
 
-        result = _to_conversation(entries, caller_name="John Doe")
+        result = _conversation(entries, _ticket())
 
-        self.assertEqual([e.speaker for e in result], ["caller", "agent"])
+        self.assertEqual(result, ["caller: hi", "agent: hello"])
 
 
 class TestNoPrincipal(unittest.IsolatedAsyncioTestCase):

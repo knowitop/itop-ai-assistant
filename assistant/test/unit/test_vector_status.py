@@ -95,6 +95,39 @@ class VectorStatusTestCase(unittest.TestCase):
         self.tasks = self.client.app.state.tasks
 
 
+class TestVectorSources(VectorStatusTestCase):
+    """GET /api/vector/sources — the chunking vocabulary the admin UI renders
+    its editor from (ADR-018). Shares the status harness on purpose: both
+    endpoints answer from the same registry."""
+
+    def test_declares_the_ticket_source_vocabulary(self):
+        # Nothing is configured in this harness — no Qdrant, no embeddings,
+        # indexing off. The editor must still be usable.
+        body = self.client.get("/api/vector/sources").json()
+
+        [source] = body["sources"]
+        self.assertEqual(source["name"], "tickets")
+        self.assertEqual(source["classes"], ["UserRequest", "Incident"])
+        self.assertIn("title", source["fields"])
+        by_kind = {f["kind"]: f for f in source["fragments"]}
+        self.assertEqual(by_kind["body"], {"kind": "body", "visibility": "public", "optional": False})
+        self.assertEqual(by_kind["log:private"], {"kind": "log:private", "visibility": "internal", "optional": True})
+
+    def test_classes_follow_the_saved_config(self):
+        self.client.patch("/api/setup/vector", json={"classes": {"Problem": {"index_values": []}}})
+
+        body = self.client.get("/api/vector/sources").json()
+
+        self.assertEqual(body["sources"][0]["classes"], ["Problem"])
+
+    def test_no_itop_call_is_made(self):
+        # Reading a declaration must not touch iTop: `prepare()` is what needs
+        # a live bundle, and this endpoint never calls it.
+        self.client.get("/api/vector/sources")
+
+        self.client.app.state.deps.itop.get.assert_not_called()
+
+
 class TestVectorStatus(VectorStatusTestCase):
     def test_unconfigured_database(self):
         body = self.client.get("/api/vector/status").json()

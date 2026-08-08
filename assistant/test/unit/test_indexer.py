@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
 
-from itop_ai_assistant.config import EmbeddingsConfig, VectorClassConfig, VectorConfig
+from itop_ai_assistant.config import ChunkFragmentConfig, EmbeddingsConfig, VectorClassConfig, VectorConfig
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
-from itop_ai_assistant.vector.chunker import chunk_object
+from itop_ai_assistant.vector.chunker import FragmentContent, TextContent, chunk_object
 from itop_ai_assistant.vector.index_journal import IndexJournal
 from itop_ai_assistant.vector.indexer import SWEEP_TASK, VectorIndexer, register_vector_sweep
 from itop_ai_assistant.vector.source import VectorRecord
@@ -20,7 +20,12 @@ _LOCK_KEY = "vector:sweep:lock"
 
 _VECTOR_CFG = VectorConfig(
     enabled=True,
-    classes={"UserRequest": VectorClassConfig(index_values=["resolved", "closed"], profile={"body": ["description"]})},
+    classes={
+        "UserRequest": VectorClassConfig(
+            index_values=["resolved", "closed"],
+            chunks={"body": ChunkFragmentConfig(fields=["description"])},
+        )
+    },
     sweep_interval_seconds=300,
     sweep_throttle_seconds=0,
 )
@@ -42,7 +47,7 @@ def _record(
         index_value=index_value,
         updated_at=updated_at,
         created_at=_NOW - timedelta(days=1),
-        payload={"description": description},
+        payload={"body": description},
     )
 
 
@@ -79,10 +84,16 @@ class FakeTicketSource:
             return self.find_existing_ids_result
         return set(ids)
 
-    async def chunk(self, obj_class, record, profile, *, max_chunk_tokens, log_entries_per_chunk):
-        return chunk_object(
-            record.payload, profile, max_chunk_tokens=max_chunk_tokens, log_entries_per_chunk=log_entries_per_chunk
-        )
+    async def chunk(self, obj_class, record, cfg, *, max_chunk_tokens, log_entries_per_chunk):
+        # Resolving config into fragment content is the real source's job;
+        # this probe maps each configured fragment to the payload field of
+        # the same name and stops there.
+        fragments = [
+            FragmentContent(kind=kind, visibility="public", content=TextContent(record.payload[kind]))
+            for kind in cfg.chunks
+            if kind in record.payload
+        ]
+        return chunk_object(fragments, max_chunk_tokens=max_chunk_tokens, items_per_window=log_entries_per_chunk)
 
 
 class FakeChunkStore:
@@ -493,13 +504,16 @@ class TestMetadataFreshness(IndexerTestCase):
 
     async def test_mixed_object_takes_both_paths_in_one_pass(self):
         cfg = _VECTOR_CFG.model_copy(deep=True)
-        cfg.classes["UserRequest"].profile = {"body": ["description"], "solution": ["resolution"]}
+        cfg.classes["UserRequest"].chunks = {
+            "body": ChunkFragmentConfig(fields=["description"]),
+            "solution": ChunkFragmentConfig(fields=["resolution"]),
+        }
         original = VectorRecord(
             obj_id=1,
             index_value="resolved",
             updated_at=_NOW,
             created_at=_NOW - timedelta(days=1),
-            payload={"description": "Broken.", "resolution": "Rebooted it."},
+            payload={"body": "Broken.", "solution": "Rebooted it."},
         )
         store = FakeChunkStore()
         await self._run(_deps_mock(vector_cfg=cfg, store=store), FakeTicketSource([original]))
@@ -511,7 +525,7 @@ class TestMetadataFreshness(IndexerTestCase):
             index_value="closed",
             updated_at=_NOW,
             created_at=_NOW - timedelta(days=1),
-            payload={"description": "Still broken.", "resolution": "Rebooted it."},
+            payload={"body": "Still broken.", "solution": "Rebooted it."},
         )
         report = await self._run(_deps_mock(vector_cfg=cfg, store=store2), FakeTicketSource([reopened]))
 

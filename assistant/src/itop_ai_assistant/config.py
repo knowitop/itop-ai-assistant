@@ -294,6 +294,24 @@ class SelfCheckConfig(BaseModel):
     model: str | None = None
 
 
+class ChunkFragmentConfig(BaseModel):
+    """What an administrator may say about one chunk fragment.
+
+    Which of the two keys is read depends on how the source declared the
+    fragment (`vector/source.py::FragmentSpec`, ADR-018): a required fragment
+    reads `fields`, an opt-in one reads `enabled` and has no fields of its own
+    — its content is the source's business. The fragment's kind and its
+    visibility are not here at all and cannot be: they belong to the source.
+    """
+
+    # Semantic field names, from the source's `fields` vocabulary. Empty means
+    # the fragment produces nothing — valid, but almost always a mistake.
+    fields: list[str] = []
+    # Only meaningful for opt-in fragments; a fragment missing from the
+    # `chunks` map entirely is off.
+    enabled: bool = True
+
+
 class VectorClassConfig(BaseModel):
     """Per-class vector index settings (one entry per indexed object class).
 
@@ -307,14 +325,18 @@ class VectorClassConfig(BaseModel):
     # index (similar-tickets searches want resolved knowledge, not open
     # noise); [] = index every object of the class
     index_values: list[str] = []
-    # Chunking profile: which semantic fields feed which chunk kinds
-    profile: dict[str, list[str]] = {}
+    # Chunking settings keyed by fragment kind. The keys are not free-form:
+    # they must be fragments the class's source declares, and a key it does
+    # not know is ignored with a warning at sweep time.
+    chunks: dict[str, ChunkFragmentConfig] = {}
 
 
-_TICKET_PROFILE = {
-    "profile": ["title", "service", "subcategory"],
-    "body": ["description"],
-    "solution": ["solution"],
+_TICKET_CHUNKS = {
+    "profile": ChunkFragmentConfig(fields=["title", "service", "subcategory"]),
+    "body": ChunkFragmentConfig(fields=["description"]),
+    "solution": ChunkFragmentConfig(fields=["solution"]),
+    # The two log fragments are opt-in and deliberately absent: indexing
+    # internal notes is a privacy decision, not a default (TASK-013).
 }
 
 
@@ -329,8 +351,8 @@ class VectorConfig(BaseModel):
     enabled: bool = False
     # Indexed object classes with their per-class settings
     classes: dict[str, VectorClassConfig] = {
-        "UserRequest": VectorClassConfig(index_values=["resolved", "closed"], profile=_TICKET_PROFILE),
-        "Incident": VectorClassConfig(index_values=["resolved", "closed"], profile=_TICKET_PROFILE),
+        "UserRequest": VectorClassConfig(index_values=["resolved", "closed"], chunks=_TICKET_CHUNKS),
+        "Incident": VectorClassConfig(index_values=["resolved", "closed"], chunks=_TICKET_CHUNKS),
     }
     sweep_interval_seconds: int = Field(default=300, gt=0)
     sweep_page_size: int = Field(default=100, gt=0)

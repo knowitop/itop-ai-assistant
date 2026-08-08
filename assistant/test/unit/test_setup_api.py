@@ -204,12 +204,14 @@ class TestSetupSections(SetupApiTestCase):
         self.assertEqual(response.status_code, 422)
 
     def test_vector_section_is_editable(self):
-        classes = {"UserRequest": {"index_values": ["resolved"], "profile": {"body": ["description"]}}}
+        classes = {"UserRequest": {"index_values": ["resolved"], "chunks": {"body": {"fields": ["description"]}}}}
         response = self.client.patch("/api/setup/vector", json={"enabled": True, "classes": classes})
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["values"]["enabled"])
-        self.assertEqual(response.json()["values"]["classes"]["UserRequest"]["index_values"], ["resolved"])
+        saved = response.json()["values"]["classes"]["UserRequest"]
+        self.assertEqual(saved["index_values"], ["resolved"])
+        self.assertEqual(saved["chunks"]["body"], {"fields": ["description"], "enabled": True})
         # No secrets in this section
         self.assertEqual(response.json()["secrets"], {})
 

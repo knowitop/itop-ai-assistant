@@ -15,6 +15,11 @@ whether the object belongs in the index. Which attributes those are is the
 source's own mapping concern (for tickets: semantic `status`/`updated_at`
 via `ticket_mapping`); the per-class value lists live in
 `vector.classes[<class>].index_values`.
+
+A source also declares its own chunking vocabulary — `fields` and
+`fragments` (ADR-018). That declaration is what the admin UI renders its
+editor from, so a source that omits it cannot be configured by anyone but a
+person editing raw config.
 """
 
 from collections.abc import Sequence
@@ -22,7 +27,30 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+from itop_ai_assistant.config import VectorClassConfig
 from itop_ai_assistant.vector.chunker import Chunk
+
+
+@dataclass(frozen=True)
+class FragmentSpec:
+    """One fragment a source can produce, as declared by the source itself
+    (ADR-018) — the vocabulary the admin UI renders its editor from.
+
+    Visibility belongs here and nowhere else: the source is written for a
+    business scenario and is the only party that knows its private log is
+    private. The config cannot express it at all, which is what keeps a
+    security control from being a setting.
+
+    `optional` marks the fragments where the administrator has a real choice.
+    A required fragment is always indexed and the config only says which
+    semantic fields feed it (adapting to a customized iTop datamodel); an
+    opt-in fragment carries no fields of its own and is switched on or off
+    (for tickets: whether internal notes get embedded at all).
+    """
+
+    kind: str
+    visibility: str  # public / internal
+    optional: bool = False
 
 
 @dataclass(frozen=True)
@@ -56,6 +84,12 @@ class VectorSource(Protocol):
     # Which keys from VectorRecord.filters this source wants indexed in Qdrant
     # (fields.<key>), see qdrant_store.py::_ensure_payload_indexes.
     indexed_filter_keys: Sequence[str] = ()
+    # Semantic field names an administrator may compose required fragments
+    # from — the source's own vocabulary, not iTop attribute names.
+    fields: Sequence[str] = ()
+    # Every fragment this source can produce. Served to the admin UI by
+    # GET /api/vector/sources.
+    fragments: Sequence[FragmentSpec] = ()
 
     async def prepare(self) -> None:
         """Called once per sweep pass, before any of this source's classes
@@ -82,10 +116,15 @@ class VectorSource(Protocol):
         self,
         obj_class: str,
         record: VectorRecord,
-        profile: dict[str, list[str]],
+        cfg: VectorClassConfig,
         *,
         max_chunk_tokens: int,
         log_entries_per_chunk: int,
     ) -> list[Chunk]:
-        """Build this object's chunks according to the class's chunking profile."""
+        """Build this object's chunks from `cfg.chunks`.
+
+        Resolving the config against the source's own datamodel happens here,
+        not in the chunker: which field name means what, which fragment reads
+        which log, and what to do with a field name the source does not know
+        (warn and treat as empty — a stale config must not fail a sweep)."""
         ...

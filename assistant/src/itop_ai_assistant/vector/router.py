@@ -5,6 +5,7 @@ error inside, so the admin UI can always render the page.
 """
 
 import logging
+from dataclasses import asdict
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
@@ -94,6 +95,35 @@ async def vector_status(request: Request) -> dict:
         "reindex_pending": reindex_pending,
         "runs": runs,
         "indexer_running": tasks.is_running(SWEEP_TASK),
+    }
+
+
+@router.get("/sources")
+async def vector_sources(request: Request) -> dict:
+    """The chunking vocabulary of every registered source — what the admin UI
+    renders its fragment editor from (ADR-018).
+
+    Deliberately independent of Qdrant and of the embeddings endpoint:
+    indexing must be configurable before — or without — either being up, so
+    this never reports an infrastructure error, only what the code declares.
+    `prepare()` is not called: the declarations are static and iTop is not
+    needed to read them.
+    """
+    deps: AppDeps = request.app.state.deps
+    vector_cfg = await deps.config_store.get("vector", VectorConfig)
+    return {
+        "sources": [
+            {
+                "name": source.name,
+                # As claimed today, i.e. derived from the saved config — a
+                # class nobody claims has no vocabulary to offer (TASK-016
+                # owns the class → source model).
+                "classes": list(source.classes),
+                "fields": list(source.fields),
+                "fragments": [asdict(fragment) for fragment in source.fragments],
+            }
+            for source in build_vector_sources(deps, vector_cfg)
+        ]
     }
 
 

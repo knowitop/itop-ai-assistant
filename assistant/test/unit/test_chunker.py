@@ -3,78 +3,88 @@ import unittest
 from itop_ai_assistant.vector.chunker import (
     CHARS_PER_TOKEN,
     Chunk,
-    ConversationEntry,
+    FragmentContent,
+    SequenceContent,
+    TextContent,
     chunk_object,
     clean_text,
     split_text,
 )
 
-_PROFILE = {
-    "profile": ["title", "service", "subcategory"],
-    "body": ["description"],
-    "solution": ["solution"],
-}
+
+def _text(kind: str, text: str, visibility: str = "public") -> FragmentContent:
+    return FragmentContent(kind=kind, visibility=visibility, content=TextContent(text))
 
 
-def _chunk(
-    fields: dict[str, str], profile=None, *, max_chunk_tokens=100, log_entries_per_chunk=5, **kwargs
-) -> list[Chunk]:
-    return chunk_object(
-        fields,
-        profile or _PROFILE,
-        max_chunk_tokens=max_chunk_tokens,
-        log_entries_per_chunk=log_entries_per_chunk,
-        **kwargs,
-    )
+def _sequence(kind: str, items: list[str], visibility: str = "public") -> FragmentContent:
+    return FragmentContent(kind=kind, visibility=visibility, content=SequenceContent(items))
 
 
-class TestFieldChunks(unittest.TestCase):
-    def test_profile_keys_become_chunk_kinds(self):
+def _chunk(fragments: list[FragmentContent], *, max_chunk_tokens=100, items_per_window=5) -> list[Chunk]:
+    return chunk_object(fragments, max_chunk_tokens=max_chunk_tokens, items_per_window=items_per_window)
+
+
+class TestTextFragments(unittest.TestCase):
+    def test_fragment_kind_and_order_preserved(self):
         chunks = _chunk(
-            {
-                "title": "Printer broken",
-                "service": "Printing",
-                "subcategory": "Hardware",
-                "description": "<p>Not printing.</p>",
-                "solution": "Replaced the cartridge.",
-            }
+            [
+                _text("profile", "Printer broken\n\nPrinting\n\nHardware"),
+                _text("body", "Not printing."),
+                _text("solution", "Replaced the cartridge."),
+            ]
         )
 
-        by_kind = {c.kind: c for c in chunks}
-        self.assertEqual(set(by_kind), {"profile", "body", "solution"})
-        self.assertEqual(by_kind["profile"].text, "Printer broken\n\nPrinting\n\nHardware")
-        self.assertEqual(by_kind["body"].text, "Not printing.")
-        self.assertTrue(all(c.visibility == "public" for c in chunks))
+        self.assertEqual([c.kind for c in chunks], ["profile", "body", "solution"])
+        self.assertEqual(chunks[0].text, "Printer broken\n\nPrinting\n\nHardware")
         self.assertTrue(all(c.n == 0 for c in chunks))
 
-    def test_empty_solution_yields_no_chunk(self):
-        chunks = _chunk({"title": "T", "service": "", "subcategory": "", "description": "D", "solution": ""})
+    def test_empty_content_yields_no_chunk(self):
+        chunks = _chunk([_text("body", "D"), _text("solution", "")])
 
-        self.assertNotIn("solution", {c.kind for c in chunks})
+        self.assertEqual([c.kind for c in chunks], ["body"])
 
-    def test_all_empty_yields_nothing(self):
-        self.assertEqual(_chunk({k: "" for k in ("title", "service", "subcategory", "description", "solution")}), [])
+    def test_nothing_at_all_yields_nothing(self):
+        self.assertEqual(_chunk([]), [])
 
-    def test_hash_stable_under_cosmetic_html(self):
-        fields = {"title": "", "service": "", "subcategory": "", "solution": ""}
-        plain = _chunk({**fields, "description": "Hello world"})
-        html = _chunk({**fields, "description": "<p>Hello   world</p>"})
+    def test_hash_follows_content(self):
+        a = _chunk([_text("body", "Hello world")])
+        b = _chunk([_text("body", "Hello world")])
+        c = _chunk([_text("body", "Hello there")])
 
-        self.assertEqual(plain[0].content_hash, html[0].content_hash)
+        self.assertEqual(a[0].content_hash, b[0].content_hash)
+        self.assertNotEqual(a[0].content_hash, c[0].content_hash)
 
-    def test_hash_changes_with_content(self):
-        fields = {"title": "", "service": "", "subcategory": "", "solution": ""}
-        a = _chunk({**fields, "description": "Hello world"})
-        b = _chunk({**fields, "description": "Hello there"})
+    def test_multi_chunk_ordinals(self):
+        budget_tokens = 4  # 12 chars
+        chunks = _chunk([_text("body", "aaaa\n\nbbbb\n\ncccc")], max_chunk_tokens=budget_tokens)
 
-        self.assertNotEqual(a[0].content_hash, b[0].content_hash)
+        self.assertEqual([(c.kind, c.n) for c in chunks], [("body", 0), ("body", 1)])
+        self.assertEqual(budget_tokens * CHARS_PER_TOKEN, 12)
 
-    def test_unknown_field_in_profile_treated_as_empty(self):
-        with self.assertLogs("itop_ai_assistant.vector.chunker", level="WARNING"):
-            chunks = _chunk({"description": "Text"}, {"body": ["description", "no_such_field"]})
 
-        self.assertEqual(len(chunks), 1)
-        self.assertEqual(chunks[0].text, "Text")
+class TestVisibility(unittest.TestCase):
+    """Visibility travels with the content the source hands over — the
+    chunker has no rule of its own to derive it from (ADR-018), which is what
+    keeps it out of reach of the config (backlog B6)."""
+
+    def test_taken_from_the_fragment_verbatim(self):
+        chunks = _chunk(
+            [
+                _text("body", "public text"),
+                _text("notes", "internal text", visibility="internal"),
+                _sequence("log:private", ["agent: note"], visibility="internal"),
+            ]
+        )
+
+        self.assertEqual({c.kind: c.visibility for c in chunks}["body"], "public")
+        self.assertEqual({c.kind: c.visibility for c in chunks}["notes"], "internal")
+        self.assertEqual({c.kind: c.visibility for c in chunks}["log:private"], "internal")
+
+    def test_kind_name_carries_no_meaning(self):
+        # "log:private" used to imply internal by name alone; it no longer does
+        chunks = _chunk([_sequence("log:private", ["agent: note"], visibility="public")])
+
+        self.assertEqual(chunks[0].visibility, "public")
 
 
 class TestSplitText(unittest.TestCase):
@@ -106,85 +116,46 @@ class TestSplitText(unittest.TestCase):
         text = ("Sentence one. Sentence two. " * 20 + "\n\n") * 3
         self.assertEqual(split_text(text, 100), split_text(text, 100))
 
-    def test_multi_chunk_ordinals(self):
-        budget_tokens = 4  # 12 chars
-        chunks = _chunk(
-            {"title": "", "service": "", "subcategory": "", "solution": "", "description": "aaaa\n\nbbbb\n\ncccc"},
-            max_chunk_tokens=budget_tokens,
-        )
 
-        self.assertEqual([(c.kind, c.n) for c in chunks], [("body", 0), ("body", 1)])
-        self.assertEqual(budget_tokens * CHARS_PER_TOKEN, 12)
-
-
-class TestLogChunks(unittest.TestCase):
-    _PROFILE: dict = {"log:public": [], "log:private": []}
-
+class TestSequenceFragments(unittest.TestCase):
     @staticmethod
-    def _entries(n: int, speaker: str = "agent") -> list[ConversationEntry]:
-        return [ConversationEntry(speaker=speaker, message=f"message {i}") for i in range(n)]
+    def _items(n: int, speaker: str = "agent") -> list[str]:
+        return [f"{speaker}: message {i}" for i in range(n)]
 
-    def _log_chunks(self, logs, **kwargs) -> list[Chunk]:
-        return _chunk({}, self._PROFILE, logs=logs, **kwargs)
+    def test_window_boundaries_by_item_index(self):
+        chunks = _chunk([_sequence("log:public", self._items(7))], items_per_window=5)
 
-    def test_window_boundaries_by_entry_index(self):
-        chunks = self._log_chunks({"log:public": self._entries(7)}, log_entries_per_chunk=5)
+        self.assertEqual([c.n for c in chunks], [0, 1])
+        self.assertEqual(chunks[0].text.count("\n") + 1, 5)
+        self.assertEqual(chunks[1].text.count("\n") + 1, 2)
 
-        public = [c for c in chunks if c.kind == "log:public"]
-        self.assertEqual([c.n for c in public], [0, 1])
-        self.assertEqual(public[0].text.count("\n") + 1, 5)
-        self.assertEqual(public[1].text.count("\n") + 1, 2)
-
-    def test_appending_entries_only_changes_last_chunk(self):
-        before = self._log_chunks({"log:public": self._entries(7)}, log_entries_per_chunk=5)
-        after = self._log_chunks({"log:public": self._entries(8)}, log_entries_per_chunk=5)
+    def test_appending_items_only_changes_last_chunk(self):
+        before = _chunk([_sequence("log:public", self._items(7))], items_per_window=5)
+        after = _chunk([_sequence("log:public", self._items(8))], items_per_window=5)
 
         self.assertEqual(before[0].content_hash, after[0].content_hash)
         self.assertEqual(before[0].text, after[0].text)  # byte-for-byte
         self.assertNotEqual(before[1].content_hash, after[1].content_hash)
 
-    def test_speaker_labels_pass_through(self):
-        # Role resolution (caller vs agent) is the source's job, not the
-        # chunker's — entries arrive already labeled.
-        entries = [
-            ConversationEntry(speaker="caller", message="I have a problem"),
-            ConversationEntry(speaker="agent", message="Looking into it"),
-        ]
-        chunks = self._log_chunks({"log:public": entries})
+    def test_items_pass_through_verbatim(self):
+        # Labelling ("who said it") is the source's job — the chunker packs
+        # the strings it is given and adds nothing.
+        chunks = _chunk([_sequence("log:public", ["caller: I have a problem", "agent: Looking into it"])])
 
-        text = chunks[0].text
-        self.assertIn("caller: I have a problem", text)
-        self.assertIn("agent: Looking into it", text)
+        self.assertEqual(chunks[0].text, "caller: I have a problem\nagent: Looking into it")
 
-    def test_private_log_is_internal(self):
-        chunks = self._log_chunks({"log:private": self._entries(1), "log:public": self._entries(1)})
+    def test_empty_sequence_yields_no_chunk(self):
+        self.assertEqual(_chunk([_sequence("log:public", [])]), [])
 
-        by_kind = {c.kind: c.visibility for c in chunks}
-        self.assertEqual(by_kind["log:private"], "internal")
-        self.assertEqual(by_kind["log:public"], "public")
+    def test_items_truncated_to_share_of_budget(self):
+        # budget = 10 tokens * 3 = 30 chars; per item = 30 // 5 = 6 chars
+        chunks = _chunk([_sequence("log:public", ["a" * 100])], max_chunk_tokens=10, items_per_window=5)
 
-    def test_missing_log_kind_warns_and_is_treated_as_empty(self):
-        with self.assertLogs("itop_ai_assistant.vector.chunker", level="WARNING"):
-            chunks = self._log_chunks({"log:public": self._entries(1)})
-
-        self.assertNotIn("log:private", {c.kind for c in chunks})
-
-    def test_present_but_empty_log_kind_does_not_warn(self):
-        with self.assertRaises(AssertionError):  # assertLogs raises when nothing was logged
-            with self.assertLogs("itop_ai_assistant.vector.chunker", level="WARNING"):
-                self._log_chunks({"log:public": self._entries(1), "log:private": []})
-
-    def test_entries_truncated_to_share_of_budget(self):
-        # budget = 10 tokens * 3 = 30 chars; per entry = 30 // 5 = 6 chars
-        entries = [ConversationEntry(speaker="agent", message="a" * 100)]
-        chunks = self._log_chunks({"log:public": entries}, max_chunk_tokens=10, log_entries_per_chunk=5)
-
-        self.assertEqual(chunks[0].text, "agent: " + "a" * 6)
+        self.assertEqual(chunks[0].text, "a" * 6)
 
     def test_windows_never_resplit(self):
-        # Oversize window is truncated per entry, never split into more chunks
-        entries = [ConversationEntry(speaker="agent", message="b" * 500) for _ in range(5)]
-        chunks = self._log_chunks({"log:public": entries}, max_chunk_tokens=10, log_entries_per_chunk=5)
+        # An oversize window is truncated per item, never split into more chunks
+        chunks = _chunk([_sequence("log:public", ["b" * 500] * 5)], max_chunk_tokens=10, items_per_window=5)
 
         self.assertEqual(len(chunks), 1)
         self.assertEqual(chunks[0].n, 0)
@@ -195,6 +166,12 @@ class TestCleanText(unittest.TestCase):
         self.assertEqual(clean_text("<p>Hello   <b>world</b></p>"), "Hello **world**")
         self.assertEqual(clean_text("<p>a</p><p>b</p>"), "a\n\nb")
         self.assertEqual(clean_text(None), "")
+
+    def test_not_idempotent_so_callers_must_apply_it_once(self):
+        # Why canonicalization belongs to the source and not to chunk_object:
+        # markdownify escapes markdown syntax, so a second pass mangles text.
+        once = clean_text("<p>Hello <b>world</b></p>")
+        self.assertNotEqual(clean_text(once), once)
 
 
 if __name__ == "__main__":

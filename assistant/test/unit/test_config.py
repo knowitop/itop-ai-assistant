@@ -171,7 +171,7 @@ class TestVectorConfig(unittest.TestCase):
         self.assertFalse(cfg.enabled)
         self.assertEqual(list(cfg.classes), ["UserRequest", "Incident"])
         self.assertEqual(cfg.classes["UserRequest"].index_values, ["resolved", "closed"])
-        self.assertIn("body", cfg.classes["UserRequest"].profile)
+        self.assertEqual(cfg.classes["UserRequest"].chunks["body"].fields, ["description"])
 
     def test_qdrant_url_defaults_to_none(self):
         with patch.dict(os.environ, _REQUIRED, clear=True):

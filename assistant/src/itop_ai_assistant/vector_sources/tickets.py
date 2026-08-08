@@ -7,22 +7,56 @@ never imports `Ticket`, `ItopBundle`, or `CatalogRepository`; all of that
 domain knowledge lives here instead.
 """
 
+import logging
 from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from itop_ai_assistant.catalog_repository import CatalogRepository
+from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
-from itop_ai_assistant.vector.chunker import Chunk, ConversationEntry, chunk_object
-from itop_ai_assistant.vector.source import VectorRecord, VectorSource
+from itop_ai_assistant.vector.chunker import (
+    Chunk,
+    FragmentContent,
+    SequenceContent,
+    TextContent,
+    chunk_object,
+    clean_text,
+)
+from itop_ai_assistant.vector.source import FragmentSpec, VectorRecord, VectorSource
 
 if TYPE_CHECKING:
     from itop_ai_assistant.deps import AppDeps, ItopBundle
+
+logger = logging.getLogger(__name__)
 
 # The collection family this source writes to (`TicketVectorSource.name`) and
 # the one `SimilarSearch` in `agents/intake/pipeline.py` reads from — one
 # constant so the two never drift apart (TASK-008).
 FAMILY = "tickets"
+
+# The semantic fields an administrator composes the required fragments from
+# (ADR-018). Not iTop attribute names: the mapping to those is
+# `ticket_mapping`'s job, and `_semantic_fields` below is the one place these
+# names are bound to actual ticket content.
+FIELDS = ("title", "description", "solution", "service", "subcategory")
+
+# Every fragment this source can produce. The two log fragments are opt-in:
+# whether internal notes get embedded at all is the administrator's call
+# (TASK-013), and `log:private` is the only fragment here that is not
+# caller-facing.
+FRAGMENTS = (
+    FragmentSpec(kind="profile", visibility="public"),
+    FragmentSpec(kind="body", visibility="public"),
+    FragmentSpec(kind="solution", visibility="public"),
+    FragmentSpec(kind="log:public", visibility="public", optional=True),
+    FragmentSpec(kind="log:private", visibility="internal", optional=True),
+)
+
+# Which ticket log each opt-in log fragment is built from. Fixed here rather
+# than configurable: a fragment's visibility is declared above, and letting
+# the private log feed a public fragment would make that declaration a lie.
+_LOG_SOURCES = {"log:public": "public_log", "log:private": "private_log"}
 
 
 class _CatalogNames:
@@ -66,6 +100,8 @@ class TicketVectorSource(VectorSource):
 
     name = FAMILY
     indexed_filter_keys = ("status", "org_id")
+    fields = FIELDS
+    fragments = FRAGMENTS
 
     def __init__(self, deps: "AppDeps", *, classes: list[str]) -> None:
         self._deps = deps
@@ -109,35 +145,62 @@ class TicketVectorSource(VectorSource):
         self,
         obj_class: str,
         record: VectorRecord,
-        profile: dict[str, list[str]],
+        cfg: VectorClassConfig,
         *,
         max_chunk_tokens: int,
         log_entries_per_chunk: int,
     ) -> list[Chunk]:
-        assert self._names is not None, "prepare() must run before chunk()"
         ticket: Ticket = record.payload  # type: ignore[assignment]
-        fields = {
-            "title": ticket.title,
-            "description": ticket.description,
-            "solution": ticket.solution,
-            "service": await self._names.service(ticket),
-            "subcategory": await self._names.subcategory(ticket),
+        fields = await self._semantic_fields(ticket)
+        fragments = [
+            content
+            for spec in FRAGMENTS
+            if (content := self._resolve(spec, cfg.chunks.get(spec.kind), ticket, fields)) is not None
+        ]
+        return chunk_object(fragments, max_chunk_tokens=max_chunk_tokens, items_per_window=log_entries_per_chunk)
+
+    async def _semantic_fields(self, ticket: Ticket) -> dict[str, str]:
+        """`FIELDS` bound to this ticket's content, canonicalized.
+
+        The one place the two are tied together — `test_vector_sources_tickets`
+        keeps the key set equal to `FIELDS`, so the vocabulary served to the
+        admin UI cannot drift away from what is actually chunkable.
+        """
+        assert self._names is not None, "prepare() must run before chunk()"
+        return {
+            "title": clean_text(ticket.title),
+            "description": clean_text(ticket.description),
+            "solution": clean_text(ticket.solution),
+            "service": clean_text(await self._names.service(ticket)),
+            "subcategory": clean_text(await self._names.subcategory(ticket)),
         }
-        logs = {
-            "log:public": _to_conversation(ticket.public_log, ticket.caller_name),
-            "log:private": _to_conversation(ticket.private_log, ticket.caller_name),
-        }
-        return chunk_object(
-            fields,
-            profile,
-            max_chunk_tokens=max_chunk_tokens,
-            log_entries_per_chunk=log_entries_per_chunk,
-            logs=logs,
-        )
+
+    def _resolve(
+        self, spec: FragmentSpec, cfg: ChunkFragmentConfig | None, ticket: Ticket, fields: dict[str, str]
+    ) -> FragmentContent | None:
+        """One fragment's configured content, or None if it is switched off."""
+        if spec.optional:
+            if cfg is None or not cfg.enabled:
+                return None
+            entries: list[LogEntry] = getattr(ticket, _LOG_SOURCES[spec.kind])
+            return FragmentContent(spec.kind, spec.visibility, SequenceContent(_conversation(entries, ticket)))
+        if cfg is None or not cfg.fields:
+            return None
+        parts = []
+        for name in cfg.fields:
+            if name not in fields:
+                logger.warning(f"tickets source: fragment {spec.kind!r} references unknown field {name!r} — ignored")
+                continue
+            if fields[name]:
+                parts.append(fields[name])
+        return FragmentContent(spec.kind, spec.visibility, TextContent("\n\n".join(parts)))
 
 
-def _to_conversation(entries: list[LogEntry], caller_name: str) -> list[ConversationEntry]:
+def _conversation(entries: list[LogEntry], ticket: Ticket) -> list[str]:
+    """Log entries as canonical lines. Who counts as the caller is domain
+    knowledge, so the labelling happens here and the chunker only ever sees
+    strings."""
     return [
-        ConversationEntry(speaker="caller" if entry.user_login == caller_name else "agent", message=entry.message)
+        f"{'caller' if entry.user_login == ticket.caller_name else 'agent'}: {clean_text(entry.message)}"
         for entry in entries
     ]
