@@ -225,22 +225,31 @@ function VectorStatusPanel() {
     }
   };
 
-  const reindex = async () => {
-    if (!window.confirm(t('vector.reindex_confirm'))) return;
+  // Both buttons post and reload; only the confirmation and the wording
+  // differ. No confirm on the incremental sweep — it re-embeds only what
+  // changed, which is what makes it cheap enough to ask for on a whim.
+  const trigger = async (path: string, message: string, confirmMsg?: string) => {
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
     setBusy(true);
     setError(null);
     setSuccess(null);
     try {
-      await apiSend('POST', '/vector/reindex');
-      setSuccess(t('vector.reindex_scheduled'));
+      await apiSend('POST', path);
+      setSuccess(message);
       await load();
     } catch (e) {
-      // 409 (no database / indexing disabled) arrives as ApiError.message
+      // 409 (no database / indexing disabled / no sweep loop here) arrives as
+      // ApiError.message
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
   };
+
+  const sweep = () => trigger('/vector/sweep', t('vector.sweep_scheduled'));
+
+  const reindex = () =>
+    trigger('/vector/reindex', t('vector.reindex_scheduled'), t('vector.reindex_confirm'));
 
   if (!status) return error ? <Alert color="red">{error}</Alert> : <Loader />;
 
@@ -388,6 +397,9 @@ function VectorStatusPanel() {
       <Group>
         <Button variant="default" onClick={refresh} loading={busy}>
           {t('vector.btn_refresh')}
+        </Button>
+        <Button variant="light" onClick={sweep} loading={busy} title={t('vector.sweep_hint')}>
+          {t('vector.btn_sweep')}
         </Button>
         <Button color="orange" variant="light" onClick={reindex} loading={busy}>
           {t('vector.btn_reindex')}

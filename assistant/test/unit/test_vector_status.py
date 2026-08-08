@@ -259,6 +259,76 @@ class TestReindex(VectorStatusTestCase):
         self.tasks.wake.assert_called_once_with(SWEEP_TASK)
 
 
+class TestSweep(VectorStatusTestCase):
+    """POST /api/vector/sweep — the ordinary incremental pass, on demand.
+    Nothing is written anywhere: waking the local loop is the whole action,
+    which is why every case where the tick could not do real work is a
+    refusal rather than a 202."""
+
+    def _configured_deps(self) -> AppDeps:
+        deps = _make_deps(
+            self.redis, store_url="http://localhost:1", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+        )
+        self.client.app.state.deps = deps
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+        return deps
+
+    def test_409_when_database_not_configured(self):
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+
+        response = self.client.post("/api/vector/sweep")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("qdrant_url", response.json()["detail"])
+
+    def test_409_when_vector_disabled(self):
+        self.client.app.state.deps = _make_deps(self.redis, store_url="http://localhost:1")
+
+        response = self.client.post("/api/vector/sweep")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("disabled", response.json()["detail"])
+
+    def test_409_when_embeddings_not_configured(self):
+        self.client.app.state.deps = _make_deps(self.redis, store_url="http://localhost:1")
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+        self.tasks.wake = MagicMock(return_value=True)
+
+        response = self.client.post("/api/vector/sweep")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Embeddings", response.json()["detail"])
+        self.tasks.wake.assert_not_called()
+
+    def test_409_when_this_process_has_no_sweep_loop(self):
+        """The loop is registered at startup from the settings, not from the
+        deps a request happens to see — an unregistered task means the wake-up
+        went nowhere, and saying "scheduled" would be a lie."""
+        self._configured_deps()
+
+        response = self.client.post("/api/vector/sweep")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("restart", response.json()["detail"])
+
+    def test_202_wakes_the_sweep_without_requesting_a_backfill(self):
+        deps = self._configured_deps()
+        self.tasks.wake = MagicMock(return_value=True)
+
+        response = self.client.post("/api/vector/sweep")
+
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json(), {"status": "scheduled"})
+        self.tasks.wake.assert_called_once_with(SWEEP_TASK)
+        # The cursors stay where they are — that is the whole difference
+        self.assertFalse(asyncio.run(deps.vector_sync.reindex_pending()))
+
+    def test_requires_admin_token_when_set(self):
+        self.client.app.state.deps = _make_deps(self.redis, admin_token=SecretStr("s3cret"))
+
+        self.assertEqual(self.client.post("/api/vector/sweep").status_code, 401)
+
+
 class TestSearch(VectorStatusTestCase):
     def test_409_when_database_not_configured(self):
         self.client.patch("/api/setup/vector", json={"enabled": True})

@@ -2,13 +2,18 @@
 
 Status is a diagnostic, not a gate: every failure mode returns 200 with the
 error inside, so the admin UI can always render the page.
+
+The endpoints that *act* share their preconditions through `require_vector` /
+`require_embeddings` below; the two that only read (`/status`, `/sources`)
+deliberately have none.
 """
 
 import logging
 from dataclasses import asdict
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
 from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
@@ -25,6 +30,34 @@ from itop_ai_assistant.vector_sources.tickets import FAMILY as TICKETS_FAMILY
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/vector")
+
+
+async def require_vector(request: Request) -> VectorConfig:
+    """The two gates every acting endpoint shares — and the config it needs anyway.
+
+    Local to this router on purpose (`api_deps.py` is for what several entry
+    points need). Declared as a `Depends` parameter rather than called from the
+    body so the set of preconditions is visible in the signature: that
+    `/reindex` asks for one gate and `/search` for two is a real difference —
+    a backfill request survives an unconfigured embeddings endpoint, since it
+    is a flag waiting for whichever pass eventually runs.
+    """
+    deps: AppDeps = request.app.state.deps
+    if not deps.vector_store.configured:
+        raise HTTPException(status_code=409, detail="Vector store is not configured (qdrant_url is not set)")
+    vector_cfg = await deps.config_store.get("vector", VectorConfig)
+    if not vector_cfg.enabled:
+        raise HTTPException(status_code=409, detail="Vector indexing is disabled (vector: enabled)")
+    return vector_cfg
+
+
+async def require_embeddings(request: Request) -> EmbeddingsConfig:
+    """Refuse anything that would have to embed text with no endpoint to embed it at."""
+    deps: AppDeps = request.app.state.deps
+    embeddings_cfg = await deps.config_store.get("embeddings", EmbeddingsConfig)
+    if not embeddings_cfg.base_url or not embeddings_cfg.model:
+        raise HTTPException(status_code=409, detail="Embeddings endpoint is not configured")
+    return embeddings_cfg
 
 
 @router.get("/status")
@@ -128,7 +161,7 @@ async def vector_sources(request: Request) -> dict:
 
 
 @router.post("/reindex", status_code=202)
-async def vector_reindex(request: Request) -> dict:
+async def vector_reindex(request: Request, vector_cfg: Annotated[VectorConfig, Depends(require_vector)]) -> dict:
     """Schedule a full backfill: cursor reset + an immediate sweep tick.
 
     The request is a flag in Redis, not in this process — whichever replica
@@ -137,17 +170,48 @@ async def vector_reindex(request: Request) -> dict:
     """
     deps: AppDeps = request.app.state.deps
     tasks: PeriodicTasks = request.app.state.tasks
-    if not deps.vector_store.configured:
-        raise HTTPException(status_code=409, detail="Vector store is not configured (qdrant_url is not set)")
-    vector_cfg = await deps.config_store.get("vector", VectorConfig)
-    if not vector_cfg.enabled:
-        raise HTTPException(status_code=409, detail="Vector indexing is disabled (vector: enabled)")
     try:
         await deps.vector_sync.request_reindex()
     except Exception as e:  # Redis down …
         logger.warning(f"reindex request could not be stored: {e}")
         raise HTTPException(status_code=503, detail=f"Vector store is unavailable: {type(e).__name__}: {e}") from e
     tasks.wake(SWEEP_TASK)
+    return {"status": "scheduled"}
+
+
+@router.post("/sweep", status_code=202)
+async def vector_sweep(
+    request: Request,
+    vector_cfg: Annotated[VectorConfig, Depends(require_vector)],
+    embeddings_cfg: Annotated[EmbeddingsConfig, Depends(require_embeddings)],
+) -> dict:
+    """Run the next incremental pass now instead of at the end of the wait.
+
+    What it does *not* do is the difference from `/reindex`: no cursor reset,
+    so the pass reads only what changed since the last one — the ordinary
+    sweep, on demand.
+
+    Waking a loop is local to this process, and there is nothing to persist:
+    unlike the backfill flag, which any replica may act on, this schedules a
+    tick here or nowhere at all — hence the 409 when this process has no sweep
+    loop (registered at startup, so a store configured afterwards needs a
+    restart). `require_embeddings` is in the signature for the same reason —
+    unlike `/reindex`, which leaves a flag behind, a tick that would only skip
+    is refused rather than reported as scheduled.
+
+    A pending backfill stays pending — the woken tick reads the same Redis
+    flag and runs as a backfill.
+    """
+    tasks: PeriodicTasks = request.app.state.tasks
+    # Not a `Depends`: this one is about the state of *this process*, not the
+    # configuration, and it has to be the last word — the config gates answer
+    # first because their fix is the same everywhere, this one asks for a restart.
+    if not tasks.wake(SWEEP_TASK):
+        raise HTTPException(
+            status_code=409,
+            detail="The sweep loop is not registered in this process — it is put under the scheduler at "
+            "startup, so a vector store configured afterwards needs a restart",
+        )
     return {"status": "scheduled"}
 
 
@@ -257,7 +321,12 @@ class SearchResponse(BaseModel):
 
 
 @router.post("/search")
-async def vector_search(request: Request, body: SearchRequest) -> SearchResponse:
+async def vector_search(
+    request: Request,
+    body: SearchRequest,
+    vector_cfg: Annotated[VectorConfig, Depends(require_vector)],
+    embeddings_cfg: Annotated[EmbeddingsConfig, Depends(require_embeddings)],
+) -> SearchResponse:
     """Debug endpoint: run one `SimilarSearch.find_with_stats()` and return the hits.
 
     Resolves candidates under the service account (`VectorSource.prepare()`),
@@ -268,15 +337,6 @@ async def vector_search(request: Request, body: SearchRequest) -> SearchResponse
     real iTop before one exists.
     """
     deps: AppDeps = request.app.state.deps
-    if not deps.vector_store.configured:
-        raise HTTPException(status_code=409, detail="Vector store is not configured (qdrant_url is not set)")
-    vector_cfg = await deps.config_store.get("vector", VectorConfig)
-    if not vector_cfg.enabled:
-        raise HTTPException(status_code=409, detail="Vector indexing is disabled (vector: enabled)")
-    embeddings_cfg = await deps.config_store.get("embeddings", EmbeddingsConfig)
-    if not embeddings_cfg.base_url or not embeddings_cfg.model:
-        raise HTTPException(status_code=409, detail="Embeddings endpoint is not configured")
-
     sources = {s.name: s for s in build_vector_sources(deps, vector_cfg)}
     source = sources.get(body.family)
     if source is None:
