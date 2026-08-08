@@ -46,9 +46,7 @@ class TicketFieldMap(BaseModel):
     private_log: str | None = "private_log"
     solution: str | None = "solution"
     last_update: str | None = "last_update"
-    # Stock iTop attribute for ticket creation time; custom datamodels remap
-    # via class_overrides (Incident needs none — it has start_date too)
-    created_at: str | None = "start_date"
+    start_date: str | None = "start_date"
 
 
 class TicketMappingConfig(BaseModel):

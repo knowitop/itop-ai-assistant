@@ -80,7 +80,7 @@ class TicketRepository:
             private_log=private_entries,
             solution=attr("solution") or "",
             last_update=_parse_dt(attr("last_update")),
-            start_date=_parse_dt(attr("created_at")),
+            start_date=_parse_dt(attr("start_date")),
         )
 
     async def find_modified_since(
