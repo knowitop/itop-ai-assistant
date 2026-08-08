@@ -54,7 +54,6 @@ How semantic ticket fields map onto your iTop datamodel — edit this instead of
 
 - `fields` — semantic name → iTop attribute code (`null` = the attribute does not exist)
 - `class_overrides` — per-class differences (e.g. `Incident` has no `request_type`)
-- `active_statuses` — the statuses in which the assistant is allowed to act
 
 ---
 
@@ -66,6 +65,7 @@ Per-module business settings. Currently the **Intake** module exposes:
 |---------|---------|-------------|
 | Enabled | `true` | Enable or disable the module entirely |
 | Classes | `UserRequest`, `Incident` | Ticket classes the module handles |
+| Active statuses | `new` | Statuses in which the module is allowed to act on a ticket |
 | Max rounds | `2` | Maximum completeness clarifying questions per ticket |
 | Max classify rounds | `2` | Maximum classification clarifying questions per ticket |
 | Max iterations | `8` | Budget of model calls per ticket; on exhaustion the run is closed with the fallback note |

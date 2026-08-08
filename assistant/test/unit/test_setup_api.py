@@ -173,10 +173,12 @@ class TestSetupSections(SetupApiTestCase):
         self.assertEqual(self.client.get("/api/setup/llm").json()["values"]["model"], "env-model")
 
     def test_ticket_mapping_is_editable(self):
-        response = self.client.patch("/api/setup/ticket_mapping", json={"active_statuses": ["new", "assigned"]})
+        response = self.client.patch(
+            "/api/setup/ticket_mapping", json={"class_overrides": {"Incident": {"title": None}}}
+        )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["values"]["active_statuses"], ["new", "assigned"])
+        self.assertEqual(response.json()["values"]["class_overrides"], {"Incident": {"title": None}})
 
     def test_embeddings_section_masks_api_key(self):
         self.client.patch("/api/setup/embeddings", json={"base_url": "http://emb/v1", "api_key": "sk-emb"})

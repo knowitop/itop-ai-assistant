@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from itop_ai_assistant.config import ItopConfig, LlmConfig, TicketMappingConfig, get_settings
+from itop_ai_assistant.config import ItopConfig, LlmConfig, TicketFieldMap, TicketMappingConfig, get_settings
 from itop_ai_assistant.deps import ItopProvider, build_deps, create_llm
 from itop_ai_assistant.principal import Principal
 
@@ -44,12 +44,12 @@ class TestItopProvider(unittest.IsolatedAsyncioTestCase):
 
     async def test_mapping_change_rebuilds_repositories(self):
         b1 = await self.provider.get()
-        self.store.sections["ticket_mapping"] = TicketMappingConfig(active_statuses=["new", "assigned"])
+        self.store.sections["ticket_mapping"] = TicketMappingConfig(fields=TicketFieldMap(title="short_description"))
 
         b2 = await self.provider.get()
 
         self.assertIsNot(b1.ticket_repo, b2.ticket_repo)
-        self.assertEqual(b2.ticket_repo.mapping.active_statuses, ["new", "assigned"])
+        self.assertEqual(b2.ticket_repo.mapping.fields.title, "short_description")
         await self.provider.aclose()
 
     async def test_aclose_resets_cache(self):

@@ -30,7 +30,7 @@ class ConfigStore(Protocol):
     async def reset(self, module: str) -> None: ...
 
 
-class RedisConfigStore:
+class RedisConfigStore(ConfigStore):
     """Serves module config with Redis overrides on top of settings defaults.
 
     The module name must match the settings attribute holding its defaults

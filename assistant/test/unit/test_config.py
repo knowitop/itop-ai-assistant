@@ -185,6 +185,9 @@ class TestVectorConfig(unittest.TestCase):
 
 
 class TestIntakeConfig(unittest.TestCase):
+    def test_default_active_statuses(self):
+        self.assertEqual(IntakeConfig().active_statuses, ["new"])
+
     def test_similar_chunk_kinds_default(self):
         self.assertEqual(IntakeConfig().similar_chunk_kinds, ["profile", "body"])
 
@@ -274,9 +277,6 @@ class TestTicketMapping(unittest.TestCase):
     def test_unknown_override_field_raises(self):
         with self.assertRaises(ValidationError):
             TicketMappingConfig(class_overrides={"Incident": {"no_such_field": None}})
-
-    def test_default_active_statuses(self):
-        self.assertEqual(TicketMappingConfig().active_statuses, ["new"])
 
 
 class TestGetSettings(unittest.TestCase):

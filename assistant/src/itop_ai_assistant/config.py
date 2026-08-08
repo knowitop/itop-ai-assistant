@@ -60,8 +60,6 @@ class TicketMappingConfig(BaseModel):
     class_overrides: dict[str, dict[str, str | None]] = {
         "Incident": {"request_type": None},  # Incident has no request_type in stock iTop
     }
-    # Process a ticket only while its status is in this list
-    active_statuses: list[str] = ["new"]
 
     def for_class(self, obj_class: str) -> dict[str, str | None]:
         resolved = self.fields.model_dump()
@@ -233,6 +231,9 @@ class IntakeConfig(BaseModel):
 
     enabled: bool = True
     classes: list[str] = ["UserRequest", "Incident"]
+    # The module acts on a ticket only while its status is in this list — an
+    # intake concern (when this module may act), not the datamodel mapping's.
+    active_statuses: list[str] = ["new"]
     max_rounds: int = 2
     max_classify_rounds: int = 2
     # Budget of model calls per run; without it a looping agent burns tokens

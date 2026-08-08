@@ -72,9 +72,9 @@ class IntakeRun(TicketRun):
         if ticket_state.ai_done:
             return "already processed (ai_done)"
 
-        active_statuses = self.bundle.ticket_repo.mapping.active_statuses
-        if ticket.status not in active_statuses:
-            return f"status={ticket.status} not in {active_statuses}"
+        cfg = await self.deps.config_store.get("intake", IntakeConfig)
+        if ticket.status not in cfg.active_statuses:
+            return f"status={ticket.status} not in {cfg.active_statuses}"
 
         # Loop protection, second line of defense after iTop trigger contexts:
         # if our own question is the last public entry, wait for the user instead

@@ -79,6 +79,7 @@ Set in the [Admin UI → Modules](admin-ui.md#modules) or via `PUT /api/config/i
 |---------|---------|-------------|
 | `enabled` | `true` | Enable or disable the intake module |
 | `classes` | `["UserRequest", "Incident"]` | Ticket classes to process |
+| `active_statuses` | `["new"]` | Statuses in which the module is allowed to act on a ticket |
 | `max_rounds` | `2` | Max completeness clarifying questions per ticket |
 | `max_classify_rounds` | `2` | Max classification clarifying questions per ticket |
 | `max_iterations` | `9` | Budget of model calls per ticket; on exhaustion the run is closed with the fallback note |

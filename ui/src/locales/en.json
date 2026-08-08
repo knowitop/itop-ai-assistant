@@ -144,7 +144,7 @@
     "embeddings_model_desc": "Embedding model as exposed by the endpoint; must be multilingual, e.g. bge-m3",
     "embeddings_test_ok": "Model {{model}} responded — dimension {{dimension}}",
     "embeddings_dimension_mismatch": "The endpoint returned dimension {{actual}} but the config says {{expected}} — fix the Dimension field",
-    "ticket_mapping_desc": "Maps semantic ticket fields onto the iTop datamodel: <code>fields</code> (semantic name → attribute code, null = attribute absent), <code>class_overrides</code> (per-class differences), <code>active_statuses</code> (when the assistant may act)."
+    "ticket_mapping_desc": "Maps semantic ticket fields onto the iTop datamodel: <code>fields</code> (semantic name → attribute code, null = attribute absent), <code>class_overrides</code> (per-class differences)."
   },
   "modules": {
     "title": "Modules",
