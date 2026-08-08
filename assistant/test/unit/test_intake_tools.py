@@ -383,7 +383,10 @@ class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
         # Explicit, not the port's default — a safeguard against TASK-013
         # silently widening intake's search into internal chunks
         self.assertEqual(kwargs["visibilities"], ["public"])
-        age = datetime.now(UTC) - kwargs["updated_after"]
+        # A lower bound and nothing else: "solved recently" has no upper end
+        window = kwargs["updated"]
+        self.assertIsNone(window.before)
+        age = datetime.now(UTC) - window.after
         self.assertAlmostEqual(age.total_seconds(), timedelta(days=30).total_seconds(), delta=60)
 
     async def test_finding_nothing_is_an_answer_not_a_refusal(self):

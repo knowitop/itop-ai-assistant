@@ -20,10 +20,9 @@ ticket is.
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
 
 from itop_ai_assistant.vector.embedder import EmbeddingsClient
-from itop_ai_assistant.vector.store import ChunkStore, SearchHit
+from itop_ai_assistant.vector.store import ChunkStore, DateRange, SearchHit
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +82,8 @@ class SimilarSearch:
         filters: dict[str, list[str]] | None = None,
         visibilities: Sequence[str] = ("public", "internal"),
         exclude: tuple[str, int] | None = None,
-        updated_after: datetime | None = None,
+        created: DateRange | None = None,
+        updated: DateRange | None = None,
         min_score: float | None = None,
         candidates: int = 15,
         top: int = 5,
@@ -92,7 +92,9 @@ class SimilarSearch:
 
         Returns [] for empty text and for an index that has nothing to say —
         a caller with no results is a normal outcome here, not a failure.
-        `min_score` drops a candidate below that similarity score regardless
+        `created`/`updated` are inclusive windows over the two system dates,
+        either bound optional (`DateRange`). `min_score` drops a candidate
+        below that similarity score regardless
         of rank — top-N alone does not mean relevant (TASK-011); `None`
         applies no floor. Named `min_score` rather than the backend's own
         `score_threshold` (`ChunkStore.search()`) to keep this port
@@ -105,7 +107,8 @@ class SimilarSearch:
             filters=filters,
             visibilities=visibilities,
             exclude=exclude,
-            updated_after=updated_after,
+            created=created,
+            updated=updated,
             min_score=min_score,
             candidates=candidates,
             top=top,
@@ -121,7 +124,8 @@ class SimilarSearch:
         filters: dict[str, list[str]] | None = None,
         visibilities: Sequence[str] = ("public", "internal"),
         exclude: tuple[str, int] | None = None,
-        updated_after: datetime | None = None,
+        created: DateRange | None = None,
+        updated: DateRange | None = None,
         min_score: float | None = None,
         candidates: int = 15,
         top: int = 5,
@@ -134,7 +138,8 @@ class SimilarSearch:
             filters=filters,
             visibilities=visibilities,
             exclude=exclude,
-            updated_after=updated_after,
+            created=created,
+            updated=updated,
             min_score=min_score,
             candidates=candidates,
             top=top,
@@ -149,7 +154,8 @@ class SimilarSearch:
         filters: dict[str, list[str]] | None,
         visibilities: Sequence[str],
         exclude: tuple[str, int] | None,
-        updated_after: datetime | None,
+        created: DateRange | None,
+        updated: DateRange | None,
         min_score: float | None,
         candidates: int,
         top: int,
@@ -165,7 +171,8 @@ class SimilarSearch:
             filters=filters,
             visibilities=list(visibilities),
             exclude=exclude,
-            updated_after=updated_after,
+            created=created,
+            updated=updated,
             score_threshold=min_score,
             limit=candidates,
         )

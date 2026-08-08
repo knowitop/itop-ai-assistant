@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 from itop_ai_assistant.vector.search import FindStats, ObjectHit, SimilarSearch
-from itop_ai_assistant.vector.store import SearchHit
+from itop_ai_assistant.vector.store import DateRange, SearchHit
 
 _NOW = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
 _FAMILY = "tickets"
@@ -49,7 +49,7 @@ class TestSimilarSearch(unittest.IsolatedAsyncioTestCase):
             classes=["UserRequest", "Incident"],
             filters={"status": ["resolved", "closed"]},
             exclude=("UserRequest", 7),
-            updated_after=_NOW,
+            updated=DateRange(after=_NOW),
             candidates=15,
         )
 
@@ -59,8 +59,26 @@ class TestSimilarSearch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["filters"], {"status": ["resolved", "closed"]})
         self.assertEqual(kwargs["visibilities"], ["public", "internal"])
         self.assertEqual(kwargs["exclude"], ("UserRequest", 7))
-        self.assertEqual(kwargs["updated_after"], _NOW)
+        self.assertEqual(kwargs["updated"], DateRange(after=_NOW))
         self.assertEqual(kwargs["limit"], 15)
+
+    async def test_both_date_windows_reach_the_store_under_the_same_names(self):
+        search, store, _ = _search([])
+        created = DateRange(after=datetime(2020, 1, 1, tzinfo=UTC), before=_NOW)
+
+        await search.find("q", classes=["UserRequest"], created=created, updated=DateRange(after=_NOW))
+
+        kwargs = store.search.await_args.kwargs
+        self.assertEqual(kwargs["created"], created)
+        self.assertEqual(kwargs["updated"], DateRange(after=_NOW))
+
+    async def test_date_windows_default_to_none(self):
+        search, store, _ = _search([_hit(1, 0.9)])
+
+        await search.find("q", classes=["UserRequest"], filters={"status": ["resolved"]})
+
+        self.assertIsNone(store.search.await_args.kwargs["created"])
+        self.assertIsNone(store.search.await_args.kwargs["updated"])
 
     async def test_chunk_kinds_reaches_the_store_under_the_same_name(self):
         search, store, _ = _search([])
@@ -228,3 +246,26 @@ class TestFindWithStats(unittest.IsolatedAsyncioTestCase):
         found = await search.find("q", classes=["UserRequest"], filters={"status": ["resolved"]})
 
         self.assertEqual([hit.obj_id for hit in found], [1, 3])
+
+
+class TestDateRange(unittest.TestCase):
+    """The contract convention (ADR-017) applied to a window: "unrestricted"
+    is the absent argument, so an empty or impossible window is a caller
+    mistake and says so instead of silently matching everything or nothing."""
+
+    def test_one_bound_is_enough(self):
+        self.assertEqual(DateRange(after=_NOW).before, None)
+        self.assertEqual(DateRange(before=_NOW).after, None)
+
+    def test_a_window_without_bounds_is_rejected(self):
+        with self.assertRaises(ValueError):
+            DateRange()
+
+    def test_an_inverted_window_is_rejected(self):
+        with self.assertRaises(ValueError):
+            DateRange(after=_NOW, before=datetime(2020, 1, 1, tzinfo=UTC))
+
+    def test_a_single_moment_is_a_valid_window(self):
+        # Both bounds inclusive — `after == before` means "exactly then", not
+        # a guaranteed empty answer
+        self.assertEqual(DateRange(after=_NOW, before=_NOW).after, _NOW)

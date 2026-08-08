@@ -20,6 +20,7 @@ from langchain_core.tools import BaseTool, tool
 
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.text_utils import bind_oql, html_to_markdown
+from itop_ai_assistant.vector.store import DateRange
 
 from .context import IntakeContext
 from .prompt import format_options
@@ -192,7 +193,9 @@ async def find_similar_resolved_tickets(runtime: IntakeToolRuntime) -> tuple[str
         # without a change here.
         visibilities=["public"],
         exclude=(ticket.obj_class, int(ticket.id)),
-        updated_after=datetime.now(UTC) - timedelta(days=ctx.intake.similar_max_age_days),
+        # Lower bound only — "solved recently"; the window has an upper bound
+        # available (TASK-018) and intake has no use for one.
+        updated=DateRange(after=datetime.now(UTC) - timedelta(days=ctx.intake.similar_max_age_days)),
         min_score=ctx.intake.similar_min_score,
         candidates=ctx.intake.similar_candidates,
         top=ctx.intake.similar_top,

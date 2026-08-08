@@ -23,7 +23,7 @@ from itop_ai_assistant.vector.sync_state import VectorSyncState
 _NOW = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
 
 
-def _chunk(obj_id: int, *, obj_class: str = "UserRequest") -> ChunkRecord:
+def _chunk(obj_id: int, *, obj_class: str = "UserRequest", updated_at: datetime = _NOW) -> ChunkRecord:
     return ChunkRecord(
         meta=ChunkMetadata(
             obj_class=obj_class,
@@ -34,7 +34,7 @@ def _chunk(obj_id: int, *, obj_class: str = "UserRequest") -> ChunkRecord:
             content_hash="hash",
             created_at=_NOW,
             filters={"status": "resolved"},
-            updated_at=_NOW,
+            updated_at=updated_at,
         ),
         embedding=[1.0, 0.0, 0.0, 0.0],
     )
@@ -331,6 +331,55 @@ class TestSearch(VectorStatusTestCase):
         self.assertIsNone(body["allowed_org_ids"])
         embedder.embed.assert_awaited_once_with(["printer is on fire"])
         embedder.aclose.assert_awaited_once()
+
+    def test_a_date_window_narrows_the_answer(self):
+        deps = _make_deps(
+            self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+        )
+        self.client.app.state.deps = deps
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+
+        async def _seed() -> None:
+            await deps.vector_store.ensure_version("tickets", "bge-m3", 4)
+            await deps.vector_store.upsert_chunks(
+                [_chunk(1), _chunk(2, updated_at=datetime(2020, 1, 1, tzinfo=UTC))],
+                family="tickets",
+                model="bge-m3",
+                dim=4,
+            )
+
+        asyncio.run(_seed())
+        embedder = MagicMock()
+        embedder.embed = AsyncMock(return_value=[[1.0, 0.0, 0.0, 0.0]])
+        embedder.aclose = AsyncMock()
+
+        with (
+            patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.router.build_vector_sources", return_value=[_FakeSource(existing={1, 2})]),
+        ):
+            response = self.client.post(
+                "/api/vector/search",
+                json={"family": "tickets", "text": "printer", "updated": {"after": "2026-01-01T00:00:00Z"}},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([h["obj_id"] for h in response.json()["hits"]], [1])
+
+    def test_an_impossible_window_is_rejected_on_parsing(self):
+        # 422 from the body validator, not a 500 out of the store: the domain
+        # `DateRange` invariants are checked before the search runs at all
+        self.client.app.state.deps = _make_deps(
+            self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+        )
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+
+        for window in ({}, {"after": "2026-08-01T00:00:00Z", "before": "2020-01-01T00:00:00Z"}):
+            with self.subTest(window=window):
+                response = self.client.post(
+                    "/api/vector/search", json={"family": "tickets", "text": "printer", "updated": window}
+                )
+
+                self.assertEqual(response.status_code, 422)
 
     def test_requires_admin_token_when_set(self):
         self.client.app.state.deps = _make_deps(self.redis, admin_token=SecretStr("s3cret"))

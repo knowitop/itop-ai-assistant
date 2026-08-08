@@ -5,7 +5,14 @@ from unittest.mock import patch
 from qdrant_client import models
 
 from itop_ai_assistant.vector.qdrant_store import QdrantChunkStore
-from itop_ai_assistant.vector.store import ChunkDigest, ChunkMetadata, ChunkRecord, ChunkStore, FingerprintMismatchError
+from itop_ai_assistant.vector.store import (
+    ChunkDigest,
+    ChunkMetadata,
+    ChunkRecord,
+    ChunkStore,
+    DateRange,
+    FingerprintMismatchError,
+)
 
 _NOW = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
 _FAMILY = "tickets"
@@ -23,6 +30,7 @@ def _meta(
     visibility="public",
     extra_filters: dict[str, str] | None = {"service_id": "5"},
     updated_at: datetime | None = _NOW,
+    created_at: datetime = _NOW,
 ) -> ChunkMetadata:
     return ChunkMetadata(
         obj_class=obj_class,
@@ -31,7 +39,7 @@ def _meta(
         chunk_n=n,
         visibility=visibility,
         content_hash=digest,
-        created_at=_NOW,
+        created_at=created_at,
         filters={**(extra_filters or {}), "status": status, **({"org_id": org_id} if org_id else {})},
         updated_at=updated_at,
     )
@@ -49,6 +57,7 @@ def _chunk(
     org_id: str | None = "1",
     visibility="public",
     updated_at: datetime | None = _NOW,
+    created_at: datetime = _NOW,
 ) -> ChunkRecord:
     return ChunkRecord(
         meta=_meta(
@@ -61,6 +70,7 @@ def _chunk(
             org_id=org_id,
             visibility=visibility,
             updated_at=updated_at,
+            created_at=created_at,
         ),
         embedding=vector or [1.0, 0.0, 0.0, 0.0],
     )
@@ -139,6 +149,23 @@ class TestVersioning(QdrantStoreCase):
         field_names = {call.kwargs["field_name"] for call in spy.await_args_list}
         self.assertIn("fields.status", field_names)
         self.assertIn("fields.org_id", field_names)
+
+    async def test_both_dates_are_indexed_as_datetime(self):
+        # Same spy trick as above, and for the same reason: `:memory:` Qdrant
+        # reports no payload schema back. A range filter would still work
+        # without the index — by full scan — so nothing but this call says
+        # whether the walk is actually using an index (TASK-018).
+        with patch.object(
+            self.store.client, "create_payload_index", wraps=self.store.client.create_payload_index
+        ) as spy:
+            await self.store.ensure_version(_FAMILY, "test-model", 4)
+
+        datetime_fields = {
+            call.kwargs["field_name"]
+            for call in spy.await_args_list
+            if call.kwargs["field_schema"] == models.PayloadSchemaType.DATETIME
+        }
+        self.assertEqual(datetime_fields, {"created_at", "updated_at"})
 
 
 class TestUpsert(QdrantStoreCase):
@@ -476,7 +503,7 @@ class TestSearch(QdrantStoreCase):
             {(hit.obj_class, hit.obj_id) for hit in hits}, {("UserRequest", 1), ("KnowledgeBaseArticle", 1)}
         )
 
-    async def test_updated_after_keeps_only_the_recent(self):
+    async def test_updated_after_keeps_only_the_recently_modified(self):
         await self.store.upsert_chunks(
             [
                 _chunk(1, updated_at=datetime(2026, 7, 1, tzinfo=UTC)),
@@ -487,20 +514,115 @@ class TestSearch(QdrantStoreCase):
             dim=4,
         )
 
-        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], updated_after=datetime(2026, 1, 1, tzinfo=UTC), **_ALL)
+        hits = await self.store.search(
+            [1.0, 0.0, 0.0, 0.0], updated=DateRange(after=datetime(2026, 1, 1, tzinfo=UTC)), **_ALL
+        )
+
+        self.assertEqual([hit.obj_id for hit in hits], [1])
+
+    async def test_updated_before_keeps_only_the_old(self):
+        await self.store.upsert_chunks(
+            [
+                _chunk(1, updated_at=datetime(2026, 7, 1, tzinfo=UTC)),
+                _chunk(2, updated_at=datetime(2024, 1, 1, tzinfo=UTC)),
+            ],
+            family=_FAMILY,
+            model="test-model",
+            dim=4,
+        )
+
+        hits = await self.store.search(
+            [1.0, 0.0, 0.0, 0.0], updated=DateRange(before=datetime(2026, 1, 1, tzinfo=UTC)), **_ALL
+        )
+
+        self.assertEqual([hit.obj_id for hit in hits], [2])
+
+    async def test_two_bounds_make_an_interval(self):
+        await self.store.upsert_chunks(
+            [
+                _chunk(1, updated_at=datetime(2026, 7, 1, tzinfo=UTC)),
+                _chunk(2, updated_at=datetime(2026, 3, 1, tzinfo=UTC)),
+                _chunk(3, updated_at=datetime(2024, 1, 1, tzinfo=UTC)),
+            ],
+            family=_FAMILY,
+            model="test-model",
+            dim=4,
+        )
+
+        hits = await self.store.search(
+            [1.0, 0.0, 0.0, 0.0],
+            updated=DateRange(after=datetime(2026, 1, 1, tzinfo=UTC), before=datetime(2026, 5, 1, tzinfo=UTC)),
+            **_ALL,
+        )
+
+        self.assertEqual([hit.obj_id for hit in hits], [2])
+
+    async def test_both_bounds_are_inclusive(self):
+        moment = datetime(2026, 3, 1, tzinfo=UTC)
+        await self.store.upsert_chunks([_chunk(1, updated_at=moment)], family=_FAMILY, model="test-model", dim=4)
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], updated=DateRange(after=moment, before=moment), **_ALL)
+
+        self.assertEqual([hit.obj_id for hit in hits], [1])
+
+    async def test_created_is_filtered_independently_of_updated(self):
+        # Same modification date, different creation dates — the window must
+        # read the other field, not fall back to `updated_at`
+        await self.store.upsert_chunks(
+            [
+                _chunk(1, created_at=datetime(2026, 7, 1, tzinfo=UTC)),
+                _chunk(2, created_at=datetime(2020, 1, 1, tzinfo=UTC)),
+            ],
+            family=_FAMILY,
+            model="test-model",
+            dim=4,
+        )
+
+        recent = await self.store.search(
+            [1.0, 0.0, 0.0, 0.0], created=DateRange(after=datetime(2026, 1, 1, tzinfo=UTC)), **_ALL
+        )
+        old = await self.store.search(
+            [1.0, 0.0, 0.0, 0.0], created=DateRange(before=datetime(2026, 1, 1, tzinfo=UTC)), **_ALL
+        )
+
+        self.assertEqual([hit.obj_id for hit in recent], [1])
+        self.assertEqual([hit.obj_id for hit in old], [2])
+
+    async def test_the_two_windows_narrow_each_other(self):
+        await self.store.upsert_chunks(
+            [
+                _chunk(1, created_at=datetime(2020, 1, 1, tzinfo=UTC), updated_at=datetime(2026, 7, 1, tzinfo=UTC)),
+                _chunk(2, created_at=datetime(2026, 6, 1, tzinfo=UTC), updated_at=datetime(2026, 7, 1, tzinfo=UTC)),
+            ],
+            family=_FAMILY,
+            model="test-model",
+            dim=4,
+        )
+
+        hits = await self.store.search(
+            [1.0, 0.0, 0.0, 0.0],
+            created=DateRange(before=datetime(2021, 1, 1, tzinfo=UTC)),
+            updated=DateRange(after=datetime(2026, 1, 1, tzinfo=UTC)),
+            **_ALL,
+        )
 
         self.assertEqual([hit.obj_id for hit in hits], [1])
 
     async def test_an_object_without_a_date_never_passes_the_window(self):
-        # "Unknown" must not read as "recent" — the payload key is absent, and
-        # an absent key matches no range condition
+        # "Unknown" must read neither as "recent" nor as "old" — the payload
+        # key is absent, and an absent key matches no range condition, whether
+        # the window has a lower bound, an upper one, or both
         await self.store.upsert_chunks([_chunk(1, updated_at=None)], family=_FAMILY, model="test-model", dim=4)
 
         found = await self.store.search([1.0, 0.0, 0.0, 0.0], **_ALL)
         self.assertEqual([hit.obj_id for hit in found], [1])
-        self.assertEqual(
-            await self.store.search([1.0, 0.0, 0.0, 0.0], updated_after=datetime(2000, 1, 1, tzinfo=UTC), **_ALL), []
-        )
+        for window in (
+            DateRange(after=datetime(2000, 1, 1, tzinfo=UTC)),
+            DateRange(before=datetime(2030, 1, 1, tzinfo=UTC)),
+            DateRange(after=datetime(2000, 1, 1, tzinfo=UTC), before=datetime(2030, 1, 1, tzinfo=UTC)),
+        ):
+            with self.subTest(window=window):
+                self.assertEqual(await self.store.search([1.0, 0.0, 0.0, 0.0], updated=window, **_ALL), [])
 
     async def test_limit_caps_the_number_of_objects(self):
         await self.store.upsert_chunks([_chunk(1), _chunk(2), _chunk(3)], family=_FAMILY, model="test-model", dim=4)

@@ -35,6 +35,7 @@ from itop_ai_assistant.vector.store import (
     ChunkDigest,
     ChunkMetadata,
     ChunkRecord,
+    DateRange,
     FingerprintMismatchError,
     IndexMeta,
     IndexStats,
@@ -316,7 +317,8 @@ class QdrantChunkStore:
         chunk_kinds: list[str] | None = None,
         filters: dict[str, list[str]] | None = None,
         exclude: tuple[str, int] | None = None,
-        updated_after: datetime | None = None,
+        created: DateRange | None = None,
+        updated: DateRange | None = None,
         score_threshold: float | None = None,
         limit: int = 30,
     ) -> list[SearchHit]:
@@ -328,7 +330,9 @@ class QdrantChunkStore:
         searches the whole family, `chunk_kinds=None` matches any chunk kind;
         an absent key in `filters` means unrestricted for that key — an empty
         list under any of these is a caller mistake, not "no results", and is
-        rejected loudly. `score_threshold`
+        rejected loudly. The `created`/`updated` windows join the same `must`,
+        so a date range narrows the walk itself rather than its result — both
+        dates carry a DATETIME payload index for exactly that. `score_threshold`
         is the same idea applied to the score itself, native to
         `query_points_groups` — a candidate below it never reaches the
         result, so it costs nothing extra beyond a plain top-N walk. Returns
@@ -359,10 +363,10 @@ class QdrantChunkStore:
                     f'search filter {key!r} got an empty value list — omit the key for "unrestricted", not []'
                 )
             must.append(models.FieldCondition(key=f"fields.{key}", match=models.MatchAny(any=values)))
-        if updated_after is not None:
-            must.append(
-                models.FieldCondition(key="updated_at", range=models.DatetimeRange(gte=updated_after.isoformat()))
-            )
+        if created is not None:
+            must.append(_date_condition("created_at", created))
+        if updated is not None:
+            must.append(_date_condition("updated_at", updated))
         must_not: list[models.Condition] = []
         if exclude is not None:
             must_not.append(
@@ -429,12 +433,17 @@ class QdrantChunkStore:
         await self.client.create_payload_index(
             collection_name=name, field_name="obj_id", field_schema=models.PayloadSchemaType.INTEGER
         )
-        # DATETIME, not KEYWORD: this is the field range conditions are built
-        # on ("modified within the last year"), and Qdrant parses RFC-3339 and
-        # compares in UTC itself.
-        await self.client.create_payload_index(
-            collection_name=name, field_name="updated_at", field_schema=models.PayloadSchemaType.DATETIME
-        )
+        # DATETIME, not KEYWORD: these are the fields range conditions are
+        # built on ("modified within the last year"), and Qdrant parses
+        # RFC-3339 and compares in UTC itself. `created_at` joined `updated_at`
+        # in TASK-018 and needs no backfill — it has always been written to
+        # every payload, and `ensure_version` runs this for existing
+        # collections too, so a deployment provisioned earlier gets the index
+        # on the next start.
+        for field in ("created_at", "updated_at"):
+            await self.client.create_payload_index(
+                collection_name=name, field_name=field, field_schema=models.PayloadSchemaType.DATETIME
+            )
 
 
 def _point_id(obj_class: str, obj_id: int, chunk_kind: str, chunk_n: int) -> str:
@@ -488,6 +497,19 @@ def _payload(chunk: ChunkMetadata) -> dict:
     # specific keys in via `indexed_filter_keys` (see `_KEYWORD_FIELDS`, ADR-005).
     payload["fields"] = chunk.filters or {}
     return payload
+
+
+def _date_condition(key: str, window: DateRange) -> models.FieldCondition:
+    """The port's `after`/`before` in Qdrant's own terms: `gte`/`lte`, both
+    inclusive. An omitted bound stays `None` — Qdrant then leaves that side
+    of the range open."""
+    return models.FieldCondition(
+        key=key,
+        range=models.DatetimeRange(
+            gte=window.after.isoformat() if window.after else None,
+            lte=window.before.isoformat() if window.before else None,
+        ),
+    )
 
 
 def _object_filter(obj_class: str, obj_id: int) -> models.Filter:

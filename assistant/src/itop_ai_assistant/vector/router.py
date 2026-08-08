@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
 from itop_ai_assistant.deps import AppDeps
@@ -17,6 +17,7 @@ from itop_ai_assistant.principal import Principal
 from itop_ai_assistant.vector.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.indexer import SWEEP_TASK
 from itop_ai_assistant.vector.search import FindStats, ObjectHit, SimilarSearch
+from itop_ai_assistant.vector.store import DateRange
 from itop_ai_assistant.vector_sources.registry import build_vector_sources
 from itop_ai_assistant.vector_sources.tickets import FAMILY as TICKETS_FAMILY
 
@@ -120,6 +121,25 @@ async def vector_reindex(request: Request) -> dict:
     return {"status": "scheduled"}
 
 
+class DateRangeBody(BaseModel):
+    """`vector.store.DateRange` over the wire — same two inclusive bounds.
+
+    Validated here rather than deep in the store so an inverted or empty
+    window is a 422 on parsing the body, not a 500 from inside the search.
+    """
+
+    after: datetime | None = Field(default=None, description="Lower bound, inclusive. Omit for an open lower side.")
+    before: datetime | None = Field(default=None, description="Upper bound, inclusive. Omit for an open upper side.")
+
+    @model_validator(mode="after")
+    def _check(self) -> "DateRangeBody":
+        self.to_domain()
+        return self
+
+    def to_domain(self) -> DateRange:
+        return DateRange(after=self.after, before=self.before)
+
+
 class SearchRequest(BaseModel):
     """Mirrors `SimilarSearch.__init__`'s `family` plus `find()`'s own
     parameters (`vector/search.py`) — one-to-one, for manual testing."""
@@ -157,10 +177,18 @@ class SearchRequest(BaseModel):
         description="One (obj_class, obj_id) pair to drop from the results — typically the ticket the "
         "search is being run for, so it doesn't show up as similar to itself.",
     )
-    updated_after: datetime | None = Field(
+    created: DateRangeBody | None = Field(
         default=None,
-        description="Only consider chunks whose source object was updated at or after this timestamp. "
-        "None applies no lower bound.",
+        description="Window over the source object's creation date, both bounds inclusive and each "
+        "optional ({'after': ...} alone is a plain lower bound). None applies no window at all. "
+        "Note that for a source that reports no creation date this is the time the object was last "
+        "written to the index, not when it came into being.",
+    )
+    updated: DateRangeBody | None = Field(
+        default=None,
+        description="Window over the source object's last modification, both bounds inclusive and each "
+        "optional. None applies no window. An object indexed without an update date passes no window "
+        "here, not even one made of a single upper bound.",
     )
     min_score: float | None = Field(
         default=None,
@@ -251,7 +279,8 @@ async def vector_search(request: Request, body: SearchRequest) -> SearchResponse
             filters=filters,
             visibilities=body.visibilities,
             exclude=body.exclude,
-            updated_after=body.updated_after,
+            created=body.created.to_domain() if body.created else None,
+            updated=body.updated.to_domain() if body.updated else None,
             min_score=body.min_score,
             candidates=body.candidates,
             top=body.top,

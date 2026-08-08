@@ -22,7 +22,11 @@ the indexer falls back to the sweep's `started_at` when a source has no
 creation date, and that fallback is not deterministic across passes — folding
 it into the hash would make metadata churn on every sweep for such objects.
 `updated_at` has no such fallback and does feed it, which is what keeps the
-"resolved within the last year" filter honest. See `dev-docs/architecture/vector.md`.
+"resolved within the last year" filter honest. Making `created_at` filterable
+(`DateRange`, TASK-018) does not change that: the general rule is "a payload
+field filtering depends on must feed `meta_hash`", and this one field is the
+documented exception, bought at the price spelled out in `DateRange`. See
+`dev-docs/architecture/vector.md`.
 """
 
 import hashlib
@@ -70,8 +74,8 @@ class ChunkMetadata:
     filters: dict[str, str] | None = None
     # Last modification of the source object — the range filter behind "solved
     # within the last year". None when the source has no such date: such an
-    # object is then invisible to every `updated_after` search, which is the
-    # honest answer (see the module docstring on why there is no fallback).
+    # object is then invisible to every `updated` window, which is the honest
+    # answer (see the module docstring on why there is no fallback).
     updated_at: datetime | None = None
 
     @property
@@ -138,6 +142,43 @@ class SearchHit:
     score: float
 
 
+@dataclass(frozen=True)
+class DateRange:
+    """A window over one indexed datetime field — both bounds inclusive.
+
+    One object rather than a pair of scalar parameters per date: each new
+    filterable date would otherwise add two more arguments to `search()`
+    (TASK-018). Named `after`/`before` and not `gte`/`lte` to keep the port
+    backend-agnostic, the same reason `SimilarSearch.find()` says `min_score`
+    where the backend says `score_threshold`.
+
+    Either bound may be omitted, but not both: "no restriction" is expressed
+    by passing no range at all, so an empty one is a caller mistake — the
+    same convention `filters`/`classes`/`chunk_kinds` follow (ADR-017). An
+    inverted window (`after > before`) can match nothing and is rejected too.
+
+    An object whose payload has no such date passes **no** range, not even
+    one made of a single upper bound: an absent key matches no range
+    condition, and "unknown" must read neither as "recent" nor as "old".
+    That is the real case for `updated_at`, which a source may leave unset.
+    `created_at` is always present, but for a source that reports no creation
+    date the indexer falls back to the sweep's own clock — filtering such an
+    object by `created` filters by when it was last written to the index, not
+    by when it came into being (`vector/indexer.py`, module docstring above).
+    """
+
+    after: datetime | None = None
+    before: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.after is None and self.before is None:
+            raise ValueError('DateRange got neither bound — omit the range for "unrestricted", not DateRange()')
+        if self.after is not None and self.before is not None and self.after > self.before:
+            raise ValueError(
+                f"DateRange is inverted: after={self.after.isoformat()} > before={self.before.isoformat()}"
+            )
+
+
 class FingerprintMismatchError(Exception):
     """The active index was built with a different model/dim — rebuild required."""
 
@@ -192,13 +233,15 @@ class ChunkStore(Protocol):
         chunk_kinds: list[str] | None = None,
         filters: dict[str, list[str]] | None = None,
         exclude: tuple[str, int] | None = None,
-        updated_after: datetime | None = None,
+        created: DateRange | None = None,
+        updated: DateRange | None = None,
         score_threshold: float | None = None,
         limit: int = 30,
     ) -> list[SearchHit]:
         """`exclude` is one (obj_class, obj_id) pair — the asking object
-        itself. `updated_after` keeps objects modified at/after that moment;
-        an object indexed without an `updated_at` never passes it.
+        itself. `created`/`updated` are windows over the two system dates,
+        each bound inclusive and each optional; an object indexed without an
+        `updated_at` passes no `updated` window at all (see `DateRange`).
         `score_threshold` drops a hit below that similarity score regardless
         of rank — top-N alone does not mean relevant (TASK-011); `None`
         applies no such floor. `chunk_kinds`: `None` matches any kind, an
