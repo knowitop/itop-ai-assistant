@@ -1,0 +1,168 @@
+import unittest
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
+
+from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
+from itop_ai_assistant.domain.faq import FaqArticle
+from itop_ai_assistant.vector_sources.faq import FIELDS, FRAGMENTS, FaqVectorSource
+
+_NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
+
+
+def _cfg(fragments: dict[str, ChunkFragmentConfig]) -> VectorClassConfig:
+    return VectorClassConfig(chunks=fragments)
+
+
+_CFG = _cfg(
+    {
+        "profile": ChunkFragmentConfig(fields=["title", "summary", "category_name", "error_code", "key_words"]),
+        "body": ChunkFragmentConfig(fields=["description"]),
+    }
+)
+
+
+def _article(**overrides) -> FaqArticle:
+    fields = {
+        "id": "1",
+        "title": "How to reset your password",
+        "summary": "Quick steps to reset a forgotten password",
+        "category_name": "Accounts",
+        "error_code": "",
+        "key_words": "password, reset, login",
+        "description": "Go to the login page and click reset.",
+        "status": "published",
+        "org_id": "org1",
+        "last_update": _NOW,
+        "start_date": _NOW,
+    }
+    fields.update(overrides)
+    return FaqArticle(**fields)
+
+
+def _deps_with_bundle() -> tuple[MagicMock, MagicMock]:
+    bundle = MagicMock()
+    deps = MagicMock()
+    deps.itop.get = AsyncMock(return_value=bundle)
+    return deps, bundle
+
+
+class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
+    async def test_maps_article_fields_onto_vector_record(self):
+        deps, bundle = _deps_with_bundle()
+        bundle.faq_repo.find_modified_since = AsyncMock(return_value=[_article()])
+        source = FaqVectorSource(deps, classes=["FAQ"])
+        await source.prepare()
+
+        records = await source.find_modified_since("FAQ", None, page=1, page_size=100)
+
+        self.assertEqual(len(records), 1)
+        record = records[0]
+        self.assertEqual(record.obj_id, 1)
+        self.assertEqual(record.index_value, "published")
+        self.assertEqual(record.org_id, "org1")
+        self.assertIsNone(record.filters)
+        self.assertEqual(record.payload.id, "1")
+
+    async def test_delegates_to_the_repository(self):
+        deps, bundle = _deps_with_bundle()
+        bundle.faq_repo.find_modified_since = AsyncMock(return_value=[_article()])
+        source = FaqVectorSource(deps, classes=["FAQ"])
+        await source.prepare()
+
+        await source.find_modified_since("FAQ", None, page=1, page_size=100)
+
+        bundle.faq_repo.find_modified_since.assert_awaited_once_with(None, page=1, page_size=100)
+
+
+class TestFindExistingIds(unittest.IsolatedAsyncioTestCase):
+    async def test_delegates_to_the_repository(self):
+        deps, bundle = _deps_with_bundle()
+        bundle.faq_repo.find_existing_ids = AsyncMock(return_value={1, 2})
+        source = FaqVectorSource(deps, classes=["FAQ"])
+        await source.prepare()
+
+        result = await source.find_existing_ids("FAQ", [1, 2, 3])
+
+        self.assertEqual(result, {1, 2})
+        bundle.faq_repo.find_existing_ids.assert_awaited_once_with([1, 2, 3])
+
+
+class TestChunk(unittest.IsolatedAsyncioTestCase):
+    async def test_builds_profile_and_body_chunks(self):
+        deps, bundle = _deps_with_bundle()
+        bundle.faq_repo.find_modified_since = AsyncMock(return_value=[_article()])
+        source = FaqVectorSource(deps, classes=["FAQ"])
+        await source.prepare()
+        [record] = await source.find_modified_since("FAQ", None, page=1, page_size=100)
+
+        chunks = await source.chunk("FAQ", record, _CFG, max_chunk_tokens=100, log_entries_per_chunk=5)
+
+        by_kind = {c.kind: c for c in chunks}
+        self.assertIn("How to reset your password", by_kind["profile"].text)
+        self.assertIn("Accounts", by_kind["profile"].text)
+        self.assertIn("password, reset, login", by_kind["profile"].text)
+        self.assertEqual(by_kind["body"].text, "Go to the login page and click reset.")
+        self.assertEqual(by_kind["profile"].visibility, "public")
+        self.assertEqual(by_kind["body"].visibility, "public")
+
+
+class TestDeclaration(unittest.IsolatedAsyncioTestCase):
+    """The vocabulary served to the admin UI (ADR-018) must describe what the
+    source can actually do — a stale declaration would put fields and
+    fragments in the editor that quietly produce nothing."""
+
+    async def _chunk(self, cfg: VectorClassConfig, article: FaqArticle | None = None):
+        deps, bundle = _deps_with_bundle()
+        bundle.faq_repo.find_modified_since = AsyncMock(return_value=[article or _article()])
+        source = FaqVectorSource(deps, classes=["FAQ"])
+        await source.prepare()
+        [record] = await source.find_modified_since("FAQ", None, page=1, page_size=100)
+        return await source.chunk("FAQ", record, cfg, max_chunk_tokens=100, log_entries_per_chunk=5)
+
+    async def test_declared_fields_are_exactly_the_chunkable_ones(self):
+        deps, bundle = _deps_with_bundle()
+        source = FaqVectorSource(deps, classes=["FAQ"])
+        await source.prepare()
+
+        fields = source._semantic_fields(_article())
+
+        self.assertEqual(set(FIELDS), set(fields))
+
+    async def test_every_declared_fragment_can_be_produced(self):
+        cfg = _cfg({spec.kind: ChunkFragmentConfig(fields=list(FIELDS)) for spec in FRAGMENTS})
+
+        chunks = await self._chunk(cfg)
+
+        self.assertEqual({c.kind for c in chunks}, {spec.kind for spec in FRAGMENTS})
+
+    async def test_fragment_without_fields_produces_nothing(self):
+        self.assertEqual(await self._chunk(_cfg({"body": ChunkFragmentConfig(fields=[])})), [])
+
+    async def test_unknown_field_warns_and_is_treated_as_empty(self):
+        cfg = _cfg({"body": ChunkFragmentConfig(fields=["description", "no_such_field"])})
+
+        with self.assertLogs("itop_ai_assistant.vector_sources.faq", level="WARNING"):
+            chunks = await self._chunk(cfg)
+
+        self.assertEqual([c.text for c in chunks], ["Go to the login page and click reset."])
+
+    async def test_unknown_fragment_kind_in_config_is_ignored(self):
+        cfg = _cfg({"no_such_fragment": ChunkFragmentConfig(fields=["description"])})
+
+        self.assertEqual(await self._chunk(cfg), [])
+
+
+class TestNoPrincipal(unittest.IsolatedAsyncioTestCase):
+    async def test_the_sweep_takes_the_plain_connection(self):
+        """No run, no principal: the sweep is infrastructure, and the index it
+        builds is global on purpose. Acting as somebody would be the mistake."""
+        deps, _ = _deps_with_bundle()
+
+        await FaqVectorSource(deps, classes=["FAQ"]).prepare()
+
+        deps.itop.get.assert_awaited_once_with()
+        deps.itop.for_principal.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

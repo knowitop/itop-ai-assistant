@@ -15,6 +15,16 @@ if TYPE_CHECKING:
 
 
 def build_vector_sources(deps: "AppDeps", cfg: VectorConfig) -> list["VectorSource"]:
+    from itop_ai_assistant.vector_sources.faq import FaqVectorSource
     from itop_ai_assistant.vector_sources.tickets import TicketVectorSource
 
-    return [TicketVectorSource(deps, classes=list(cfg.classes))]
+    # `cfg.classes` mixes classes from every source; each source is built
+    # only with the ones it actually owns (TASK-016 — the first time a
+    # second source exists, so this split used to be unconditional).
+    ticket_classes = [c for c in cfg.classes if c != "FAQ"]
+    sources: list["VectorSource"] = []
+    if ticket_classes:
+        sources.append(TicketVectorSource(deps, classes=ticket_classes))
+    if "FAQ" in cfg.classes:
+        sources.append(FaqVectorSource(deps, classes=["FAQ"]))
+    return sources

@@ -169,9 +169,11 @@ class TestVectorConfig(unittest.TestCase):
     def test_disabled_by_default(self):
         cfg = VectorConfig()
         self.assertFalse(cfg.enabled)
-        self.assertEqual(list(cfg.classes), ["UserRequest", "Incident"])
+        self.assertEqual(list(cfg.classes), ["UserRequest", "Incident", "FAQ"])
         self.assertEqual(cfg.classes["UserRequest"].index_values, ["resolved", "closed"])
         self.assertEqual(cfg.classes["UserRequest"].chunks["body"].fields, ["description"])
+        self.assertEqual(cfg.classes["FAQ"].index_values, [])  # no status attribute in stock iTop
+        self.assertEqual(cfg.classes["FAQ"].chunks["body"].fields, ["description"])
 
     def test_qdrant_url_defaults_to_none(self):
         with patch.dict(os.environ, _REQUIRED, clear=True):

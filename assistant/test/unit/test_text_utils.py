@@ -1,6 +1,7 @@
 import unittest
+from datetime import UTC, datetime
 
-from itop_ai_assistant.text_utils import bind_oql, html_to_markdown, strip_thinking
+from itop_ai_assistant.text_utils import bind_oql, html_to_markdown, parse_itop_dt, strip_thinking
 
 
 class TestBindOql(unittest.TestCase):
@@ -44,6 +45,15 @@ class TestBindOql(unittest.TestCase):
             bind_oql("SELECT S WHERE service_id = :this->service_id", {"service_id": 5}),
             "SELECT S WHERE service_id = 5",
         )
+
+
+class TestParseItopDt(unittest.TestCase):
+    def test_valid_itop_timestamp(self):
+        self.assertEqual(parse_itop_dt("2026-07-10 12:00:00"), datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
+
+    def test_garbage_is_none(self):
+        for value in (None, "", "not-a-date", "2026-07-10", 12345, {"a": 1}):
+            self.assertIsNone(parse_itop_dt(value), value)
 
 
 class TestStripThinking(unittest.TestCase):

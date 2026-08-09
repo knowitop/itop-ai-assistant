@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from itop_ai_assistant.config import TicketMappingConfig
 from itop_ai_assistant.domain.ticket import Ticket
-from itop_ai_assistant.ticket_repository import TicketRepository, _parse_dt
+from itop_ai_assistant.ticket_repository import TicketRepository
 
 _RAW_TICKET = {
     "id": "42",
@@ -99,15 +99,6 @@ class TestToTicket(unittest.TestCase):
         self.assertIsNone(ticket.last_update)
         self.assertIsNone(ticket.start_date)
         self.assertEqual(ticket.solution, "")
-
-
-class TestParseDt(unittest.TestCase):
-    def test_valid_itop_timestamp(self):
-        self.assertEqual(_parse_dt("2026-07-10 12:00:00"), datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
-
-    def test_garbage_is_none(self):
-        for value in (None, "", "not-a-date", "2026-07-10", 12345, {"a": 1}):
-            self.assertIsNone(_parse_dt(value), value)
 
 
 class TestFetch(unittest.IsolatedAsyncioTestCase):

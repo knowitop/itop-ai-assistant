@@ -6,12 +6,15 @@ importing each other.
 """
 
 import re
+from datetime import UTC, datetime
 from functools import lru_cache
 
 from bs4 import BeautifulSoup
 from markdownify import markdownify
 
 _NUMERIC_RE = re.compile(r"-?\d+(\.\d+)?")
+
+ITOP_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # <think> is the de-facto standard for open-weight reasoning models
 # (DeepSeek-R1, Qwen3, QwQ); <thinking> and <reasoning> appear in fine-tunes.
@@ -41,6 +44,24 @@ def bind_oql(oql: str, this: dict) -> str:
                 replacement = f'"{escaped}"'
         oql = oql.replace(placeholder, replacement)
     return oql
+
+
+# TODO: set itop timezone in config
+def parse_itop_dt(value) -> datetime | None:
+    """Parse an iTop timestamp, tolerating garbage (None on failure).
+
+    iTop returns naive strings in the *server's local time*. We tag them UTC
+    purely as a label — timestamptz columns require aware datetimes — and only
+    ever compare them with other iTop timestamps, so the offset is irrelevant.
+    Do not "fix" this by converting to real UTC: there is no reliable way to
+    know the iTop server's zone from here, and consistency is all we need.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.strptime(value, ITOP_DATETIME_FORMAT).replace(tzinfo=UTC)
+    except ValueError:
+        return None
 
 
 def html_to_markdown(text: str | None) -> str:

@@ -1,7 +1,14 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from itop_ai_assistant.config import ItopConfig, LlmConfig, TicketFieldMap, TicketMappingConfig, get_settings
+from itop_ai_assistant.config import (
+    FaqMappingConfig,
+    ItopConfig,
+    LlmConfig,
+    TicketFieldMap,
+    TicketMappingConfig,
+    get_settings,
+)
 from itop_ai_assistant.deps import ItopProvider, build_deps, create_llm
 from itop_ai_assistant.principal import Principal
 
@@ -13,6 +20,7 @@ class _FakeConfigStore:
         self.sections = {
             "itop": ItopConfig(url="http://one/rest.php", token="tok"),
             "ticket_mapping": TicketMappingConfig(),
+            "faq_mapping": FaqMappingConfig(),
         }
 
     async def get(self, module, model):
@@ -82,6 +90,7 @@ class TestForPrincipal(unittest.IsolatedAsyncioTestCase):
         self.assertIsNot(bundle.client, base.client)
         self.assertIs(bundle.client._http, base.client._http)
         self.assertIs(bundle.ticket_repo.mapping, base.ticket_repo.mapping)
+        self.assertIs(bundle.faq_repo.mapping, base.faq_repo.mapping)
 
     async def test_the_service_account_keeps_the_connections_own_credentials(self):
         base = await self.provider.get()
@@ -97,6 +106,7 @@ class TestForPrincipal(unittest.IsolatedAsyncioTestCase):
         self.assertIs(bundle.ticket_repo._itop, bundle.client)
         self.assertIs(bundle.catalog_repo._itop, bundle.client)
         self.assertIs(bundle.access_repo._itop, bundle.client)
+        self.assertIs(bundle.faq_repo._itop, bundle.client)
 
 
 class TestAiPersonName(unittest.IsolatedAsyncioTestCase):

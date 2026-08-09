@@ -8,8 +8,9 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from itop_ai_assistant.access_repository import AccessRepository
 from itop_ai_assistant.catalog_repository import CatalogRepository
-from itop_ai_assistant.config import ItopConfig, LlmConfig, Settings, TicketMappingConfig
+from itop_ai_assistant.config import FaqMappingConfig, ItopConfig, LlmConfig, Settings, TicketMappingConfig
 from itop_ai_assistant.config_store import ConfigStore, RedisConfigStore
+from itop_ai_assistant.faq_repository import FaqRepository
 from itop_ai_assistant.itop_client import Itop
 from itop_ai_assistant.journal import RunJournal
 from itop_ai_assistant.llm_providers import get_provider
@@ -40,16 +41,17 @@ class ItopBundle:
     ticket_repo: TicketRepository
     catalog_repo: CatalogRepository
     access_repo: AccessRepository
+    faq_repo: FaqRepository
 
 
 class ItopProvider:
     """Serves the iTop client and repositories built from the effective runtime config.
 
-    The bundle is cached and rebuilt (old client closed) whenever the "itop"
-    or "ticket_mapping" section changes — connection edits made through the
-    setup API apply from the next processed ticket without a restart. The
-    per-process caches living inside the repositories (e.g. the AI person
-    name) are dropped together with the bundle.
+    The bundle is cached and rebuilt (old client closed) whenever the "itop",
+    "ticket_mapping" or "faq_mapping" section changes — connection edits made
+    through the setup API apply from the next processed ticket without a
+    restart. The per-process caches living inside the repositories (e.g. the
+    AI person name) are dropped together with the bundle.
     """
 
     def __init__(self, config_store: ConfigStore):
@@ -62,7 +64,8 @@ class ItopProvider:
     async def get(self) -> ItopBundle:
         itop_cfg = await self._config_store.get("itop", ItopConfig)
         mapping = await self._config_store.get("ticket_mapping", TicketMappingConfig)
-        fingerprint = itop_cfg.model_dump_json() + mapping.model_dump_json()
+        faq_mapping = await self._config_store.get("faq_mapping", FaqMappingConfig)
+        fingerprint = itop_cfg.model_dump_json() + mapping.model_dump_json() + faq_mapping.model_dump_json()
         async with self._rebuild_lock:
             if self._bundle is None or fingerprint != self._fingerprint:
                 if self._bundle is not None:
@@ -73,6 +76,7 @@ class ItopProvider:
                     ticket_repo=TicketRepository(client, mapping),
                     catalog_repo=CatalogRepository(client),
                     access_repo=AccessRepository(client),
+                    faq_repo=FaqRepository(client, faq_mapping),
                 )
                 self._fingerprint = fingerprint
                 self._ai_person_name = None
@@ -100,6 +104,7 @@ class ItopProvider:
             ticket_repo=TicketRepository(client, base.ticket_repo.mapping),
             catalog_repo=CatalogRepository(client),
             access_repo=AccessRepository(client),
+            faq_repo=FaqRepository(client, base.faq_repo.mapping),
         )
 
     async def ai_person_name(self) -> str:

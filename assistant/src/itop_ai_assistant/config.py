@@ -14,7 +14,7 @@ from itop_ai_assistant.llm_providers import DEFAULT_PROVIDER, PROVIDERS, get_pro
 
 _PACKAGE_DIR = Path(__file__).parent  # itop_ai_assistant/ — ships config.yaml
 
-
+# TODO: этому тоже место в intake
 _CLASSIFY_SERVICE_OQL = (
     "SELECT Service AS s"
     " JOIN lnkCustomerContractToService AS l1 ON l1.service_id=s.id"
@@ -22,6 +22,7 @@ _CLASSIFY_SERVICE_OQL = (
     " WHERE cc.org_id = :this->org_id AND s.status != 'obsolete'"
 )
 
+# TODO: этому тоже место в intake
 _CLASSIFY_SUBCATEGORY_OQL = (
     "SELECT ServiceSubcategory"
     " WHERE service_id = :this->service_id"
@@ -75,6 +76,44 @@ class TicketMappingConfig(BaseModel):
                     f"known: {sorted(known)}"
                 )
         return self
+
+
+class FaqFieldMap(BaseModel):
+    """Semantic FAQ field → iTop attribute code. None = attribute absent."""
+
+    title: str | None = "title"
+    summary: str | None = "summary"
+    category_name: str | None = "category_name"
+    error_code: str | None = "error_code"
+    key_words: str | None = "key_words"
+    description: str | None = "description"  # HTML
+    # FAQ has no lifecycle status in stock iTop — unlike tickets, unmapped by
+    # default; index_values is therefore [] for FAQ (see VectorConfig.classes),
+    # not a list of status values to filter by. Set this if a deployment adds
+    # one (a custom attribute or an extension that does carry a status).
+    status: str | None = None
+    # No org-scoped ACL for FAQ in stock iTop either — unmapped by default,
+    # same reasoning as `status` above. `VectorRecord.org_id`/the `org_id`
+    # pre-filter (ADR-003, R4) simply stay unset for every article until a
+    # deployment maps a real attribute here.
+    org_id: str | None = None
+    # Stock iTop's FAQ class carries no date attribute at all — neither this
+    # nor `start_date` maps to anything by default. `FaqRepository` degrades
+    # to a full scan on every sweep pass when this is unmapped (cheap thanks
+    # to the hash-guard); set it if a deployment's FAQ does track one.
+    last_update: str | None = None
+    start_date: str | None = None
+
+
+class FaqMappingConfig(BaseModel):
+    """How FAQ semantics map onto the customer's iTop datamodel.
+
+    A single class, unlike `TicketMappingConfig` — no `class_overrides`: that
+    mechanism exists for point differences between several classes sharing
+    one mapping, and there is only one class here.
+    """
+
+    fields: FaqFieldMap = FaqFieldMap()
 
 
 class RuntimeSectionConfig(BaseModel):
@@ -219,6 +258,7 @@ def missing_setup(itop: ItopConfig, llm: LlmConfig) -> list[str]:
     return missing
 
 
+# TODO: переложить в intake, конфиг должен жить рядом с модулем и регистрироваться автоматически.
 class IntakeConfig(BaseModel):
     """The ticket-processing module: classify, ask, hand off.
 
@@ -227,6 +267,7 @@ class IntakeConfig(BaseModel):
     invariants.
     """
 
+    # TODO: обернуть поля в Field с description, чтобы в UI не просто названия были, но и описание и может валидация.
     enabled: bool = True
     classes: list[str] = ["UserRequest", "Incident"]
     # The module acts on a ticket only while its status is in this list — an
@@ -338,6 +379,11 @@ _TICKET_CHUNKS = {
     # internal notes is a privacy decision, not a default (TASK-013).
 }
 
+_FAQ_CHUNKS = {
+    "profile": ChunkFragmentConfig(fields=["title", "summary", "category_name", "error_code", "key_words"]),
+    "body": ChunkFragmentConfig(fields=["description"]),
+}
+
 
 class VectorConfig(BaseModel):
     """Vector index settings — infrastructure section "vector" (setup API).
@@ -352,6 +398,10 @@ class VectorConfig(BaseModel):
     classes: dict[str, VectorClassConfig] = {
         "UserRequest": VectorClassConfig(index_values=["resolved", "closed"], chunks=_TICKET_CHUNKS),
         "Incident": VectorClassConfig(index_values=["resolved", "closed"], chunks=_TICKET_CHUNKS),
+        # No status attribute for FAQ in stock iTop — [] indexes every article
+        # (ADR-005: "no attribute to filter by" degrades to "index everything",
+        # not an error). Set explicit values if a deployment adds a status.
+        "FAQ": VectorClassConfig(index_values=[], chunks=_FAQ_CHUNKS),
     }
     sweep_interval_seconds: int = Field(default=300, gt=0)
     sweep_page_size: int = Field(default=100, gt=0)
@@ -426,6 +476,7 @@ class Settings(BaseSettings):
 
     # iTop datamodel mapping
     ticket_mapping: TicketMappingConfig = TicketMappingConfig()
+    faq_mapping: FaqMappingConfig = FaqMappingConfig()
 
     # Business modules
     intake: IntakeConfig = IntakeConfig()

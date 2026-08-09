@@ -105,13 +105,26 @@ class TestVectorSources(VectorStatusTestCase):
         # indexing off. The editor must still be usable.
         body = self.client.get("/api/vector/sources").json()
 
-        [source] = body["sources"]
-        self.assertEqual(source["name"], "tickets")
+        by_name = {s["name"]: s for s in body["sources"]}
+        source = by_name["tickets"]
         self.assertEqual(source["classes"], ["UserRequest", "Incident"])
         self.assertIn("title", source["fields"])
         by_kind = {f["kind"]: f for f in source["fragments"]}
         self.assertEqual(by_kind["body"], {"kind": "body", "visibility": "public", "optional": False})
         self.assertEqual(by_kind["log:private"], {"kind": "log:private", "visibility": "internal", "optional": True})
+
+    def test_declares_the_faq_source_vocabulary(self):
+        body = self.client.get("/api/vector/sources").json()
+
+        by_name = {s["name"]: s for s in body["sources"]}
+        source = by_name["faq"]
+        self.assertEqual(source["classes"], ["FAQ"])
+        self.assertEqual(
+            set(source["fields"]), {"title", "summary", "category_name", "error_code", "key_words", "description"}
+        )
+        by_kind = {f["kind"]: f for f in source["fragments"]}
+        self.assertEqual(by_kind["body"], {"kind": "body", "visibility": "public", "optional": False})
+        self.assertEqual(by_kind["profile"], {"kind": "profile", "visibility": "public", "optional": False})
 
     def test_classes_follow_the_saved_config(self):
         self.client.patch("/api/setup/vector", json={"classes": {"Problem": {"index_values": []}}})
@@ -172,20 +185,20 @@ class TestVectorStatus(VectorStatusTestCase):
         self.assertTrue(body["enabled"])
 
     def test_index_is_a_list_of_families(self):
-        # `tickets` is always in the registry (registry.py), so it appears
-        # `configured: true` even with no active version yet — same "no
-        # index" case the old single-block response used to report.
+        # `tickets` and `faq` are always in the registry (registry.py), so
+        # both appear `configured: true` even with no active version yet —
+        # same "no index" case the old single-block response used to report.
         deps = _make_deps(self.redis, store_url=":memory:")
         self.client.app.state.deps = deps
 
         body = self.client.get("/api/vector/status").json()
 
-        self.assertEqual(len(body["index"]), 1)
-        entry = body["index"][0]
-        self.assertEqual(entry["family"], "tickets")
-        self.assertTrue(entry["configured"])
-        self.assertIsNone(entry["active_version"])
-        self.assertIsNone(entry["rows"])
+        families = {entry["family"]: entry for entry in body["index"]}
+        self.assertEqual(set(families), {"tickets", "faq"})
+        for entry in families.values():
+            self.assertTrue(entry["configured"])
+            self.assertIsNone(entry["active_version"])
+            self.assertIsNone(entry["rows"])
 
     def test_a_family_no_longer_in_the_registry_is_reported_as_unconfigured(self):
         # list_families() (Qdrant) knows about `kb_articles`; build_vector_sources()
@@ -197,8 +210,9 @@ class TestVectorStatus(VectorStatusTestCase):
         body = self.client.get("/api/vector/status").json()
 
         families = {entry["family"]: entry for entry in body["index"]}
-        self.assertEqual(set(families), {"tickets", "kb_articles"})
+        self.assertEqual(set(families), {"tickets", "faq", "kb_articles"})
         self.assertTrue(families["tickets"]["configured"])
+        self.assertTrue(families["faq"]["configured"])
         self.assertFalse(families["kb_articles"]["configured"])
         self.assertEqual(families["kb_articles"]["active_version"], 1)
         self.assertEqual(families["kb_articles"]["model"], "bge-m3")

@@ -1,35 +1,16 @@
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 
 from itop_ai_assistant.config import TicketMappingConfig
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.itop_client import Itop
-from itop_ai_assistant.text_utils import bind_oql
+from itop_ai_assistant.text_utils import ITOP_DATETIME_FORMAT, bind_oql, parse_itop_dt
 
 logger = logging.getLogger(__name__)
-
-ITOP_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def _parse_log_entries(log_raw: dict | None) -> list[LogEntry]:
     return [LogEntry(user_login=e["user_login"], message=e["message"]) for e in ((log_raw or {}).get("entries") or [])]
-
-
-def _parse_dt(value) -> datetime | None:
-    """Parse an iTop timestamp, tolerating garbage (None on failure).
-
-    iTop returns naive strings in the *server's local time*. We tag them UTC
-    purely as a label — timestamptz columns require aware datetimes — and only
-    ever compare them with other iTop timestamps, so the offset is irrelevant.
-    Do not "fix" this by converting to real UTC: there is no reliable way to
-    know the iTop server's zone from here, and consistency is all we need.
-    """
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        return datetime.strptime(value, ITOP_DATETIME_FORMAT).replace(tzinfo=UTC)
-    except ValueError:
-        return None
 
 
 class TicketRepository:
@@ -79,18 +60,18 @@ class TicketRepository:
             public_log=entries,
             private_log=private_entries,
             solution=attr("solution") or "",
-            last_update=_parse_dt(attr("last_update")),
-            start_date=_parse_dt(attr("start_date")),
+            last_update=parse_itop_dt(attr("last_update")),
+            start_date=parse_itop_dt(attr("start_date")),
         )
 
     async def find_modified_since(
         self,
         obj_class: str,
-        since: datetime | None,
+        since: datetime | None,  # TODO: это не должно быть None, раз метод называется find_modified_since
         *,
         page: int,
         page_size: int,
-        include_private_log: bool = False,
+        include_private_log: bool = False,  # TODO: это порнография. Нужен нормальный механизм включения/исключия/ленивой_загрузки полей объектов.
     ) -> list[Ticket]:
         """One page of tickets modified at/after `since` (None = full scan).
 
@@ -107,16 +88,18 @@ class TicketRepository:
         if last_update_attr is None:
             raise ValueError(f"'last_update' is not mapped for class {obj_class}")
         if since is None:
-            oql = f"SELECT {obj_class}"
+            query = f"SELECT {obj_class}"
         else:
-            oql = bind_oql(
+            # TODO: почему мы тут пишем OQL? Нет в библиотеке метода, куда условия фильтра попдают как параметры?
+            #  Вот так должно работать по идее: query = {last_update_attr: ('>=', since.strftime(ITOP_DATETIME_FORMAT))}
+            query = bind_oql(
                 f"SELECT {obj_class} WHERE {last_update_attr} >= :this->since",
                 {"since": since.strftime(ITOP_DATETIME_FORMAT)},
             )
         excluded = set() if include_private_log else {"private_log"}
         attrs = [attr for semantic, attr in fields.items() if attr and semantic not in excluded]
         rows = await self._itop.schema(obj_class).find(
-            oql, projection=["id", *attrs], limit=str(page_size), page=str(page)
+            query, projection=["id", *attrs], limit=str(page_size), page=str(page)
         )
         return [self.to_ticket(obj_class, row) for row in rows]
 

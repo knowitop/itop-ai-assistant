@@ -103,6 +103,8 @@ class TicketVectorSource(VectorSource):
     fields = FIELDS
     fragments = FRAGMENTS
 
+    # TODO: плохая идея везде передавать AppDeps. Теряется понимание использования зависимостей (кто и кого где использует).
+    #  Тут нужен только ItopProvider, а передаём сюда все зависимости сразу зачем-то.
     def __init__(self, deps: "AppDeps", *, classes: list[str]) -> None:
         self._deps = deps
         self.classes: Sequence[str] = classes
@@ -120,6 +122,7 @@ class TicketVectorSource(VectorSource):
     async def find_modified_since(
         self, obj_class: str, since: datetime | None, *, page: int, page_size: int
     ) -> list[VectorRecord]:
+        # TODO: а нельзя prepare() автоматически проверять и вызвать, а не требовать это от клиентского кода?
         assert self._bundle is not None, "prepare() must run before find_modified_since()"
         tickets = await self._bundle.ticket_repo.find_modified_since(
             obj_class, since, page=page, page_size=page_size, include_private_log=True
@@ -150,7 +153,7 @@ class TicketVectorSource(VectorSource):
         max_chunk_tokens: int,
         log_entries_per_chunk: int,
     ) -> list[Chunk]:
-        ticket: Ticket = record.payload  # type: ignore[assignment]
+        ticket: Ticket = record.payload  # type: ignore[assignment] # TODO: generic type for VectorRecord.payload
         fields = await self._semantic_fields(ticket)
         fragments = [
             content
@@ -171,6 +174,7 @@ class TicketVectorSource(VectorSource):
             "title": clean_text(ticket.title),
             "description": clean_text(ticket.description),
             "solution": clean_text(ticket.solution),
+            # TODO: мы можем из айтоп сразу в тикете получать названия услуи и подкатегории (service_id_friendlyname)
             "service": clean_text(await self._names.service(ticket)),
             "subcategory": clean_text(await self._names.subcategory(ticket)),
         }

@@ -1,6 +1,6 @@
 """Setup API: runtime connection configuration — backend for the setup wizard.
 
-Connection sections (itop, llm, security, ticket_mapping) are stored through
+Connection sections (itop, llm, security, ticket_mapping, faq_mapping) are stored through
 the same ConfigStore as module config (Redis overrides > env defaults), but
 served by dedicated endpoints because secrets need special treatment:
 
@@ -20,6 +20,7 @@ from pydantic import BaseModel, ValidationError
 
 from itop_ai_assistant.config import (
     EmbeddingsConfig,
+    FaqMappingConfig,
     ItopConfig,
     LlmConfig,
     SecurityConfig,
@@ -42,6 +43,7 @@ SETUP_SECTIONS: dict[str, type[BaseModel]] = {
     "llm": LlmConfig,
     "security": SecurityConfig,
     "ticket_mapping": TicketMappingConfig,
+    "faq_mapping": FaqMappingConfig,
     # Vector store (optional infrastructure — not part of missing_setup)
     "embeddings": EmbeddingsConfig,
     "vector": VectorConfig,
