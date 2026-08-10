@@ -127,11 +127,30 @@ class TestVectorSources(VectorStatusTestCase):
         self.assertEqual(by_kind["profile"], {"kind": "profile", "visibility": "public", "optional": False})
 
     def test_classes_follow_the_saved_config(self):
-        self.client.patch("/api/setup/vector", json={"classes": {"Problem": {"index_values": []}}})
+        self.client.patch(
+            "/api/setup/vector", json={"families": {"tickets": {"classes": {"Problem": {"index_values": []}}}}}
+        )
 
         body = self.client.get("/api/vector/sources").json()
 
-        self.assertEqual(body["sources"][0]["classes"], ["Problem"])
+        by_name = {s["name"]: s for s in body["sources"]}
+        self.assertEqual(by_name["tickets"]["classes"], ["Problem"])
+
+    def test_a_family_missing_from_saved_config_still_lists_its_vocabulary(self):
+        # TASK-021: PATCH replaces the whole `families` field, so sending only
+        # `tickets` drops `faq` from the saved config entirely — the bug this
+        # fixes: a family with nothing saved (or nothing left after an admin
+        # cleared it) used to have no vocabulary to offer at all, so it could
+        # not be recovered from the UI.
+        self.client.patch("/api/setup/vector", json={"families": {"tickets": {"classes": {}}}})
+
+        body = self.client.get("/api/vector/sources").json()
+
+        by_name = {s["name"]: s for s in body["sources"]}
+        self.assertEqual(set(by_name), {"tickets", "faq"})
+        self.assertEqual(by_name["tickets"]["classes"], [])
+        self.assertEqual(by_name["faq"]["classes"], [])
+        self.assertIn("title", by_name["tickets"]["fields"])  # vocabulary survives regardless
 
     def test_no_itop_call_is_made(self):
         # Reading a declaration must not touch iTop: `prepare()` is what needs

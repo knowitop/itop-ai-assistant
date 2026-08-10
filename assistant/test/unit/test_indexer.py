@@ -4,7 +4,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
 
-from itop_ai_assistant.config import ChunkFragmentConfig, EmbeddingsConfig, VectorClassConfig, VectorConfig
+from itop_ai_assistant.config import (
+    ChunkFragmentConfig,
+    EmbeddingsConfig,
+    FamilyConfig,
+    VectorClassConfig,
+    VectorConfig,
+)
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.vector.chunker import FragmentContent, TextContent, chunk_object
 from itop_ai_assistant.vector.index_journal import IndexJournal
@@ -20,10 +26,14 @@ _LOCK_KEY = "vector:sweep:lock"
 
 _VECTOR_CFG = VectorConfig(
     enabled=True,
-    classes={
-        "UserRequest": VectorClassConfig(
-            index_values=["resolved", "closed"],
-            chunks={"body": ChunkFragmentConfig(fields=["description"])},
+    families={
+        "tickets": FamilyConfig(
+            classes={
+                "UserRequest": VectorClassConfig(
+                    index_values=["resolved", "closed"],
+                    chunks={"body": ChunkFragmentConfig(fields=["description"])},
+                )
+            }
         )
     },
     sweep_interval_seconds=300,
@@ -266,15 +276,29 @@ class TestSkips(IndexerTestCase):
         self.assertIn("lock", report.skip_reason)
         self.assertEqual(await deps.vector_journal.recent(), [])
 
-    async def test_no_source_registered_for_class_is_reported_as_ok(self):
-        # A class in cfg.classes that no registered source claims — logged
-        # and skipped, same tolerance as "no chunking profile".
-        source = FakeTicketSource([_record(1)], classes=("SomeOtherClass",))
+    async def test_no_config_entry_for_family_is_reported_as_ok(self):
+        # A source whose name matches nothing in cfg.families — logged and
+        # skipped before prepare() is ever called, same tolerance as an
+        # unrecognized family key in the saved config (TASK-021).
+        source = FakeTicketSource([_record(1)], classes=("UserRequest",), name="unknown-family")
         report = await self._run(_deps_mock(), source)
 
         self.assertEqual(report.status, "ok")
         self.assertEqual(report.objects_seen, 0)
         self.assertEqual(source.prepare_calls, 0)
+
+    async def test_class_not_in_family_config_is_skipped_after_prepare(self):
+        # Unlike a whole unrecognized family, a class the family's own config
+        # does not list is only discovered after the family itself has
+        # already been prepared — this pairing cannot arise from a real
+        # config (registry.py builds a source's classes from the same
+        # FamilyConfig), only from a source injected directly, as in tests.
+        source = FakeTicketSource([_record(1)], classes=("SomeOtherClass",), name="tickets")
+        report = await self._run(_deps_mock(), source)
+
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(report.objects_seen, 0)
+        self.assertEqual(source.prepare_calls, 1)
 
 
 class TestMultiFamily(IndexerTestCase):
@@ -283,20 +307,38 @@ class TestMultiFamily(IndexerTestCase):
     that family's classes, the same way a single class's failure already
     isolated to that class."""
 
-    async def test_two_sources_claiming_the_same_class_is_an_error(self):
+    async def test_same_class_under_two_families_is_independent(self):
+        # TASK-021 M:N: a class can be a key under several families at once,
+        # each with its own independent config — no longer a collision to
+        # guard against, since sweep goes by source, not by a merged
+        # class→source map.
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.families["tickets2"] = FamilyConfig(
+            classes={"UserRequest": VectorClassConfig(chunks={"body": ChunkFragmentConfig(fields=["description"])})}
+        )
         a = FakeTicketSource([_record(1)], classes=("UserRequest",), name="tickets")
         b = FakeTicketSource([_record(2)], classes=("UserRequest",), name="tickets2")
-        report = await self._run_sources(_deps_mock(), [a, b])
+        store = FakeChunkStore()
+        deps = _deps_mock(vector_cfg=cfg, store=store)
 
-        self.assertEqual(report.status, "error")
-        self.assertIn("UserRequest", report.errors[0])
-        self.assertIn("tickets", report.errors[0])
-        self.assertIn("tickets2", report.errors[0])
-        self.assertEqual(a.prepare_calls, 0)
+        report = await self._run_sources(deps, [a, b])
+
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(a.prepare_calls, 1)
+        self.assertEqual(b.prepare_calls, 1)
+        self.assertEqual(report.chunks_embedded, 2)
+        self.assertIn((_FAMILY, "UserRequest", 1), store.digests)
+        self.assertIn(("tickets2", "UserRequest", 2), store.digests)
 
     async def test_fingerprint_mismatch_of_one_family_does_not_block_another(self):
         cfg = _VECTOR_CFG.model_copy(deep=True)
-        cfg.classes["KnowledgeBaseArticle"] = VectorClassConfig(index_values=[], profile={"body": ["description"]})
+        cfg.families["kb_articles"] = FamilyConfig(
+            classes={
+                "KnowledgeBaseArticle": VectorClassConfig(
+                    index_values=[], chunks={"body": ChunkFragmentConfig(fields=["description"])}
+                )
+            }
+        )
         store = FakeChunkStore()
         store.ensure_version_errors = {"kb_articles": FingerprintMismatchError("dim changed")}
         tickets = FakeTicketSource([_record(1)], classes=("UserRequest",), name="tickets")
@@ -312,6 +354,48 @@ class TestMultiFamily(IndexerTestCase):
         # tickets synced despite kb_articles' fingerprint mismatch
         self.assertEqual(report.chunks_embedded, 1)
         self.assertEqual(store.upsert_calls[-1][0].meta.obj_class, "UserRequest")
+
+    async def test_generic_failure_preparing_one_family_does_not_block_another(self):
+        # Same isolation, for a plain infrastructure error rather than a
+        # fingerprint mismatch — the class docstring's "or any other failure".
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.families["kb_articles"] = FamilyConfig(
+            classes={
+                "KnowledgeBaseArticle": VectorClassConfig(chunks={"body": ChunkFragmentConfig(fields=["description"])})
+            }
+        )
+        store = FakeChunkStore()
+        store.ensure_version_errors = {"kb_articles": RuntimeError("qdrant down")}
+        tickets = FakeTicketSource([_record(1)], classes=("UserRequest",), name="tickets")
+        kb = FakeTicketSource([_record(2)], classes=("KnowledgeBaseArticle",), name="kb_articles")
+        deps = _deps_mock(vector_cfg=cfg, store=store)
+
+        report = await self._run_sources(deps, [tickets, kb])
+
+        self.assertEqual(report.status, "error")
+        self.assertIn("qdrant down", "; ".join(report.errors))
+        self.assertEqual(report.chunks_embedded, 1)
+        self.assertEqual(store.upsert_calls[-1][0].meta.obj_class, "UserRequest")
+
+    async def test_fingerprint_mismatch_reported_once_not_per_class(self):
+        # ensure_version is now called once per source, not once per class of
+        # a multi-class family — a mismatch must not produce a duplicate
+        # error for the family's second class.
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.families["tickets"].classes["Incident"] = VectorClassConfig(
+            chunks={"body": ChunkFragmentConfig(fields=["description"])}
+        )
+        store = FakeChunkStore()
+        store.ensure_version_error = FingerprintMismatchError("dim changed")
+        deps = _deps_mock(vector_cfg=cfg, store=store)
+        await deps.vector_sync.set_reconcile(datetime.now(UTC))
+        source = FakeTicketSource([_record(1)], classes=("UserRequest", "Incident"))
+
+        report = await self._run(deps, source)
+
+        self.assertEqual(report.status, "error")
+        self.assertEqual(len(report.errors), 1)
+        self.assertEqual(source.prepare_calls, 1)
 
 
 class TestSweep(IndexerTestCase):
@@ -369,7 +453,7 @@ class TestSweep(IndexerTestCase):
 
     async def test_empty_index_values_indexes_everything(self):
         cfg = _VECTOR_CFG.model_copy(deep=True)
-        cfg.classes["UserRequest"].index_values = []
+        cfg.families["tickets"].classes["UserRequest"].index_values = []
         store = FakeChunkStore()
         report = await self._run(
             _deps_mock(vector_cfg=cfg, store=store), FakeTicketSource([_record(1, index_value="new")])
@@ -510,7 +594,7 @@ class TestMetadataFreshness(IndexerTestCase):
 
     async def test_mixed_object_takes_both_paths_in_one_pass(self):
         cfg = _VECTOR_CFG.model_copy(deep=True)
-        cfg.classes["UserRequest"].chunks = {
+        cfg.families["tickets"].classes["UserRequest"].chunks = {
             "body": ChunkFragmentConfig(fields=["description"]),
             "solution": ChunkFragmentConfig(fields=["resolution"]),
         }
@@ -609,7 +693,7 @@ class TestCreationDate(IndexerTestCase):
         # nothing stored of its own and would take the current clock while its
         # siblings keep the old one.
         cfg = _VECTOR_CFG.model_copy(deep=True)
-        cfg.classes["UserRequest"].chunks = {
+        cfg.families["tickets"].classes["UserRequest"].chunks = {
             "body": ChunkFragmentConfig(fields=["description"]),
             "solution": ChunkFragmentConfig(fields=["resolution"]),
         }
@@ -642,6 +726,98 @@ class TestCreationDate(IndexerTestCase):
 
         self.assertEqual((report.chunks_embedded, report.chunks_metadata_updated), (0, 1))
         self.assertEqual(_flat(store2.update_metadata_calls)[0].created_at, real)
+
+
+class TestFamilyPacing(IndexerTestCase):
+    """TASK-021: a family with its own `sweep_interval_seconds` compares
+    against its own last-swept timestamp instead of running on every tick —
+    distinct from the per-class cursor, which tracks progress within a pass
+    the family was already included in."""
+
+    async def test_family_within_its_own_interval_is_skipped(self):
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.families["tickets"].sweep_interval_seconds = 3600
+        deps = _deps_mock(vector_cfg=cfg)
+        await deps.vector_sync.set_reconcile(datetime.now(UTC))  # isolate the sweep phase
+        await deps.vector_sync.set_family_swept("tickets", datetime.now(UTC))
+        source = FakeTicketSource([_record(1)])
+
+        report = await self._run(deps, source)
+
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(report.objects_seen, 0)
+        self.assertEqual(source.prepare_calls, 0)
+
+    async def test_family_past_its_own_interval_runs(self):
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.families["tickets"].sweep_interval_seconds = 60
+        deps = _deps_mock(vector_cfg=cfg)
+        await deps.vector_sync.set_reconcile(datetime.now(UTC))
+        await deps.vector_sync.set_family_swept("tickets", datetime.now(UTC) - timedelta(hours=1))
+        source = FakeTicketSource([_record(1)])
+
+        report = await self._run(deps, source)
+
+        self.assertEqual(report.objects_seen, 1)
+        self.assertEqual(source.prepare_calls, 1)
+
+    async def test_a_family_without_its_own_interval_is_never_paced_out(self):
+        # No override on the family — pacing must not double up on the
+        # scheduler's own tick cadence (already gated on the same
+        # system-wide interval), or an out-of-band tick ("Index now", or the
+        # scheduler firing a hair early) silently returns zero objects even
+        # though nothing about this family was ever slowed down on purpose.
+        deps = _deps_mock()
+        await deps.vector_sync.set_reconcile(datetime.now(UTC))
+        await deps.vector_sync.set_family_swept("tickets", datetime.now(UTC))
+        source = FakeTicketSource([_record(1)])
+
+        report = await self._run(deps, source)
+
+        self.assertEqual(report.objects_seen, 1)
+        self.assertEqual(source.prepare_calls, 1)
+
+    async def test_a_family_never_swept_before_is_not_skipped(self):
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.families["tickets"].sweep_interval_seconds = 3600
+        deps = _deps_mock(vector_cfg=cfg)
+        await deps.vector_sync.set_reconcile(datetime.now(UTC))
+        source = FakeTicketSource([_record(1)])
+
+        report = await self._run(deps, source)
+
+        self.assertEqual(report.objects_seen, 1)
+
+    async def test_backfill_ignores_family_pacing(self):
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.families["tickets"].sweep_interval_seconds = 3600
+        deps = _deps_mock(vector_cfg=cfg)
+        await deps.vector_sync.set_reconcile(datetime.now(UTC))
+        await deps.vector_sync.set_family_swept("tickets", datetime.now(UTC))
+        await deps.vector_sync.request_reindex()
+        source = FakeTicketSource([_record(1)])
+
+        report = await self._run(deps, source)
+
+        self.assertEqual(report.kind, "backfill")
+        self.assertEqual(report.objects_seen, 1)
+
+    async def test_family_swept_timestamp_is_set_after_a_successful_pass(self):
+        deps = _deps_mock()
+        await deps.vector_sync.set_reconcile(datetime.now(UTC))
+
+        await self._run(deps, FakeTicketSource([_record(1)]))
+
+        self.assertIsNotNone(await deps.vector_sync.get_family_swept("tickets"))
+
+    async def test_family_swept_timestamp_is_not_set_on_fingerprint_mismatch(self):
+        store = FakeChunkStore()
+        store.ensure_version_error = FingerprintMismatchError("dim changed")
+        deps = _deps_mock(store=store)
+
+        await self._run(deps, FakeTicketSource([_record(1)]))
+
+        self.assertIsNone(await deps.vector_sync.get_family_swept("tickets"))
 
 
 class TestSweepRegistration(unittest.IsolatedAsyncioTestCase):

@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 _PREFIX = "vector:"
 _CURSOR_PREFIX = f"{_PREFIX}cursor:"
+_FAMILY_SWEPT_PREFIX = f"{_PREFIX}family-swept:"
 _RECONCILE_KEY = f"{_PREFIX}reconcile"
 _REINDEX_KEY = f"{_PREFIX}reindex"
 _LOCK_KEY = f"{_PREFIX}sweep:lock"
@@ -63,6 +64,20 @@ class VectorSyncState:
         if keys:
             await self._redis.delete(*keys)
         await self._redis.delete(_REINDEX_KEY)
+
+    def _family_swept_key(self, family: str) -> str:
+        return f"{_FAMILY_SWEPT_PREFIX}{family}"
+
+    async def get_family_swept(self, family: str) -> datetime | None:
+        """When this family's classes were last actually included in a sweep
+        pass — distinct from the per-class cursor, which tracks incremental
+        progress *within* a pass. Drives per-family pacing (TASK-021): a
+        family with its own `sweep_interval_seconds` compares against this
+        instead of running on every tick."""
+        return _parse(await self._redis.get(self._family_swept_key(family)))
+
+    async def set_family_swept(self, family: str, when: datetime) -> None:
+        await self._redis.set(self._family_swept_key(family), when.isoformat())
 
     async def get_reconcile(self) -> datetime | None:
         return _parse(await self._redis.get(_RECONCILE_KEY))

@@ -5,6 +5,7 @@ import {
   Card,
   CloseButton,
   Divider,
+  Fieldset,
   Group,
   Loader,
   MultiSelect,
@@ -88,17 +89,27 @@ interface SourceInfo {
   fragments: FragmentSpec[];
 }
 
-// One fragment's settings as stored in vector.classes[<class>].chunks.
+// One fragment's settings as stored in vector.families[<family>].classes[<class>].chunks.
 interface ChunkCfg {
   fields?: string[];
   enabled?: boolean;
 }
 
-// One entry of vector.classes: per-class relevance values + fragment settings.
+// One entry of a family's classes: per-class relevance values + fragment settings.
 interface ClassCfg {
   name: string;
   indexValues: string[];
   chunks: Record<string, ChunkCfg>;
+}
+
+// One entry of vector.families: which source owns it is its own dict key,
+// never inferred — a family's classes and its two sweep overrides live
+// together because both are about the same collection (TASK-021).
+interface FamilyCfg {
+  name: string;
+  sweepIntervalSeconds: number | string;
+  logEntriesPerChunk: number | string;
+  classes: ClassCfg[];
 }
 
 // Everything wrong with one class's chunk settings that the admin must fix
@@ -107,15 +118,6 @@ interface ClassCfg {
 interface ClassProblems {
   unknownKinds: string[];
   unknownFields: string[];
-}
-
-function sourceForClass(sources: SourceInfo[], className: string): SourceInfo | null {
-  const owner = sources.find((s) => s.classes.includes(className));
-  if (owner) return owner;
-  // A class added but not saved yet is claimed by nobody. With a single
-  // registered source the answer is not in doubt; with several it is, and
-  // guessing would put the wrong vocabulary in front of the admin.
-  return sources.length === 1 ? sources[0] : null;
 }
 
 function classProblems(cfg: ClassCfg, source: SourceInfo | null): ClassProblems {
@@ -424,12 +426,12 @@ function VectorSettingsForm() {
   const [reconcileDays, setReconcileDays] = useState<number | string>('');
   const [maxChunkTokens, setMaxChunkTokens] = useState<number | string>('');
   const [logEntries, setLogEntries] = useState<number | string>('');
-  // Per-class settings. Which source owns a class — and therefore which
-  // fragments and fields it offers — comes from /vector/sources, never from
-  // a list kept here.
-  const [classCfgs, setClassCfgs] = useState<ClassCfg[]>([]);
+  // Per-family settings, one section per registered source (never guessed —
+  // /vector/sources always lists every registered family, TASK-021).
+  const [families, setFamilies] = useState<FamilyCfg[]>([]);
   const [sources, setSources] = useState<SourceInfo[]>([]);
-  const [newClass, setNewClass] = useState('');
+  // One pending "new class name" input per family section.
+  const [newClassByFamily, setNewClassByFamily] = useState<Record<string, string>>({});
 
   const load = async () => {
     const [data, vocab] = await Promise.all([
@@ -444,17 +446,35 @@ function VectorSettingsForm() {
     setReconcileDays((data.values.reconcile_interval_days as number) ?? '');
     setMaxChunkTokens((data.values.max_chunk_tokens as number) ?? '');
     setLogEntries((data.values.log_entries_per_chunk as number) ?? '');
-    const classes =
-      (data.values.classes as Record<
+    const saved =
+      (data.values.families as Record<
         string,
-        { index_values?: string[]; chunks?: Record<string, ChunkCfg> }
+        {
+          classes?: Record<string, { index_values?: string[]; chunks?: Record<string, ChunkCfg> }>;
+          sweep_interval_seconds?: number;
+          log_entries_per_chunk?: number;
+        }
       >) ?? {};
-    setClassCfgs(
-      Object.entries(classes).map(([name, cfg]) => ({
-        name,
-        indexValues: cfg.index_values ?? [],
-        chunks: cfg.chunks ?? {},
-      })),
+    // Every registered source gets a section even with nothing saved under it
+    // yet — same reasoning as /vector/sources itself: a family emptied by
+    // mistake must stay recoverable from the UI. A name saved but no longer
+    // registered (a source removed from the code) still shows, flagged by
+    // FamilyCard as unknown, so its data is never silently dropped on save.
+    const names = [...new Set([...vocab.sources.map((s) => s.name), ...Object.keys(saved)])];
+    setFamilies(
+      names.map((name) => {
+        const f = saved[name] ?? {};
+        return {
+          name,
+          sweepIntervalSeconds: f.sweep_interval_seconds ?? '',
+          logEntriesPerChunk: f.log_entries_per_chunk ?? '',
+          classes: Object.entries(f.classes ?? {}).map(([cname, ccfg]) => ({
+            name: cname,
+            indexValues: ccfg.index_values ?? [],
+            chunks: ccfg.chunks ?? {},
+          })),
+        };
+      }),
     );
     setLoaded(true);
   };
@@ -463,21 +483,30 @@ function VectorSettingsForm() {
     load().catch((e: Error) => setError(e.message));
   }, []);
 
-  const updateClass = (i: number, patch: Partial<ClassCfg>) =>
-    setClassCfgs((prev) => prev.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+  const updateFamilyClasses = (familyName: string, fn: (classes: ClassCfg[]) => ClassCfg[]) =>
+    setFamilies((prev) => prev.map((f) => (f.name === familyName ? { ...f, classes: fn(f.classes) } : f)));
 
-  const removeClass = (i: number) => setClassCfgs((prev) => prev.filter((_, j) => j !== i));
+  const updateFamilyField = (familyName: string, patch: Partial<Omit<FamilyCfg, 'name' | 'classes'>>) =>
+    setFamilies((prev) => prev.map((f) => (f.name === familyName ? { ...f, ...patch } : f)));
 
-  const addClass = () => {
-    const name = newClass.trim();
-    if (!name || classCfgs.some((c) => c.name === name)) return;
-    setClassCfgs((prev) => [...prev, { name, indexValues: [], chunks: {} }]);
-    setNewClass('');
+  const updateClass = (familyName: string, i: number, patch: Partial<ClassCfg>) =>
+    updateFamilyClasses(familyName, (classes) => classes.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+
+  const removeClass = (familyName: string, i: number) =>
+    updateFamilyClasses(familyName, (classes) => classes.filter((_, j) => j !== i));
+
+  const addClass = (familyName: string) => {
+    const name = (newClassByFamily[familyName] ?? '').trim();
+    if (!name) return;
+    updateFamilyClasses(familyName, (classes) =>
+      classes.some((c) => c.name === name) ? classes : [...classes, { name, indexValues: [], chunks: {} }],
+    );
+    setNewClassByFamily((prev) => ({ ...prev, [familyName]: '' }));
   };
 
-  const setChunk = (i: number, kind: string, entry: ChunkCfg | null) =>
-    setClassCfgs((prev) =>
-      prev.map((c, j) => {
+  const setChunk = (familyName: string, i: number, kind: string, entry: ChunkCfg | null) =>
+    updateFamilyClasses(familyName, (classes) =>
+      classes.map((c, j) => {
         if (j !== i) return c;
         const chunks = { ...c.chunks };
         if (entry === null) delete chunks[kind];
@@ -486,20 +515,31 @@ function VectorSettingsForm() {
       }),
     );
 
-  const problems = classCfgs.map((c) => classProblems(c, sourceForClass(sources, c.name)));
-  const blocked = problems.some((p) => p.unknownKinds.length > 0 || p.unknownFields.length > 0);
+  const sourceByName = new Map(sources.map((s) => [s.name, s]));
+  const problemsByFamily = families.map((f) => {
+    const source = sourceByName.get(f.name) ?? null;
+    return f.classes.map((c) => classProblems(c, source));
+  });
+  const blocked = problemsByFamily.some((probs) =>
+    probs.some((p) => p.unknownKinds.length > 0 || p.unknownFields.length > 0),
+  );
 
   const save = async () => {
-    const classes: Record<string, unknown> = {};
-    for (const c of classCfgs) {
-      classes[c.name] = { index_values: c.indexValues, chunks: c.chunks };
+    const familiesPayload: Record<string, unknown> = {};
+    for (const f of families) {
+      const classes: Record<string, unknown> = {};
+      for (const c of f.classes) classes[c.name] = { index_values: c.indexValues, chunks: c.chunks };
+      const entry: Record<string, unknown> = { classes };
+      if (f.sweepIntervalSeconds !== '') entry.sweep_interval_seconds = Number(f.sweepIntervalSeconds);
+      if (f.logEntriesPerChunk !== '') entry.log_entries_per_chunk = Number(f.logEntriesPerChunk);
+      familiesPayload[f.name] = entry;
     }
-    // The classes dict is always sent — an empty dict is a meaningful value
-    // under PATCH-merge (removes all classes); empty numbers keep the stored
-    // value.
+    // families is always sent in full — an empty dict is a meaningful value
+    // under PATCH-merge (removes every family); empty numbers keep the
+    // stored value.
     const b: Record<string, unknown> = {
       enabled,
-      classes,
+      families: familiesPayload,
     };
     if (sweepInterval !== '') b.sweep_interval_seconds = Number(sweepInterval);
     if (sweepPageSize !== '') b.sweep_page_size = Number(sweepPageSize);
@@ -592,28 +632,24 @@ function VectorSettingsForm() {
       <Text c="dimmed" size="sm">
         {t('vector.fragments_explainer')}
       </Text>
-      {classCfgs.map((c, i) => (
-        <ClassCard
-          key={c.name}
-          cfg={c}
-          source={sourceForClass(sources, c.name)}
-          problems={problems[i]}
-          onIndexValues={(values) => updateClass(i, { indexValues: values })}
-          onChunk={(kind, entry) => setChunk(i, kind, entry)}
-          onRemove={() => removeClass(i)}
+      <Text c="dimmed" size="sm">
+        {t('vector.families_explainer')}
+      </Text>
+      {families.map((f, fi) => (
+        <FamilyCard
+          key={f.name}
+          family={f}
+          source={sourceByName.get(f.name) ?? null}
+          problems={problemsByFamily[fi]}
+          newClassValue={newClassByFamily[f.name] ?? ''}
+          onNewClassChange={(value) => setNewClassByFamily((prev) => ({ ...prev, [f.name]: value }))}
+          onAddClass={() => addClass(f.name)}
+          onFieldChange={(patch) => updateFamilyField(f.name, patch)}
+          onIndexValues={(i, values) => updateClass(f.name, i, { indexValues: values })}
+          onChunk={(i, kind, entry) => setChunk(f.name, i, kind, entry)}
+          onRemoveClass={(i) => removeClass(f.name, i)}
         />
       ))}
-      <Group align="flex-end">
-        <TextInput
-          placeholder={t('vector.add_class_placeholder')}
-          value={newClass}
-          onChange={(e) => setNewClass(e.currentTarget.value)}
-          maw={280}
-        />
-        <Button variant="default" onClick={addClass}>
-          {t('vector.btn_add_class')}
-        </Button>
-      </Group>
       <Group>
         <Button onClick={save} loading={busy} disabled={blocked}>
           {t('common.btn_save')}
@@ -623,6 +659,77 @@ function VectorSettingsForm() {
         </Button>
       </Group>
     </Stack>
+  );
+}
+
+function FamilyCard({
+  family,
+  source,
+  problems,
+  newClassValue,
+  onNewClassChange,
+  onAddClass,
+  onFieldChange,
+  onIndexValues,
+  onChunk,
+  onRemoveClass,
+}: {
+  family: FamilyCfg;
+  source: SourceInfo | null;
+  problems: ClassProblems[];
+  newClassValue: string;
+  onNewClassChange: (value: string) => void;
+  onAddClass: () => void;
+  onFieldChange: (patch: Partial<Omit<FamilyCfg, 'name' | 'classes'>>) => void;
+  onIndexValues: (classIndex: number, values: string[]) => void;
+  onChunk: (classIndex: number, kind: string, entry: ChunkCfg | null) => void;
+  onRemoveClass: (classIndex: number) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Fieldset legend={t(labelKey('source', family.name), { defaultValue: family.name })}>
+      <Stack gap="sm">
+        {source === null && <Alert color="orange">{t('vector.family_source_unknown')}</Alert>}
+        <Group grow>
+          <NumberInput
+            label={t('vector.field_family_sweep_interval')}
+            description={t('vector.field_family_override_desc')}
+            min={1}
+            value={family.sweepIntervalSeconds}
+            onChange={(value) => onFieldChange({ sweepIntervalSeconds: value })}
+          />
+          <NumberInput
+            label={t('vector.field_family_log_entries')}
+            description={t('vector.field_family_override_desc')}
+            min={1}
+            value={family.logEntriesPerChunk}
+            onChange={(value) => onFieldChange({ logEntriesPerChunk: value })}
+          />
+        </Group>
+        {family.classes.map((c, i) => (
+          <ClassCard
+            key={c.name}
+            cfg={c}
+            source={source}
+            problems={problems[i]}
+            onIndexValues={(values) => onIndexValues(i, values)}
+            onChunk={(kind, entry) => onChunk(i, kind, entry)}
+            onRemove={() => onRemoveClass(i)}
+          />
+        ))}
+        <Group align="flex-end">
+          <TextInput
+            placeholder={t('vector.add_class_placeholder')}
+            value={newClassValue}
+            onChange={(e) => onNewClassChange(e.currentTarget.value)}
+            maw={280}
+          />
+          <Button variant="default" onClick={onAddClass}>
+            {t('vector.btn_add_class')}
+          </Button>
+        </Group>
+      </Stack>
+    </Fieldset>
   );
 }
 
@@ -652,14 +759,7 @@ function ClassCard({
     <Card withBorder>
       <Stack gap="xs">
         <Group justify="space-between">
-          <Group gap={6}>
-            <Text fw={600}>{cfg.name}</Text>
-            {source && (
-              <Badge variant="light" color="gray">
-                {t(labelKey('source', source.name), { defaultValue: source.name })}
-              </Badge>
-            )}
-          </Group>
+          <Text fw={600}>{cfg.name}</Text>
           <CloseButton onClick={onRemove} />
         </Group>
         <TagsInput
@@ -668,9 +768,7 @@ function ClassCard({
           value={cfg.indexValues}
           onChange={onIndexValues}
         />
-        {source === null ? (
-          <Alert color="orange">{t('vector.class_source_unknown')}</Alert>
-        ) : (
+        {source &&
           source.fragments.map((fragment) => (
             <FragmentRow
               key={fragment.kind}
@@ -679,8 +777,7 @@ function ClassCard({
               entry={cfg.chunks[fragment.kind]}
               onChange={(entry) => onChunk(fragment.kind, entry)}
             />
-          ))
-        )}
+          ))}
         {problems.unknownKinds.map((kind) => (
           <Alert key={kind} color="red" p="xs">
             <Group justify="space-between" wrap="nowrap">

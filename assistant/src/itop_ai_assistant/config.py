@@ -355,7 +355,10 @@ class ChunkFragmentConfig(BaseModel):
 
 
 class VectorClassConfig(BaseModel):
-    """Per-class vector index settings (one entry per indexed object class).
+    """Per-class vector index settings (one entry per indexed object class,
+    nested under the family — `vector.families[<family>].classes[<class>]` —
+    that owns it, ADR-015/TASK-021: the family, not the class, is the real
+    unit of grouping everywhere else in the architecture).
 
     Every indexed class must expose a last-modification datetime and a
     "relevance" attribute — the VectorSource contract (`vector/source.py`).
@@ -387,6 +390,29 @@ _FAQ_CHUNKS = {
 }
 
 
+class FamilyConfig(BaseModel):
+    """Per-family vector index settings — one entry per `VectorSource.name`
+    (ADR-015: one collection per family, `dev-docs/tasks/TASK-021-*`).
+
+    The family, not the class, is the unit `sweep_interval_seconds` and
+    `log_entries_per_chunk` actually belong to: both are about how one
+    collection's sweep behaves (incremental cursor overlap, log-window
+    chunking), and a source without a cheap incremental scan (FAQ has no
+    `last_update`) may want a slower cadence than the rest of the deployment
+    without slowing everything else down.
+    """
+
+    # Classes this family indexes, each with its own relevance values and
+    # chunk fragment settings. The family key must match a registered
+    # `VectorSource.name` (`vector_sources/registry.py`) to do anything —
+    # same tolerance as an unknown class today: a key that matches nothing
+    # is logged and skipped, not rejected.
+    classes: dict[str, VectorClassConfig] = {}
+    # None = use VectorConfig's system-wide value.
+    sweep_interval_seconds: int | None = Field(default=None, gt=0)
+    log_entries_per_chunk: int | None = Field(default=None, gt=0)
+
+
 class VectorConfig(BaseModel):
     """Vector index settings — infrastructure section "vector" (setup API).
 
@@ -396,14 +422,24 @@ class VectorConfig(BaseModel):
     """
 
     enabled: bool = False
-    # Indexed object classes with their per-class settings
-    classes: dict[str, VectorClassConfig] = {
-        "UserRequest": VectorClassConfig(index_values=["resolved", "closed"], chunks=_TICKET_CHUNKS),
-        "Incident": VectorClassConfig(index_values=["resolved", "closed"], chunks=_TICKET_CHUNKS),
-        # No status attribute for FAQ in stock iTop — [] indexes every article
-        # (ADR-005: "no attribute to filter by" degrades to "index everything",
-        # not an error). Set explicit values if a deployment adds a status.
-        "FAQ": VectorClassConfig(index_values=[], chunks=_FAQ_CHUNKS),
+    # Indexed families (one Qdrant collection each, ADR-015) with their
+    # per-family settings.
+    families: dict[str, FamilyConfig] = {
+        "tickets": FamilyConfig(
+            classes={
+                "UserRequest": VectorClassConfig(index_values=["resolved", "closed"], chunks=_TICKET_CHUNKS),
+                "Incident": VectorClassConfig(index_values=["resolved", "closed"], chunks=_TICKET_CHUNKS),
+            }
+        ),
+        "faq": FamilyConfig(
+            classes={
+                # No status attribute for FAQ in stock iTop — [] indexes every
+                # article (ADR-005: "no attribute to filter by" degrades to
+                # "index everything", not an error). Set explicit values if a
+                # deployment adds a status.
+                "FAQ": VectorClassConfig(index_values=[], chunks=_FAQ_CHUNKS),
+            }
+        ),
     }
     sweep_interval_seconds: int = Field(default=300, gt=0)
     sweep_page_size: int = Field(default=100, gt=0)

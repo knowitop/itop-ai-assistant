@@ -169,11 +169,16 @@ class TestVectorConfig(unittest.TestCase):
     def test_disabled_by_default(self):
         cfg = VectorConfig()
         self.assertFalse(cfg.enabled)
-        self.assertEqual(list(cfg.classes), ["UserRequest", "Incident", "FAQ"])
-        self.assertEqual(cfg.classes["UserRequest"].index_values, ["resolved", "closed"])
-        self.assertEqual(cfg.classes["UserRequest"].chunks["body"].fields, ["description"])
-        self.assertEqual(cfg.classes["FAQ"].index_values, [])  # no status attribute in stock iTop
-        self.assertEqual(cfg.classes["FAQ"].chunks["body"].fields, ["description"])
+        self.assertEqual(list(cfg.families), ["tickets", "faq"])
+        tickets = cfg.families["tickets"].classes
+        self.assertEqual(list(tickets), ["UserRequest", "Incident"])
+        self.assertEqual(tickets["UserRequest"].index_values, ["resolved", "closed"])
+        self.assertEqual(tickets["UserRequest"].chunks["body"].fields, ["description"])
+        faq = cfg.families["faq"].classes
+        self.assertEqual(faq["FAQ"].index_values, [])  # no status attribute in stock iTop
+        self.assertEqual(faq["FAQ"].chunks["body"].fields, ["description"])
+        self.assertIsNone(cfg.families["tickets"].sweep_interval_seconds)
+        self.assertIsNone(cfg.families["tickets"].log_entries_per_chunk)
 
     def test_qdrant_url_defaults_to_none(self):
         with patch.dict(os.environ, _REQUIRED, clear=True):

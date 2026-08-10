@@ -57,7 +57,7 @@ _LOG_SOURCES = {"log:public": "public_log", "log:private": "private_log"}
 class TicketVectorSource(VectorSource[Ticket]):
     """VectorSource implementation for iTop tickets.
 
-    `classes` is taken verbatim from `vector.classes` at construction time —
+    `classes` is taken verbatim from `vector.families.tickets.classes` at construction time —
     `TicketRepository` is itself generic over any class the deployment's
     `ticket_mapping` covers, so this source imposes no class list of its own.
 

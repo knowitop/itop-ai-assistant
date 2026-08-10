@@ -148,9 +148,11 @@ async def vector_sources(request: Request) -> dict:
         "sources": [
             {
                 "name": source.name,
-                # As claimed today, i.e. derived from the saved config — a
-                # class nobody claims has no vocabulary to offer (TASK-016
-                # owns the class → source model).
+                # Every registered family is always present, whether or not it
+                # currently has classes configured — recovering a class an
+                # admin removed by mistake needs the family's vocabulary to
+                # still be here, not just the classes still saved (TASK-021;
+                # `vector_sources/registry.py::build_vector_sources`).
                 "classes": list(source.classes),
                 "fields": list(source.fields),
                 "fragments": [asdict(fragment) for fragment in source.fragments],

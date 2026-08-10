@@ -39,8 +39,8 @@ class FaqVectorSource(VectorSource[FaqArticle]):
     semantic `status`, the modification date is `last_update` — both mapped
     to actual iTop attributes by `FaqMappingConfig`, both unmapped by default.
     Stock iTop's `FAQ` class carries neither a lifecycle status nor any date
-    attribute at all: `vector.classes.FAQ.index_values` is `[]` (every article
-    stays in the index) and `FaqRepository.find_modified_since` always does a
+    attribute at all: `vector.families.faq.classes.FAQ.index_values` is `[]`
+    (every article stays in the index) and `FaqRepository.find_modified_since` always does a
     full scan (see its docstring) — a deployment whose `FAQ` does carry either
     can map it and set `index_values` explicitly.
 

@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
+from itop_ai_assistant.config import EmbeddingsConfig, FamilyConfig, VectorClassConfig, VectorConfig
 from itop_ai_assistant.deps import AppDeps
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.vector.chunker import Chunk
@@ -150,10 +150,8 @@ class VectorIndexer:
                 # attempt that fails earlier leaves the request standing
                 await self._deps.vector_sync.reset_cursors()
             sources = self._sources if self._sources is not None else build_vector_sources(self._deps, cfg)
-            class_to_source = _class_to_source(sources)
-            # A class→source map can send several classes to the same source
-            # instance (tickets) — `prepared` makes sure that instance's
-            # `prepare()` still runs exactly once for this pass.
+            # A source may be prepared once here and again by reconcile below,
+            # in the same pass — `prepared` keeps that to one call per source.
             prepared: set[int] = set()
 
             async def ensure_prepared(source: VectorSource[Any]) -> None:
@@ -161,45 +159,70 @@ class VectorIndexer:
                     await source.prepare()
                     prepared.add(id(source))
 
-            # One IndexMeta per family, resolved lazily on that family's first
-            # class in this pass — not once for the whole sweep (D3/D4,
-            # TASK-008): several classes can share a family (tickets), and a
-            # fingerprint mismatch on one family must not block the others.
-            meta_by_family: dict[str, IndexMeta] = {}
-            for obj_class in cfg.classes:
-                source = class_to_source.get(obj_class)
-                if source is None:
-                    logger.warning(f"vector sweep: no source registered for class {obj_class!r} — skipping the class")
-                    continue
+            for source in sources:
                 family = source.name
+                family_cfg = cfg.families.get(family)
+                if family_cfg is None:
+                    logger.warning(f"vector sweep: no config entry for family {family!r} — skipping")
+                    continue
+                if not source.classes:
+                    continue
+                # Only a family with its *own* interval gets paced against
+                # its last real pass — the scheduler's own tick cadence
+                # already enforces the system-wide interval, so gating an
+                # un-overridden family here too would double up on the same
+                # value and could skip an out-of-band tick ("Index now", or
+                # the scheduler firing a hair early) that arrives before a
+                # full system interval has elapsed since the last one.
+                if not full and family_cfg.sweep_interval_seconds is not None:
+                    last_swept = await self._deps.vector_sync.get_family_swept(family)
+                    if last_swept is not None and started_at - last_swept < timedelta(
+                        seconds=family_cfg.sweep_interval_seconds
+                    ):
+                        continue
                 try:
                     await ensure_prepared(source)
-                    meta = meta_by_family.get(family)
-                    if meta is None:
-                        meta = await store.ensure_version(
-                            family, model, emb_cfg.dimension, filter_keys=source.indexed_filter_keys
-                        )
-                        meta_by_family[family] = meta
-                    await self._sweep_class(
-                        obj_class,
-                        family=family,
-                        source=source,
-                        store=store,
-                        meta=meta,
-                        embedder=embedder,
-                        cfg=cfg,
-                        report=report,
-                        started_at=started_at,
+                    meta = await store.ensure_version(
+                        family, model, emb_cfg.dimension, filter_keys=source.indexed_filter_keys
                     )
                 except FingerprintMismatchError as e:
                     logger.error(f"vector sweep: index rebuild required for family {family!r}: {e}")
                     report.errors.append(f"rebuild required: {e}")
+                    continue
                 except Exception as e:
-                    # Class isolation: this class's cursor stays put, others proceed
-                    logger.exception(f"vector sweep: class {obj_class} failed")
-                    report.errors.append(f"{obj_class}: {e}")
+                    # Family isolation, same as the per-class catch below:
+                    # this family's classes stay untouched, others proceed.
+                    logger.exception(f"vector sweep: family {family!r} failed")
+                    report.errors.append(f"{family}: {e}")
+                    continue
+                for obj_class in source.classes:
+                    class_cfg = family_cfg.classes.get(obj_class)
+                    if class_cfg is None:
+                        logger.warning(
+                            f"vector sweep: no config for class {obj_class!r} under family {family!r} — skipping"
+                        )
+                        continue
+                    try:
+                        await self._sweep_class(
+                            obj_class,
+                            family=family,
+                            source=source,
+                            store=store,
+                            meta=meta,
+                            embedder=embedder,
+                            cfg=cfg,
+                            family_cfg=family_cfg,
+                            class_cfg=class_cfg,
+                            report=report,
+                            started_at=started_at,
+                        )
+                    except Exception as e:
+                        # Class isolation: this class's cursor stays put, others proceed
+                        logger.exception(f"vector sweep: class {obj_class} failed")
+                        report.errors.append(f"{obj_class}: {e}")
+                await self._deps.vector_sync.set_family_swept(family, started_at)
             if not report.errors and await self._reconcile_due(cfg):
-                await self._reconcile(store, class_to_source, cfg, report, ensure_prepared)
+                await self._reconcile(store, sources, cfg, report, ensure_prepared)
         except Exception as e:
             logger.exception("vector sweep failed")
             report.errors.append(str(e))
@@ -228,17 +251,20 @@ class VectorIndexer:
         meta: IndexMeta,
         embedder: EmbeddingsClient,
         cfg: VectorConfig,
+        family_cfg: FamilyConfig,
+        class_cfg: VectorClassConfig,
         report: SweepReport,
         started_at: datetime,
     ) -> None:
-        class_cfg = cfg.classes[obj_class]
         if not class_cfg.chunks:
             logger.warning(f"vector sweep: no chunk fragments configured for {obj_class} — skipping the class")
             return
+        interval = family_cfg.sweep_interval_seconds or cfg.sweep_interval_seconds
+        log_entries_per_chunk = family_cfg.log_entries_per_chunk or cfg.log_entries_per_chunk
         cursor = await self._deps.vector_sync.get_cursor(obj_class)
         # Overlap covers pages drifting while a previous pass ran; derived
-        # from the interval instead of being one more config knob
-        since = cursor - timedelta(seconds=2 * cfg.sweep_interval_seconds) if cursor else None
+        # from the family's own interval instead of being one more config knob
+        since = cursor - timedelta(seconds=2 * interval) if cursor else None
         max_seen = cursor
         page = 1
         while True:
@@ -262,7 +288,7 @@ class VectorIndexer:
                     record,
                     class_cfg,
                     max_chunk_tokens=cfg.max_chunk_tokens,
-                    log_entries_per_chunk=cfg.log_entries_per_chunk,
+                    log_entries_per_chunk=log_entries_per_chunk,
                 )
                 stored = await store.get_chunk_digests(family, obj_class, record.obj_id)
                 # Object-level once, chunk-level per chunk — `stored` is read
@@ -311,35 +337,39 @@ class VectorIndexer:
     async def _reconcile(
         self,
         store: ChunkStore,
-        class_to_source: dict[str, VectorSource[Any]],
+        sources: Sequence[VectorSource[Any]],
         cfg: VectorConfig,
         report: SweepReport,
         ensure_prepared: Callable[[VectorSource[Any]], Awaitable[None]],
     ) -> None:
         """Delete chunks of objects that no longer exist at their source
-        (deleted or archived — invisible to the incremental sweep)."""
+        (deleted or archived — invisible to the incremental sweep).
+
+        Runs on its own cadence (`reconcile_interval_days`), not the
+        per-family pacing the sweep above applies — every configured class of
+        every source is reconciled every time it is due."""
         journal_id = await self._journal_start("reconcile")
         seen = deleted = 0
         status = "ok"
         error: str | None = None
         try:
-            for obj_class in cfg.classes:
-                source = class_to_source.get(obj_class)
-                if source is None:
+            for source in sources:
+                family = source.name
+                if family not in cfg.families or not source.classes:
                     continue
                 await ensure_prepared(source)
-                family = source.name
-                after = 0
-                while True:
-                    ids = await store.list_object_ids(family, obj_class, after=after, limit=_RECONCILE_BATCH)
-                    if not ids:
-                        break
-                    seen += len(ids)
-                    existing = await source.find_existing_ids(obj_class, ids)
-                    for orphan in sorted(set(ids) - existing):
-                        deleted += await store.delete_object(family, obj_class, orphan)
-                    after = ids[-1]
-                    await asyncio.sleep(cfg.sweep_throttle_seconds)
+                for obj_class in source.classes:
+                    after = 0
+                    while True:
+                        ids = await store.list_object_ids(family, obj_class, after=after, limit=_RECONCILE_BATCH)
+                        if not ids:
+                            break
+                        seen += len(ids)
+                        existing = await source.find_existing_ids(obj_class, ids)
+                        for orphan in sorted(set(ids) - existing):
+                            deleted += await store.delete_object(family, obj_class, orphan)
+                        after = ids[-1]
+                        await asyncio.sleep(cfg.sweep_throttle_seconds)
             await self._deps.vector_sync.set_reconcile(datetime.now(UTC))
         except Exception as e:
             logger.exception("vector reconciliation failed")
@@ -451,17 +481,3 @@ def _creation_date(
     if indexed:
         return min(indexed)
     return record.updated_at or started_at
-
-
-def _class_to_source(sources: Sequence[VectorSource[Any]]) -> dict[str, VectorSource[Any]]:
-    """Map each claimed class to its one source, refusing a class claimed
-    twice instead of letting a later source silently shadow an earlier one
-    (today impossible — one source per class — but not guarded against)."""
-    class_to_source: dict[str, VectorSource[Any]] = {}
-    for source in sources:
-        for obj_class in source.classes:
-            existing = class_to_source.get(obj_class)
-            if existing is not None:
-                raise ValueError(f"class {obj_class!r} is claimed by both {existing.name!r} and {source.name!r}")
-            class_to_source[obj_class] = source
-    return class_to_source

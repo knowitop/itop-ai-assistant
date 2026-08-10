@@ -14,7 +14,7 @@ datetime (`VectorRecord.updated_at` — drives the sweep cursor) and (b) a
 whether the object belongs in the index. Which attributes those are is the
 source's own mapping concern (for tickets: semantic `status`/`updated_at`
 via `ticket_mapping`); the per-class value lists live in
-`vector.classes[<class>].index_values`.
+`vector.families[<family>].classes[<class>].index_values`.
 
 A source also declares its own chunking vocabulary — `fields` and
 `fragments` (ADR-018). That declaration is what the admin UI renders its
@@ -71,7 +71,8 @@ class VectorRecord(Generic[T]):
 
     obj_id: int
     # Current value of the class's relevance attribute (status for tickets) —
-    # compared against `vector.classes[<class>].index_values` by the indexer
+    # compared against `vector.families[<family>].classes[<class>].index_values`
+    # by the indexer
     index_value: str
     updated_at: datetime | None
     created_at: datetime | None
@@ -117,8 +118,8 @@ class VectorSource(Protocol[T]):
 
         Must include objects that left the indexable scope (e.g. status
         changed) so the indexer can delete their chunks — no relevance filter
-        here, `vector.classes[<class>].index_values` is applied by the
-        caller."""
+        here, `vector.families[<family>].classes[<class>].index_values` is
+        applied by the caller."""
         ...
 
     async def find_existing_ids(self, obj_class: str, ids: list[int]) -> set[int]:

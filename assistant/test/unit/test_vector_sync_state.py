@@ -46,6 +46,34 @@ class TestCursors(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await state.reindex_pending())
 
 
+class TestFamilySwept(unittest.IsolatedAsyncioTestCase):
+    async def test_unset_reads_as_none(self):
+        state, _ = _make_state()
+
+        self.assertIsNone(await state.get_family_swept("tickets"))
+
+    async def test_round_trips_with_timezone(self):
+        state, _ = _make_state()
+
+        await state.set_family_swept("tickets", _NOW)
+
+        self.assertEqual(await state.get_family_swept("tickets"), _NOW)
+
+    async def test_families_are_independent(self):
+        state, _ = _make_state()
+
+        await state.set_family_swept("tickets", _NOW)
+
+        self.assertIsNone(await state.get_family_swept("faq"))
+
+    async def test_not_listed_among_cursors(self):
+        state, _ = _make_state()
+        await state.set_cursor("UserRequest", _NOW)
+        await state.set_family_swept("tickets", _NOW)
+
+        self.assertEqual(await state.list_cursors(), {"UserRequest": _NOW})
+
+
 class TestReindexRequest(unittest.IsolatedAsyncioTestCase):
     async def test_request_survives_the_process_that_made_it(self):
         # The point of storing it in Redis: whichever replica wins the lock acts on it

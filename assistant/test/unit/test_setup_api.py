@@ -206,20 +206,26 @@ class TestSetupSections(SetupApiTestCase):
         self.assertEqual(response.status_code, 422)
 
     def test_vector_section_is_editable(self):
-        classes = {"UserRequest": {"index_values": ["resolved"], "chunks": {"body": {"fields": ["description"]}}}}
-        response = self.client.patch("/api/setup/vector", json={"enabled": True, "classes": classes})
+        families = {
+            "tickets": {
+                "classes": {
+                    "UserRequest": {"index_values": ["resolved"], "chunks": {"body": {"fields": ["description"]}}}
+                }
+            }
+        }
+        response = self.client.patch("/api/setup/vector", json={"enabled": True, "families": families})
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["values"]["enabled"])
-        saved = response.json()["values"]["classes"]["UserRequest"]
+        saved = response.json()["values"]["families"]["tickets"]["classes"]["UserRequest"]
         self.assertEqual(saved["index_values"], ["resolved"])
         self.assertEqual(saved["chunks"]["body"], {"fields": ["description"], "enabled": True})
         # No secrets in this section
         self.assertEqual(response.json()["secrets"], {})
 
-    def test_vector_legacy_classes_list_rejected(self):
-        # Pre-per-class schema: classes was a plain list — must 422 now
-        response = self.client.patch("/api/setup/vector", json={"classes": ["UserRequest"]})
+    def test_vector_families_list_rejected(self):
+        # families is a dict keyed by family name, not a plain list — must 422
+        response = self.client.patch("/api/setup/vector", json={"families": ["tickets"]})
         self.assertEqual(response.status_code, 422)
 
     def test_status_includes_embeddings_but_missing_unchanged(self):
