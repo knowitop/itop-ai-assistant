@@ -54,7 +54,7 @@ FRAGMENTS = (
 _LOG_SOURCES = {"log:public": "public_log", "log:private": "private_log"}
 
 
-class TicketVectorSource(VectorSource):
+class TicketVectorSource(VectorSource[Ticket]):
     """VectorSource implementation for iTop tickets.
 
     `classes` is taken verbatim from `vector.classes` at construction time —
@@ -89,7 +89,7 @@ class TicketVectorSource(VectorSource):
 
     async def find_modified_since(
         self, obj_class: str, since: datetime | None, *, page: int, page_size: int
-    ) -> list[VectorRecord]:
+    ) -> list[VectorRecord[Ticket]]:
         assert self._ticket_repo is not None, "prepare() must run before find_modified_since()"
         tickets = await self._ticket_repo.find_modified_since(
             obj_class, since, page=page, page_size=page_size, include_private_log=True
@@ -114,13 +114,13 @@ class TicketVectorSource(VectorSource):
     async def chunk(
         self,
         obj_class: str,
-        record: VectorRecord,
+        record: VectorRecord[Ticket],
         cfg: VectorClassConfig,
         *,
         max_chunk_tokens: int,
         log_entries_per_chunk: int,
     ) -> list[Chunk]:
-        ticket: Ticket = record.payload  # type: ignore[assignment] # TODO: generic type for VectorRecord.payload
+        ticket = record.payload
         fields = self._semantic_fields(ticket)
         fragments = [
             content

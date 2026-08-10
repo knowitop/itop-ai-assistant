@@ -5,7 +5,7 @@ Adding a new source: create `src/vector_sources/<name>.py` implementing
 `pipelines/registry.py` for webhook modules.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from itop_ai_assistant.config import VectorConfig
 
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from itop_ai_assistant.vector.source import VectorSource
 
 
-def build_vector_sources(deps: "AppDeps", cfg: VectorConfig) -> list["VectorSource"]:
+def build_vector_sources(deps: "AppDeps", cfg: VectorConfig) -> list["VectorSource[Any]"]:
     from itop_ai_assistant.vector_sources.faq import FaqVectorSource
     from itop_ai_assistant.vector_sources.tickets import TicketVectorSource
 
@@ -22,7 +22,7 @@ def build_vector_sources(deps: "AppDeps", cfg: VectorConfig) -> list["VectorSour
     # only with the ones it actually owns (TASK-016 — the first time a
     # second source exists, so this split used to be unconditional).
     ticket_classes = [c for c in cfg.classes if c != "FAQ"]
-    sources: list["VectorSource"] = []
+    sources: list["VectorSource[Any]"] = []
     if ticket_classes:
         sources.append(TicketVectorSource(deps.itop.ticket_repo, classes=ticket_classes))
     if "FAQ" in cfg.classes:

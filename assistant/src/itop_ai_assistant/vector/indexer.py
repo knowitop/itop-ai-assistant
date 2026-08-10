@@ -30,6 +30,7 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
 from itop_ai_assistant.deps import AppDeps
@@ -102,7 +103,7 @@ class VectorIndexer:
     mocking iTop/repository internals.
     """
 
-    def __init__(self, deps: AppDeps, sources: Sequence[VectorSource] | None = None) -> None:
+    def __init__(self, deps: AppDeps, sources: Sequence[VectorSource[Any]] | None = None) -> None:
         self._deps = deps
         self._sources = list(sources) if sources is not None else None
 
@@ -155,7 +156,7 @@ class VectorIndexer:
             # `prepare()` still runs exactly once for this pass.
             prepared: set[int] = set()
 
-            async def ensure_prepared(source: VectorSource) -> None:
+            async def ensure_prepared(source: VectorSource[Any]) -> None:
                 if id(source) not in prepared:
                     await source.prepare()
                     prepared.add(id(source))
@@ -222,7 +223,7 @@ class VectorIndexer:
         obj_class: str,
         *,
         family: str,
-        source: VectorSource,
+        source: VectorSource[Any],
         store: ChunkStore,
         meta: IndexMeta,
         embedder: EmbeddingsClient,
@@ -246,7 +247,7 @@ class VectorIndexer:
             # rewrites, vanished chunk keys) — embedding is batched per page: one
             # embed() call for every changed chunk
             pending: list[
-                tuple[VectorRecord, list[tuple[Chunk, ChunkMetadata]], list[ChunkMetadata], list[tuple[str, int]]]
+                tuple[VectorRecord[Any], list[tuple[Chunk, ChunkMetadata]], list[ChunkMetadata], list[tuple[str, int]]]
             ] = []
             for record in records:
                 report.objects_seen += 1
@@ -310,10 +311,10 @@ class VectorIndexer:
     async def _reconcile(
         self,
         store: ChunkStore,
-        class_to_source: dict[str, VectorSource],
+        class_to_source: dict[str, VectorSource[Any]],
         cfg: VectorConfig,
         report: SweepReport,
-        ensure_prepared: Callable[[VectorSource], Awaitable[None]],
+        ensure_prepared: Callable[[VectorSource[Any]], Awaitable[None]],
     ) -> None:
         """Delete chunks of objects that no longer exist at their source
         (deleted or archived — invisible to the incremental sweep)."""
@@ -405,7 +406,7 @@ class _ObjectMetadata:
 
 def _object_metadata(
     obj_class: str,
-    record: VectorRecord,
+    record: VectorRecord[Any],
     stored: dict[tuple[str, int], ChunkDigest],
     started_at: datetime,
 ) -> _ObjectMetadata:
@@ -422,7 +423,9 @@ def _object_metadata(
     )
 
 
-def _creation_date(record: VectorRecord, stored: dict[tuple[str, int], ChunkDigest], started_at: datetime) -> datetime:
+def _creation_date(
+    record: VectorRecord[Any], stored: dict[tuple[str, int], ChunkDigest], started_at: datetime
+) -> datetime:
     """When the object came into being, as the index will remember it.
 
     The source's own date if it has one. Otherwise whatever the object's
@@ -450,11 +453,11 @@ def _creation_date(record: VectorRecord, stored: dict[tuple[str, int], ChunkDige
     return record.updated_at or started_at
 
 
-def _class_to_source(sources: Sequence[VectorSource]) -> dict[str, VectorSource]:
+def _class_to_source(sources: Sequence[VectorSource[Any]]) -> dict[str, VectorSource[Any]]:
     """Map each claimed class to its one source, refusing a class claimed
     twice instead of letting a later source silently shadow an earlier one
     (today impossible — one source per class — but not guarded against)."""
-    class_to_source: dict[str, VectorSource] = {}
+    class_to_source: dict[str, VectorSource[Any]] = {}
     for source in sources:
         for obj_class in source.classes:
             existing = class_to_source.get(obj_class)

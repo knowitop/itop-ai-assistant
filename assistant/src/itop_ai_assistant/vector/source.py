@@ -25,10 +25,16 @@ person editing raw config.
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Generic, Protocol, TypeVar
 
 from itop_ai_assistant.config import VectorClassConfig
 from itop_ai_assistant.vector.chunker import Chunk
+
+# The source's own payload type (e.g. `Ticket`, `FaqArticle`) — carried through
+# `VectorRecord`/`VectorSource` so each source's `chunk()` gets it back typed,
+# with the indexer itself (which only ever sees `VectorSource[Any]`) none the
+# wiser.
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -54,12 +60,13 @@ class FragmentSpec:
 
 
 @dataclass(frozen=True)
-class VectorRecord:
+class VectorRecord(Generic[T]):
     """One object as returned by a source's sweep page: identity and the
     fields the generic indexer needs to decide what to embed/delete.
 
-    `payload` is opaque to the indexer — whatever the source's own `chunk()`
-    needs to build the object's chunks (e.g. the domain `Ticket`).
+    `payload` is opaque to the indexer (which only ever handles
+    `VectorRecord[Any]`) — whatever the source's own `chunk()` needs to build
+    the object's chunks (e.g. the domain `Ticket`), typed back for it via `T`.
     """
 
     obj_id: int
@@ -68,16 +75,22 @@ class VectorRecord:
     index_value: str
     updated_at: datetime | None
     created_at: datetime | None
+    payload: T
     org_id: str | None = None
     # Source-defined pre-filter keys stored as-is in the chunk rows' `filters`
     # column (e.g. {"service_id": "5"} for tickets) — short scalar values
     # only, see vector/models.py.
     filters: dict[str, str] | None = None
-    payload: object = None
 
 
-class VectorSource(Protocol):
-    """One pluggable content source the vector indexer can sweep."""
+class VectorSource(Protocol[T]):
+    """One pluggable content source the vector indexer can sweep.
+
+    Generic over its own payload type `T` (e.g. `Ticket`, `FaqArticle`) so a
+    concrete source's `chunk()` gets `record.payload` back typed, with no
+    cast — the indexer itself stores sources as `VectorSource[Any]`, since it
+    never touches `payload`.
+    """
 
     name: str
     classes: Sequence[str]  # obj_class values this source currently owns
@@ -99,7 +112,7 @@ class VectorSource(Protocol):
 
     async def find_modified_since(
         self, obj_class: str, since: datetime | None, *, page: int, page_size: int
-    ) -> list[VectorRecord]:
+    ) -> list[VectorRecord[T]]:
         """One page of objects modified at/after `since` (None = full scan).
 
         Must include objects that left the indexable scope (e.g. status
@@ -115,7 +128,7 @@ class VectorSource(Protocol):
     async def chunk(
         self,
         obj_class: str,
-        record: VectorRecord,
+        record: VectorRecord[T],
         cfg: VectorClassConfig,
         *,
         max_chunk_tokens: int,

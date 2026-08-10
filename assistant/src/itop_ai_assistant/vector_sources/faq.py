@@ -32,7 +32,7 @@ FRAGMENTS = (
 )
 
 
-class FaqVectorSource(VectorSource):
+class FaqVectorSource(VectorSource[FaqArticle]):
     """VectorSource implementation for iTop FAQ articles.
 
     Source contract (`vector/source.py`): the relevance attribute is the
@@ -71,7 +71,7 @@ class FaqVectorSource(VectorSource):
 
     async def find_modified_since(
         self, obj_class: str, since: datetime | None, *, page: int, page_size: int
-    ) -> list[VectorRecord]:
+    ) -> list[VectorRecord[FaqArticle]]:
         assert self._faq_repo is not None, "prepare() must run before find_modified_since()"
         articles = await self._faq_repo.find_modified_since(since, page=page, page_size=page_size)
         return [
@@ -93,13 +93,13 @@ class FaqVectorSource(VectorSource):
     async def chunk(
         self,
         obj_class: str,
-        record: VectorRecord,
+        record: VectorRecord[FaqArticle],
         cfg: VectorClassConfig,
         *,
         max_chunk_tokens: int,
         log_entries_per_chunk: int,
     ) -> list[Chunk]:
-        article: FaqArticle = record.payload  # type: ignore[assignment]
+        article = record.payload
         fields = self._semantic_fields(article)
         fragments = [
             content
