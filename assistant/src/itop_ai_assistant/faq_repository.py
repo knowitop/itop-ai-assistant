@@ -4,7 +4,7 @@ from datetime import datetime
 from itop_ai_assistant.config import FaqMappingConfig
 from itop_ai_assistant.domain.faq import FaqArticle
 from itop_ai_assistant.itop_client import Itop
-from itop_ai_assistant.text_utils import ITOP_DATETIME_FORMAT, bind_oql, parse_itop_dt
+from itop_ai_assistant.text_utils import ITOP_DATETIME_FORMAT, parse_itop_dt
 
 
 class FaqRepository:
@@ -56,15 +56,15 @@ class FaqRepository:
         """
         fields = self.mapping.fields.model_dump()
         last_update_attr = fields.get("last_update")
-        if last_update_attr is None or since is None:
-            oql = "SELECT FAQ"
-        else:
-            oql = bind_oql(
-                f"SELECT FAQ WHERE {last_update_attr} >= :this->since",
-                {"since": since.strftime(ITOP_DATETIME_FORMAT)},
-            )
+        query = (
+            {}
+            if last_update_attr is None or since is None
+            else {last_update_attr: (">=", since.strftime(ITOP_DATETIME_FORMAT))}
+        )
         attrs = [attr for attr in fields.values() if attr]
-        rows = await self._itop.schema("FAQ").find(oql, projection=["id", *attrs], limit=str(page_size), page=str(page))
+        rows = await self._itop.schema("FAQ").find(
+            query, projection=["id", *attrs], limit=str(page_size), page=str(page)
+        )
         return [self.to_article(row) for row in rows]
 
     async def find_existing_ids(self, ids: list[int]) -> set[int]:

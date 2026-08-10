@@ -5,7 +5,7 @@ from datetime import datetime
 from itop_ai_assistant.config import TicketMappingConfig
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.itop_client import Itop
-from itop_ai_assistant.text_utils import ITOP_DATETIME_FORMAT, bind_oql, parse_itop_dt
+from itop_ai_assistant.text_utils import ITOP_DATETIME_FORMAT, parse_itop_dt
 
 logger = logging.getLogger(__name__)
 
@@ -90,15 +90,7 @@ class TicketRepository:
         last_update_attr = fields.get("last_update")
         if last_update_attr is None:
             raise ValueError(f"'last_update' is not mapped for class {obj_class}")
-        if since is None:
-            query = f"SELECT {obj_class}"
-        else:
-            # TODO: почему мы тут пишем OQL? Нет в библиотеке метода, куда условия фильтра попдают как параметры?
-            #  Вот так должно работать по идее: query = {last_update_attr: ('>=', since.strftime(ITOP_DATETIME_FORMAT))}
-            query = bind_oql(
-                f"SELECT {obj_class} WHERE {last_update_attr} >= :this->since",
-                {"since": since.strftime(ITOP_DATETIME_FORMAT)},
-            )
+        query = {} if since is None else {last_update_attr: (">=", since.strftime(ITOP_DATETIME_FORMAT))}
         excluded = set() if include_private_log else {"private_log"}
         attrs = [attr for semantic, attr in fields.items() if attr and semantic not in excluded]
         rows = await self._itop.schema(obj_class).find(

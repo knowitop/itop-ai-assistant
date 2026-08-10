@@ -96,7 +96,7 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
 
         articles = await repo.find_modified_since(datetime(2026, 7, 10, 12, 0, tzinfo=UTC), page=2, page_size=50)
 
-        self.assertEqual(schema.find.await_args.args[0], "SELECT FAQ")
+        self.assertEqual(schema.find.await_args.args[0], {})
         self.assertEqual(schema.find.await_args.kwargs["limit"], "50")
         self.assertEqual(schema.find.await_args.kwargs["page"], "2")
         self.assertEqual(articles[0].id, "42")
@@ -107,7 +107,7 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
 
         await repo.find_modified_since(None, page=1, page_size=100)
 
-        self.assertEqual(schema.find.await_args.args[0], "SELECT FAQ")
+        self.assertEqual(schema.find.await_args.args[0], {})
 
     async def test_mapped_last_update_filters_and_has_no_status_predicate(self):
         mapping = FaqMappingConfig(fields=FaqFieldMap(last_update="my_date"))
@@ -116,9 +116,9 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
 
         await repo.find_modified_since(datetime(2026, 7, 10, 12, 0, tzinfo=UTC), page=1, page_size=100)
 
-        oql = schema.find.await_args.args[0]
-        self.assertEqual(oql, 'SELECT FAQ WHERE my_date >= "2026-07-10 12:00:00"')
-        self.assertNotIn("status", oql)
+        query = schema.find.await_args.args[0]
+        self.assertEqual(query, {"my_date": (">=", "2026-07-10 12:00:00")})
+        self.assertNotIn("status", query)
 
 
 class TestFindExistingIds(unittest.IsolatedAsyncioTestCase):
