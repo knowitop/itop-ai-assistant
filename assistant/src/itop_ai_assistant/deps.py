@@ -63,9 +63,9 @@ class ItopProvider:
 
     async def get(self) -> ItopBundle:
         itop_cfg = await self._config_store.get("itop", ItopConfig)
-        mapping = await self._config_store.get("ticket_mapping", TicketMappingConfig)
+        ticket_mapping = await self._config_store.get("ticket_mapping", TicketMappingConfig)
         faq_mapping = await self._config_store.get("faq_mapping", FaqMappingConfig)
-        fingerprint = itop_cfg.model_dump_json() + mapping.model_dump_json() + faq_mapping.model_dump_json()
+        fingerprint = itop_cfg.model_dump_json() + ticket_mapping.model_dump_json() + faq_mapping.model_dump_json()
         async with self._rebuild_lock:
             if self._bundle is None or fingerprint != self._fingerprint:
                 if self._bundle is not None:
@@ -73,7 +73,7 @@ class ItopProvider:
                 client = create_itop_client(itop_cfg)
                 self._bundle = ItopBundle(
                     client=client,
-                    ticket_repo=TicketRepository(client, mapping),
+                    ticket_repo=TicketRepository(client, ticket_mapping),
                     catalog_repo=CatalogRepository(client),
                     access_repo=AccessRepository(client),
                     faq_repo=FaqRepository(client, faq_mapping),
@@ -81,6 +81,15 @@ class ItopProvider:
                 self._fingerprint = fingerprint
                 self._ai_person_name = None
             return self._bundle
+
+    async def ticket_repo(self) -> TicketRepository:
+        """The plain-connection `ticket_repo` — narrower than `get()` for a
+        caller that needs only this one repository, not the whole bundle."""
+        return (await self.get()).ticket_repo
+
+    async def faq_repo(self) -> FaqRepository:
+        """Same narrowing as `ticket_repo()`, for `FaqRepository`."""
+        return (await self.get()).faq_repo
 
     async def for_principal(self, principal: Principal, *, comment: str) -> ItopBundle:
         """The same connection, seen as this principal. One run, one bundle.

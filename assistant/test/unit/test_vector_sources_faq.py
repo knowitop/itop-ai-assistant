@@ -39,18 +39,17 @@ def _article(**overrides) -> FaqArticle:
     return FaqArticle(**fields)
 
 
-def _deps_with_bundle() -> tuple[MagicMock, MagicMock]:
-    bundle = MagicMock()
-    deps = MagicMock()
-    deps.itop.get = AsyncMock(return_value=bundle)
-    return deps, bundle
+def _faq_repo_factory() -> tuple[AsyncMock, MagicMock]:
+    faq_repo = MagicMock()
+    get_faq_repo = AsyncMock(return_value=faq_repo)
+    return get_faq_repo, faq_repo
 
 
 class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
     async def test_maps_article_fields_onto_vector_record(self):
-        deps, bundle = _deps_with_bundle()
-        bundle.faq_repo.find_modified_since = AsyncMock(return_value=[_article()])
-        source = FaqVectorSource(deps, classes=["FAQ"])
+        get_faq_repo, faq_repo = _faq_repo_factory()
+        faq_repo.find_modified_since = AsyncMock(return_value=[_article()])
+        source = FaqVectorSource(get_faq_repo, classes=["FAQ"])
         await source.prepare()
 
         records = await source.find_modified_since("FAQ", None, page=1, page_size=100)
@@ -64,34 +63,34 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.payload.id, "1")
 
     async def test_delegates_to_the_repository(self):
-        deps, bundle = _deps_with_bundle()
-        bundle.faq_repo.find_modified_since = AsyncMock(return_value=[_article()])
-        source = FaqVectorSource(deps, classes=["FAQ"])
+        get_faq_repo, faq_repo = _faq_repo_factory()
+        faq_repo.find_modified_since = AsyncMock(return_value=[_article()])
+        source = FaqVectorSource(get_faq_repo, classes=["FAQ"])
         await source.prepare()
 
         await source.find_modified_since("FAQ", None, page=1, page_size=100)
 
-        bundle.faq_repo.find_modified_since.assert_awaited_once_with(None, page=1, page_size=100)
+        faq_repo.find_modified_since.assert_awaited_once_with(None, page=1, page_size=100)
 
 
 class TestFindExistingIds(unittest.IsolatedAsyncioTestCase):
     async def test_delegates_to_the_repository(self):
-        deps, bundle = _deps_with_bundle()
-        bundle.faq_repo.find_existing_ids = AsyncMock(return_value={1, 2})
-        source = FaqVectorSource(deps, classes=["FAQ"])
+        get_faq_repo, faq_repo = _faq_repo_factory()
+        faq_repo.find_existing_ids = AsyncMock(return_value={1, 2})
+        source = FaqVectorSource(get_faq_repo, classes=["FAQ"])
         await source.prepare()
 
         result = await source.find_existing_ids("FAQ", [1, 2, 3])
 
         self.assertEqual(result, {1, 2})
-        bundle.faq_repo.find_existing_ids.assert_awaited_once_with([1, 2, 3])
+        faq_repo.find_existing_ids.assert_awaited_once_with([1, 2, 3])
 
 
 class TestChunk(unittest.IsolatedAsyncioTestCase):
     async def test_builds_profile_and_body_chunks(self):
-        deps, bundle = _deps_with_bundle()
-        bundle.faq_repo.find_modified_since = AsyncMock(return_value=[_article()])
-        source = FaqVectorSource(deps, classes=["FAQ"])
+        get_faq_repo, faq_repo = _faq_repo_factory()
+        faq_repo.find_modified_since = AsyncMock(return_value=[_article()])
+        source = FaqVectorSource(get_faq_repo, classes=["FAQ"])
         await source.prepare()
         [record] = await source.find_modified_since("FAQ", None, page=1, page_size=100)
 
@@ -112,16 +111,16 @@ class TestDeclaration(unittest.IsolatedAsyncioTestCase):
     fragments in the editor that quietly produce nothing."""
 
     async def _chunk(self, cfg: VectorClassConfig, article: FaqArticle | None = None):
-        deps, bundle = _deps_with_bundle()
-        bundle.faq_repo.find_modified_since = AsyncMock(return_value=[article or _article()])
-        source = FaqVectorSource(deps, classes=["FAQ"])
+        get_faq_repo, faq_repo = _faq_repo_factory()
+        faq_repo.find_modified_since = AsyncMock(return_value=[article or _article()])
+        source = FaqVectorSource(get_faq_repo, classes=["FAQ"])
         await source.prepare()
         [record] = await source.find_modified_since("FAQ", None, page=1, page_size=100)
         return await source.chunk("FAQ", record, cfg, max_chunk_tokens=100, log_entries_per_chunk=5)
 
     async def test_declared_fields_are_exactly_the_chunkable_ones(self):
-        deps, bundle = _deps_with_bundle()
-        source = FaqVectorSource(deps, classes=["FAQ"])
+        get_faq_repo, faq_repo = _faq_repo_factory()
+        source = FaqVectorSource(get_faq_repo, classes=["FAQ"])
         await source.prepare()
 
         fields = source._semantic_fields(_article())
@@ -152,16 +151,19 @@ class TestDeclaration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self._chunk(cfg), [])
 
 
-class TestNoPrincipal(unittest.IsolatedAsyncioTestCase):
-    async def test_the_sweep_takes_the_plain_connection(self):
+class TestPrepare(unittest.IsolatedAsyncioTestCase):
+    async def test_resolves_the_repo_from_the_factory(self):
         """No run, no principal: the sweep is infrastructure, and the index it
-        builds is global on purpose. Acting as somebody would be the mistake."""
-        deps, _ = _deps_with_bundle()
+        builds is global on purpose. Not tested here as behavior — this class
+        is only ever given `ItopProvider.faq_repo` (`registry.py`), which
+        never touches `for_principal`, so there is nothing else it could do."""
+        get_faq_repo, faq_repo = _faq_repo_factory()
+        source = FaqVectorSource(get_faq_repo, classes=["FAQ"])
 
-        await FaqVectorSource(deps, classes=["FAQ"]).prepare()
+        await source.prepare()
 
-        deps.itop.get.assert_awaited_once_with()
-        deps.itop.for_principal.assert_not_called()
+        get_faq_repo.assert_awaited_once_with()
+        self.assertIs(source._faq_repo, faq_repo)
 
 
 if __name__ == "__main__":

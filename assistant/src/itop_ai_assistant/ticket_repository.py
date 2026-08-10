@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 
 from itop_ai_assistant.config import TicketMappingConfig
@@ -140,3 +141,9 @@ class TicketRepository:
             {"id": ticket.id},
             {attr_code: {"add_item": {"message": message, "format": "text"}}},
         )
+
+
+# The shape of "a way to fetch a fresh `TicketRepository`" — declared once
+# here so a caller that needs one imports this instead of redeclaring the
+# same `Callable[[], Awaitable[TicketRepository]]`.
+type TicketRepoFactory = Callable[[], Awaitable[TicketRepository]]

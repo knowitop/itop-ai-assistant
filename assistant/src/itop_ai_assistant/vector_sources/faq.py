@@ -9,15 +9,12 @@ log fragments (an FAQ article has no conversation to index).
 import logging
 from collections.abc import Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
 from itop_ai_assistant.domain.faq import FaqArticle
+from itop_ai_assistant.faq_repository import FaqRepoFactory, FaqRepository
 from itop_ai_assistant.vector.chunker import Chunk, FragmentContent, TextContent, chunk_object, clean_text
 from itop_ai_assistant.vector.source import FragmentSpec, VectorRecord, VectorSource
-
-if TYPE_CHECKING:
-    from itop_ai_assistant.deps import AppDeps, ItopBundle
 
 logger = logging.getLogger(__name__)
 
@@ -61,22 +58,22 @@ class FaqVectorSource(VectorSource):
     fields = FIELDS
     fragments = FRAGMENTS
 
-    def __init__(self, deps: "AppDeps", *, classes: list[str]) -> None:
-        self._deps = deps
+    def __init__(self, get_faq_repo: FaqRepoFactory, *, classes: list[str]) -> None:
+        self._get_faq_repo = get_faq_repo
         self.classes: Sequence[str] = classes
-        self._bundle: "ItopBundle | None" = None
+        self._faq_repo: FaqRepository | None = None
 
     async def prepare(self) -> None:
         # The plain connection, not a principal's view of it — see
         # `TicketVectorSource.prepare` for the same reasoning: the sweep is
         # not a run, and the index it builds is global by design.
-        self._bundle = await self._deps.itop.get()
+        self._faq_repo = await self._get_faq_repo()
 
     async def find_modified_since(
         self, obj_class: str, since: datetime | None, *, page: int, page_size: int
     ) -> list[VectorRecord]:
-        assert self._bundle is not None, "prepare() must run before find_modified_since()"
-        articles = await self._bundle.faq_repo.find_modified_since(since, page=page, page_size=page_size)
+        assert self._faq_repo is not None, "prepare() must run before find_modified_since()"
+        articles = await self._faq_repo.find_modified_since(since, page=page, page_size=page_size)
         return [
             VectorRecord(
                 obj_id=int(article.id),
@@ -90,8 +87,8 @@ class FaqVectorSource(VectorSource):
         ]
 
     async def find_existing_ids(self, obj_class: str, ids: list[int]) -> set[int]:
-        assert self._bundle is not None, "prepare() must run before find_existing_ids()"
-        return await self._bundle.faq_repo.find_existing_ids(ids)
+        assert self._faq_repo is not None, "prepare() must run before find_existing_ids()"
+        return await self._faq_repo.find_existing_ids(ids)
 
     async def chunk(
         self,

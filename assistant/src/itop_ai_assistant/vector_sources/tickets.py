@@ -9,10 +9,10 @@ Wraps `TicketRepository` behind the generic `VectorSource` protocol
 import logging
 from collections.abc import Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING
 
 from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
+from itop_ai_assistant.ticket_repository import TicketRepoFactory, TicketRepository
 from itop_ai_assistant.vector.chunker import (
     Chunk,
     FragmentContent,
@@ -22,9 +22,6 @@ from itop_ai_assistant.vector.chunker import (
     clean_text,
 )
 from itop_ai_assistant.vector.source import FragmentSpec, VectorRecord, VectorSource
-
-if TYPE_CHECKING:
-    from itop_ai_assistant.deps import AppDeps, ItopBundle
 
 logger = logging.getLogger(__name__)
 
@@ -76,26 +73,25 @@ class TicketVectorSource(VectorSource):
     fields = FIELDS
     fragments = FRAGMENTS
 
-    # TODO: плохая идея везде передавать AppDeps. Теряется понимание использования зависимостей (кто и кого где использует).
-    #  Тут нужен только ItopProvider, а передаём сюда все зависимости сразу зачем-то.
-    def __init__(self, deps: "AppDeps", *, classes: list[str]) -> None:
-        self._deps = deps
+    def __init__(self, get_ticket_repo: TicketRepoFactory, *, classes: list[str]) -> None:
+        self._get_ticket_repo = get_ticket_repo
         self.classes: Sequence[str] = classes
-        self._bundle: "ItopBundle | None" = None
+        self._ticket_repo: TicketRepository | None = None
 
     async def prepare(self) -> None:
         # The plain connection, not a principal's view of it: the sweep is not a
         # run — no journal entry, nobody to act for — and the index it builds is
         # global by design (`dev-docs/architecture/platform.md` §3.5). What a searcher may see
-        # is decided later, by resolving hits under their own token.
-        self._bundle = await self._deps.itop.get()
+        # is decided later, by resolving hits under their own token. Not just by
+        # convention: `get_ticket_repo` is bound to `ItopProvider.ticket_repo`,
+        # which never touches `for_principal` — this class has no way to reach it.
+        self._ticket_repo = await self._get_ticket_repo()
 
     async def find_modified_since(
         self, obj_class: str, since: datetime | None, *, page: int, page_size: int
     ) -> list[VectorRecord]:
-        # TODO: а нельзя prepare() автоматически проверять и вызвать, а не требовать это от клиентского кода?
-        assert self._bundle is not None, "prepare() must run before find_modified_since()"
-        tickets = await self._bundle.ticket_repo.find_modified_since(
+        assert self._ticket_repo is not None, "prepare() must run before find_modified_since()"
+        tickets = await self._ticket_repo.find_modified_since(
             obj_class, since, page=page, page_size=page_size, include_private_log=True
         )
         return [
@@ -112,8 +108,8 @@ class TicketVectorSource(VectorSource):
         ]
 
     async def find_existing_ids(self, obj_class: str, ids: list[int]) -> set[int]:
-        assert self._bundle is not None, "prepare() must run before find_existing_ids()"
-        return await self._bundle.ticket_repo.find_existing_ids(obj_class, ids)
+        assert self._ticket_repo is not None, "prepare() must run before find_existing_ids()"
+        return await self._ticket_repo.find_existing_ids(obj_class, ids)
 
     async def chunk(
         self,

@@ -1,3 +1,4 @@
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 
 from itop_ai_assistant.config import FaqMappingConfig
@@ -73,3 +74,9 @@ class FaqRepository:
         id_list = ",".join(str(int(i)) for i in ids)
         rows = await self._itop.schema("FAQ").find(f"SELECT FAQ WHERE id IN ({id_list})", projection=["id"])
         return {int(row["id"]) for row in rows}
+
+
+# Same reasoning as `TicketRepoFactory` in `ticket_repository.py`: the shape
+# of "a way to fetch a fresh `FaqRepository`", declared once instead of
+# redeclared by each caller.
+type FaqRepoFactory = Callable[[], Awaitable[FaqRepository]]

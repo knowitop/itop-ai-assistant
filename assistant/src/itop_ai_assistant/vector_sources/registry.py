@@ -24,7 +24,7 @@ def build_vector_sources(deps: "AppDeps", cfg: VectorConfig) -> list["VectorSour
     ticket_classes = [c for c in cfg.classes if c != "FAQ"]
     sources: list["VectorSource"] = []
     if ticket_classes:
-        sources.append(TicketVectorSource(deps, classes=ticket_classes))
+        sources.append(TicketVectorSource(deps.itop.ticket_repo, classes=ticket_classes))
     if "FAQ" in cfg.classes:
-        sources.append(FaqVectorSource(deps, classes=["FAQ"]))
+        sources.append(FaqVectorSource(deps.itop.faq_repo, classes=["FAQ"]))
     return sources

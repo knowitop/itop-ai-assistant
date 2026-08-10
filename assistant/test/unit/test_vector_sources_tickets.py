@@ -42,18 +42,17 @@ def _ticket(**overrides) -> Ticket:
     return Ticket(**fields)
 
 
-def _deps_with_bundle() -> tuple[MagicMock, MagicMock]:
-    bundle = MagicMock()
-    deps = MagicMock()
-    deps.itop.get = AsyncMock(return_value=bundle)
-    return deps, bundle
+def _ticket_repo_factory() -> tuple[AsyncMock, MagicMock]:
+    ticket_repo = MagicMock()
+    get_ticket_repo = AsyncMock(return_value=ticket_repo)
+    return get_ticket_repo, ticket_repo
 
 
 class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
     async def test_maps_ticket_fields_onto_vector_record(self):
-        deps, bundle = _deps_with_bundle()
-        bundle.ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket()])
-        source = TicketVectorSource(deps, classes=["UserRequest"])
+        get_ticket_repo, ticket_repo = _ticket_repo_factory()
+        ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket()])
+        source = TicketVectorSource(get_ticket_repo, classes=["UserRequest"])
         await source.prepare()
 
         records = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
@@ -67,21 +66,21 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.payload.id, "1")
 
     async def test_requests_private_log_from_the_repository(self):
-        deps, bundle = _deps_with_bundle()
-        bundle.ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket()])
-        source = TicketVectorSource(deps, classes=["UserRequest"])
+        get_ticket_repo, ticket_repo = _ticket_repo_factory()
+        ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket()])
+        source = TicketVectorSource(get_ticket_repo, classes=["UserRequest"])
         await source.prepare()
 
         await source.find_modified_since("UserRequest", None, page=1, page_size=100)
 
-        bundle.ticket_repo.find_modified_since.assert_awaited_once_with(
+        ticket_repo.find_modified_since.assert_awaited_once_with(
             "UserRequest", None, page=1, page_size=100, include_private_log=True
         )
 
     async def test_filters_none_when_no_service(self):
-        deps, bundle = _deps_with_bundle()
-        bundle.ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket(service_id="0")])
-        source = TicketVectorSource(deps, classes=["UserRequest"])
+        get_ticket_repo, ticket_repo = _ticket_repo_factory()
+        ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket(service_id="0")])
+        source = TicketVectorSource(get_ticket_repo, classes=["UserRequest"])
         await source.prepare()
 
         records = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
@@ -91,22 +90,22 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
 
 class TestFindExistingIds(unittest.IsolatedAsyncioTestCase):
     async def test_delegates_to_ticket_repo(self):
-        deps, bundle = _deps_with_bundle()
-        bundle.ticket_repo.find_existing_ids = AsyncMock(return_value={1, 2})
-        source = TicketVectorSource(deps, classes=["UserRequest"])
+        get_ticket_repo, ticket_repo = _ticket_repo_factory()
+        ticket_repo.find_existing_ids = AsyncMock(return_value={1, 2})
+        source = TicketVectorSource(get_ticket_repo, classes=["UserRequest"])
         await source.prepare()
 
         result = await source.find_existing_ids("UserRequest", [1, 2, 3])
 
         self.assertEqual(result, {1, 2})
-        bundle.ticket_repo.find_existing_ids.assert_awaited_once_with("UserRequest", [1, 2, 3])
+        ticket_repo.find_existing_ids.assert_awaited_once_with("UserRequest", [1, 2, 3])
 
 
 class TestChunk(unittest.IsolatedAsyncioTestCase):
     async def test_builds_profile_and_body_chunks_with_service_names(self):
-        deps, bundle = _deps_with_bundle()
-        bundle.ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket()])
-        source = TicketVectorSource(deps, classes=["UserRequest"])
+        get_ticket_repo, ticket_repo = _ticket_repo_factory()
+        ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket()])
+        source = TicketVectorSource(get_ticket_repo, classes=["UserRequest"])
         await source.prepare()
         [record] = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
 
@@ -118,15 +117,15 @@ class TestChunk(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(by_kind["body"].text, "Not printing.")
 
     async def test_public_log_entries_labeled_by_caller_name(self):
-        deps, bundle = _deps_with_bundle()
+        get_ticket_repo, ticket_repo = _ticket_repo_factory()
         ticket = _ticket(
             public_log=[
                 LogEntry(user_login="John Doe", message="I have a problem"),
                 LogEntry(user_login="Jane Agent", message="Looking into it"),
             ]
         )
-        bundle.ticket_repo.find_modified_since = AsyncMock(return_value=[ticket])
-        source = TicketVectorSource(deps, classes=["UserRequest"])
+        ticket_repo.find_modified_since = AsyncMock(return_value=[ticket])
+        source = TicketVectorSource(get_ticket_repo, classes=["UserRequest"])
         await source.prepare()
         [record] = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
 
@@ -137,10 +136,10 @@ class TestChunk(unittest.IsolatedAsyncioTestCase):
         self.assertIn("agent: Looking into it", log_chunk.text)
 
     async def test_private_log_entries_labeled_by_caller_name(self):
-        deps, bundle = _deps_with_bundle()
+        get_ticket_repo, ticket_repo = _ticket_repo_factory()
         ticket = _ticket(private_log=[LogEntry(user_login="Jane Agent", message="Ordered a replacement part")])
-        bundle.ticket_repo.find_modified_since = AsyncMock(return_value=[ticket])
-        source = TicketVectorSource(deps, classes=["UserRequest"])
+        ticket_repo.find_modified_since = AsyncMock(return_value=[ticket])
+        source = TicketVectorSource(get_ticket_repo, classes=["UserRequest"])
         await source.prepare()
         [record] = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
 
@@ -158,16 +157,16 @@ class TestDeclaration(unittest.IsolatedAsyncioTestCase):
     fragments in the editor that quietly produce nothing."""
 
     async def _chunk(self, cfg: VectorClassConfig, ticket: Ticket | None = None):
-        deps, bundle = _deps_with_bundle()
-        bundle.ticket_repo.find_modified_since = AsyncMock(return_value=[ticket or _ticket()])
-        source = TicketVectorSource(deps, classes=["UserRequest"])
+        get_ticket_repo, ticket_repo = _ticket_repo_factory()
+        ticket_repo.find_modified_since = AsyncMock(return_value=[ticket or _ticket()])
+        source = TicketVectorSource(get_ticket_repo, classes=["UserRequest"])
         await source.prepare()
         [record] = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
         return await source.chunk("UserRequest", record, cfg, max_chunk_tokens=100, log_entries_per_chunk=5)
 
     async def test_declared_fields_are_exactly_the_chunkable_ones(self):
-        deps, _ = _deps_with_bundle()
-        source = TicketVectorSource(deps, classes=["UserRequest"])
+        get_ticket_repo, _ = _ticket_repo_factory()
+        source = TicketVectorSource(get_ticket_repo, classes=["UserRequest"])
         await source.prepare()
 
         fields = source._semantic_fields(_ticket())
@@ -239,16 +238,19 @@ class TestConversation(unittest.TestCase):
         self.assertEqual(result, ["caller: hi", "agent: hello"])
 
 
-class TestNoPrincipal(unittest.IsolatedAsyncioTestCase):
-    async def test_the_sweep_takes_the_plain_connection(self):
+class TestPrepare(unittest.IsolatedAsyncioTestCase):
+    async def test_resolves_the_repo_from_the_factory(self):
         """No run, no principal: the sweep is infrastructure, and the index it
-        builds is global on purpose. Acting as somebody would be the mistake."""
-        deps, _ = _deps_with_bundle()
+        builds is global on purpose. Not tested here as behavior — this class
+        is only ever given `ItopProvider.ticket_repo` (`registry.py`), which
+        never touches `for_principal`, so there is nothing else it could do."""
+        get_ticket_repo, ticket_repo = _ticket_repo_factory()
+        source = TicketVectorSource(get_ticket_repo, classes=["UserRequest"])
 
-        await TicketVectorSource(deps, classes=["UserRequest"]).prepare()
+        await source.prepare()
 
-        deps.itop.get.assert_awaited_once_with()
-        deps.itop.for_principal.assert_not_called()
+        get_ticket_repo.assert_awaited_once_with()
+        self.assertIs(source._ticket_repo, ticket_repo)
 
 
 if __name__ == "__main__":
