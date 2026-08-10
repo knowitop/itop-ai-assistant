@@ -1,10 +1,9 @@
 """Ticket vector source: iTop UserRequest/Incident tickets as vectorizable
 objects.
 
-Wraps `TicketRepository` + `CatalogRepository` behind the generic
-`VectorSource` protocol (`vector/source.py`) — the vector indexer itself
-never imports `Ticket`, `ItopBundle`, or `CatalogRepository`; all of that
-domain knowledge lives here instead.
+Wraps `TicketRepository` behind the generic `VectorSource` protocol
+(`vector/source.py`) — the vector indexer itself never imports `Ticket` or
+`ItopBundle`; all of that domain knowledge lives here instead.
 """
 
 import logging
@@ -12,7 +11,6 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from itop_ai_assistant.catalog_repository import CatalogRepository
 from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.vector.chunker import (
@@ -59,31 +57,6 @@ FRAGMENTS = (
 _LOG_SOURCES = {"log:public": "public_log", "log:private": "private_log"}
 
 
-class _CatalogNames:
-    """Per-sweep memo of service/subcategory id → name (profile chunk text)."""
-
-    def __init__(self, catalog: CatalogRepository):
-        self._catalog = catalog
-        self._services: dict[str, str] = {}
-        self._subcategories: dict[str, str] = {}
-
-    async def service(self, ticket: Ticket) -> str:
-        if not ticket.has_service:
-            return ""
-        if ticket.service_id not in self._services:
-            service = await self._catalog.get_service(ticket.service_id)
-            self._services[ticket.service_id] = service.name if service else ""
-        return self._services[ticket.service_id]
-
-    async def subcategory(self, ticket: Ticket) -> str:
-        if not ticket.has_subcategory:
-            return ""
-        if ticket.subcategory_id not in self._subcategories:
-            subcategory = await self._catalog.get_subcategory(ticket.subcategory_id)
-            self._subcategories[ticket.subcategory_id] = subcategory.name if subcategory else ""
-        return self._subcategories[ticket.subcategory_id]
-
-
 class TicketVectorSource(VectorSource):
     """VectorSource implementation for iTop tickets.
 
@@ -109,7 +82,6 @@ class TicketVectorSource(VectorSource):
         self._deps = deps
         self.classes: Sequence[str] = classes
         self._bundle: "ItopBundle | None" = None
-        self._names: _CatalogNames | None = None
 
     async def prepare(self) -> None:
         # The plain connection, not a principal's view of it: the sweep is not a
@@ -117,7 +89,6 @@ class TicketVectorSource(VectorSource):
         # global by design (`dev-docs/architecture/platform.md` §3.5). What a searcher may see
         # is decided later, by resolving hits under their own token.
         self._bundle = await self._deps.itop.get()
-        self._names = _CatalogNames(self._bundle.catalog_repo)
 
     async def find_modified_since(
         self, obj_class: str, since: datetime | None, *, page: int, page_size: int
@@ -154,7 +125,7 @@ class TicketVectorSource(VectorSource):
         log_entries_per_chunk: int,
     ) -> list[Chunk]:
         ticket: Ticket = record.payload  # type: ignore[assignment] # TODO: generic type for VectorRecord.payload
-        fields = await self._semantic_fields(ticket)
+        fields = self._semantic_fields(ticket)
         fragments = [
             content
             for spec in FRAGMENTS
@@ -162,21 +133,19 @@ class TicketVectorSource(VectorSource):
         ]
         return chunk_object(fragments, max_chunk_tokens=max_chunk_tokens, items_per_window=log_entries_per_chunk)
 
-    async def _semantic_fields(self, ticket: Ticket) -> dict[str, str]:
+    def _semantic_fields(self, ticket: Ticket) -> dict[str, str]:
         """`FIELDS` bound to this ticket's content, canonicalized.
 
         The one place the two are tied together — `test_vector_sources_tickets`
         keeps the key set equal to `FIELDS`, so the vocabulary served to the
         admin UI cannot drift away from what is actually chunkable.
         """
-        assert self._names is not None, "prepare() must run before chunk()"
         return {
             "title": clean_text(ticket.title),
             "description": clean_text(ticket.description),
             "solution": clean_text(ticket.solution),
-            # TODO: мы можем из айтоп сразу в тикете получать названия услуи и подкатегории (service_id_friendlyname)
-            "service": clean_text(await self._names.service(ticket)),
-            "subcategory": clean_text(await self._names.subcategory(ticket)),
+            "service": clean_text(ticket.service_name),
+            "subcategory": clean_text(ticket.subcategory_name),
         }
 
     def _resolve(

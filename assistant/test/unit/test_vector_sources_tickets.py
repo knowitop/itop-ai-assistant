@@ -3,7 +3,6 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
-from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.vector_sources.tickets import FIELDS, FRAGMENTS, TicketVectorSource, _conversation
 
@@ -32,6 +31,8 @@ def _ticket(**overrides) -> Ticket:
         "status": "resolved",
         "service_id": "5",
         "subcategory_id": "9",
+        "service_name": "Printing",
+        "subcategory_name": "Hardware",
         "org_id": "org1",
         "caller_name": "John Doe",
         "last_update": _NOW,
@@ -43,10 +44,6 @@ def _ticket(**overrides) -> Ticket:
 
 def _deps_with_bundle() -> tuple[MagicMock, MagicMock]:
     bundle = MagicMock()
-    bundle.catalog_repo.get_service = AsyncMock(return_value=Service(id="5", name="Printing"))
-    bundle.catalog_repo.get_subcategory = AsyncMock(
-        return_value=ServiceSubcategory(id="9", name="Hardware", service_id="5")
-    )
     deps = MagicMock()
     deps.itop.get = AsyncMock(return_value=bundle)
     return deps, bundle
@@ -106,7 +103,7 @@ class TestFindExistingIds(unittest.IsolatedAsyncioTestCase):
 
 
 class TestChunk(unittest.IsolatedAsyncioTestCase):
-    async def test_builds_profile_and_body_chunks_with_catalog_names(self):
+    async def test_builds_profile_and_body_chunks_with_service_names(self):
         deps, bundle = _deps_with_bundle()
         bundle.ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket()])
         source = TicketVectorSource(deps, classes=["UserRequest"])
@@ -119,18 +116,6 @@ class TestChunk(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Printing", by_kind["profile"].text)
         self.assertIn("Hardware", by_kind["profile"].text)
         self.assertEqual(by_kind["body"].text, "Not printing.")
-
-    async def test_catalog_names_are_memoized_within_a_sweep(self):
-        deps, bundle = _deps_with_bundle()
-        bundle.ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket(id="1"), _ticket(id="2")])
-        source = TicketVectorSource(deps, classes=["UserRequest"])
-        await source.prepare()
-        records = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
-
-        for record in records:
-            await source.chunk("UserRequest", record, _CFG, max_chunk_tokens=100, log_entries_per_chunk=5)
-
-        bundle.catalog_repo.get_service.assert_awaited_once()
 
     async def test_public_log_entries_labeled_by_caller_name(self):
         deps, bundle = _deps_with_bundle()
@@ -185,7 +170,7 @@ class TestDeclaration(unittest.IsolatedAsyncioTestCase):
         source = TicketVectorSource(deps, classes=["UserRequest"])
         await source.prepare()
 
-        fields = await source._semantic_fields(_ticket())
+        fields = source._semantic_fields(_ticket())
 
         self.assertEqual(set(FIELDS), set(fields))
 

@@ -40,6 +40,8 @@ class TicketFieldMap(BaseModel):
     status: str | None = "status"
     service_id: str | None = "service_id"
     subcategory_id: str | None = "servicesubcategory_id"
+    service_name: str | None = "service_id_friendlyname"
+    subcategory_name: str | None = "servicesubcategory_id_friendlyname"
     caller_name: str | None = "caller_id_friendlyname"
     org_id: str | None = "org_id"
     request_type: str | None = "request_type"

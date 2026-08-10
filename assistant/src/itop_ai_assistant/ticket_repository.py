@@ -54,6 +54,8 @@ class TicketRepository:
             status=attr("status") or "",
             service_id=str(attr("service_id") or "0"),
             subcategory_id=str(attr("subcategory_id") or "0"),
+            service_name=attr("service_name") or "",
+            subcategory_name=attr("subcategory_name") or "",
             caller_name=attr("caller_name") or "",
             org_id=attr("org_id"),
             request_type=attr("request_type"),

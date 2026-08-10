@@ -261,6 +261,8 @@ class TestTicketMapping(unittest.TestCase):
         mapping = TicketMappingConfig()
         resolved = mapping.for_class("UserRequest")
         self.assertEqual(resolved["subcategory_id"], "servicesubcategory_id")
+        self.assertEqual(resolved["service_name"], "service_id_friendlyname")
+        self.assertEqual(resolved["subcategory_name"], "servicesubcategory_id_friendlyname")
         self.assertEqual(resolved["caller_name"], "caller_id_friendlyname")
         self.assertEqual(resolved["request_type"], "request_type")
 

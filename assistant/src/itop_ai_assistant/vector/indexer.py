@@ -27,7 +27,7 @@ snapshot on every tick, so enabling the feature at runtime needs no restart.
 
 import asyncio
 import logging
-from collections.abc import Iterable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
@@ -150,9 +150,16 @@ class VectorIndexer:
                 await self._deps.vector_sync.reset_cursors()
             sources = self._sources if self._sources is not None else build_vector_sources(self._deps, cfg)
             class_to_source = _class_to_source(sources)
-            active_sources = _dedupe(s for c in cfg.classes if (s := class_to_source.get(c)) is not None)
-            for active_source in active_sources:
-                await active_source.prepare()
+            # A class→source map can send several classes to the same source
+            # instance (tickets) — `prepared` makes sure that instance's
+            # `prepare()` still runs exactly once for this pass.
+            prepared: set[int] = set()
+
+            async def ensure_prepared(source: VectorSource) -> None:
+                if id(source) not in prepared:
+                    await source.prepare()
+                    prepared.add(id(source))
+
             # One IndexMeta per family, resolved lazily on that family's first
             # class in this pass — not once for the whole sweep (D3/D4,
             # TASK-008): several classes can share a family (tickets), and a
@@ -165,6 +172,7 @@ class VectorIndexer:
                     continue
                 family = source.name
                 try:
+                    await ensure_prepared(source)
                     meta = meta_by_family.get(family)
                     if meta is None:
                         meta = await store.ensure_version(
@@ -190,7 +198,7 @@ class VectorIndexer:
                     logger.exception(f"vector sweep: class {obj_class} failed")
                     report.errors.append(f"{obj_class}: {e}")
             if not report.errors and await self._reconcile_due(cfg):
-                await self._reconcile(store, class_to_source, cfg, report)
+                await self._reconcile(store, class_to_source, cfg, report, ensure_prepared)
         except Exception as e:
             logger.exception("vector sweep failed")
             report.errors.append(str(e))
@@ -300,7 +308,12 @@ class VectorIndexer:
         return last is None or datetime.now(UTC) - last >= timedelta(days=cfg.reconcile_interval_days)
 
     async def _reconcile(
-        self, store: ChunkStore, class_to_source: dict[str, VectorSource], cfg: VectorConfig, report: SweepReport
+        self,
+        store: ChunkStore,
+        class_to_source: dict[str, VectorSource],
+        cfg: VectorConfig,
+        report: SweepReport,
+        ensure_prepared: Callable[[VectorSource], Awaitable[None]],
     ) -> None:
         """Delete chunks of objects that no longer exist at their source
         (deleted or archived — invisible to the incremental sweep)."""
@@ -313,6 +326,7 @@ class VectorIndexer:
                 source = class_to_source.get(obj_class)
                 if source is None:
                     continue
+                await ensure_prepared(source)
                 family = source.name
                 after = 0
                 while True:
@@ -448,12 +462,3 @@ def _class_to_source(sources: Sequence[VectorSource]) -> dict[str, VectorSource]
                 raise ValueError(f"class {obj_class!r} is claimed by both {existing.name!r} and {source.name!r}")
             class_to_source[obj_class] = source
     return class_to_source
-
-
-def _dedupe(sources: Iterable[VectorSource]) -> list[VectorSource]:
-    """Unique sources by identity, order-preserving (a class→source map can
-    map several classes onto the same source instance)."""
-    seen: dict[int, VectorSource] = {}
-    for source in sources:
-        seen.setdefault(id(source), source)
-    return list(seen.values())

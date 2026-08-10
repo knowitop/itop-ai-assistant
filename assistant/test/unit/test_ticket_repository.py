@@ -14,6 +14,8 @@ _RAW_TICKET = {
     "status": "new",
     "service_id": "5",
     "servicesubcategory_id": "3",
+    "service_id_friendlyname": "Printing",
+    "servicesubcategory_id_friendlyname": "Hardware",
     "caller_id_friendlyname": "John Doe",
     "org_id": "7",
     "request_type": "incident",
@@ -46,6 +48,8 @@ class TestToTicket(unittest.TestCase):
         self.assertEqual(ticket.status, "new")
         self.assertEqual(ticket.service_id, "5")
         self.assertEqual(ticket.subcategory_id, "3")
+        self.assertEqual(ticket.service_name, "Printing")
+        self.assertEqual(ticket.subcategory_name, "Hardware")
         self.assertEqual(ticket.caller_name, "John Doe")
         self.assertEqual(ticket.request_type, "incident")
         self.assertEqual(len(ticket.public_log), 1)

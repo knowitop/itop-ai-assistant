@@ -23,7 +23,9 @@ class Ticket(BaseModel):
     description: str = ""  # raw HTML as stored in iTop
     status: str = ""
     service_id: str = "0"
+    service_name: str = ""
     subcategory_id: str = "0"
+    subcategory_name: str = ""
     caller_name: str = ""
     org_id: str | None = None
     request_type: str | None = None
