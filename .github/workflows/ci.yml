@@ -57,7 +57,17 @@ jobs:
 
       # `test/integration` is deliberately excluded — it needs a real LLM endpoint.
       - name: Unit tests
-        run: uv run pytest --cov=itop_ai_assistant --cov-report=term-missing -o log_cli=false
+        run: uv run pytest --cov-report=xml -o log_cli=false
+
+      # Powers the coverage badge in README.md. Needs the CODECOV_TOKEN repo
+      # secret (from codecov.io) — without it this step fails but doesn't
+      # block the job, so the badge just stays stale until the secret is set.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v6
+        with:
+          files: assistant/coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
   ui:
     name: Build admin UI

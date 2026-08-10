@@ -1,5 +1,9 @@
 [pytest]
-addopts = ["--import-mode=importlib"]
+addopts = [
+    "--import-mode=importlib",
+    "--cov=itop_ai_assistant",
+    "--cov-report=term-missing",
+]
 testpaths = [
     "test/unit"
 ]

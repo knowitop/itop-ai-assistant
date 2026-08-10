@@ -1,6 +1,7 @@
 # iTop AI Assistant
 
 [![CI](https://github.com/knowitop/itop-ai-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/knowitop/itop-ai-assistant/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/knowitop/itop-ai-assistant/graph/badge.svg)](https://codecov.io/gh/knowitop/itop-ai-assistant)
 
 AI-powered middleware for [Combodo iTop](https://www.itophub.io/) that reduces ticket back-and-forth and helps engineers start working faster.
 
@@ -168,8 +169,7 @@ uv run uvicorn itop_ai_assistant.main:app --host 0.0.0.0 --port 8001 --reload
 
 ```bash
 cd assistant
-uv run pytest                   # unit tests (mocked LLM, iTop and Redis)
-uv run pytest --cov=itop_ai_assistant  # with coverage report
+uv run pytest                   # unit tests (mocked LLM, iTop and Redis), with coverage
 uv run pytest test/pg           # pgvector tests (Testcontainers, needs Docker)
 uv run pytest test/integration   # agent against a real LLM (needs .env.test)
 ```
