@@ -246,6 +246,7 @@
     "badge_internal": "internal",
     "visibility_internal_hint": "Engineer-only content. Searches run on behalf of a caller never return it.",
     "unknown_fragment": "\"{{kind}}\" is not a fragment this source produces — it is indexed as nothing. Remove it to save.",
+    "btn_remove_fragment": "Remove",
     "unknown_fields": "Fields this source does not provide: {{fields}}. Remove them to save.",
     "nothing_indexed": "No fragment is enabled for this class: it will be swept and produce no chunks at all.",
     "btn_add_class": "Add class",
