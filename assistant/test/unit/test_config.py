@@ -2,11 +2,10 @@ import os
 import unittest
 from unittest.mock import patch
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from itop_ai_assistant.config import (
     EmbeddingsConfig,
-    IntakeConfig,
     ItopConfig,
     LlmConfig,
     Settings,
@@ -49,8 +48,6 @@ class TestSettings(unittest.TestCase):
         self.assertEqual(s.itop_api_version, "1.3")
         self.assertEqual(s.itop_timeout, 30.0)
         self.assertEqual(s.state_ttl_days, 30)
-        self.assertEqual(s.intake.max_rounds, 2)
-        self.assertEqual(s.intake.max_classify_rounds, 2)
         self.assertEqual(s.llm_think_tags, ["think", "thinking", "reasoning"])
 
     def test_webhook_token_is_secret(self):
@@ -191,16 +188,41 @@ class TestVectorConfig(unittest.TestCase):
         self.assertFalse(s.vector.enabled)
 
 
-class TestIntakeConfig(unittest.TestCase):
-    def test_default_active_statuses(self):
-        self.assertEqual(IntakeConfig().active_statuses, ["new"])
+class _DummyModuleConfig(BaseModel):
+    enabled: bool = False
+    rounds: int = 1
 
-    def test_similar_chunk_kinds_default(self):
-        self.assertEqual(IntakeConfig().similar_chunk_kinds, ["profile", "body"])
 
-    def test_similar_chunk_kinds_rejects_empty_list(self):
-        with self.assertRaises(ValidationError):
-            IntakeConfig(similar_chunk_kinds=[])
+class TestModuleDefaults(unittest.TestCase):
+    """`Settings` carries no field for a business module — see TASK-024.
+
+    A module's own model is the only thing that knows its shape;
+    `module_defaults` is the sole path `config.py` offers back.
+    """
+
+    def test_unset_module_returns_model_defaults(self):
+        with patch.dict(os.environ, {}, clear=True):
+            s = Settings(_env_file=None)
+        self.assertEqual(s.module_defaults("nope", _DummyModuleConfig), _DummyModuleConfig())
+
+    def test_module_config_overrides_apply(self):
+        # Like every other complex field here (e.g. LLM_PARAMS), env carries
+        # it as JSON — settings_customise_sources deliberately excludes
+        # constructor kwargs, so this is the real path, not `Settings(...)`.
+        env = {"MODULE_CONFIG": '{"dummy": {"enabled": true, "rounds": 5}}'}
+        with patch.dict(os.environ, env, clear=True):
+            s = Settings(_env_file=None)
+        cfg = s.module_defaults("dummy", _DummyModuleConfig)
+        self.assertTrue(cfg.enabled)
+        self.assertEqual(cfg.rounds, 5)
+
+    def test_settings_has_no_attribute_for_a_business_module(self):
+        # The whole point: config.py does not know "intake" or any other
+        # module name — there is no typed field to accidentally shadow.
+        with patch.dict(os.environ, {}, clear=True):
+            s = Settings(_env_file=None)
+        self.assertFalse(hasattr(s, "intake"))
+        self.assertFalse(hasattr(s, "selfcheck"))
 
 
 class TestMissingSetup(unittest.TestCase):

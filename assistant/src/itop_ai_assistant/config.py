@@ -1,6 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeVar
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import (
@@ -14,21 +14,7 @@ from itop_ai_assistant.core.llm_providers import DEFAULT_PROVIDER, PROVIDERS, ge
 
 _PACKAGE_DIR = Path(__file__).parent  # itop_ai_assistant/ — ships config.yaml
 
-# TODO: этому тоже место в intake
-_CLASSIFY_SERVICE_OQL = (
-    "SELECT Service AS s"
-    " JOIN lnkCustomerContractToService AS l1 ON l1.service_id=s.id"
-    " JOIN CustomerContract AS cc ON l1.customercontract_id=cc.id"
-    " WHERE cc.org_id = :this->org_id AND s.status != 'obsolete'"
-)
-
-# TODO: этому тоже место в intake
-_CLASSIFY_SUBCATEGORY_OQL = (
-    "SELECT ServiceSubcategory"
-    " WHERE service_id = :this->service_id"
-    " AND (ISNULL(:this->request_type) OR request_type = :this->request_type)"
-    " AND status != 'obsolete'"
-)
+TConfig = TypeVar("TConfig", bound=BaseModel)
 
 
 class TicketFieldMap(BaseModel):
@@ -260,82 +246,6 @@ def missing_setup(itop: ItopConfig, llm: LlmConfig) -> list[str]:
     return missing
 
 
-# TODO: переложить в intake, конфиг должен жить рядом с модулем и регистрироваться автоматически.
-class IntakeConfig(BaseModel):
-    """The ticket-processing module: classify, ask, hand off.
-
-    One tool-calling agent per ticket rather than a fixed sequence of steps —
-    the model decides which tool to call next, the tools enforce the
-    invariants.
-    """
-
-    # TODO: обернуть поля в Field с description, чтобы в UI не просто названия были, но и описание и может валидация.
-    enabled: bool = True
-    classes: list[str] = ["UserRequest", "Incident"]
-    # The module acts on a ticket only while its status is in this list — an
-    # intake concern (when this module may act), not the datamodel mapping's.
-    active_statuses: list[str] = ["new"]
-    max_rounds: int = 2
-    max_classify_rounds: int = 2
-    # Budget of model calls per run; without it a looping agent burns tokens
-    # until the ticket is abandoned. Catalog + subcategories + classify +
-    # similar tickets + question/handoff + slack.
-    max_iterations: int = 9
-    # One override for the whole module (the agent has a single loop); None
-    # falls back to the global llm_model. It must be a reliable tool-caller —
-    # a model that answers in prose instead of calling a tool burns the run.
-    model: str | None = None
-    classify_fallback_note: str = "Could not determine the request category. Manual classification required."
-    handoff_fallback_note: str = "AI intake finished without a summary. Manual review required."
-    # Similar solved tickets quoted in the handoff note (only when the vector
-    # store and the embeddings endpoint are configured). The window is a range
-    # over the modification date, never a substitute for the status filter —
-    # a reopened ticket keeps its old resolution date (ADR-005, rule 2).
-    similar_max_age_days: int = Field(default=365, gt=0)
-    # Business parameter of the "similar solved" scenario — not tied to
-    # `VectorClassConfig.index_values` (the matching default is a coincidence
-    # for tickets, not a shared source of truth, see ADR-017).
-    resolved_statuses: list[str] = ["resolved", "closed"]
-    # Asked of the index; more than `similar_top` because candidates the
-    # requester's iTop no longer returns are dropped afterwards (ADR-003)
-    similar_candidates: int = Field(default=15, gt=0)
-    similar_top: int = Field(default=5, gt=0)
-    # Absolute floor on the Qdrant cosine score (range [-1, 1]) below which a
-    # candidate is dropped regardless of rank — top-N alone does not
-    # guarantee relevance, only relative rank among whatever `candidates`
-    # happened to return (TASK-011). 0.6 is an engineering guess, not
-    # calibrated against this deployment's embeddings model; tune it after a
-    # live check against real similar/unrelated pairs.
-    similar_min_score: float = Field(default=0.6, ge=-1.0, le=1.0)
-    # Which chunk kinds the query text is matched against. The query is the new
-    # ticket's title and description, so a match against `solution` means "the
-    # solution reads like the problem" — usually noise, sometimes a genuine
-    # restatement (TASK-012). Configurable because that call needs live tickets,
-    # not a release. Non-empty: `search()` rejects an empty list loudly, and a
-    # config value must not become a crash mid-run.
-    similar_chunk_kinds: list[str] = Field(default=["profile", "body"], min_length=1)
-    classify_service_oql: str = _CLASSIFY_SERVICE_OQL
-    classify_subcategory_oql: str = _CLASSIFY_SUBCATEGORY_OQL
-
-
-class SelfCheckConfig(BaseModel):
-    """The smoke module: it touches every seam and changes nothing.
-
-    Its job is to prove the platform's own contracts on a live deployment —
-    a config section, a prompt file, an LLM call, an iTop read and a journal
-    entry, reached through the same trigger registry every business module
-    uses. It writes nothing anywhere, which is why it is safe to schedule.
-    """
-
-    # Read at startup like intake's: off by default, because nobody wants a
-    # fresh deployment calling a model on a timer for no business reason
-    enabled: bool = False
-    interval_seconds: int = Field(default=900, gt=0)
-    # Cheapest read that proves the connection and the credentials at once
-    probe_oql: str = "SELECT Service"
-    model: str | None = None
-
-
 class ChunkFragmentConfig(BaseModel):
     """What an administrator may say about one chunk fragment.
 
@@ -516,9 +426,12 @@ class Settings(BaseSettings):
     ticket_mapping: TicketMappingConfig = TicketMappingConfig()
     faq_mapping: FaqMappingConfig = FaqMappingConfig()
 
-    # Business modules
-    intake: IntakeConfig = IntakeConfig()
-    selfcheck: SelfCheckConfig = SelfCheckConfig()
+    # Business modules — config.py does not know their field names, only
+    # this raw bucket. A module resolves its own section via
+    # `module_defaults(name, its_own_model)`, both at registration
+    # (`agents/<module>/pipeline.py::register`) and through
+    # `RedisConfigStore` (which merges Redis overrides on top).
+    module_config: dict[str, dict[str, Any]] = {}
 
     # Vector store (infrastructure; editable via /api/setup/vector)
     vector: VectorConfig = VectorConfig()
@@ -536,6 +449,20 @@ class Settings(BaseSettings):
     # Env/yaml values act as *defaults* for the runtime-editable sections
     # below: RedisConfigStore resolves a section via getattr(settings, name),
     # so overrides stored through the setup API take priority over these.
+    # Business-module sections have no such attribute — see `module_defaults`.
+
+    def module_defaults(self, name: str, model: type[TConfig]) -> TConfig:
+        """Env/yaml defaults for a business module's own config section.
+
+        Unlike `itop`/`llm`/... below, `Settings` does not know this
+        section's fields — `module_config[name]` is a raw dict, validated
+        against the model the module itself registers
+        (`ModuleInfo.config_model`). Called both by a module's own
+        `register()` (to read `enabled`/`classes` at startup, before the
+        registry exists) and by `RedisConfigStore` as the fallback when a
+        section is not a `Settings` attribute.
+        """
+        return model(**self.module_config.get(name, {}))
 
     @property
     def itop(self) -> ItopConfig:

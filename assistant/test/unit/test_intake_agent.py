@@ -14,8 +14,9 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
+from itop_ai_assistant.agents.intake.config import IntakeConfig
 from itop_ai_assistant.agents.intake.pipeline import IntakeRun
-from itop_ai_assistant.config import EmbeddingsConfig, IntakeConfig, LlmConfig, VectorConfig
+from itop_ai_assistant.config import EmbeddingsConfig, LlmConfig, VectorConfig
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.context import RunContext

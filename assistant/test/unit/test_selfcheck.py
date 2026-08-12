@@ -14,6 +14,7 @@ from uuid import uuid4
 import fakeredis.aioredis
 from langchain_core.messages import AIMessage
 
+from itop_ai_assistant.agents.selfcheck.config import SelfCheckConfig
 from itop_ai_assistant.agents.selfcheck.pipeline import (
     MODULE,
     SelfCheckInput,
@@ -22,7 +23,7 @@ from itop_ai_assistant.agents.selfcheck.pipeline import (
     run_selfcheck,
 )
 from itop_ai_assistant.agents.selfcheck.prompts import build_selfcheck_prompts
-from itop_ai_assistant.config import ItopConfig, LlmConfig, SelfCheckConfig
+from itop_ai_assistant.config import ItopConfig, LlmConfig
 from itop_ai_assistant.domain.catalog import Service
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.registry import TriggerRegistry
@@ -34,7 +35,8 @@ _LLM = LlmConfig(base_url="http://llm/v1", model="test-model")
 
 
 def _settings(**overrides) -> SimpleNamespace:
-    return SimpleNamespace(selfcheck=SelfCheckConfig(**{"enabled": True, **overrides}))
+    cfg = SelfCheckConfig(**{"enabled": True, **overrides})
+    return SimpleNamespace(module_defaults=lambda name, model: cfg)
 
 
 def _deps(*, itop=_ITOP, llm=_LLM, selfcheck=None, services=2) -> MagicMock:

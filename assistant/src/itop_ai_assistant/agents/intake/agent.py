@@ -23,8 +23,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
-from itop_ai_assistant.config import IntakeConfig
-
+from .config import IntakeConfig
 from .context import IntakeContext
 from .tools import ToolRejection
 

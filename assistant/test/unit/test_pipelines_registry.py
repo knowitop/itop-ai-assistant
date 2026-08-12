@@ -2,7 +2,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from itop_ai_assistant.config import IntakeConfig, SelfCheckConfig
+from itop_ai_assistant.agents.intake.config import IntakeConfig
+from itop_ai_assistant.agents.selfcheck.config import SelfCheckConfig
 from itop_ai_assistant.pipelines.models import ObjectRef
 from itop_ai_assistant.pipelines.registry import (
     ModuleInfo,
@@ -38,10 +39,11 @@ def _schedule(module: str = "test-module", name: str = "tick", **overrides) -> S
 
 
 def _settings(intake_overrides=None, selfcheck_overrides=None) -> SimpleNamespace:
-    return SimpleNamespace(
-        intake=IntakeConfig(**(intake_overrides or {})),
-        selfcheck=SelfCheckConfig(**(selfcheck_overrides or {})),
-    )
+    configs = {
+        "intake": IntakeConfig(**(intake_overrides or {})),
+        "selfcheck": SelfCheckConfig(**(selfcheck_overrides or {})),
+    }
+    return SimpleNamespace(module_defaults=lambda name, model: configs[name])
 
 
 class TestWebhookRoutes(unittest.TestCase):

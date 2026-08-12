@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+from itop_ai_assistant.agents.intake.config import IntakeConfig
 from itop_ai_assistant.agents.intake.context import IntakeContext
 from itop_ai_assistant.agents.intake.prompt import (
     build_conversation_xml,
@@ -10,7 +11,6 @@ from itop_ai_assistant.agents.intake.prompt import (
     format_options,
 )
 from itop_ai_assistant.agents.intake.prompts import build_intake_prompts
-from itop_ai_assistant.config import IntakeConfig
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir

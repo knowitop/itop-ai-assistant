@@ -17,6 +17,7 @@ import pytest
 
 logger = logging.getLogger(__name__)
 
+from itop_ai_assistant.agents.intake.config import IntakeConfig
 from itop_ai_assistant.agents.intake.context import IntakeContext
 from itop_ai_assistant.agents.intake.prompts import build_intake_prompts
 from itop_ai_assistant.config import get_settings
@@ -106,7 +107,7 @@ def make_ctx(
         ticket_repo=TicketRepository(itop, settings.ticket_mapping),
         catalog_repo=CatalogRepository(itop),
         state_manager=state_manager,
-        intake=settings.intake,
+        intake=settings.module_defaults("intake", IntakeConfig),
         # Matches _AI_PERSON_FIELDS, i.e. what IdentityRepository would return
         ai_name="ai-assistant",
     )

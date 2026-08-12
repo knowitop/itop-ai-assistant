@@ -97,10 +97,21 @@ live in the same file and are deliberately not the same thing.
 ## Adding a module
 
 `agents/<module>/pipeline.py` with `register(registry, settings)` exposing a
-`ModuleInfo` and its routes, one call in `build_registry`, one config section in
-`config.py`. Object-scoped work subclasses `TicketRun`; work that is not about an
-object is a plain coroutine `(run, deps) -> RunOutcome`. Every handler takes a
-`RunContext`, never a bare id. `validate_prompts` runs at startup for every
-module, so a broken template fails the boot instead of a live ticket.
+`ModuleInfo` and its routes, one call in `build_registry`. Object-scoped work
+subclasses `TicketRun`; work that is not about an object is a plain coroutine
+`(run, deps) -> RunOutcome`. Every handler takes a `RunContext`, never a bare
+id. `validate_prompts` runs at startup for every module, so a broken template
+fails the boot instead of a live ticket.
+
+A module's config model is its own: define it in `agents/<module>/config.py`,
+never in `config.py`. `Settings` carries no field for it — `config.py` does
+not know the model exists. Defaults come from `settings.module_defaults(name,
+Model)` (validates `settings.module_config[name]`, empty dict if unset);
+`RedisConfigStore` calls the same method as its fallback when resolving
+`config_store.get(name, Model)`, so Redis overrides layer on top exactly like
+any other section. A module reads its own `enabled`/other startup-gating
+fields the same way, before the registry exists — `settings.module_defaults`
+needs nothing but `Settings` itself, so there is no ordering problem between
+building the registry and reading the config that decides what goes into it.
 
 `agents/selfcheck/` is the reference implementation of this contract.

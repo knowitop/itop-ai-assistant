@@ -24,7 +24,9 @@ Adding a new module:
    the journal steps and the guaranteed closure come from there; the module
    supplies `stop_reason` and `body`, and registers `<Run>.handle` as its route.
 3. Call it from `build_registry()` below — one line.
-4. Add the module's config section to `config.py`.
+4. If it owns config, define the model in its own package
+   (`agents/<module>/config.py`) and read defaults with
+   `settings.module_defaults(name, Model)` — nothing to add to `config.py`.
 """
 
 import logging

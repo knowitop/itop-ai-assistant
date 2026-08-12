@@ -9,7 +9,7 @@ and what to write when the agent closed nothing itself.
 import logging
 from typing import Protocol
 
-from itop_ai_assistant.config import EmbeddingsConfig, IntakeConfig, LlmConfig, Settings, VectorConfig
+from itop_ai_assistant.config import EmbeddingsConfig, LlmConfig, Settings, VectorConfig
 from itop_ai_assistant.core.deps import create_llm
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.agent_run import AgentRun
@@ -24,6 +24,7 @@ from itop_ai_assistant.vector_sources.tickets import FAMILY as TICKETS_FAMILY
 from itop_ai_assistant.webhook.models import TicketEvent
 
 from .agent import TERMINAL_TOOLS, build_intake_agent
+from .config import IntakeConfig
 from .context import IntakeContext
 from .prompt import build_initial_messages
 from .prompts import PROMPT_VARIABLES, build_intake_prompts
@@ -33,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 def register(registry: TriggerRegistry, settings: Settings) -> None:
-    cfg = settings.intake
+    cfg = settings.module_defaults("intake", IntakeConfig)
     if not cfg.enabled:
         logger.info("Intake module is disabled, skipping registration")
         return

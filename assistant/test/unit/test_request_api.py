@@ -9,12 +9,12 @@ from unittest.mock import AsyncMock, MagicMock
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
 
+from itop_ai_assistant.agents.intake.config import IntakeConfig
+from itop_ai_assistant.agents.selfcheck.config import SelfCheckConfig
 from itop_ai_assistant.config import (
-    IntakeConfig,
     ItopConfig,
     LlmConfig,
     SecurityConfig,
-    SelfCheckConfig,
     TicketMappingConfig,
 )
 from itop_ai_assistant.main import app
@@ -100,7 +100,8 @@ class TestProbeModule(unittest.TestCase):
 
         self.calls: list[ObjectRef] = []
         self.raises: Exception | None = None
-        registry = build_registry(SimpleNamespace(intake=IntakeConfig(), selfcheck=SelfCheckConfig()))
+        _configs = {"intake": IntakeConfig(), "selfcheck": SelfCheckConfig()}
+        registry = build_registry(SimpleNamespace(module_defaults=lambda name, model: _configs[name]))
         registry.register(
             ModuleInfo(name="probe", description="Probe"),
             requests=[

@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel
 
-from itop_ai_assistant.config import ItopConfig, LlmConfig, SelfCheckConfig, Settings, missing_setup
+from itop_ai_assistant.config import ItopConfig, LlmConfig, Settings, missing_setup
 from itop_ai_assistant.core.deps import create_llm
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import RunOutcome
@@ -26,6 +26,7 @@ from itop_ai_assistant.pipelines.ports import RunDeps
 from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, ScheduleRoute, TriggerRegistry
 from itop_ai_assistant.util.text import strip_thinking
 
+from .config import SelfCheckConfig
 from .prompts import PROMPT_VARIABLES, build_selfcheck_prompts
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ class SelfCheckInput(BaseModel):
 
 
 def register(registry: TriggerRegistry, settings: Settings) -> None:
-    cfg = settings.selfcheck
+    cfg = settings.module_defaults(MODULE, SelfCheckConfig)
     if not cfg.enabled:
         logger.info("Selfcheck module is disabled, skipping registration")
         return

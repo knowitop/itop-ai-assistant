@@ -5,13 +5,14 @@ import fakeredis.aioredis
 from pydantic import ValidationError
 from redis.exceptions import RedisError
 
-from itop_ai_assistant.config import IntakeConfig, Settings
+from itop_ai_assistant.agents.intake.config import IntakeConfig
+from itop_ai_assistant.config import Settings
 from itop_ai_assistant.settings.config_store import RedisConfigStore
 
 
 def _make_store() -> tuple[RedisConfigStore, fakeredis.aioredis.FakeRedis]:
     redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    settings = Settings(intake=IntakeConfig())
+    settings = Settings()
     return RedisConfigStore(redis, settings), redis
 
 
@@ -64,6 +65,32 @@ class TestRedisConfigStore(unittest.IsolatedAsyncioTestCase):
             cfg = await store.get("intake", IntakeConfig)
 
         self.assertEqual(cfg, IntakeConfig())
+
+    async def test_resolves_a_section_settings_has_no_attribute_for(self):
+        # `Settings` carries no `intake` field at all (TASK-024) — this is the
+        # only path business-module defaults can come through, not a fallback
+        # that happens to agree with an unused attribute.
+        settings = Settings()
+        self.assertFalse(hasattr(settings, "intake"))
+        redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        store = RedisConfigStore(redis, settings)
+
+        cfg = await store.get("intake", IntakeConfig)
+
+        self.assertEqual(cfg, IntakeConfig())
+
+    async def test_env_yaml_module_config_flows_through_as_defaults(self):
+        # Constructor kwargs are not a settings source here
+        # (settings_customise_sources excludes init_settings) — env is the
+        # real path, same as every other complex field (e.g. LLM_PARAMS).
+        with patch.dict("os.environ", {"MODULE_CONFIG": '{"intake": {"max_rounds": 7}}'}, clear=True):
+            settings = Settings(_env_file=None)
+        redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        store = RedisConfigStore(redis, settings)
+
+        cfg = await store.get("intake", IntakeConfig)
+
+        self.assertEqual(cfg.max_rounds, 7)
 
 
 if __name__ == "__main__":

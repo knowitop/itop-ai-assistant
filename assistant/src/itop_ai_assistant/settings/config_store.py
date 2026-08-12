@@ -33,33 +33,41 @@ class ConfigStore(Protocol):
 class RedisConfigStore(ConfigStore):
     """Serves module config with Redis overrides on top of settings defaults.
 
-    The module name must match the settings attribute holding its defaults
-    (e.g. module "intake" → `settings.intake`).
+    A settings attribute of the same name wins first — that's the
+    infrastructure sections (`itop`, `llm`, `ticket_mapping`, ...), which
+    `Settings` declares directly. A business module has no such attribute:
+    its defaults come from `Settings.module_defaults(module, model)`, which
+    validates `settings.module_config[module]` against the model the module
+    itself registered (`ModuleInfo.config_model`) — `config.py` never needs
+    to know it exists.
     """
 
     def __init__(self, redis: Redis, settings: Settings):
         self._redis = redis
         self._settings = settings
 
-    def _defaults(self, module: str) -> BaseModel:
-        return getattr(self._settings, module)
+    def _defaults(self, module: str, model: type[TConfig]) -> TConfig:
+        attr = getattr(self._settings, module, None)
+        if isinstance(attr, BaseModel):
+            return attr
+        return self._settings.module_defaults(module, model)
 
     async def get(self, module: str, model: type[TConfig]) -> TConfig:
-        defaults = self._defaults(module)
+        defaults = self._defaults(module, model)
         try:
             raw = await self._redis.get(_KEY_PREFIX + module)
         except RedisError as e:
             # Runtime overrides are an enhancement — degrade to defaults
             logger.warning(f"Redis unavailable, using default config for {module!r}: {e}")
-            return defaults  # type: ignore[return-value]
+            return defaults
         if not raw:
-            return defaults  # type: ignore[return-value]
+            return defaults
         try:
             overrides = json.loads(raw)
             return model(**{**defaults.model_dump(), **overrides})
         except (json.JSONDecodeError, ValidationError) as e:
             logger.warning(f"Stored config for {module!r} is invalid, falling back to defaults: {e}")
-            return defaults  # type: ignore[return-value]
+            return defaults
 
     async def set(self, module: str, values: dict, model: type[TConfig]) -> TConfig:
         """Validate values merged over defaults and store the full result.
@@ -67,7 +75,7 @@ class RedisConfigStore(ConfigStore):
         Raises pydantic.ValidationError on invalid values — the admin API
         surfaces it to the client before anything is written.
         """
-        defaults = self._defaults(module)
+        defaults = self._defaults(module, model)
         validated = model(**{**defaults.model_dump(), **values})
         await self._redis.set(_KEY_PREFIX + module, validated.model_dump_json())
         return validated
