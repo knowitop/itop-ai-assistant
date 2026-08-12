@@ -14,8 +14,8 @@ from fastapi import Depends, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from itop_ai_assistant.config import ItopConfig, LlmConfig, SecurityConfig, missing_setup
-from itop_ai_assistant.deps import AppDeps
-from itop_ai_assistant.principal import Principal
+from itop_ai_assistant.core.deps import AppDeps
+from itop_ai_assistant.core.principal import Principal
 
 logger = logging.getLogger(__name__)
 

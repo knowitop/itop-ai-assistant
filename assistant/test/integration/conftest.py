@@ -19,13 +19,13 @@ logger = logging.getLogger(__name__)
 
 from itop_ai_assistant.agents.intake.context import IntakeContext
 from itop_ai_assistant.agents.intake.prompts import build_intake_prompts
-from itop_ai_assistant.catalog_repository import CatalogRepository
 from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.itop_client import Itop
-from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
+from itop_ai_assistant.repositories.catalog import CatalogRepository
+from itop_ai_assistant.repositories.ticket import TicketRepository
+from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
 from itop_ai_assistant.state.ticket_state import TicketStateManager
-from itop_ai_assistant.ticket_repository import TicketRepository
 
 ITOP_URL = "http://mock-itop/webservices/rest.php"
 

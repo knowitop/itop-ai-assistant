@@ -5,7 +5,7 @@ from uuid import uuid4
 import fakeredis.aioredis
 from redis.exceptions import RedisError
 
-from itop_ai_assistant.journal import RunJournal
+from itop_ai_assistant.state.journal import RunJournal
 
 
 def _make_journal() -> tuple[RunJournal, fakeredis.aioredis.FakeRedis]:

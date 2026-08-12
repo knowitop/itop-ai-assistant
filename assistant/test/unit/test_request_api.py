@@ -17,10 +17,10 @@ from itop_ai_assistant.config import (
     SelfCheckConfig,
     TicketMappingConfig,
 )
-from itop_ai_assistant.journal import RunJournal
 from itop_ai_assistant.main import app
 from itop_ai_assistant.pipelines.models import ObjectRef, RunOutcome
 from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, build_registry
+from itop_ai_assistant.state.journal import RunJournal
 
 
 def _mock_deps(security: SecurityConfig | None = None, configured: bool = True) -> MagicMock:

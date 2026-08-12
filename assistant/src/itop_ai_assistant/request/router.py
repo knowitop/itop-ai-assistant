@@ -15,8 +15,8 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import ValidationError
 
-from itop_ai_assistant.api_deps import require_configured, resolve_principal
-from itop_ai_assistant.deps import AppDeps
+from itop_ai_assistant.core.api_deps import require_configured, resolve_principal
+from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import RunOutcome
 from itop_ai_assistant.pipelines.registry import RequestRoute

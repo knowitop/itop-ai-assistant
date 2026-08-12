@@ -8,10 +8,10 @@ from uuid import uuid4
 
 import fakeredis.aioredis
 
-from itop_ai_assistant.journal import RunJournal
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.runner import journalled_run
-from itop_ai_assistant.principal import Principal
+from itop_ai_assistant.state.journal import RunJournal
 
 _TOKEN = "s3cret-engineer-token"
 _ENGINEER = Principal.delegated(_TOKEN, login="jdoe", name="John Doe")

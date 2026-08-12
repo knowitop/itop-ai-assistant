@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from itop_ai_assistant.config import LlmConfig, get_settings
-from itop_ai_assistant.deps import build_deps, create_llm
+from itop_ai_assistant.core.deps import build_deps, create_llm
 
 
 class TestAclose(unittest.IsolatedAsyncioTestCase):

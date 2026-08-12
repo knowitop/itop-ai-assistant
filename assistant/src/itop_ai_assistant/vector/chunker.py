@@ -27,7 +27,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from itop_ai_assistant.text_utils import html_to_markdown
+from itop_ai_assistant.util.text import html_to_markdown
 
 logger = logging.getLogger(__name__)
 

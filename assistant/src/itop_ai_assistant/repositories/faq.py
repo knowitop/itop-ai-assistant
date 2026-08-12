@@ -4,7 +4,7 @@ from datetime import datetime
 from itop_ai_assistant.config import FaqMappingConfig
 from itop_ai_assistant.domain.faq import FaqArticle
 from itop_ai_assistant.itop_client import Itop
-from itop_ai_assistant.text_utils import ITOP_DATETIME_FORMAT, parse_itop_dt
+from itop_ai_assistant.util.text import ITOP_DATETIME_FORMAT, parse_itop_dt
 
 
 class FaqRepository:
@@ -76,7 +76,7 @@ class FaqRepository:
         return {int(row["id"]) for row in rows}
 
 
-# Same reasoning as `TicketRepoFactory` in `ticket_repository.py`: the shape
-# of "a way to fetch a fresh `FaqRepository`", declared once instead of
+# Same reasoning as `TicketRepositoryProvider` in `repositories/ticket.py`: the
+# shape of "a way to fetch a fresh `FaqRepository`", declared once instead of
 # redeclared by each caller.
-type FaqRepoFactory = Callable[[], Awaitable[FaqRepository]]
+type FaqRepositoryProvider = Callable[[], Awaitable[FaqRepository]]

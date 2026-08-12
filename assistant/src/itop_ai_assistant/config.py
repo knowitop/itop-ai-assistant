@@ -10,7 +10,7 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-from itop_ai_assistant.llm_providers import DEFAULT_PROVIDER, PROVIDERS, get_provider
+from itop_ai_assistant.core.llm_providers import DEFAULT_PROVIDER, PROVIDERS, get_provider
 
 _PACKAGE_DIR = Path(__file__).parent  # itop_ai_assistant/ — ships config.yaml
 

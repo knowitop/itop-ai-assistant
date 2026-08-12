@@ -6,16 +6,17 @@ from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from itop_ai_assistant.config import LlmConfig, Settings
-from itop_ai_assistant.config_store import ConfigStore, RedisConfigStore
-from itop_ai_assistant.itop_connection import ItopConnection, ItopRepositories
-from itop_ai_assistant.journal import RunJournal
-from itop_ai_assistant.llm_providers import get_provider
-from itop_ai_assistant.prompt_store import (
+from itop_ai_assistant.core.llm_providers import get_provider
+from itop_ai_assistant.itop.connection import ItopConnection
+from itop_ai_assistant.repositories.sets import ItopRepositories
+from itop_ai_assistant.settings.config_store import ConfigStore, RedisConfigStore
+from itop_ai_assistant.settings.prompt_store import (
     PACKAGED_PROMPTS_DIR,
     FilePromptStore,
     PromptStore,
     RedisPromptStore,
 )
+from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.vector.index_journal import IndexJournal
 from itop_ai_assistant.vector.qdrant_store import QdrantChunkStore

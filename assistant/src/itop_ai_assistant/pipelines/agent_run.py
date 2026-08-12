@@ -19,7 +19,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.ports import StepJournal
-from itop_ai_assistant.text_utils import strip_thinking
+from itop_ai_assistant.util.text import strip_thinking
 
 logger = logging.getLogger(__name__)
 

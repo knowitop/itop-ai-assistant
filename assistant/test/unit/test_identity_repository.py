@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from itop_ai_assistant.identity_repository import IdentityRepository
+from itop_ai_assistant.repositories.identity import IdentityRepository
 
 
 class TestIdentityRepository(unittest.IsolatedAsyncioTestCase):

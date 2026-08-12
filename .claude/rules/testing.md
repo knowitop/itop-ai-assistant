@@ -18,7 +18,7 @@ paths:
 - The intake agent loop is driven by a scripted `FakeToolCallingModel`
   (`test_intake_agent.py`) — `create_agent` calls `bind_tools`, which
   `BaseChatModel` leaves unimplemented, so the ready-made langchain-core fakes do
-  not fit. Those tests call `IntakeRun.body(...)` directly and set `run.bundle`
+  not fit. Those tests call `IntakeRun.body(...)` directly and set `run.repos`
   by hand; `execute()` is the shell's job and is covered separately.
 - Tools are called as `tools.<name>.coroutine(...)`, bypassing pydantic.
 - **Anything generic is pinned by two implementations.** The shell is tested

@@ -18,13 +18,13 @@ import logging
 from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
-from itop_ai_assistant.deps import AppDeps
+from itop_ai_assistant.core.deps import AppDeps
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import RunOutcome
 from itop_ai_assistant.pipelines.registry import ScheduleRoute, TriggerRegistry
 from itop_ai_assistant.pipelines.runner import journalled_run
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
-from itop_ai_assistant.principal import Principal
 
 logger = logging.getLogger(__name__)
 

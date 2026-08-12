@@ -10,7 +10,7 @@ import logging
 from typing import Protocol
 
 from itop_ai_assistant.config import EmbeddingsConfig, IntakeConfig, LlmConfig, Settings, VectorConfig
-from itop_ai_assistant.deps import create_llm
+from itop_ai_assistant.core.deps import create_llm
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.agent_run import AgentRun
 from itop_ai_assistant.pipelines.context import RunContext

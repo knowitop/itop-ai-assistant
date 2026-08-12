@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from itop_ai_assistant.catalog_repository import CatalogRepository
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
+from itop_ai_assistant.repositories.catalog import CatalogRepository
 
 _RAW_SERVICE = {"id": "5", "name": "IT Support", "description": "General IT"}
 _RAW_SUBCATEGORY = {"id": "3", "name": "Hardware", "description": "HW issues", "service_id": "5"}

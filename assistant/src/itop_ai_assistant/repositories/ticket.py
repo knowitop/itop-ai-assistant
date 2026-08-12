@@ -5,7 +5,7 @@ from datetime import datetime
 from itop_ai_assistant.config import TicketMappingConfig
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.itop_client import Itop
-from itop_ai_assistant.text_utils import ITOP_DATETIME_FORMAT, parse_itop_dt
+from itop_ai_assistant.util.text import ITOP_DATETIME_FORMAT, parse_itop_dt
 
 logger = logging.getLogger(__name__)
 
@@ -137,5 +137,8 @@ class TicketRepository:
 
 # The shape of "a way to fetch a fresh `TicketRepository`" — declared once
 # here so a caller that needs one imports this instead of redeclaring the
-# same `Callable[[], Awaitable[TicketRepository]]`.
-type TicketRepoFactory = Callable[[], Awaitable[TicketRepository]]
+# same `Callable[[], Awaitable[TicketRepository]]`. Named `*Provider`, not
+# `*Factory`: it never constructs one, it fetches one already built by
+# `ItopRepositories` (the actual factory) and projects it out of the
+# `RepositorySet`.
+type TicketRepositoryProvider = Callable[[], Awaitable[TicketRepository]]

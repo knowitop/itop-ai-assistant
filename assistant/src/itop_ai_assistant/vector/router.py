@@ -17,9 +17,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
 from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
-from itop_ai_assistant.deps import AppDeps
+from itop_ai_assistant.core.deps import AppDeps
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
-from itop_ai_assistant.principal import Principal
 from itop_ai_assistant.vector.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.indexer import SWEEP_TASK
 from itop_ai_assistant.vector.search import FindStats, ObjectHit, SimilarSearch
@@ -35,7 +35,7 @@ router = APIRouter(prefix="/vector")
 async def require_vector(request: Request) -> VectorConfig:
     """The two gates every acting endpoint shares — and the config it needs anyway.
 
-    Local to this router on purpose (`api_deps.py` is for what several entry
+    Local to this router on purpose (`core/api_deps.py` is for what several entry
     points need). Declared as a `Depends` parameter rather than called from the
     body so the set of preconditions is visible in the signature: that
     `/reindex` asks for one gate and `/search` for two is a real difference —

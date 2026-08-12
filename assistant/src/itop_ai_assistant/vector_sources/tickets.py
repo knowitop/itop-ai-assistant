@@ -12,7 +12,7 @@ from datetime import datetime
 
 from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
-from itop_ai_assistant.ticket_repository import TicketRepoFactory, TicketRepository
+from itop_ai_assistant.repositories.ticket import TicketRepository, TicketRepositoryProvider
 from itop_ai_assistant.vector.chunker import (
     Chunk,
     FragmentContent,
@@ -73,7 +73,7 @@ class TicketVectorSource(VectorSource[Ticket]):
     fields = FIELDS
     fragments = FRAGMENTS
 
-    def __init__(self, get_ticket_repo: TicketRepoFactory, *, classes: list[str]) -> None:
+    def __init__(self, get_ticket_repo: TicketRepositoryProvider, *, classes: list[str]) -> None:
         self._get_ticket_repo = get_ticket_repo
         self.classes: Sequence[str] = classes
         self._ticket_repo: TicketRepository | None = None

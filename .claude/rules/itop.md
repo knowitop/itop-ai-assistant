@@ -1,8 +1,8 @@
 ---
 paths:
   - "assistant/src/itop_ai_assistant/itop_client/**"
-  - "assistant/src/itop_ai_assistant/*_repository.py"
-  - "assistant/src/itop_ai_assistant/itop_provisioning.py"
+  - "assistant/src/itop_ai_assistant/repositories/**"
+  - "assistant/src/itop_ai_assistant/itop/**"
   - "assistant/src/itop_ai_assistant/domain/**"
   - "assistant/src/itop_ai_assistant/vector_sources/**"
   - "assistant/src/itop_ai_assistant/agents/**/tools.py"
@@ -20,7 +20,7 @@ formats, pagination, object classes): `dev-docs/reference/itop-api.md`.
 A fork of itoptop, rewritten with httpx. Keep it self-contained and generic: no
 imports from this application, and **do not remove functionality this service
 happens not to use**. Application-specific logic belongs in
-`ticket_repository.py`.
+`repositories/`.
 
 ## Nothing outside the repositories touches iTop
 
@@ -28,7 +28,7 @@ No exceptions — `ai_person_name()` was the last one and became
 `IdentityRepository` in TASK-027.
 
 Tools and agents never see the raw client or an iTop attribute name. All access
-goes through a `*_repository.py` — `TicketRepository` and `CatalogRepository`
+goes through `repositories/` — `TicketRepository` and `CatalogRepository`
 translate semantic fields to attributes (driven by the `ticket_mapping` config
 section: `fields`, `class_overrides`, `active_statuses`); `AccessRepository` is
 narrower, one read of the calling principal's own access scope, not a
@@ -40,9 +40,10 @@ belongs to whoever owns the event that invalidates it (the name cache lives on
 
 A run receives repositories only as a `RepositorySet` from
 `ItopRepositories.for_principal()`, never one built by hand: the set is what
-makes "one run, one identity" structural rather than a convention. OQL templates use semantic `:this->field` placeholders
-bound from `ticket.model_dump()`. Adapting to a customized iTop datamodel must
-stay a config change, not a code change.
+makes "one run, one identity" structural rather than a convention. OQL templates
+use semantic `:this->field` placeholders bound from `ticket.model_dump()`.
+Adapting to a customized iTop datamodel must stay a config change, not a code
+change.
 
 Processing code works with the semantic `Ticket` model (`domain/ticket.py`) —
 `subcategory_id`, `caller_name`, `ticket.label`, `ticket.has_service` — never

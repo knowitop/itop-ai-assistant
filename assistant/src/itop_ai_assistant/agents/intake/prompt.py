@@ -20,10 +20,10 @@ from xml.sax.saxutils import escape, quoteattr
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.prompts import PromptTemplate
 
-from itop_ai_assistant.catalog_repository import CatalogRepository
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
-from itop_ai_assistant.text_utils import bind_oql, html_to_markdown
+from itop_ai_assistant.repositories.catalog import CatalogRepository
+from itop_ai_assistant.util.text import bind_oql, html_to_markdown
 
 from .context import IntakeContext
 from .prompts import IntakePrompts

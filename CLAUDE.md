@@ -98,5 +98,5 @@ See `assistant/CLAUDE.md`.
 ## Configuration
 
 Priority and startup nuances: `.claude/rules/config.md` (loads when you touch
-`config.py`, `config_store.py`, or `admin/`). Every variable is tabulated in
-`docs/configuration.md`; `docker/.env.dist` is the full template.
+`config.py`, `settings/config_store.py`, or `admin/`). Every variable is
+tabulated in `docs/configuration.md`; `docker/.env.dist` is the full template.

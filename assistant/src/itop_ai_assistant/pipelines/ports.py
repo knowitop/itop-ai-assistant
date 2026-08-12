@@ -15,7 +15,7 @@ Two rules hold this together:
   accepts it. This is checked by strict mypy, which is the gate in pre-commit.
 * **Implementations do not inherit these protocols.** `AppDeps` satisfies
   `RunDeps` structurally and knows nothing about this module; making it inherit
-  would drag the Redis/Qdrant/langchain imports of `deps.py` back into the
+  would drag the Redis/Qdrant/langchain imports of `core/deps.py` back into the
   core, which is exactly what this file exists to prevent.
 
 `aclose()` appears in no port on purpose: the connection pool belongs to the
@@ -25,11 +25,11 @@ composition root, and no run should be able to close it.
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
-from itop_ai_assistant.config_store import ConfigStore
-from itop_ai_assistant.itop_connection import RepositorySet
-from itop_ai_assistant.journal import RunStatus, TriggerKind
-from itop_ai_assistant.principal import Principal
-from itop_ai_assistant.prompt_store import PromptStore
+from itop_ai_assistant.core.principal import Principal
+from itop_ai_assistant.repositories.sets import RepositorySet
+from itop_ai_assistant.settings.config_store import ConfigStore
+from itop_ai_assistant.settings.prompt_store import PromptStore
+from itop_ai_assistant.state.journal import RunStatus, TriggerKind
 from itop_ai_assistant.state.ticket_state import TicketState
 from itop_ai_assistant.vector.store import ChunkStore
 

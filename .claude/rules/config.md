@@ -1,7 +1,7 @@
 ---
 paths:
   - "assistant/src/itop_ai_assistant/config.py"
-  - "assistant/src/itop_ai_assistant/config_store.py"
+  - "assistant/src/itop_ai_assistant/settings/config_store.py"
   - "assistant/src/itop_ai_assistant/admin/**"
 ---
 

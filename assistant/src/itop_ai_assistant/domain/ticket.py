@@ -1,8 +1,9 @@
 """Semantic ticket model, decoupled from iTop attribute names.
 
-Raw iTop attributes are translated into this model by `itop.repository.
-TicketRepository` according to the `ticket_mapping` config section — customer
-datamodel customizations are handled there, never in processing code.
+Raw iTop attributes are translated into this model by
+`repositories/ticket.py::TicketRepository` according to the `ticket_mapping`
+config section — customer datamodel customizations are handled there, never in
+processing code.
 """
 
 from datetime import datetime

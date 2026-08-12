@@ -59,7 +59,7 @@ cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true 
 
 [project.scripts]
 itop-ai-reindex = "itop_ai_assistant.vector.reindex:main"
-itop-ai-provision = "itop_ai_assistant.itop_provisioning:main"
+itop-ai-provision = "itop_ai_assistant.itop.provisioning:main"
 
 [dependency-groups]
 dev = [

@@ -24,10 +24,10 @@ from itop_ai_assistant.agents.selfcheck.pipeline import (
 from itop_ai_assistant.agents.selfcheck.prompts import build_selfcheck_prompts
 from itop_ai_assistant.config import ItopConfig, LlmConfig, SelfCheckConfig
 from itop_ai_assistant.domain.catalog import Service
-from itop_ai_assistant.journal import RunJournal
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.registry import TriggerRegistry
-from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore
+from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore
+from itop_ai_assistant.state.journal import RunJournal
 
 _ITOP = ItopConfig(url="https://itop.example", token="t")
 _LLM = LlmConfig(base_url="http://llm/v1", model="test-model")

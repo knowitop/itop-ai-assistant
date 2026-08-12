@@ -12,9 +12,9 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from itop_ai_assistant.journal import TriggerKind
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.ports import RunFrameJournal
+from itop_ai_assistant.state.journal import TriggerKind
 
 logger = logging.getLogger(__name__)
 

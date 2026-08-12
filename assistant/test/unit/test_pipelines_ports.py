@@ -14,7 +14,7 @@ they are asserted against the protocol's own member list.
 import unittest
 
 from itop_ai_assistant.config import get_settings
-from itop_ai_assistant.deps import AppDeps, build_deps
+from itop_ai_assistant.core.deps import AppDeps, build_deps
 from itop_ai_assistant.pipelines.ports import (
     ItopAccess,
     LockPort,

@@ -12,7 +12,7 @@ list under a present key is a caller error, not "no organizations".
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from itop_ai_assistant.access_repository import AccessRepository
+from itop_ai_assistant.repositories.access import AccessRepository
 from itop_ai_assistant.vector.search import SimilarSearch
 from itop_ai_assistant.vector.store import SearchHit
 

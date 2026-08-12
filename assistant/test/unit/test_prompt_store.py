@@ -5,7 +5,7 @@ from pathlib import Path
 import fakeredis.aioredis
 
 from itop_ai_assistant.agents.intake.prompts import PROMPT_VARIABLES, build_intake_prompts
-from itop_ai_assistant.prompt_store import (
+from itop_ai_assistant.settings.prompt_store import (
     PACKAGED_PROMPTS_DIR,
     FilePromptStore,
     PromptStoreError,

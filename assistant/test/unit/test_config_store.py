@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from redis.exceptions import RedisError
 
 from itop_ai_assistant.config import IntakeConfig, Settings
-from itop_ai_assistant.config_store import RedisConfigStore
+from itop_ai_assistant.settings.config_store import RedisConfigStore
 
 
 def _make_store() -> tuple[RedisConfigStore, fakeredis.aioredis.FakeRedis]:

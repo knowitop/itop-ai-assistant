@@ -19,12 +19,12 @@ from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel
 
 from itop_ai_assistant.config import ItopConfig, LlmConfig, SelfCheckConfig, Settings, missing_setup
-from itop_ai_assistant.deps import create_llm
+from itop_ai_assistant.core.deps import create_llm
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import RunOutcome
 from itop_ai_assistant.pipelines.ports import RunDeps
 from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, ScheduleRoute, TriggerRegistry
-from itop_ai_assistant.text_utils import strip_thinking
+from itop_ai_assistant.util.text import strip_thinking
 
 from .prompts import PROMPT_VARIABLES, build_selfcheck_prompts
 

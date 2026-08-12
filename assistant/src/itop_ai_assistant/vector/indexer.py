@@ -33,7 +33,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from itop_ai_assistant.config import EmbeddingsConfig, FamilyConfig, VectorClassConfig, VectorConfig
-from itop_ai_assistant.deps import AppDeps
+from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.vector.chunker import Chunk
 from itop_ai_assistant.vector.embedder import EmbeddingsClient

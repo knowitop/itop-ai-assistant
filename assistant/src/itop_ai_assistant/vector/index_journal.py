@@ -1,4 +1,4 @@
-"""History of indexing runs — the same shape as `journal.py`, one hash per
+"""History of indexing runs — the same shape as `state/journal.py`, one hash per
 entry plus a capped sorted index.
 
 Journal writes are observability, never correctness: the sweep treats a

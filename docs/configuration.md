@@ -132,7 +132,7 @@ The scheduled run is journalled with `kind: schedule` and `subject: selfcheck` �
 | `google_genai` | not used | required | Google Gemini (native API, not the OpenAI shim) |
 | `ollama` | optional, default `http://localhost:11434` | not used | Ollama's native API |
 
-Adding a provider is a single entry in `assistant/src/llm_providers.py` — the setup API and the UI form are generated from that registry.
+Adding a provider is a single entry in `assistant/src/itop_ai_assistant/core/llm_providers.py` — the setup API and the UI form are generated from that registry.
 
 **Model parameters.** Anything the provider's client accepts goes in `LLM_PARAMS` (env, JSON) or the **Model parameters** field in Connections: `{"temperature": 0.2, "max_tokens": 2048, "timeout": 60}`. Connection fields (`model`, `base_url`, `api_key`) are rejected there — set them in their own fields.
 

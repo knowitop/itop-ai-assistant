@@ -19,7 +19,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import BaseTool, tool
 
 from itop_ai_assistant.domain.ticket import Ticket
-from itop_ai_assistant.text_utils import bind_oql, html_to_markdown
+from itop_ai_assistant.util.text import bind_oql, html_to_markdown
 from itop_ai_assistant.vector.store import DateRange
 
 from .context import IntakeContext

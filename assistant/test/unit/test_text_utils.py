@@ -1,7 +1,7 @@
 import unittest
 from datetime import UTC, datetime
 
-from itop_ai_assistant.text_utils import bind_oql, html_to_markdown, parse_itop_dt, strip_thinking
+from itop_ai_assistant.util.text import bind_oql, html_to_markdown, parse_itop_dt, strip_thinking
 
 
 class TestBindOql(unittest.TestCase):

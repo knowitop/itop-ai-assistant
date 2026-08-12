@@ -15,8 +15,9 @@ from itop_ai_assistant.config import (
     TicketFieldMap,
     TicketMappingConfig,
 )
-from itop_ai_assistant.itop_connection import ItopConnection, ItopRepositories, RepositorySet
-from itop_ai_assistant.principal import Principal
+from itop_ai_assistant.core.principal import Principal
+from itop_ai_assistant.itop.connection import ItopConnection
+from itop_ai_assistant.repositories.sets import ItopRepositories, RepositorySet
 
 _ENGINEER = Principal.delegated("engineer-token", login="jdoe", name="John Doe")
 

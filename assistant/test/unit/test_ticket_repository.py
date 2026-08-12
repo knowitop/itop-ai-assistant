@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from itop_ai_assistant.config import TicketMappingConfig
 from itop_ai_assistant.domain.ticket import Ticket
-from itop_ai_assistant.ticket_repository import TicketRepository
+from itop_ai_assistant.repositories.ticket import TicketRepository
 
 _RAW_TICKET = {
     "id": "42",

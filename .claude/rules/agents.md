@@ -3,8 +3,8 @@ paths:
   - "assistant/src/itop_ai_assistant/agents/**"
   - "assistant/src/itop_ai_assistant/graph/**"
   - "assistant/src/itop_ai_assistant/prompts/**"
-  - "assistant/src/itop_ai_assistant/prompt_store.py"
-  - "assistant/src/itop_ai_assistant/llm_providers.py"
+  - "assistant/src/itop_ai_assistant/settings/prompt_store.py"
+  - "assistant/src/itop_ai_assistant/core/llm_providers.py"
 ---
 
 # Agents, tools and prompts
@@ -37,8 +37,8 @@ convention; `graph/` is reserved for a genuinely deterministic multi-step flow.
   `_require_tool_call` on even when `tool_choice` is forced — Ollama and some
   gateways drop the field silently instead of erroring.
 - Whether an endpoint accepts a forced `tool_choice` is a fact about the
-  connection (`llm_providers`); whether to use it is the agent's call. An agent
-  whose prose is the product passes `force_tool_choice=False`.
+  connection (`core/llm_providers.py`); whether to use it is the agent's call.
+  An agent whose prose is the product passes `force_tool_choice=False`.
 
 ## Prompts
 
@@ -52,6 +52,7 @@ the boot. After touching `prompts/intake/*.md` or a tool signature, run
 
 ## LLM client
 
-`create_llm` (`deps.py`) is the only construction site and returns
+`create_llm` (`core/deps.py`) is the only construction site and returns
 `BaseChatModel`; type every consumer that way. Adding a provider is an entry in
-`llm_providers.py` plus its `langchain-*` package — never a change in an agent.
+`core/llm_providers.py` plus its `langchain-*` package — never a change in an
+agent.

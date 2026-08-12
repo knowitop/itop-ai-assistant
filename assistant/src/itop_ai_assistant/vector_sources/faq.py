@@ -12,7 +12,7 @@ from datetime import datetime
 
 from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
 from itop_ai_assistant.domain.faq import FaqArticle
-from itop_ai_assistant.faq_repository import FaqRepoFactory, FaqRepository
+from itop_ai_assistant.repositories.faq import FaqRepository, FaqRepositoryProvider
 from itop_ai_assistant.vector.chunker import Chunk, FragmentContent, TextContent, chunk_object, clean_text
 from itop_ai_assistant.vector.source import FragmentSpec, VectorRecord, VectorSource
 
@@ -58,7 +58,7 @@ class FaqVectorSource(VectorSource[FaqArticle]):
     fields = FIELDS
     fragments = FRAGMENTS
 
-    def __init__(self, get_faq_repo: FaqRepoFactory, *, classes: list[str]) -> None:
+    def __init__(self, get_faq_repo: FaqRepositoryProvider, *, classes: list[str]) -> None:
         self._get_faq_repo = get_faq_repo
         self.classes: Sequence[str] = classes
         self._faq_repo: FaqRepository | None = None

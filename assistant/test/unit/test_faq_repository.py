@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from itop_ai_assistant.config import FaqFieldMap, FaqMappingConfig
 from itop_ai_assistant.domain.faq import FaqArticle
-from itop_ai_assistant.faq_repository import FaqRepository
+from itop_ai_assistant.repositories.faq import FaqRepository
 
 _RAW_ARTICLE = {
     "id": "42",

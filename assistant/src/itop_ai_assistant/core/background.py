@@ -13,7 +13,7 @@ Adding either is one line, the same idiom as `build_registry` and
 `build_vector_sources`.
 """
 
-from itop_ai_assistant.deps import AppDeps
+from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.pipelines.registry import TriggerRegistry
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.schedule.runner import register_schedules

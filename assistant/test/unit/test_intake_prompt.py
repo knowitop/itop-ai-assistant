@@ -13,7 +13,7 @@ from itop_ai_assistant.agents.intake.prompts import build_intake_prompts
 from itop_ai_assistant.config import IntakeConfig
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
-from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
+from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
 
 _PROMPTS = build_intake_prompts(read_prompt_dir(PACKAGED_PROMPTS_DIR / "intake"))
 

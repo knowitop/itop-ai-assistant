@@ -11,7 +11,10 @@ logger = logging.getLogger(__name__)
 
 #: Prompt templates shipped inside the package — the bottom of the override
 #: chain, and the only copy guaranteed to exist in an installed deployment.
-PACKAGED_PROMPTS_DIR = Path(__file__).parent / "prompts"
+#: They sit next to the package root rather than next to this store: the store
+#: is one of two layered settings (`config_store.py` is the other), the
+#: templates are packaged data.
+PACKAGED_PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
 
 
 class PromptStoreError(Exception):

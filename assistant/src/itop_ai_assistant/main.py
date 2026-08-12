@@ -7,11 +7,11 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from itop_ai_assistant.admin.router import router as admin_router
-from itop_ai_assistant.background import build_background_tasks
-from itop_ai_assistant.build_info import get_build_info
 from itop_ai_assistant.config import ItopConfig, LlmConfig, SecurityConfig, get_settings, missing_setup
-from itop_ai_assistant.deps import build_deps
+from itop_ai_assistant.core.background import build_background_tasks
+from itop_ai_assistant.core.deps import build_deps
 from itop_ai_assistant.pipelines.registry import build_registry
+from itop_ai_assistant.util.build_info import get_build_info
 from itop_ai_assistant.webhook.router import router
 
 settings = get_settings()

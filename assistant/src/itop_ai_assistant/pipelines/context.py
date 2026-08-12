@@ -8,7 +8,7 @@ A run context is never serialized — it is passed, not posted.
 from dataclasses import dataclass, field
 from uuid import UUID
 
-from itop_ai_assistant.principal import Principal
+from itop_ai_assistant.core.principal import Principal
 
 
 @dataclass(frozen=True)

@@ -22,10 +22,10 @@ from abc import ABC, abstractmethod
 from uuid import UUID
 
 from itop_ai_assistant.domain.ticket import Ticket
-from itop_ai_assistant.itop_connection import RepositorySet
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import ObjectRef, RunOutcome
 from itop_ai_assistant.pipelines.ports import ItopAccess, LockPort, RunDeps, StepJournal
+from itop_ai_assistant.repositories.sets import RepositorySet
 
 logger = logging.getLogger(__name__)
 

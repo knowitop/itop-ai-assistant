@@ -10,9 +10,9 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from itop_ai_assistant.config import FamilyConfig, VectorConfig
-from itop_ai_assistant.faq_repository import FaqRepository
-from itop_ai_assistant.itop_connection import RepositorySet
-from itop_ai_assistant.ticket_repository import TicketRepository
+from itop_ai_assistant.repositories.faq import FaqRepository
+from itop_ai_assistant.repositories.sets import RepositorySet
+from itop_ai_assistant.repositories.ticket import TicketRepository
 
 if TYPE_CHECKING:
     from itop_ai_assistant.vector.source import VectorSource

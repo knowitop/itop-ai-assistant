@@ -5,9 +5,11 @@ a clean pass. Uses the *effective* runtime config (Redis overrides included),
 so it needs access to the same Redis as the assistant — run it next to a
 configured deployment, not on a blank machine.
 
-    PYTHONPATH=src uv run python -m vector.reindex [--full]
+    uv run itop-ai-reindex [--full]
 
-(In the Docker image PYTHONPATH is already set.) `--full` resets the sweep
+The console script (`pyproject.toml`) is the entry point; in the Docker image it
+is on `PATH` from the venv, so the same command works there. Equivalently
+`python -m itop_ai_assistant.vector.reindex`. `--full` resets the sweep
 cursors first, turning the run into a complete backfill; without it the run
 just catches up from the current cursors.
 """
@@ -17,7 +19,7 @@ import asyncio
 import sys
 
 from itop_ai_assistant.config import get_settings
-from itop_ai_assistant.deps import build_deps
+from itop_ai_assistant.core.deps import build_deps
 from itop_ai_assistant.vector.indexer import SweepReport, VectorIndexer
 
 _MAX_ATTEMPTS = 3

@@ -1,13 +1,13 @@
 import unittest
 
-from itop_ai_assistant.itop_client.exceptions import ItopError
-from itop_ai_assistant.itop_provisioning import (
+from itop_ai_assistant.itop.provisioning import (
     APP_NAME,
     CREATED_TRIGGER_DESC,
     CREATED_WEBHOOK_NAME,
     UPDATED_WEBHOOK_NAME,
     provision_itop,
 )
+from itop_ai_assistant.itop_client.exceptions import ItopError
 
 BACKEND_URL = "http://assistant:8000"
 WEBHOOK_TOKEN = "wh-tok"

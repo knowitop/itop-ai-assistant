@@ -19,7 +19,7 @@ from itop_ai_assistant.config import EmbeddingsConfig, IntakeConfig, LlmConfig, 
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.context import RunContext
-from itop_ai_assistant.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
+from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
 from itop_ai_assistant.state.ticket_state import TicketState
 from itop_ai_assistant.vector.store import SearchHit
 from itop_ai_assistant.webhook.models import WebhookPayload

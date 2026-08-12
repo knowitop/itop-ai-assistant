@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from itop_ai_assistant.access_repository import AccessRepository
+from itop_ai_assistant.repositories.access import AccessRepository
 
 
 def _make_repo(response: dict | None) -> tuple[AccessRepository, MagicMock, MagicMock]:

@@ -10,11 +10,11 @@ from unittest.mock import MagicMock
 
 import fakeredis.aioredis
 
-from itop_ai_assistant.journal import RunJournal
 from itop_ai_assistant.pipelines.models import RunOutcome
 from itop_ai_assistant.pipelines.registry import ModuleInfo, ScheduleRoute, TriggerRegistry
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.schedule.runner import register_schedules, run_schedule
+from itop_ai_assistant.state.journal import RunJournal
 
 
 class ScheduleRunnerTestCase(unittest.IsolatedAsyncioTestCase):

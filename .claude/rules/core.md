@@ -5,12 +5,9 @@ paths:
   - "assistant/src/itop_ai_assistant/webhook/**"
   - "assistant/src/itop_ai_assistant/request/**"
   - "assistant/src/itop_ai_assistant/main.py"
-  - "assistant/src/itop_ai_assistant/deps.py"
-  - "assistant/src/itop_ai_assistant/background.py"
-  - "assistant/src/itop_ai_assistant/api_deps.py"
-  - "assistant/src/itop_ai_assistant/principal.py"
-  - "assistant/src/itop_ai_assistant/journal.py"
-  - "assistant/src/itop_ai_assistant/itop_connection.py"
+  - "assistant/src/itop_ai_assistant/core/**"
+  - "assistant/src/itop_ai_assistant/state/journal.py"
+  - "assistant/src/itop_ai_assistant/itop/connection.py"
 ---
 
 # The run core
@@ -91,8 +88,8 @@ Every entry point rejects anything no module has claimed.
 **A background loop is not a trigger.** `PeriodicTasks` paces periodic loops and
 knows nothing about runs. Never put an infrastructure loop (the vector sweep)
 into the registry: it would need a fake module name and a "do not journal" flag.
-Both kinds of loop are assembled in `background.py`, one line each. Loops are
-**per process** — cross-replica exclusion is the tick's own business.
+Both kinds of loop are assembled in `core/background.py`, one line each. Loops
+are **per process** — cross-replica exclusion is the tick's own business.
 
 `ModuleInfo` (what a business module is) and the routes (what may start a run)
 live in the same file and are deliberately not the same thing.

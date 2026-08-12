@@ -4,8 +4,8 @@ import logging
 import unittest
 from uuid import UUID
 
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.pipelines.context import RunContext
-from itop_ai_assistant.principal import Principal
 
 _TOKEN = "s3cret-engineer-token"
 _PID = UUID("3f2a1c4e-0000-0000-0000-000000000042")
