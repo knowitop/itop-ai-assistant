@@ -112,22 +112,22 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.deps.config_store.get = AsyncMock(side_effect=config_get)
 
-        self.bundle = MagicMock()
-        self.bundle.ticket_repo.set_fields = AsyncMock()
-        self.bundle.ticket_repo.append_public_log = AsyncMock()
-        self.bundle.ticket_repo.append_private_log = AsyncMock()
-        self.bundle.catalog_repo.find_services = AsyncMock(
+        self.repos = MagicMock()
+        self.repos.ticket_repo.set_fields = AsyncMock()
+        self.repos.ticket_repo.append_public_log = AsyncMock()
+        self.repos.ticket_repo.append_private_log = AsyncMock()
+        self.repos.catalog_repo.find_services = AsyncMock(
             return_value=[Service(id="10", name="Printing", description="Printer issues")]
         )
-        self.bundle.catalog_repo.find_subcategories = AsyncMock(
+        self.repos.catalog_repo.find_subcategories = AsyncMock(
             return_value=[ServiceSubcategory(id="101", name="Hardware fault", description="Model", service_id="10")]
         )
-        self.bundle.catalog_repo.get_service = AsyncMock(return_value=None)
-        self.bundle.catalog_repo.get_subcategory = AsyncMock(return_value=None)
+        self.repos.catalog_repo.get_service = AsyncMock(return_value=None)
+        self.repos.catalog_repo.get_subcategory = AsyncMock(return_value=None)
 
     def intake_run(self) -> IntakeRun:
         """A run whose body is called directly — `execute()` is the shell's job
-        and is covered in `test_intake_pipeline.py`, so `bundle` is set by hand."""
+        and is covered in `test_intake_pipeline.py`, so `repos` is set by hand."""
         payload = WebhookPayload.model_validate({"id": "123", "class": "Incident", "event": "created"})
         run = IntakeRun(
             payload,
@@ -137,7 +137,7 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
             itop=self.deps.itop,
             journal=self.deps.journal,
         )
-        run.bundle = self.bundle
+        run.repos = self.repos
         return run
 
     async def run_agent(self, responses: list[AIMessage]) -> FakeToolCallingModel:
@@ -154,9 +154,9 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
     async def test_plain_text_answer_triggers_the_epilogue(self):
         await self.run_agent([ai(content="I think this is a printer problem.")])
 
-        self.bundle.ticket_repo.append_private_log.assert_awaited_once()
+        self.repos.ticket_repo.append_private_log.assert_awaited_once()
         self.assertEqual(
-            self.bundle.ticket_repo.append_private_log.await_args.args[1],
+            self.repos.ticket_repo.append_private_log.await_args.args[1],
             self.intake_cfg.handoff_fallback_note,
         )
         self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
@@ -178,7 +178,7 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
         self.assertEqual(steps[-2][0], "epilogue")  # usage is always last
 
     async def test_rejected_call_comes_back_as_feedback_and_the_loop_continues(self):
-        self.bundle.catalog_repo.find_subcategories = AsyncMock(return_value=[])
+        self.repos.catalog_repo.find_subcategories = AsyncMock(return_value=[])
 
         model = await self.run_agent(
             [
@@ -233,7 +233,7 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
         self.assertIn("wall time:", detail)
 
     async def test_usage_is_recorded_even_when_the_run_fails(self):
-        self.bundle.catalog_repo.find_subcategories = AsyncMock(side_effect=RuntimeError("iTop is down"))
+        self.repos.catalog_repo.find_subcategories = AsyncMock(side_effect=RuntimeError("iTop is down"))
 
         with self.assertRaises(RuntimeError):
             await self.run_agent([ai([call("get_subcategories", {"service_id": 10})])])
@@ -241,7 +241,7 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
         self.assertEqual(self.journal_steps()[-1][0], "usage")
 
     async def test_itop_failure_propagates(self):
-        self.bundle.catalog_repo.find_subcategories = AsyncMock(side_effect=RuntimeError("iTop is down"))
+        self.repos.catalog_repo.find_subcategories = AsyncMock(side_effect=RuntimeError("iTop is down"))
 
         with self.assertRaises(RuntimeError):
             await self.run_agent([ai([call("get_subcategories", {"service_id": 10})])])
@@ -253,7 +253,7 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
 
         await self.run_agent([ai(content="nothing to do")])
 
-        self.bundle.ticket_repo.append_private_log.assert_not_called()
+        self.repos.ticket_repo.append_private_log.assert_not_called()
         self.deps.state_manager.mark_done.assert_not_called()
         self.assertEqual(self.journal_steps()[-2], ("epilogue", "ticket already finished — nothing to close"))
 
@@ -271,10 +271,10 @@ class TestProseInsteadOfToolCall(IntakeAgentTestCase):
         )
 
         self.assertEqual(model.calls, 2)
-        self.bundle.ticket_repo.append_public_log.assert_awaited_once()
+        self.repos.ticket_repo.append_public_log.assert_awaited_once()
         # The round was not wasted and the ticket was not closed behind the requester
         self.deps.state_manager.mark_done.assert_not_called()
-        self.bundle.ticket_repo.append_private_log.assert_not_called()
+        self.repos.ticket_repo.append_private_log.assert_not_called()
         self.assertNotIn("epilogue", [node for node, _ in self.journal_steps()])
 
     async def test_the_failed_turn_and_the_retry_are_both_journalled(self):
@@ -331,7 +331,7 @@ class TestForcedToolChoice(IntakeAgentTestCase):
         )
 
         self.assertEqual(model.calls, 2)
-        self.bundle.ticket_repo.append_public_log.assert_awaited_once()
+        self.repos.ticket_repo.append_public_log.assert_awaited_once()
 
 
 class TestClassifiedTicket(IntakeAgentTestCase):
@@ -347,9 +347,9 @@ class TestClassifiedTicket(IntakeAgentTestCase):
         model = await self.run_agent([ai([call("finish_handoff", {"note": "VPN error 868."}, "h1")])])
 
         self.assertEqual(model.calls, 1)
-        self.bundle.catalog_repo.find_services.assert_not_called()
-        self.bundle.catalog_repo.find_subcategories.assert_not_called()
-        self.bundle.ticket_repo.set_fields.assert_not_called()
+        self.repos.catalog_repo.find_services.assert_not_called()
+        self.repos.catalog_repo.find_subcategories.assert_not_called()
+        self.repos.ticket_repo.set_fields.assert_not_called()
 
     async def test_the_model_is_not_even_offered_the_classification_tools(self):
         captured: list[list] = []
@@ -377,8 +377,8 @@ class TestTerminalTools(IntakeAgentTestCase):
         )
 
         self.assertEqual(model.calls, 2, "the run must end without a closing model call")
-        self.bundle.ticket_repo.set_fields.assert_awaited_once()
-        self.bundle.ticket_repo.append_private_log.assert_awaited_once_with(self.ticket, "Printer in room 3 is dead.")
+        self.repos.ticket_repo.set_fields.assert_awaited_once()
+        self.repos.ticket_repo.append_private_log.assert_awaited_once_with(self.ticket, "Printer in room 3 is dead.")
         self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
         self.assertNotIn("epilogue", [node for node, _ in self.journal_steps()])
 
@@ -391,10 +391,10 @@ class TestTerminalTools(IntakeAgentTestCase):
         )
 
         self.assertEqual(model.calls, 1)
-        self.bundle.ticket_repo.append_public_log.assert_awaited_once()
+        self.repos.ticket_repo.append_public_log.assert_awaited_once()
         self.deps.state_manager.increment_classify_rounds.assert_awaited_once_with("Incident::123")
         self.deps.state_manager.mark_done.assert_not_called()
-        self.bundle.ticket_repo.append_private_log.assert_not_called()
+        self.repos.ticket_repo.append_private_log.assert_not_called()
 
     async def test_invalid_service_id_is_fed_back_and_the_agent_recovers(self):
         model = await self.run_agent(
@@ -410,7 +410,7 @@ class TestTerminalTools(IntakeAgentTestCase):
         rejection = next(detail for node, detail in steps if node == "tool:set_classification")
         self.assertIn("[error]", rejection)
         self.assertIn("Valid service IDs: 10", rejection)
-        self.bundle.ticket_repo.set_fields.assert_awaited_once()
+        self.repos.ticket_repo.set_fields.assert_awaited_once()
         self.deps.state_manager.mark_done.assert_awaited_once()
 
     async def test_exhausted_classify_budget_closes_the_ticket_inside_the_tool(self):
@@ -426,8 +426,8 @@ class TestTerminalTools(IntakeAgentTestCase):
         )
 
         self.assertEqual(model.calls, 1)
-        self.bundle.ticket_repo.append_public_log.assert_not_called()
-        self.bundle.ticket_repo.append_private_log.assert_awaited_once_with(
+        self.repos.ticket_repo.append_public_log.assert_not_called()
+        self.repos.ticket_repo.append_private_log.assert_awaited_once_with(
             self.ticket, self.intake_cfg.classify_fallback_note
         )
         self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
@@ -441,7 +441,7 @@ class TestSimilarTicketsWiring(IntakeAgentTestCase):
     def enable_vectors(self) -> MagicMock:
         self.deps.vector_store.configured = True
         self.deps.vector_store.search = AsyncMock(return_value=[SearchHit("UserRequest", 12, 0.9)])
-        self.bundle.ticket_repo.find_existing_ids = AsyncMock(return_value={12})
+        self.repos.ticket_repo.find_existing_ids = AsyncMock(return_value={12})
         self.vector_cfg = VectorConfig(enabled=True)
         self.embeddings_cfg = EmbeddingsConfig(base_url="http://emb/v1", model="e5")
         embedder = MagicMock()
@@ -493,8 +493,8 @@ class TestSimilarTicketsWiring(IntakeAgentTestCase):
         )
 
         self.deps.vector_store.search.assert_awaited_once()
-        self.bundle.ticket_repo.find_existing_ids.assert_awaited_once_with("UserRequest", [12])
-        self.bundle.ticket_repo.append_private_log.assert_awaited_once_with(
+        self.repos.ticket_repo.find_existing_ids.assert_awaited_once_with("UserRequest", [12])
+        self.repos.ticket_repo.append_private_log.assert_awaited_once_with(
             self.ticket, "Printer is dead.\n[[UserRequest:12]]"
         )
         # TASK-014: the tool's artifact (never sent to the model) reaches the
@@ -509,7 +509,7 @@ class TestSimilarTicketsWiring(IntakeAgentTestCase):
 
     async def test_the_embeddings_client_is_closed_even_when_the_run_fails(self):
         embedder = self.enable_vectors()
-        self.bundle.ticket_repo.append_private_log = AsyncMock(side_effect=RuntimeError("iTop is down"))
+        self.repos.ticket_repo.append_private_log = AsyncMock(side_effect=RuntimeError("iTop is down"))
 
         with self.assertRaises(RuntimeError):
             await self.run_agent([ai([call("finish_handoff", {"note": "Printer is dead."})])])

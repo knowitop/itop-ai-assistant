@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from itop_ai_assistant.config import FamilyConfig, VectorConfig
 from itop_ai_assistant.faq_repository import FaqRepository
+from itop_ai_assistant.itop_connection import RepositorySet
 from itop_ai_assistant.ticket_repository import TicketRepository
 
 if TYPE_CHECKING:
@@ -20,17 +21,16 @@ logger = logging.getLogger(__name__)
 
 
 class ItopRepos(Protocol):
-    """The repository accessors a source is built from — declared here, by the
-    consumer, rather than imported from the container that happens to offer them.
+    """The service-account repository set a source is built from — declared here,
+    by the consumer, rather than imported from the container that happens to
+    offer it.
 
     Sources are built by the service account and index globally, so this port
     deliberately has no `for_principal`: whatever a given person may see is
     decided at search time, not at indexing time.
     """
 
-    async def ticket_repo(self) -> TicketRepository: ...
-
-    async def faq_repo(self) -> FaqRepository: ...
+    async def service(self) -> RepositorySet: ...
 
 
 def build_vector_sources(itop: ItopRepos, cfg: VectorConfig) -> list["VectorSource[Any]"]:
@@ -56,14 +56,23 @@ def build_vector_sources(itop: ItopRepos, cfg: VectorConfig) -> list["VectorSour
     from itop_ai_assistant.vector_sources.tickets import FAMILY as TICKETS_FAMILY
     from itop_ai_assistant.vector_sources.tickets import TicketVectorSource
 
-    builders: dict[str, Callable[[ItopRepos, list[str]], "VectorSource[Any]"]] = {
-        TICKETS_FAMILY: lambda i, classes: TicketVectorSource(i.ticket_repo, classes=classes),
-        FAQ_FAMILY: lambda i, classes: FaqVectorSource(i.faq_repo, classes=classes),
+    # A source is given one repository, not the set: it has no business reaching
+    # for another one, and the accessor it gets can only ever answer with the
+    # service account's (see `ItopRepos` above).
+    async def ticket_repo() -> TicketRepository:
+        return (await itop.service()).ticket_repo
+
+    async def faq_repo() -> FaqRepository:
+        return (await itop.service()).faq_repo
+
+    builders: dict[str, Callable[[list[str]], "VectorSource[Any]"]] = {
+        TICKETS_FAMILY: lambda classes: TicketVectorSource(ticket_repo, classes=classes),
+        FAQ_FAMILY: lambda classes: FaqVectorSource(faq_repo, classes=classes),
     }
     sources: list["VectorSource[Any]"] = []
     for name, builder in builders.items():
         family_cfg = cfg.families.get(name, FamilyConfig())
-        sources.append(builder(itop, list(family_cfg.classes)))
+        sources.append(builder(list(family_cfg.classes)))
     for name in cfg.families:
         if name not in builders:
             logger.warning(f"vector: family {name!r} in config matches no registered source — ignoring")

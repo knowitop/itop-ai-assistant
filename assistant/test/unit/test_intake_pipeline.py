@@ -32,11 +32,11 @@ class TestHandleTicketEvent(unittest.IsolatedAsyncioTestCase):
         self.state_manager.mark_done = AsyncMock()
         self.state_manager.get = AsyncMock(return_value=TicketState())
 
-        self.bundle = MagicMock()
+        self.repos = MagicMock()
         self.fetch = AsyncMock(return_value=_ticket())
-        self.bundle.ticket_repo.fetch = self.fetch
+        self.repos.ticket_repo.fetch = self.fetch
         self.deps.itop.ai_person_name = AsyncMock(return_value="ai-assistant")
-        self.deps.itop.for_principal = AsyncMock(return_value=self.bundle)
+        self.deps.itop.for_principal = AsyncMock(return_value=self.repos)
         self.deps.journal = AsyncMock()
         self.deps.config_store.get = AsyncMock(return_value=IntakeConfig())
 
@@ -113,10 +113,10 @@ class TestGuard(unittest.IsolatedAsyncioTestCase):
         self.deps.state_manager.get = AsyncMock(return_value=TicketState())
         self.deps.journal = AsyncMock()
 
-        self.bundle = MagicMock()
+        self.repos = MagicMock()
         self.deps.itop.ai_person_name = AsyncMock(return_value="ai-assistant")
-        self.bundle.ticket_repo.fetch = AsyncMock(return_value=_ticket())
-        self.deps.itop.for_principal = AsyncMock(return_value=self.bundle)
+        self.repos.ticket_repo.fetch = AsyncMock(return_value=_ticket())
+        self.deps.itop.for_principal = AsyncMock(return_value=self.repos)
         self.deps.config_store.get = AsyncMock(return_value=IntakeConfig())
 
         run_patch = patch.object(IntakeRun, "body", new_callable=AsyncMock)
@@ -139,14 +139,14 @@ class TestGuard(unittest.IsolatedAsyncioTestCase):
         self._assert_guarded()
 
     async def test_inactive_status_stops(self):
-        self.bundle.ticket_repo.fetch.return_value = _ticket(status="assigned")
+        self.repos.ticket_repo.fetch.return_value = _ticket(status="assigned")
 
         await self._run()
 
         self._assert_guarded()
 
     async def test_last_public_entry_is_ours_stops(self):
-        self.bundle.ticket_repo.fetch.return_value = _ticket(
+        self.repos.ticket_repo.fetch.return_value = _ticket(
             public_log=[
                 LogEntry(user_login="John Doe", message="printer is dead"),
                 LogEntry(user_login="ai-assistant", message="which printer?"),
@@ -158,7 +158,7 @@ class TestGuard(unittest.IsolatedAsyncioTestCase):
         self._assert_guarded()
 
     async def test_last_public_entry_is_users_proceeds(self):
-        self.bundle.ticket_repo.fetch.return_value = _ticket(
+        self.repos.ticket_repo.fetch.return_value = _ticket(
             public_log=[
                 LogEntry(user_login="ai-assistant", message="which printer?"),
                 LogEntry(user_login="John Doe", message="the one in room 3"),

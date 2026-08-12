@@ -26,7 +26,7 @@ from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from itop_ai_assistant.config_store import ConfigStore
-from itop_ai_assistant.itop_provider import ItopBundle
+from itop_ai_assistant.itop_connection import RepositorySet
 from itop_ai_assistant.journal import RunStatus, TriggerKind
 from itop_ai_assistant.principal import Principal
 from itop_ai_assistant.prompt_store import PromptStore
@@ -105,15 +105,16 @@ class ItopAccess(Protocol):
     """Getting at iTop from inside a run.
 
     `for_principal` is the one a run is supposed to use (see
-    `.claude/rules/core.md`); `get` is here because a run that writes nothing
-    legitimately reads as the service account — `selfcheck` does exactly that.
-    `ai_person_name` answers off the service bundle whatever the run acts as,
-    which is what keeps the intake loop guard honest.
+    `.claude/rules/core.md`); `service` is here because a run that writes
+    nothing legitimately reads as the service account — `selfcheck` does exactly
+    that, and the name says so at the call site. `ai_person_name` answers off
+    the connection's own client whatever the run acts as, which is what keeps
+    the intake loop guard honest.
     """
 
-    async def for_principal(self, principal: Principal, *, comment: str) -> ItopBundle: ...
+    async def for_principal(self, principal: Principal, *, comment: str) -> RepositorySet: ...
 
-    async def get(self) -> ItopBundle: ...
+    async def service(self) -> RepositorySet: ...
 
     async def ai_person_name(self) -> str: ...
 

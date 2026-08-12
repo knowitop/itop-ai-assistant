@@ -37,10 +37,10 @@ def _mock_deps(security: SecurityConfig | None = None, configured: bool = True) 
     deps.journal = RunJournal(fakeredis.aioredis.FakeRedis(decode_responses=True))
     deps.state_manager.acquire_lock = AsyncMock(return_value=True)
     deps.state_manager.release_lock = AsyncMock()
-    bundle = MagicMock()
+    repos = MagicMock()
     # "not found" — a deterministic outcome that needs no LLM
-    bundle.ticket_repo.fetch = AsyncMock(return_value=None)
-    deps.itop.for_principal = AsyncMock(return_value=bundle)
+    repos.ticket_repo.fetch = AsyncMock(return_value=None)
+    deps.itop.for_principal = AsyncMock(return_value=repos)
     return deps
 
 

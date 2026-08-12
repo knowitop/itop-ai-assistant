@@ -95,8 +95,8 @@ async def run_selfcheck(run: RunContext, deps: RunDeps) -> RunOutcome:
         await deps.journal.add_step(run.processing_id, "guard", reason)
         return RunOutcome(status="skipped", detail=reason)
 
-    bundle = await deps.itop.get()
-    services = await bundle.catalog_repo.find_services(cfg.probe_oql)
+    repos = await deps.itop.service()
+    services = await repos.catalog_repo.find_services(cfg.probe_oql)
     await deps.journal.add_step(run.processing_id, "itop", f"{len(services)} services read with {cfg.probe_oql!r}")
 
     prompts = build_selfcheck_prompts(await deps.prompt_store.get(MODULE))

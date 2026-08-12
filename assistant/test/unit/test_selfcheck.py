@@ -47,7 +47,7 @@ def _deps(*, itop=_ITOP, llm=_LLM, selfcheck=None, services=2) -> MagicMock:
     catalog.find_services = AsyncMock(
         return_value=[Service(id=str(i), name=f"svc-{i}", description="") for i in range(services)]
     )
-    deps.itop.get = AsyncMock(return_value=SimpleNamespace(catalog_repo=catalog))
+    deps.itop.service = AsyncMock(return_value=SimpleNamespace(catalog_repo=catalog))
     return deps
 
 
@@ -140,7 +140,9 @@ class TestRun(SelfCheckTestCase):
 
         await self._run(deps)
 
-        deps.itop.get.return_value.catalog_repo.find_services.assert_awaited_once_with("SELECT Service WHERE id = 1")
+        deps.itop.service.return_value.catalog_repo.find_services.assert_awaited_once_with(
+            "SELECT Service WHERE id = 1"
+        )
 
     async def test_the_catalog_size_reaches_the_prompt(self):
         deps = _deps(services=5)
@@ -164,7 +166,7 @@ class TestRun(SelfCheckTestCase):
 
         self.assertEqual(outcome.status, "skipped")
         self.assertIn("setup incomplete", outcome.detail)
-        deps.itop.get.assert_not_awaited()
+        deps.itop.service.assert_not_awaited()
         self.assertIn("guard", await self._steps(deps))
 
     async def test_request_trigger_runs_the_same_work(self):

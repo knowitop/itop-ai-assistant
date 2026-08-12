@@ -7,7 +7,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from itop_ai_assistant.config import LlmConfig, Settings
 from itop_ai_assistant.config_store import ConfigStore, RedisConfigStore
-from itop_ai_assistant.itop_provider import ItopProvider
+from itop_ai_assistant.itop_connection import ItopConnection, ItopRepositories
 from itop_ai_assistant.journal import RunJournal
 from itop_ai_assistant.llm_providers import get_provider
 from itop_ai_assistant.prompt_store import (
@@ -38,7 +38,11 @@ class AppDeps:
     """
 
     settings: Settings
-    itop: ItopProvider
+    itop: ItopRepositories
+    # The connection is held next to the factory built over it, not inside it:
+    # closing the pool is the composition root's business, and the factory is
+    # kept free of a lifecycle method for the same reason no port has one.
+    itop_connection: ItopConnection
     state_manager: TicketStateManager
     config_store: ConfigStore
     prompt_store: PromptStore
@@ -48,7 +52,7 @@ class AppDeps:
     vector_journal: IndexJournal
 
     async def aclose(self) -> None:
-        await self.itop.aclose()
+        await self.itop_connection.aclose()
         await self.state_manager.aclose()
         await self.vector_store.aclose()
 
@@ -76,9 +80,11 @@ def build_deps(settings: Settings) -> AppDeps:
     redis = aioredis.from_url(settings.redis_url, decode_responses=True)
     config_store = RedisConfigStore(redis, settings)
     state_manager = TicketStateManager(redis, ttl_seconds=settings.state_ttl_days * 24 * 60 * 60)
+    itop_connection = ItopConnection(config_store)
     return AppDeps(
         settings=settings,
-        itop=ItopProvider(config_store),
+        itop=ItopRepositories(itop_connection, config_store),
+        itop_connection=itop_connection,
         state_manager=state_manager,
         config_store=config_store,
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR, settings.prompts_dir), redis),

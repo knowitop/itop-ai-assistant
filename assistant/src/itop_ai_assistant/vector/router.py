@@ -355,9 +355,9 @@ async def vector_search(
                 detail=f"principal_token is only supported for family {TICKETS_FAMILY!r} today (TASK-015)",
             )
         principal = Principal.delegated(body.principal_token, login="debug", name="debug")
-        bundle = await deps.itop.for_principal(principal, comment="vector debug search (TASK-015)")
-        resolve = bundle.ticket_repo.find_existing_ids
-        allowed_org_ids = await bundle.access_repo.allowed_org_ids()
+        repos = await deps.itop.for_principal(principal, comment="vector debug search (TASK-015)")
+        resolve = repos.ticket_repo.find_existing_ids
+        allowed_org_ids = await repos.access_repo.allowed_org_ids()
         if allowed_org_ids is not None and (filters is None or "org_id" not in filters):
             filters = {**(filters or {}), "org_id": allowed_org_ids}
 

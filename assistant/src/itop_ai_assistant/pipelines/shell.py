@@ -22,7 +22,7 @@ from abc import ABC, abstractmethod
 from uuid import UUID
 
 from itop_ai_assistant.domain.ticket import Ticket
-from itop_ai_assistant.itop_provider import ItopBundle
+from itop_ai_assistant.itop_connection import RepositorySet
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import ObjectRef, RunOutcome
 from itop_ai_assistant.pipelines.ports import ItopAccess, LockPort, RunDeps, StepJournal
@@ -44,7 +44,7 @@ class TicketRun(ABC):
 
     # Assigned by execute() before the guard and the body run — there is nothing
     # to read before that.
-    bundle: ItopBundle
+    repos: RepositorySet
 
     def __init__(
         self,
@@ -95,8 +95,8 @@ class TicketRun(ABC):
             logger.info(f"[{self.processing_id}] {self.label} is already being processed, skipping")
             return await self.skip("lock", "ticket is already being processed")
         try:
-            self.bundle = await self.itop.for_principal(self.run.principal, comment=self.run.comment)
-            ticket = await self.bundle.ticket_repo.fetch(self.ref.obj_class, self.ref.id)
+            self.repos = await self.itop.for_principal(self.run.principal, comment=self.run.comment)
+            ticket = await self.repos.ticket_repo.fetch(self.ref.obj_class, self.ref.id)
             if ticket is None:
                 logger.warning(f"[{self.processing_id}] {self.label} not found in iTop, skipping")
                 return await self.skip("fetch", "ticket not found in iTop")

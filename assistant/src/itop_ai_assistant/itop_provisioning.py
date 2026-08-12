@@ -173,7 +173,7 @@ async def provision_itop(client: Itop, backend_url: str, webhook_token: str) -> 
 
 async def _run_cli(args: argparse.Namespace) -> list[dict[str, Any]]:
     from itop_ai_assistant.config import ItopConfig
-    from itop_ai_assistant.itop_provider import create_itop_client
+    from itop_ai_assistant.itop_connection import create_itop_client
 
     cfg = ItopConfig(
         url=args.itop_url,

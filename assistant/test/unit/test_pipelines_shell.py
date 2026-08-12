@@ -33,7 +33,7 @@ class _ProbeRun(TicketRun):
         self.stop_with: str | None = None
         self.body_raises: Exception | None = None
         self.seen: tuple[Ticket, str] | None = None
-        self.bundle_in_body = None
+        self.repos_in_body = None
 
     async def stop_reason(self, ticket: Ticket, ai_name: str) -> str | None:
         self.phases.append("guard")
@@ -42,8 +42,8 @@ class _ProbeRun(TicketRun):
     async def body(self, ticket: Ticket, ai_name: str) -> None:
         self.phases.append("body")
         self.seen = (ticket, ai_name)
-        # The shell must have resolved the iTop bundle before handing over
-        self.bundle_in_body = self.bundle
+        # The shell must have resolved the repository set before handing over
+        self.repos_in_body = self.repos
         if self.body_raises:
             raise self.body_raises
 
@@ -61,11 +61,11 @@ class ShellTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.journal = AsyncMock()
 
-        self.bundle = MagicMock()
-        self.bundle.ticket_repo.fetch = AsyncMock(return_value=self.ticket)
+        self.repos = MagicMock()
+        self.repos.ticket_repo.fetch = AsyncMock(return_value=self.ticket)
         self.itop = MagicMock()
         self.itop.ai_person_name = AsyncMock(return_value="ai-assistant")
-        self.itop.for_principal = AsyncMock(return_value=self.bundle)
+        self.itop.for_principal = AsyncMock(return_value=self.repos)
 
         self.deps = MagicMock()
         self.deps.state_manager = self.lock
@@ -85,7 +85,7 @@ class TestPhaseOrder(ShellTestCase):
         self.assertEqual(outcome.status, "done")
         self.assertEqual(self.run.phases, ["guard", "body"])
         self.assertEqual(self.run.seen, (self.ticket, "ai-assistant"))
-        self.assertIs(self.run.bundle_in_body, self.bundle)
+        self.assertIs(self.run.repos_in_body, self.repos)
         self.assertEqual(self.journalled(), [], "a clean run leaves the trace to the module")
 
     async def test_itop_is_reached_as_the_runs_principal(self):
@@ -122,7 +122,7 @@ class TestSkips(ShellTestCase):
         self.deps.state_manager.release_lock.assert_not_called()
 
     async def test_missing_object_stops_before_the_guard(self):
-        self.bundle.ticket_repo.fetch.return_value = None
+        self.repos.ticket_repo.fetch.return_value = None
 
         outcome = await self.run.execute()
 

@@ -95,7 +95,7 @@ class IntakeRun(TicketRun):
         embedder = await self._similar_search_parts()
         similar = (
             SimilarSearch(
-                self.deps.vector_store, embedder, self.bundle.ticket_repo.find_existing_ids, family=TICKETS_FAMILY
+                self.deps.vector_store, embedder, self.repos.ticket_repo.find_existing_ids, family=TICKETS_FAMILY
             )
             if embedder is not None
             else None
@@ -103,8 +103,8 @@ class IntakeRun(TicketRun):
         context = IntakeContext(
             processing_id=self.processing_id,
             ticket=ticket,
-            ticket_repo=self.bundle.ticket_repo,
-            catalog_repo=self.bundle.catalog_repo,
+            ticket_repo=self.repos.ticket_repo,
+            catalog_repo=self.repos.catalog_repo,
             state_manager=self.deps.state_manager,
             intake=cfg,
             ai_name=ai_name,

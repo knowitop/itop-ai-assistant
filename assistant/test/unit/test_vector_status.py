@@ -42,7 +42,7 @@ def _chunk(obj_id: int, *, obj_class: str = "UserRequest", updated_at: datetime 
 
 class _FakeSource:
     """Stands in for `TicketVectorSource` — the real one needs a live iTop
-    bundle from `deps.itop.get()`, which `_make_deps`'s `MagicMock()` can't
+    repository set from `deps.itop.service()`, which `_make_deps`'s `MagicMock()` can't
     provide."""
 
     name = "tickets"
@@ -75,6 +75,7 @@ def _make_deps(redis, store_url: str | None = None, **settings_overrides) -> App
     return AppDeps(
         settings=settings,
         itop=MagicMock(),
+        itop_connection=MagicMock(),
         state_manager=TicketStateManager(redis),
         config_store=RedisConfigStore(redis, settings),
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR), redis),
@@ -154,7 +155,7 @@ class TestVectorSources(VectorStatusTestCase):
 
     def test_no_itop_call_is_made(self):
         # Reading a declaration must not touch iTop: `prepare()` is what needs
-        # a live bundle, and this endpoint never calls it.
+        # a live repository set, and this endpoint never calls it.
         self.client.get("/api/vector/sources")
 
         self.client.app.state.deps.itop.get.assert_not_called()
@@ -541,11 +542,11 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         embedder.aclose = AsyncMock()
         source = _FakeSource(existing=set())  # must not be asked — see assertion below
         source.find_existing_ids = AsyncMock(side_effect=source.find_existing_ids)
-        bundle = MagicMock()
-        bundle.ticket_repo.find_existing_ids = AsyncMock(side_effect=lambda _cls, ids: existing & set(ids))
-        bundle.access_repo.allowed_org_ids = AsyncMock(return_value=allowed_org_ids)
-        deps.itop.for_principal = AsyncMock(return_value=bundle)
-        return embedder, source, bundle
+        repos = MagicMock()
+        repos.ticket_repo.find_existing_ids = AsyncMock(side_effect=lambda _cls, ids: existing & set(ids))
+        repos.access_repo.allowed_org_ids = AsyncMock(return_value=allowed_org_ids)
+        deps.itop.for_principal = AsyncMock(return_value=repos)
+        return embedder, source, repos
 
     def test_resolves_under_the_given_principal_not_the_service_account(self):
         deps = _make_deps(
@@ -556,7 +557,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         # Unrestricted org scope here — the seeded chunks carry no `org_id`
         # filter value, so an org pre-filter would (correctly) match nothing;
         # that interaction is covered separately below.
-        embedder, source, bundle = self._seed_and_patch(deps, existing={1}, allowed_org_ids=None)
+        embedder, source, repos = self._seed_and_patch(deps, existing={1}, allowed_org_ids=None)
 
         with (
             patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
@@ -572,7 +573,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         self.assertEqual({h["obj_id"] for h in body["hits"]}, {1})
         self.assertIsNone(body["allowed_org_ids"])
         source.find_existing_ids.assert_not_awaited()
-        bundle.ticket_repo.find_existing_ids.assert_awaited()
+        repos.ticket_repo.find_existing_ids.assert_awaited()
         deps.itop.for_principal.assert_awaited_once()
         principal = deps.itop.for_principal.await_args.args[0]
         self.assertEqual(principal.auth.token, "engineer-token")
