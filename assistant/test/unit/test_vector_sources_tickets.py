@@ -242,7 +242,7 @@ class TestPrepare(unittest.IsolatedAsyncioTestCase):
     async def test_resolves_the_repo_from_the_factory(self):
         """No run, no principal: the sweep is infrastructure, and the index it
         builds is global on purpose. Not tested here as behavior — this class
-        is only ever given `ItopProvider.ticket_repo` (`registry.py`), which
+        is only ever given the service set's `ticket_repo` (`registry.py`), which
         never touches `for_principal`, so there is nothing else it could do."""
         get_ticket_repo, ticket_repo = _ticket_repo_factory()
         source = TicketVectorSource(get_ticket_repo, classes=["UserRequest"])

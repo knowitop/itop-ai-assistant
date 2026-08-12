@@ -19,7 +19,7 @@ route and writes no `RunJournal` entry — `register_vector_sweep` puts it under
 the process scheduler and that is the whole of its relationship with the core.
 
 This module is source-agnostic: it knows `VectorSource`/`VectorRecord`, never
-`Ticket` or `ItopBundle` — those live in `vector_sources/tickets.py`.
+`Ticket` or a repository — those live in `vector_sources/tickets.py`.
 
 `vector.enabled` and the embeddings section are re-read from the ConfigStore
 snapshot on every tick, so enabling the feature at runtime needs no restart.

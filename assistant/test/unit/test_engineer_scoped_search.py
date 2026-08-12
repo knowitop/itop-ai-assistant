@@ -1,8 +1,8 @@
 """TASK-015: the two R4 layers composed, without a console to call them yet.
 
 Layer 2 (resolve under the caller's own token) needed no new code — it is
-`ItopProvider.for_principal()` plus `SimilarSearch(resolve=...)`, both already
-covered by `test_deps.py` and `test_vector_search.py`. What is new is layer 1
+`ItopRepositories.for_principal()` plus `SimilarSearch(resolve=...)`, both
+already covered by `test_itop_repositories.py` and `test_vector_search.py`. What is new is layer 1
 (`AccessRepository.allowed_org_ids()`); this test pins the one thing that is
 easy to get backwards when the two are wired together: `None` (unrestricted)
 must not become `filters={"org_id": []}` — under ADR-017's convention an empty

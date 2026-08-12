@@ -107,7 +107,7 @@ def make_ctx(
         catalog_repo=CatalogRepository(itop),
         state_manager=state_manager,
         intake=settings.intake,
-        # Matches _AI_PERSON_FIELDS, i.e. what ItopProvider.ai_person_name() would return
+        # Matches _AI_PERSON_FIELDS, i.e. what IdentityRepository would return
         ai_name="ai-assistant",
     )
     return ctx, transport

@@ -10,7 +10,7 @@ paths:
   - "assistant/src/itop_ai_assistant/api_deps.py"
   - "assistant/src/itop_ai_assistant/principal.py"
   - "assistant/src/itop_ai_assistant/journal.py"
-  - "assistant/src/itop_ai_assistant/itop_provider.py"
+  - "assistant/src/itop_ai_assistant/itop_connection.py"
 ---
 
 # The run core
@@ -44,16 +44,27 @@ apart into them, because the registry has one handler shape for every module.
 `app.state.deps`); a run builds its own context with a config snapshot and a
 per-run LLM client. Nothing reads globals or `get_settings()` at call time.
 
-## Connections: `for_principal()`, not `get()`
+## Connections: `for_principal()`, not `service()`
 
-Inside a run, always `deps.itop.for_principal(principal, comment=...)`. A bare
-`get()` compiles and works — and silently acts as the service account with no
-change comment. `get()` is for code that is genuinely not a run: the vector
-sweep, the wizard probes.
+Inside a run, always `deps.itop.for_principal(principal, comment=...)`, which
+answers with a `RepositorySet` — one identity, one comment, every repository in
+it bound to the same client. `service()` compiles and works, and acts as the
+service account with no change comment; it is for code that is genuinely not a
+run: the vector sweep, the wizard probes, `selfcheck`.
 
-`ai_person_name()` answers off the **service** bundle whatever the run acts as.
-Resolving it under an engineer's token would make the loop guard — which
-compares it against the author of the last public comment — lie.
+`ai_person_name()` answers off the **connection's own** client whatever the run
+acts as. Resolving it under an engineer's token would make the loop guard —
+which compares it against the author of the last public comment — lie. That is
+why `IdentityRepository` is built by `ItopConnection` and is not a member of
+`RepositorySet`: from inside a run it is not merely wrong to call, it is absent.
+
+## A class owns one config section
+
+`ItopConnection` owns `itop`; `ItopRepositories` owns `ticket_mapping` /
+`faq_mapping` and is the only place repositories are listed. Do not move a
+section to whoever finds it convenient: while one fingerprint covered all three,
+a mapping edit rebuilt the client and closed the pool (TASK-027). A new
+repository is one line in `ItopRepositories._build`, not a second list.
 
 ## The shell is the core, not a module's business
 

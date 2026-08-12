@@ -23,7 +23,7 @@ class AccessRepository:
         """Organizations the current principal may access, or `None` for "all".
 
         `:current_contact_id` resolves per request, same placeholder
-        `ItopProvider.ai_person_name()` uses on `Person` — here it is joined
+        `IdentityRepository` uses on `Person` — here it is joined
         through `User.contactid` because the linked set lives on the account,
         not the contact. iTop's own convention is that an empty "Allowed
         Organizations" list means every organization is allowed, not zero

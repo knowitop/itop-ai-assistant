@@ -3,7 +3,7 @@ objects.
 
 Wraps `TicketRepository` behind the generic `VectorSource` protocol
 (`vector/source.py`) — the vector indexer itself never imports `Ticket` or
-`ItopBundle`; all of that domain knowledge lives here instead.
+a repository; all of that domain knowledge lives here instead.
 """
 
 import logging
@@ -83,8 +83,9 @@ class TicketVectorSource(VectorSource[Ticket]):
         # run — no journal entry, nobody to act for — and the index it builds is
         # global by design (`dev-docs/architecture/platform.md` §3.5). What a searcher may see
         # is decided later, by resolving hits under their own token. Not just by
-        # convention: `get_ticket_repo` is bound to `ItopProvider.ticket_repo`,
-        # which never touches `for_principal` — this class has no way to reach it.
+        # convention: `get_ticket_repo` is bound to the service set
+        # (`ItopRepositories.service()`, see `vector_sources/registry.py`), which
+        # never touches `for_principal` — this class has no way to reach it.
         self._ticket_repo = await self._get_ticket_repo()
 
     async def find_modified_since(
