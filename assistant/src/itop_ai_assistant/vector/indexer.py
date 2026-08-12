@@ -149,7 +149,7 @@ class VectorIndexer:
                 # Drops the pending-reindex flag along with the cursors — an
                 # attempt that fails earlier leaves the request standing
                 await self._deps.vector_sync.reset_cursors()
-            sources = self._sources if self._sources is not None else build_vector_sources(self._deps, cfg)
+            sources = self._sources if self._sources is not None else build_vector_sources(self._deps.itop, cfg)
             # A source may be prepared once here and again by reconcile below,
             # in the same pass — `prepared` keeps that to one call per source.
             prepared: set[int] = set()

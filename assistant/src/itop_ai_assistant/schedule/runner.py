@@ -46,7 +46,7 @@ async def run_schedule(route: ScheduleRoute, deps: AppDeps) -> RunOutcome:
     # always will be — delegated schedules are exactly the case §8.5 defers.
     run = RunContext(processing_id=uuid4(), module=route.module, principal=Principal.service())
     async with journalled_run(
-        deps,
+        deps.journal,
         run,
         kind="schedule",
         subject=route.subject or route.label,

@@ -30,7 +30,7 @@ async def _process_safely(handler: WebhookHandler, payload: WebhookPayload, run:
     so a failure is recorded and logged, never raised."""
     try:
         async with journalled_run(
-            deps,
+            deps.journal,
             run,
             kind="webhook",
             subject=payload.label,

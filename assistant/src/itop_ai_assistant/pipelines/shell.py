@@ -19,15 +19,13 @@ opened once, at the entry point. Exceptions from the body propagate out of
 
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
 from uuid import UUID
 
+from itop_ai_assistant.domain.ticket import Ticket
+from itop_ai_assistant.itop_provider import ItopBundle
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import ObjectRef, RunOutcome
-
-if TYPE_CHECKING:
-    from itop_ai_assistant.deps import AppDeps, ItopBundle
-    from itop_ai_assistant.domain.ticket import Ticket
+from itop_ai_assistant.pipelines.ports import ItopAccess, LockPort, RunDeps, StepJournal
 
 logger = logging.getLogger(__name__)
 
@@ -38,16 +36,34 @@ class TicketRun(ABC):
     Instantiated **per run**, never per registration: the attributes below are
     this run's state, and a single shared instance in the registry would race
     between concurrent webhooks for the same object.
+
+    Takes the three ports it actually uses, not the container: the shell locks,
+    reads iTop and records steps, and its type says so. `handle()` is where the
+    container handed to a module gets taken apart into them.
     """
 
     # Assigned by execute() before the guard and the body run — there is nothing
     # to read before that.
-    bundle: "ItopBundle"
+    bundle: ItopBundle
 
-    def __init__(self, ref: ObjectRef, run: RunContext, deps: "AppDeps") -> None:
+    def __init__(
+        self,
+        ref: ObjectRef,
+        run: RunContext,
+        deps: RunDeps,
+        *,
+        lock: LockPort,
+        itop: ItopAccess,
+        journal: StepJournal,
+    ) -> None:
         self.ref = ref
         self.run = run
+        # Kept for the module's own body: what a concrete run needs beyond the
+        # shell's three ports is the module's business, not the shell's.
         self.deps = deps
+        self.lock = lock
+        self.itop = itop
+        self.journal = journal
         self.label = ref.label
 
     @property
@@ -55,25 +71,36 @@ class TicketRun(ABC):
         return self.run.processing_id
 
     @classmethod
-    async def handle(cls, ref: ObjectRef, run: RunContext, deps: "AppDeps") -> RunOutcome:
+    async def handle(cls, ref: ObjectRef, run: RunContext, deps: RunDeps) -> RunOutcome:
         """What a module registers as its route — fits both handler types.
 
         A webhook route drops the outcome; a request route returns it to the
         caller. That is the whole difference between the two triggers here.
+
+        This is also the boundary: the registry has one handler type for every
+        module, so the container arrives here, and here is where it becomes the
+        narrow ports the shell is constructed with.
         """
-        return await cls(ref, run, deps).execute()
+        return await cls(
+            ref,
+            run,
+            deps,
+            lock=deps.state_manager,
+            itop=deps.itop,
+            journal=deps.journal,
+        ).execute()
 
     async def execute(self) -> RunOutcome:
-        if not await self.deps.state_manager.acquire_lock(self.label):
+        if not await self.lock.acquire_lock(self.label):
             logger.info(f"[{self.processing_id}] {self.label} is already being processed, skipping")
             return await self.skip("lock", "ticket is already being processed")
         try:
-            self.bundle = await self.deps.itop.for_principal(self.run.principal, comment=self.run.comment)
+            self.bundle = await self.itop.for_principal(self.run.principal, comment=self.run.comment)
             ticket = await self.bundle.ticket_repo.fetch(self.ref.obj_class, self.ref.id)
             if ticket is None:
                 logger.warning(f"[{self.processing_id}] {self.label} not found in iTop, skipping")
                 return await self.skip("fetch", "ticket not found in iTop")
-            ai_name = await self.deps.itop.ai_person_name()
+            ai_name = await self.itop.ai_person_name()
             # The guard runs before the body, not as middleware: it needs no LLM
             # and it saves the catalog round-trip to iTop on a no-op webhook
             reason = await self.stop_reason(ticket, ai_name)
@@ -83,19 +110,19 @@ class TicketRun(ABC):
             await self.body(ticket, ai_name)
             return RunOutcome(status="done")
         finally:
-            await self.deps.state_manager.release_lock(self.label)
+            await self.lock.release_lock(self.label)
 
     @abstractmethod
-    async def stop_reason(self, ticket: "Ticket", ai_name: str) -> str | None:
+    async def stop_reason(self, ticket: Ticket, ai_name: str) -> str | None:
         """Why this object must not be processed, or None to proceed."""
 
     @abstractmethod
-    async def body(self, ticket: "Ticket", ai_name: str) -> None:
+    async def body(self, ticket: Ticket, ai_name: str) -> None:
         """What the module does once the guard let it through."""
 
     async def step(self, node: str, detail: str = "") -> None:
         """One journal step for this run. Journal writes are non-fatal by contract."""
-        await self.deps.journal.add_step(self.processing_id, node, detail)
+        await self.journal.add_step(self.processing_id, node, detail)
 
     async def skip(self, node: str, reason: str) -> RunOutcome:
         """Record why the run stopped and report it — the same text both ways."""

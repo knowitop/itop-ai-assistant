@@ -7,13 +7,15 @@ and what to write when the agent closed nothing itself.
 """
 
 import logging
+from typing import Protocol
 
 from itop_ai_assistant.config import EmbeddingsConfig, IntakeConfig, LlmConfig, Settings, VectorConfig
-from itop_ai_assistant.deps import AppDeps, create_llm
+from itop_ai_assistant.deps import create_llm
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.agent_run import AgentRun
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import ObjectRef
+from itop_ai_assistant.pipelines.ports import TicketStatePort
 from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, TriggerRegistry
 from itop_ai_assistant.pipelines.shell import TicketRun
 from itop_ai_assistant.vector.embedder import EmbeddingsClient
@@ -122,7 +124,7 @@ class IntakeRun(TicketRun):
             await IntakeAgentRun(
                 agent,
                 context,
-                deps=self.deps,
+                journal=self.journal,
                 run=self.run,
                 think_tags=tuple(llm_cfg.think_tags),
             ).stream(messages)
@@ -165,23 +167,39 @@ class IntakeAgentRun(AgentRun[IntakeContext]):
         else's ticket.
         """
         ticket = self.context.ticket
-        state = await self.deps.state_manager.get(ticket.label)
+        state = await self.context.state_manager.get(ticket.label)
         if state.ai_done:
             await self.step("epilogue", "ticket already finished — nothing to close")
             return
 
         logger.info(f"[{self.processing_id}] {ticket.label}: agent produced no terminal action, posting fallback note")
         await self.context.ticket_repo.append_private_log(ticket, self.context.intake.handoff_fallback_note)
-        await self.deps.state_manager.mark_done(ticket.label)
+        await self.context.state_manager.mark_done(ticket.label)
         await self.step("epilogue", "no terminal action — fallback note posted, ai_done set")
 
 
-async def handle_assigned(ref: ObjectRef, run: RunContext, deps: AppDeps) -> None:
+class _AssignedDeps(Protocol):
+    """All `handle_assigned` is allowed to reach.
+
+    Wider than `RunDeps` in the type-system sense, and that is what makes it
+    legal as a handler: a parameter type is contravariant, so a handler asking
+    for less still fits a registry that hands it more.
+    """
+
+    @property
+    def state_manager(self) -> TicketStatePort: ...
+
+
+async def handle_assigned(ref: ObjectRef, run: RunContext, deps: _AssignedDeps) -> None:
     """Engineer took the ticket: stop any further AI processing.
 
     Not a `TicketRun`: no lock and no read. The missing lock is deliberate — it
     is what lets this land while an agent is mid-run, and what
     `IntakeAgentRun.epilogue` re-reads `ai_done` for.
+
+    Typed by the narrowest thing that still fits the registry's handler shape:
+    this route marks one ticket done and has no business reaching iTop, the
+    model or the vector store.
     """
     await deps.state_manager.mark_done(ref.label)
     logger.info(f"[{run.processing_id}] {ref.label} assigned, marked done")

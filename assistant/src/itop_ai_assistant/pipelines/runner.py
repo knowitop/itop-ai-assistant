@@ -11,20 +11,17 @@ they leave, which is why the frame lives here instead of in each entry point.
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
 
 from itop_ai_assistant.journal import TriggerKind
 from itop_ai_assistant.pipelines.context import RunContext
-
-if TYPE_CHECKING:
-    from itop_ai_assistant.deps import AppDeps
+from itop_ai_assistant.pipelines.ports import RunFrameJournal
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def journalled_run(
-    deps: "AppDeps",
+    journal: RunFrameJournal,
     run: RunContext,
     *,
     kind: TriggerKind,
@@ -37,7 +34,7 @@ async def journalled_run(
     re-raised — swallowing it is the entry point's decision, not the frame's.
     """
     processing_id = run.processing_id
-    await deps.journal.start(
+    await journal.start(
         processing_id,
         subject=subject,
         event=event,
@@ -51,7 +48,7 @@ async def journalled_run(
     try:
         yield
     except Exception as e:
-        await deps.journal.finish(processing_id, "failed", error=f"{type(e).__name__}: {e}")
+        await journal.finish(processing_id, "failed", error=f"{type(e).__name__}: {e}")
         raise
     else:
-        await deps.journal.finish(processing_id, "done")
+        await journal.finish(processing_id, "done")

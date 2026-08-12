@@ -129,7 +129,14 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
         """A run whose body is called directly — `execute()` is the shell's job
         and is covered in `test_intake_pipeline.py`, so `bundle` is set by hand."""
         payload = WebhookPayload.model_validate({"id": "123", "class": "Incident", "event": "created"})
-        run = IntakeRun(payload, RunContext(processing_id=uuid4(), module="intake"), self.deps)
+        run = IntakeRun(
+            payload,
+            RunContext(processing_id=uuid4(), module="intake"),
+            self.deps,
+            lock=self.deps.state_manager,
+            itop=self.deps.itop,
+            journal=self.deps.journal,
+        )
         run.bundle = self.bundle
         return run
 

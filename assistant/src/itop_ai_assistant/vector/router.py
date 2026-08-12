@@ -79,7 +79,7 @@ async def vector_status(request: Request) -> dict:
             # (TASK-008): a family dropped from the registry stays visible
             # here — `configured: false` — until its collection is dropped,
             # instead of silently disappearing from observability.
-            configured_families = {s.name for s in build_vector_sources(deps, vector_cfg)}
+            configured_families = {s.name for s in build_vector_sources(deps.itop, vector_cfg)}
             known_families = set(await deps.vector_store.list_families())
             store_status["ok"] = True
             index_info = []
@@ -157,7 +157,7 @@ async def vector_sources(request: Request) -> dict:
                 "fields": list(source.fields),
                 "fragments": [asdict(fragment) for fragment in source.fragments],
             }
-            for source in build_vector_sources(deps, vector_cfg)
+            for source in build_vector_sources(deps.itop, vector_cfg)
         ]
     }
 
@@ -339,7 +339,7 @@ async def vector_search(
     real iTop before one exists.
     """
     deps: AppDeps = request.app.state.deps
-    sources = {s.name: s for s in build_vector_sources(deps, vector_cfg)}
+    sources = {s.name: s for s in build_vector_sources(deps.itop, vector_cfg)}
     source = sources.get(body.family)
     if source is None:
         raise HTTPException(status_code=404, detail=f"Unknown family {body.family!r}; known: {sorted(sources)}")

@@ -45,6 +45,6 @@ async def run_request(module: str, action: str, body: dict, request: Request) ->
     run = RunContext(processing_id=uuid4(), module=module, principal=await resolve_principal(request))
     subject = route.subject_of(payload)
     logger.info(f"[{run.processing_id}] Running {module}/{action} for {subject}")
-    async with journalled_run(deps, run, kind="request", subject=subject, event=action):
+    async with journalled_run(deps.journal, run, kind="request", subject=subject, event=action):
         outcome = await route.handler(payload, run, deps)
     return RunRequestResponse(processing_id=run.processing_id, **outcome.model_dump())

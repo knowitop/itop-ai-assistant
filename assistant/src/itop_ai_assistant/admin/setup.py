@@ -28,7 +28,8 @@ from itop_ai_assistant.config import (
     VectorConfig,
     missing_setup,
 )
-from itop_ai_assistant.deps import AppDeps, create_itop_client, create_llm
+from itop_ai_assistant.deps import AppDeps, create_llm
+from itop_ai_assistant.itop_provider import create_itop_client
 from itop_ai_assistant.itop_provisioning import provision_itop
 from itop_ai_assistant.llm_providers import PROVIDERS, get_provider
 from itop_ai_assistant.text_utils import strip_thinking

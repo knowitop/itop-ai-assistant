@@ -11,17 +11,15 @@ method would force the console to stub the locking half out.
 import logging
 from dataclasses import dataclass
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypeVar
+from typing import Any, ClassVar, Generic, TypeVar
 from uuid import UUID
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langgraph.graph.state import CompiledStateGraph
 
 from itop_ai_assistant.pipelines.context import RunContext
+from itop_ai_assistant.pipelines.ports import StepJournal
 from itop_ai_assistant.text_utils import strip_thinking
-
-if TYPE_CHECKING:
-    from itop_ai_assistant.deps import AppDeps
 
 logger = logging.getLogger(__name__)
 
@@ -76,13 +74,15 @@ class AgentRun(Generic[ContextT]):
         agent: CompiledStateGraph,
         context: ContextT,
         *,
-        deps: "AppDeps",
+        journal: StepJournal,
         run: RunContext,
         think_tags: tuple[str, ...],
     ) -> None:
         self.agent = agent
         self.context = context
-        self.deps = deps
+        # Steps only: the agent loop records inside a frame the entry point
+        # opened, and must not be able to open or finish a run itself.
+        self.journal = journal
         self.run = run
         self.think_tags = think_tags
 
@@ -115,7 +115,7 @@ class AgentRun(Generic[ContextT]):
         return None
 
     async def step(self, node: str, detail: str = "") -> None:
-        await self.deps.journal.add_step(self.processing_id, node, detail)
+        await self.journal.add_step(self.processing_id, node, detail)
 
     async def _journal_update(self, update: dict[str, Any], usage: RunUsage) -> bool:
         """Turn one stream update into journal steps; report a terminal tool result.

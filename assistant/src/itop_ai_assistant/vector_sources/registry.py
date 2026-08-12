@@ -7,18 +7,33 @@ pattern as `pipelines/registry.py` for webhook modules.
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from itop_ai_assistant.config import FamilyConfig, VectorConfig
+from itop_ai_assistant.faq_repository import FaqRepository
+from itop_ai_assistant.ticket_repository import TicketRepository
 
 if TYPE_CHECKING:
-    from itop_ai_assistant.deps import AppDeps
     from itop_ai_assistant.vector.source import VectorSource
 
 logger = logging.getLogger(__name__)
 
 
-def build_vector_sources(deps: "AppDeps", cfg: VectorConfig) -> list["VectorSource[Any]"]:
+class ItopRepos(Protocol):
+    """The repository accessors a source is built from — declared here, by the
+    consumer, rather than imported from the container that happens to offer them.
+
+    Sources are built by the service account and index globally, so this port
+    deliberately has no `for_principal`: whatever a given person may see is
+    decided at search time, not at indexing time.
+    """
+
+    async def ticket_repo(self) -> TicketRepository: ...
+
+    async def faq_repo(self) -> FaqRepository: ...
+
+
+def build_vector_sources(itop: ItopRepos, cfg: VectorConfig) -> list["VectorSource[Any]"]:
     """One instance per *registered* family, not per family the saved config
     happens to still mention (TASK-021).
 
@@ -41,14 +56,14 @@ def build_vector_sources(deps: "AppDeps", cfg: VectorConfig) -> list["VectorSour
     from itop_ai_assistant.vector_sources.tickets import FAMILY as TICKETS_FAMILY
     from itop_ai_assistant.vector_sources.tickets import TicketVectorSource
 
-    builders: dict[str, Callable[["AppDeps", list[str]], "VectorSource[Any]"]] = {
-        TICKETS_FAMILY: lambda d, classes: TicketVectorSource(d.itop.ticket_repo, classes=classes),
-        FAQ_FAMILY: lambda d, classes: FaqVectorSource(d.itop.faq_repo, classes=classes),
+    builders: dict[str, Callable[[ItopRepos, list[str]], "VectorSource[Any]"]] = {
+        TICKETS_FAMILY: lambda i, classes: TicketVectorSource(i.ticket_repo, classes=classes),
+        FAQ_FAMILY: lambda i, classes: FaqVectorSource(i.faq_repo, classes=classes),
     }
     sources: list["VectorSource[Any]"] = []
     for name, builder in builders.items():
         family_cfg = cfg.families.get(name, FamilyConfig())
-        sources.append(builder(deps, list(family_cfg.classes)))
+        sources.append(builder(itop, list(family_cfg.classes)))
     for name in cfg.families:
         if name not in builders:
             logger.warning(f"vector: family {name!r} in config matches no registered source — ignoring")

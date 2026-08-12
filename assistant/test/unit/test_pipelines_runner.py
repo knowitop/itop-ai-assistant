@@ -4,7 +4,6 @@ Both entry points share it, so it is pinned here rather than through either one.
 """
 
 import unittest
-from unittest.mock import MagicMock
 from uuid import uuid4
 
 import fakeredis.aioredis
@@ -20,13 +19,13 @@ _ENGINEER = Principal.delegated(_TOKEN, login="jdoe", name="John Doe")
 
 class RunnerTestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        self.deps = MagicMock()
-        self.deps.journal = RunJournal(fakeredis.aioredis.FakeRedis(decode_responses=True))
+        # The frame needs a journal and nothing else — no container to assemble.
+        self.journal = RunJournal(fakeredis.aioredis.FakeRedis(decode_responses=True))
         self.pid = uuid4()
 
     def _run(self, kind="webhook", principal=None):
         run = RunContext(processing_id=self.pid, module="intake", principal=principal or Principal.service())
-        return journalled_run(self.deps, run, kind=kind, subject="UserRequest::42", event="created")
+        return journalled_run(self.journal, run, kind=kind, subject="UserRequest::42", event="created")
 
 
 class TestJournalledRun(RunnerTestCase):
@@ -34,7 +33,7 @@ class TestJournalledRun(RunnerTestCase):
         async with self._run():
             pass
 
-        run = await self.deps.journal.get(self.pid)
+        run = await self.journal.get(self.pid)
         self.assertEqual(run.status, "done")
         self.assertEqual(run.subject, "UserRequest::42")
         self.assertEqual(run.module, "intake")
@@ -44,13 +43,13 @@ class TestJournalledRun(RunnerTestCase):
         async with self._run(kind="request"):
             pass
 
-        self.assertEqual((await self.deps.journal.get(self.pid)).kind, "request")
+        self.assertEqual((await self.journal.get(self.pid)).kind, "request")
 
     async def test_the_principal_travels_to_the_journal(self):
         async with self._run(principal=_ENGINEER):
             pass
 
-        self.assertEqual((await self.deps.journal.get(self.pid)).principal, "engineer:jdoe")
+        self.assertEqual((await self.journal.get(self.pid)).principal, "engineer:jdoe")
 
     async def test_the_token_reaches_no_part_of_the_record(self):
         """Reading under an engineer's token leaves almost no trace in iTop, so
@@ -59,7 +58,7 @@ class TestJournalledRun(RunnerTestCase):
         async with self._run(principal=_ENGINEER):
             pass
 
-        stored = await self.deps.journal._redis.hgetall(f"run:{self.pid}")
+        stored = await self.journal._redis.hgetall(f"run:{self.pid}")
         self.assertNotIn(_TOKEN, "".join([*stored.keys(), *stored.values()]))
 
     async def test_failure_is_recorded_and_re_raised(self):
@@ -68,7 +67,7 @@ class TestJournalledRun(RunnerTestCase):
             async with self._run():
                 raise RuntimeError("boom")
 
-        run = await self.deps.journal.get(self.pid)
+        run = await self.journal.get(self.pid)
         self.assertEqual(run.status, "failed")
         self.assertEqual(run.error, "RuntimeError: boom")
 

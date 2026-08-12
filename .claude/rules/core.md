@@ -10,12 +10,33 @@ paths:
   - "assistant/src/itop_ai_assistant/api_deps.py"
   - "assistant/src/itop_ai_assistant/principal.py"
   - "assistant/src/itop_ai_assistant/journal.py"
+  - "assistant/src/itop_ai_assistant/itop_provider.py"
 ---
 
 # The run core
 
 How the seams are meant to work: `dev-docs/architecture/platform.md` §3.1–3.2.
 Which file implements what: `dev-docs/reference/source-map.md`.
+
+## The core takes ports, not the container
+
+`ADR-019`. `AppDeps` goes to entry points and no deeper. The core is constructed
+with the narrow protocols of `pipelines/ports.py` — `TicketRun` with `LockPort`,
+`ItopAccess`, `StepJournal`; `AgentRun` with `StepJournal`; `journalled_run` with
+`RunFrameJournal`. A module's `<Run>.handle` is where the container is taken
+apart into them, because the registry has one handler shape for every module.
+
+- **A protocol member is a method or a read-only `@property`, never a plain
+  attribute** — attributes are invariant, and `AppDeps` (whose fields are typed
+  concretely) would stop satisfying the port. Strict mypy catches this.
+- **Nothing implements these protocols by inheritance.** `AppDeps` satisfies
+  them structurally; making it inherit would drag Redis/Qdrant/langchain back
+  into the core.
+- **`aclose()` belongs to no port.** The pool is the composition root's, and a
+  run must not be typed into closing it (`test_pipelines_ports.py`).
+- Need something `RunDeps` does not carry? Declare a port at the consumer, as
+  `handle_assigned` (`_AssignedDeps`) and `build_vector_sources` (`ItopRepos`)
+  do — do not widen `RunDeps`.
 
 ## No module-level singletons
 

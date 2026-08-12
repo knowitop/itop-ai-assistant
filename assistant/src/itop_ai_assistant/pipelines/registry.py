@@ -36,20 +36,24 @@ from pydantic import BaseModel
 
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import RunOutcome
+from itop_ai_assistant.pipelines.ports import RunDeps
 
 if TYPE_CHECKING:
-    from itop_ai_assistant.deps import AppDeps
     from itop_ai_assistant.webhook.models import WebhookPayload
 
 logger = logging.getLogger(__name__)
 
+# Handlers are typed by the `RunDeps` port, not by the container that satisfies
+# it: the registry describes what a module may be handed, and a module has no
+# business owning the connection pool or reading startup settings.
+#
 # `object` as the return type, not `None`: a webhook route drops whatever the
 # handler produced, and both a plain function returning None and
 # `TicketRun.handle` returning a RunOutcome have to fit.
-WebhookHandler = Callable[["WebhookPayload", RunContext, "AppDeps"], Awaitable[object]]
-RequestHandler = Callable[[Any, RunContext, "AppDeps"], Awaitable[RunOutcome]]
+WebhookHandler = Callable[["WebhookPayload", RunContext, RunDeps], Awaitable[object]]
+RequestHandler = Callable[[Any, RunContext, RunDeps], Awaitable[RunOutcome]]
 # No payload: the clock carries no information beyond "it is time"
-ScheduleHandler = Callable[[RunContext, "AppDeps"], Awaitable[RunOutcome]]
+ScheduleHandler = Callable[[RunContext, RunDeps], Awaitable[RunOutcome]]
 
 
 @dataclass(frozen=True)
@@ -97,7 +101,7 @@ class ScheduleRoute:
     name: str
     module: str
     handler: ScheduleHandler
-    interval_of: Callable[["AppDeps"], Awaitable[float]]
+    interval_of: Callable[[RunDeps], Awaitable[float]]
     default_interval: float = 300.0
     subject: str = ""
     summary: str = ""

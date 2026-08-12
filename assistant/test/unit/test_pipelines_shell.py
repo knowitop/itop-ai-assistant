@@ -27,8 +27,8 @@ def _run() -> RunContext:
 class _ProbeRun(TicketRun):
     """Records the order of the phases and what each one was handed."""
 
-    def __init__(self, payload, run, deps):
-        super().__init__(payload, run, deps)
+    def __init__(self, payload, run, deps, **ports):
+        super().__init__(payload, run, deps, **ports)
         self.phases: list[str] = []
         self.stop_with: str | None = None
         self.body_raises: Exception | None = None
@@ -52,20 +52,30 @@ class ShellTestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.ticket = Ticket(obj_class="Change", id="123", status="new")
 
-        self.deps = MagicMock()
-        self.deps.journal = AsyncMock()
-        self.deps.state_manager.acquire_lock = AsyncMock(return_value=True)
-        self.deps.state_manager.release_lock = AsyncMock()
+        # The three ports the shell actually names, built one by one. The
+        # container below is assembled *from* them, so `handle()` — which takes
+        # a container apart — and direct construction exercise the same doubles.
+        self.lock = MagicMock()
+        self.lock.acquire_lock = AsyncMock(return_value=True)
+        self.lock.release_lock = AsyncMock()
+
+        self.journal = AsyncMock()
 
         self.bundle = MagicMock()
         self.bundle.ticket_repo.fetch = AsyncMock(return_value=self.ticket)
-        self.deps.itop.ai_person_name = AsyncMock(return_value="ai-assistant")
-        self.deps.itop.for_principal = AsyncMock(return_value=self.bundle)
+        self.itop = MagicMock()
+        self.itop.ai_person_name = AsyncMock(return_value="ai-assistant")
+        self.itop.for_principal = AsyncMock(return_value=self.bundle)
 
-        self.run = _ProbeRun(_payload(), _run(), self.deps)
+        self.deps = MagicMock()
+        self.deps.state_manager = self.lock
+        self.deps.journal = self.journal
+        self.deps.itop = self.itop
+
+        self.run = _ProbeRun(_payload(), _run(), self.deps, lock=self.lock, itop=self.itop, journal=self.journal)
 
     def journalled(self) -> list[str]:
-        return [call.args[1] for call in self.deps.journal.add_step.await_args_list]
+        return [call.args[1] for call in self.journal.add_step.await_args_list]
 
 
 class TestPhaseOrder(ShellTestCase):

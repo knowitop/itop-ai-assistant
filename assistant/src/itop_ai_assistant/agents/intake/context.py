@@ -4,7 +4,7 @@ from uuid import UUID
 from itop_ai_assistant.catalog_repository import CatalogRepository
 from itop_ai_assistant.config import IntakeConfig
 from itop_ai_assistant.domain.ticket import Ticket
-from itop_ai_assistant.state.ticket_state import TicketStateManager
+from itop_ai_assistant.pipelines.ports import TicketStatePort
 from itop_ai_assistant.ticket_repository import TicketRepository
 from itop_ai_assistant.vector.search import SimilarSearch
 
@@ -23,7 +23,7 @@ class IntakeContext:
     ticket: Ticket
     ticket_repo: TicketRepository
     catalog_repo: CatalogRepository
-    state_manager: TicketStateManager
+    state_manager: TicketStatePort
     intake: IntakeConfig
     ai_name: str
     # `similar` is None on a deployment without vectors — the tool that needs

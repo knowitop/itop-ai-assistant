@@ -19,9 +19,10 @@ from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel
 
 from itop_ai_assistant.config import ItopConfig, LlmConfig, SelfCheckConfig, Settings, missing_setup
-from itop_ai_assistant.deps import AppDeps, create_llm
+from itop_ai_assistant.deps import create_llm
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import RunOutcome
+from itop_ai_assistant.pipelines.ports import RunDeps
 from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, ScheduleRoute, TriggerRegistry
 from itop_ai_assistant.text_utils import strip_thinking
 
@@ -76,15 +77,15 @@ def register(registry: TriggerRegistry, settings: Settings) -> None:
     registry.register(info, requests=requests, schedules=schedules)
 
 
-async def _interval(deps: AppDeps) -> float:
+async def _interval(deps: RunDeps) -> float:
     return (await deps.config_store.get(MODULE, SelfCheckConfig)).interval_seconds
 
 
-async def handle_request(payload: SelfCheckInput, run: RunContext, deps: AppDeps) -> RunOutcome:
+async def handle_request(payload: SelfCheckInput, run: RunContext, deps: RunDeps) -> RunOutcome:
     return await run_selfcheck(run, deps)
 
 
-async def run_selfcheck(run: RunContext, deps: AppDeps) -> RunOutcome:
+async def run_selfcheck(run: RunContext, deps: RunDeps) -> RunOutcome:
     """One pass over every seam: config, iTop, prompts, model, journal."""
     cfg = await deps.config_store.get(MODULE, SelfCheckConfig)
     llm_cfg = await deps.config_store.get("llm", LlmConfig)
