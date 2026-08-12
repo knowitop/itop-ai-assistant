@@ -14,10 +14,9 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from itop_ai_assistant.config import Settings
+from itop_ai_assistant.util.redis_keyspace import CONFIG_PREFIX
 
 logger = logging.getLogger(__name__)
-
-_KEY_PREFIX = "config:"
 
 TConfig = TypeVar("TConfig", bound=BaseModel)
 
@@ -55,7 +54,7 @@ class RedisConfigStore(ConfigStore):
     async def get(self, module: str, model: type[TConfig]) -> TConfig:
         defaults = self._defaults(module, model)
         try:
-            raw = await self._redis.get(_KEY_PREFIX + module)
+            raw = await self._redis.get(CONFIG_PREFIX + module)
         except RedisError as e:
             # Runtime overrides are an enhancement — degrade to defaults
             logger.warning(f"Redis unavailable, using default config for {module!r}: {e}")
@@ -77,8 +76,8 @@ class RedisConfigStore(ConfigStore):
         """
         defaults = self._defaults(module, model)
         validated = model(**{**defaults.model_dump(), **values})
-        await self._redis.set(_KEY_PREFIX + module, validated.model_dump_json())
+        await self._redis.set(CONFIG_PREFIX + module, validated.model_dump_json())
         return validated
 
     async def reset(self, module: str) -> None:
-        await self._redis.delete(_KEY_PREFIX + module)
+        await self._redis.delete(CONFIG_PREFIX + module)

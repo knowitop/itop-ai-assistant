@@ -14,12 +14,15 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
-logger = logging.getLogger(__name__)
+from itop_ai_assistant.util.redis_capped_index import CappedIndex
+from itop_ai_assistant.util.redis_keyspace import (
+    RUN_INDEX_KEY,
+    RUN_INDEX_MAX_ENTRIES,
+    RUN_INDEX_SCAN_WINDOW,
+    RUN_PREFIX,
+)
 
-_RUN_PREFIX = "run:"
-_INDEX_KEY = "runs:index"
-_MAX_INDEXED_RUNS = 1000
-_LIST_SCAN_WINDOW = 500
+logger = logging.getLogger(__name__)
 
 RunStatus = Literal["running", "done", "failed"]
 # What started the run: an iTop event, a synchronous call, or the clock.
@@ -59,12 +62,13 @@ class RunJournal:
     def __init__(self, redis: Redis, ttl_seconds: int = 7 * 24 * 60 * 60):
         self._redis = redis
         self._ttl = ttl_seconds
+        self._index = CappedIndex(redis, RUN_INDEX_KEY, RUN_INDEX_MAX_ENTRIES)
 
     def _key(self, processing_id: UUID | str) -> str:
-        return f"{_RUN_PREFIX}{processing_id}"
+        return f"{RUN_PREFIX}{processing_id}"
 
     def _steps_key(self, processing_id: UUID | str) -> str:
-        return f"{_RUN_PREFIX}{processing_id}:steps"
+        return f"{RUN_PREFIX}{processing_id}:steps"
 
     async def start(
         self,
@@ -93,8 +97,7 @@ class RunJournal:
                     },
                 )
                 pipe.expire(key, self._ttl)
-                pipe.zadd(_INDEX_KEY, {str(processing_id): now.timestamp()})
-                pipe.zremrangebyrank(_INDEX_KEY, 0, -_MAX_INDEXED_RUNS - 1)
+                self._index.record(pipe, str(processing_id), now.timestamp())
                 await pipe.execute()
         except RedisError as e:
             logger.warning(f"Run journal unavailable, start not recorded for {processing_id}: {e}")
@@ -129,7 +132,7 @@ class RunJournal:
 
     async def list(self, limit: int = 50, subject: str | None = None, status: str | None = None) -> list[ProcessingRun]:
         """Most recent runs first. Steps are not loaded — use get() for details."""
-        ids = await self._redis.zrevrange(_INDEX_KEY, 0, _LIST_SCAN_WINDOW - 1)
+        ids = await self._index.recent_ids(RUN_INDEX_SCAN_WINDOW)
         runs: list[ProcessingRun] = []
         stale: list[str] = []
         for processing_id in ids:
@@ -145,6 +148,5 @@ class RunJournal:
             runs.append(run)
             if len(runs) >= limit:
                 break
-        if stale:
-            await self._redis.zrem(_INDEX_KEY, *stale)
+        await self._index.prune(stale)
         return runs

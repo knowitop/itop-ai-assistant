@@ -4,12 +4,17 @@ from dataclasses import dataclass
 from redis import RedisError
 from redis.asyncio import Redis
 
+from itop_ai_assistant.util.redis_keyspace import (
+    TICKET_LOCK_PREFIX,
+    TICKET_STATE_PREFIX,
+)
+from itop_ai_assistant.util.redis_keyspace import (
+    TICKET_LOCK_TTL_SECONDS as LOCK_TTL_SECONDS,
+)
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
-LOCK_TTL_SECONDS = 300  # safety timeout: lock self-expires if processing dies without releasing it
-_KEY_PREFIX = "ticket:"
-_LOCK_PREFIX = "lock:"
 
 
 class StateUnavailableError(Exception):
@@ -40,10 +45,10 @@ class TicketStateManager:
         self._lock_ttl = lock_ttl_seconds
 
     def _key(self, ticket_ref: str) -> str:
-        return f"{_KEY_PREFIX}{ticket_ref}"
+        return f"{TICKET_STATE_PREFIX}{ticket_ref}"
 
     def _lock_key(self, ticket_ref: str) -> str:
-        return f"{_LOCK_PREFIX}{ticket_ref}"
+        return f"{TICKET_LOCK_PREFIX}{ticket_ref}"
 
     async def get(self, ticket_ref: str) -> TicketState:
         """Return current state for a ticket. Defaults to rounds=0, ai_done=False if not found."""

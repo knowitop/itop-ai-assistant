@@ -18,6 +18,7 @@ from itop_ai_assistant.settings.prompt_store import (
 )
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
+from itop_ai_assistant.util.redis_keyspace import days_to_seconds
 from itop_ai_assistant.vector.index_journal import IndexJournal
 from itop_ai_assistant.vector.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.store import ChunkStore
@@ -80,7 +81,7 @@ def build_deps(settings: Settings) -> AppDeps:
     # One shared Redis connection pool for state, journal, config and prompts
     redis = aioredis.from_url(settings.redis_url, decode_responses=True)
     config_store = RedisConfigStore(redis, settings)
-    state_manager = TicketStateManager(redis, ttl_seconds=settings.state_ttl_days * 24 * 60 * 60)
+    state_manager = TicketStateManager(redis, ttl_seconds=days_to_seconds(settings.state_ttl_days))
     itop_connection = ItopConnection(config_store)
     return AppDeps(
         settings=settings,
@@ -89,7 +90,7 @@ def build_deps(settings: Settings) -> AppDeps:
         state_manager=state_manager,
         config_store=config_store,
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR, settings.prompts_dir), redis),
-        journal=RunJournal(redis, ttl_seconds=settings.run_ttl_days * 24 * 60 * 60),
+        journal=RunJournal(redis, ttl_seconds=days_to_seconds(settings.run_ttl_days)),
         # Lazy: no client (and no connection) until the vector store is used
         vector_store=QdrantChunkStore(settings.qdrant_url),
         vector_sync=VectorSyncState(redis),

@@ -12,19 +12,25 @@ from uuid import uuid4
 
 from redis.asyncio import Redis
 
-MAX_ENTRIES = 50
+from itop_ai_assistant.util.redis_capped_index import CappedIndex
+from itop_ai_assistant.util.redis_keyspace import (
+    VECTOR_RUN_INDEX_KEY,
+    VECTOR_RUN_PREFIX,
+)
+from itop_ai_assistant.util.redis_keyspace import (
+    VECTOR_RUN_INDEX_MAX_ENTRIES as MAX_ENTRIES,
+)
 
-_ENTRY_PREFIX = "vector:run:"
-_INDEX_KEY = "vector:runs"
 _COUNTERS = ("objects_seen", "chunks_embedded", "chunks_metadata_updated", "chunks_deleted")
 
 
 class IndexJournal:
     def __init__(self, redis: Redis) -> None:
         self._redis = redis
+        self._index = CappedIndex(redis, VECTOR_RUN_INDEX_KEY, MAX_ENTRIES)
 
     def _key(self, entry_id: str) -> str:
-        return f"{_ENTRY_PREFIX}{entry_id}"
+        return f"{VECTOR_RUN_PREFIX}{entry_id}"
 
     async def start(self, kind: str) -> str:
         entry_id = str(uuid4())
@@ -40,8 +46,7 @@ class IndexJournal:
         }
         async with self._redis.pipeline(transaction=True) as pipe:
             pipe.set(self._key(entry_id), json.dumps(entry))
-            pipe.zadd(_INDEX_KEY, {entry_id: now.timestamp()})
-            pipe.zremrangebyrank(_INDEX_KEY, 0, -MAX_ENTRIES - 1)
+            self._index.record(pipe, entry_id, now.timestamp())
             await pipe.execute()
         return entry_id
 
@@ -72,7 +77,7 @@ class IndexJournal:
         await self._redis.set(self._key(entry_id), json.dumps(entry))
 
     async def recent(self, limit: int = 10) -> list[dict]:
-        ids = await self._redis.zrevrange(_INDEX_KEY, 0, limit - 1)
+        ids = await self._index.recent_ids(limit)
         entries = []
         stale = []
         for entry_id in ids:
@@ -81,6 +86,5 @@ class IndexJournal:
                 stale.append(entry_id)
                 continue
             entries.append(json.loads(raw))
-        if stale:
-            await self._redis.zrem(_INDEX_KEY, *stale)
+        await self._index.prune(stale)
         return entries

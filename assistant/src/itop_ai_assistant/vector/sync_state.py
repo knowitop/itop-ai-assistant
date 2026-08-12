@@ -20,19 +20,21 @@ from uuid import uuid4
 
 from redis.asyncio import Redis
 
+from itop_ai_assistant.util.redis_keyspace import (
+    VECTOR_CURSOR_PREFIX,
+    VECTOR_FAMILY_SWEPT_PREFIX,
+    VECTOR_RECONCILE_KEY,
+    VECTOR_REINDEX_KEY,
+    VECTOR_SWEEP_LOCK_KEY,
+)
+from itop_ai_assistant.util.redis_keyspace import (
+    VECTOR_SWEEP_LOCK_RENEW_INTERVAL_SECONDS as RENEW_INTERVAL_SECONDS,
+)
+from itop_ai_assistant.util.redis_keyspace import (
+    VECTOR_SWEEP_LOCK_TTL_SECONDS as LOCK_TTL_SECONDS,
+)
+
 logger = logging.getLogger(__name__)
-
-_PREFIX = "vector:"
-_CURSOR_PREFIX = f"{_PREFIX}cursor:"
-_FAMILY_SWEPT_PREFIX = f"{_PREFIX}family-swept:"
-_RECONCILE_KEY = f"{_PREFIX}reconcile"
-_REINDEX_KEY = f"{_PREFIX}reindex"
-_LOCK_KEY = f"{_PREFIX}sweep:lock"
-
-# Short enough that a crashed replica does not block indexing for long,
-# renewed often enough that an hours-long backfill keeps its lock.
-LOCK_TTL_SECONDS = 120
-RENEW_INTERVAL_SECONDS = 40
 
 
 class VectorSyncState:
@@ -42,7 +44,7 @@ class VectorSyncState:
         self._redis = redis
 
     def _cursor_key(self, obj_class: str) -> str:
-        return f"{_CURSOR_PREFIX}{obj_class}"
+        return f"{VECTOR_CURSOR_PREFIX}{obj_class}"
 
     async def get_cursor(self, obj_class: str) -> datetime | None:
         return _parse(await self._redis.get(self._cursor_key(obj_class)))
@@ -54,19 +56,19 @@ class VectorSyncState:
         """Per-class cursors only — the reconcile clock and the reindex flag
         live under their own keys and never show up here."""
         cursors: dict[str, datetime | None] = {}
-        async for key in self._redis.scan_iter(match=f"{_CURSOR_PREFIX}*"):
-            cursors[key.removeprefix(_CURSOR_PREFIX)] = _parse(await self._redis.get(key))
+        async for key in self._redis.scan_iter(match=f"{VECTOR_CURSOR_PREFIX}*"):
+            cursors[key.removeprefix(VECTOR_CURSOR_PREFIX)] = _parse(await self._redis.get(key))
         return cursors
 
     async def reset_cursors(self) -> None:
         """Drop every cursor and the pending request — the next sweep is a full backfill."""
-        keys = [key async for key in self._redis.scan_iter(match=f"{_CURSOR_PREFIX}*")]
+        keys = [key async for key in self._redis.scan_iter(match=f"{VECTOR_CURSOR_PREFIX}*")]
         if keys:
             await self._redis.delete(*keys)
-        await self._redis.delete(_REINDEX_KEY)
+        await self._redis.delete(VECTOR_REINDEX_KEY)
 
     def _family_swept_key(self, family: str) -> str:
-        return f"{_FAMILY_SWEPT_PREFIX}{family}"
+        return f"{VECTOR_FAMILY_SWEPT_PREFIX}{family}"
 
     async def get_family_swept(self, family: str) -> datetime | None:
         """When this family's classes were last actually included in a sweep
@@ -80,17 +82,17 @@ class VectorSyncState:
         await self._redis.set(self._family_swept_key(family), when.isoformat())
 
     async def get_reconcile(self) -> datetime | None:
-        return _parse(await self._redis.get(_RECONCILE_KEY))
+        return _parse(await self._redis.get(VECTOR_RECONCILE_KEY))
 
     async def set_reconcile(self, when: datetime) -> None:
-        await self._redis.set(_RECONCILE_KEY, when.isoformat())
+        await self._redis.set(VECTOR_RECONCILE_KEY, when.isoformat())
 
     async def request_reindex(self) -> None:
         """Mark a full backfill as pending. Idempotent; cleared by reset_cursors."""
-        await self._redis.set(_REINDEX_KEY, "1")
+        await self._redis.set(VECTOR_REINDEX_KEY, "1")
 
     async def reindex_pending(self) -> bool:
-        return await self._redis.exists(_REINDEX_KEY) == 1
+        return await self._redis.exists(VECTOR_REINDEX_KEY) == 1
 
     @asynccontextmanager
     async def sweep_lock(
@@ -109,7 +111,7 @@ class VectorSyncState:
         hash-guard makes a duplicated pass cheap.
         """
         token = str(uuid4())
-        acquired = bool(await self._redis.set(_LOCK_KEY, token, nx=True, ex=ttl_seconds))
+        acquired = bool(await self._redis.set(VECTOR_SWEEP_LOCK_KEY, token, nx=True, ex=ttl_seconds))
         if not acquired:
             yield False
             return
@@ -121,17 +123,17 @@ class VectorSyncState:
             with contextlib.suppress(asyncio.CancelledError):
                 await renewer
             # Compare before deleting: never drop a lock that is no longer ours
-            if await self._redis.get(_LOCK_KEY) == token:
-                await self._redis.delete(_LOCK_KEY)
+            if await self._redis.get(VECTOR_SWEEP_LOCK_KEY) == token:
+                await self._redis.delete(VECTOR_SWEEP_LOCK_KEY)
 
     async def _renew(self, token: str, ttl_seconds: int, interval: float) -> None:
         while True:
             await asyncio.sleep(interval)
             try:
-                if await self._redis.get(_LOCK_KEY) != token:
+                if await self._redis.get(VECTOR_SWEEP_LOCK_KEY) != token:
                     logger.warning("vector sweep lock was taken over — this pass no longer holds it")
                     return
-                await self._redis.expire(_LOCK_KEY, ttl_seconds)
+                await self._redis.expire(VECTOR_SWEEP_LOCK_KEY, ttl_seconds)
             except Exception as e:  # Redis blip: keep going, the TTL still has room
                 logger.warning(f"vector sweep lock renewal failed (will retry): {e}")
 

@@ -7,6 +7,8 @@ from typing import Protocol
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
+from itop_ai_assistant.util.redis_keyspace import PROMPTS_PREFIX
+
 logger = logging.getLogger(__name__)
 
 #: Prompt templates shipped inside the package — the bottom of the override
@@ -100,7 +102,7 @@ class RedisPromptStore:
         self._redis = redis
 
     def _key(self, module: str) -> str:
-        return f"prompts:{module}"
+        return f"{PROMPTS_PREFIX}{module}"
 
     async def get(self, module: str) -> dict[str, str]:
         prompts = await self._files.get(module)
