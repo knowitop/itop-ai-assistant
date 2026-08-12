@@ -10,13 +10,14 @@ Identity is deliberately absent: the run acts as the module's service account
 """
 
 import logging
+from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import ValidationError
 
 from itop_ai_assistant.core.api_deps import require_configured, resolve_principal
-from itop_ai_assistant.core.deps import AppDeps
+from itop_ai_assistant.core.deps import AppDeps, get_deps
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import RunOutcome
 from itop_ai_assistant.pipelines.registry import RequestRoute
@@ -32,7 +33,13 @@ class RunRequestResponse(RunOutcome):
 
 
 @router.post("/{module}/{action}")
-async def run_request(module: str, action: str, body: dict, request: Request) -> RunRequestResponse:
+async def run_request(
+    module: str,
+    action: str,
+    body: dict,
+    request: Request,
+    deps: Annotated[AppDeps, Depends(get_deps)],
+) -> RunRequestResponse:
     route: RequestRoute | None = request.app.state.registry.resolve_request(module, action)
     if route is None:
         raise HTTPException(status_code=404, detail=f"Unknown request action: {module}/{action}")
@@ -41,7 +48,6 @@ async def run_request(module: str, action: str, body: dict, request: Request) ->
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
-    deps: AppDeps = request.app.state.deps
     run = RunContext(processing_id=uuid4(), module=module, principal=await resolve_principal(request))
     subject = route.subject_of(payload)
     logger.info(f"[{run.processing_id}] Running {module}/{action} for {subject}")

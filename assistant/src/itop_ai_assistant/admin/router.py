@@ -6,18 +6,18 @@ separate from the webhook token.
 """
 
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 
 from itop_ai_assistant.admin.setup import router as setup_router
-from itop_ai_assistant.core.api_deps import verify_admin_token
-from itop_ai_assistant.core.deps import AppDeps
+from itop_ai_assistant.core.api_deps import get_config_store, get_journal, get_prompt_store, verify_admin_token
 from itop_ai_assistant.pipelines.registry import ModuleInfo
 from itop_ai_assistant.request.router import router as request_router
-from itop_ai_assistant.settings.prompt_store import PromptStoreError
-from itop_ai_assistant.state.journal import ProcessingRun
+from itop_ai_assistant.settings.config_store import ConfigStore
+from itop_ai_assistant.settings.prompt_store import PromptStore, PromptStoreError
+from itop_ai_assistant.state.journal import ProcessingRun, RunJournal
 from itop_ai_assistant.vector import router as vector_router
 
 logger = logging.getLogger(__name__)
@@ -26,10 +26,6 @@ router = APIRouter(prefix="/api", dependencies=[Depends(verify_admin_token)])
 router.include_router(setup_router)
 router.include_router(vector_router)
 router.include_router(request_router)
-
-
-def _deps(request: Request) -> AppDeps:
-    return request.app.state.deps
 
 
 def _module_or_404(request: Request, module: str) -> ModuleInfo:
@@ -74,11 +70,13 @@ async def list_modules(request: Request) -> list[dict]:
 
 
 @router.get("/config/{module}")
-async def get_config(module: str, request: Request) -> dict:
+async def get_config(
+    module: str, request: Request, config_store: Annotated[ConfigStore, Depends(get_config_store)]
+) -> dict:
     info = _module_or_404(request, module)
     if info.config_model is None:
         raise HTTPException(status_code=404, detail=f"Module {module!r} has no config")
-    cfg = await _deps(request).config_store.get(module, info.config_model)
+    cfg = await config_store.get(module, info.config_model)
     return cfg.model_dump()
 
 
@@ -91,12 +89,14 @@ async def get_config_schema(module: str, request: Request) -> dict:
 
 
 @router.put("/config/{module}")
-async def update_config(module: str, body: dict[str, Any], request: Request) -> dict:
+async def update_config(
+    module: str, body: dict[str, Any], request: Request, config_store: Annotated[ConfigStore, Depends(get_config_store)]
+) -> dict:
     info = _module_or_404(request, module)
     if info.config_model is None:
         raise HTTPException(status_code=404, detail=f"Module {module!r} has no config")
     try:
-        cfg = await _deps(request).config_store.set(module, body, info.config_model)
+        cfg = await config_store.set(module, body, info.config_model)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     logger.info(f"Config for module {module!r} updated via admin API")
@@ -104,18 +104,21 @@ async def update_config(module: str, body: dict[str, Any], request: Request) -> 
 
 
 @router.delete("/config/{module}", status_code=204)
-async def reset_config(module: str, request: Request) -> None:
+async def reset_config(
+    module: str, request: Request, config_store: Annotated[ConfigStore, Depends(get_config_store)]
+) -> None:
     _module_or_404(request, module)
-    await _deps(request).config_store.reset(module)
+    await config_store.reset(module)
     logger.info(f"Config for module {module!r} reset to defaults via admin API")
 
 
 @router.get("/prompts/{module}")
-async def get_prompts(module: str, request: Request) -> dict:
+async def get_prompts(
+    module: str, request: Request, prompt_store: Annotated[PromptStore, Depends(get_prompt_store)]
+) -> dict:
     _module_or_404(request, module)
-    store = _deps(request).prompt_store
-    prompts = await store.get(module)
-    overridden = await store.overrides(module)
+    prompts = await prompt_store.get(module)
+    overridden = await prompt_store.overrides(module)
     return {"prompts": prompts, "overridden": sorted(overridden)}
 
 
@@ -124,11 +127,16 @@ class PromptUpdate(BaseModel):
 
 
 @router.put("/prompts/{module}/{name}")
-async def update_prompt(module: str, name: str, body: PromptUpdate, request: Request) -> dict:
+async def update_prompt(
+    module: str,
+    name: str,
+    body: PromptUpdate,
+    request: Request,
+    prompt_store: Annotated[PromptStore, Depends(get_prompt_store)],
+) -> dict:
     info = _module_or_404(request, module)
-    store = _deps(request).prompt_store
 
-    prompts = await store.get(module)
+    prompts = await prompt_store.get(module)
     if name not in prompts:
         raise HTTPException(status_code=404, detail=f"Unknown prompt {name!r}. Known: {sorted(prompts)}")
 
@@ -139,7 +147,7 @@ async def update_prompt(module: str, name: str, body: PromptUpdate, request: Req
             raise HTTPException(status_code=422, detail=str(e)) from e
 
     try:
-        await store.set(module, name, body.text)
+        await prompt_store.set(module, name, body.text)
     except PromptStoreError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     logger.info(f"Prompt {module}/{name} updated via admin API")
@@ -147,25 +155,27 @@ async def update_prompt(module: str, name: str, body: PromptUpdate, request: Req
 
 
 @router.delete("/prompts/{module}/{name}", status_code=204)
-async def reset_prompt(module: str, name: str, request: Request) -> None:
+async def reset_prompt(
+    module: str, name: str, request: Request, prompt_store: Annotated[PromptStore, Depends(get_prompt_store)]
+) -> None:
     _module_or_404(request, module)
-    await _deps(request).prompt_store.reset(module, name)
+    await prompt_store.reset(module, name)
     logger.info(f"Prompt {module}/{name} reset via admin API")
 
 
 @router.get("/runs")
 async def list_runs(
-    request: Request,
+    journal: Annotated[RunJournal, Depends(get_journal)],
     limit: int = 50,
     subject: str | None = None,
     status: str | None = None,
 ) -> list[ProcessingRun]:
-    return await _deps(request).journal.list(limit=limit, subject=subject, status=status)
+    return await journal.list(limit=limit, subject=subject, status=status)
 
 
 @router.get("/runs/{processing_id}")
-async def get_run(processing_id: str, request: Request) -> ProcessingRun:
-    run = await _deps(request).journal.get(processing_id)
+async def get_run(processing_id: str, journal: Annotated[RunJournal, Depends(get_journal)]) -> ProcessingRun:
+    run = await journal.get(processing_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {processing_id} not found")
     return run

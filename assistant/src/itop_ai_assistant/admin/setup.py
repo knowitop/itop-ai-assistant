@@ -12,9 +12,9 @@ served by dedicated endpoints because secrets need special treatment:
 import asyncio
 import logging
 from dataclasses import asdict
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from langchain_core.tools import tool
 from pydantic import BaseModel, ValidationError
 
@@ -28,10 +28,12 @@ from itop_ai_assistant.config import (
     VectorConfig,
     missing_setup,
 )
-from itop_ai_assistant.core.deps import AppDeps, create_llm
+from itop_ai_assistant.core.api_deps import get_config_store
+from itop_ai_assistant.core.deps import create_llm
 from itop_ai_assistant.core.llm_providers import PROVIDERS, get_provider
 from itop_ai_assistant.itop.connection import create_itop_client
 from itop_ai_assistant.itop.provisioning import provision_itop
+from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.util.text import strip_thinking
 from itop_ai_assistant.vector import EmbeddingsClient
 
@@ -54,10 +56,6 @@ _TEST_TIMEOUT = 30.0  # seconds; keeps connection tests from hanging the wizard
 _PROVISION_TIMEOUT = 60.0  # seconds; provisioning makes ~10 sequential iTop requests
 
 
-def _deps(request: Request) -> AppDeps:
-    return request.app.state.deps
-
-
 def _model_or_404(section: str) -> type[BaseModel]:
     model = SETUP_SECTIONS.get(section)
     if model is None:
@@ -76,23 +74,24 @@ def _masked(cfg: BaseModel) -> dict:
     return {"values": values, "secrets": secrets_state}
 
 
-async def _merged_with_current(request: Request, section: str, model: type[BaseModel], body: dict[str, Any]) -> dict:
+async def _merged_with_current(
+    config_store: ConfigStore, section: str, model: type[BaseModel], body: dict[str, Any]
+) -> dict:
     """Body merged over the current effective config.
 
     Absent field = keep current value (secrets survive UI round-trips),
     explicit null = clear.
     """
-    current = await _deps(request).config_store.get(section, model)
+    current = await config_store.get(section, model)
     return {**current.model_dump(), **body}
 
 
 @router.get("/status")
-async def setup_status(request: Request) -> dict:
-    store = _deps(request).config_store
-    itop_cfg = await store.get("itop", ItopConfig)
-    llm_cfg = await store.get("llm", LlmConfig)
-    security_cfg = await store.get("security", SecurityConfig)
-    embeddings_cfg = await store.get("embeddings", EmbeddingsConfig)
+async def setup_status(config_store: Annotated[ConfigStore, Depends(get_config_store)]) -> dict:
+    itop_cfg = await config_store.get("itop", ItopConfig)
+    llm_cfg = await config_store.get("llm", LlmConfig)
+    security_cfg = await config_store.get("security", SecurityConfig)
+    embeddings_cfg = await config_store.get("embeddings", EmbeddingsConfig)
     missing = missing_setup(itop_cfg, llm_cfg)
     return {
         "configured": not missing,
@@ -119,18 +118,20 @@ async def llm_providers() -> dict:
 
 
 @router.get("/{section}")
-async def get_section(section: str, request: Request) -> dict:
+async def get_section(section: str, config_store: Annotated[ConfigStore, Depends(get_config_store)]) -> dict:
     model = _model_or_404(section)
-    cfg = await _deps(request).config_store.get(section, model)
+    cfg = await config_store.get(section, model)
     return _masked(cfg)
 
 
 @router.patch("/{section}")
-async def update_section(section: str, body: dict[str, Any], request: Request) -> dict:
+async def update_section(
+    section: str, body: dict[str, Any], config_store: Annotated[ConfigStore, Depends(get_config_store)]
+) -> dict:
     model = _model_or_404(section)
-    values = await _merged_with_current(request, section, model, body)
+    values = await _merged_with_current(config_store, section, model, body)
     try:
-        cfg = await _deps(request).config_store.set(section, values, model)
+        cfg = await config_store.set(section, values, model)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     logger.info(f"Setup section {section!r} updated via admin API")
@@ -138,21 +139,23 @@ async def update_section(section: str, body: dict[str, Any], request: Request) -
 
 
 @router.delete("/{section}", status_code=204)
-async def reset_section(section: str, request: Request) -> None:
+async def reset_section(section: str, config_store: Annotated[ConfigStore, Depends(get_config_store)]) -> None:
     _model_or_404(section)
-    await _deps(request).config_store.reset(section)
+    await config_store.reset(section)
     logger.info(f"Setup section {section!r} reset to env defaults via admin API")
 
 
 @router.post("/test-itop")
-async def test_itop(request: Request, body: dict[str, Any] | None = None) -> dict:
+async def test_itop(
+    config_store: Annotated[ConfigStore, Depends(get_config_store)], body: dict[str, Any] | None = None
+) -> dict:
     """Probe the iTop connection: auth + REST profile + AI service account.
 
     Body fields override the stored config for this probe only — nothing is
     saved. Secrets absent from the body are taken from the stored config, so
     the UI can re-test without re-entering the password.
     """
-    values = await _merged_with_current(request, "itop", ItopConfig, body or {})
+    values = await _merged_with_current(config_store, "itop", ItopConfig, body or {})
     try:
         cfg = ItopConfig(**values)
     except ValidationError as e:
@@ -180,7 +183,9 @@ async def test_itop(request: Request, body: dict[str, Any] | None = None) -> dic
 
 
 @router.post("/provision-itop")
-async def provision_itop_endpoint(request: Request, body: dict[str, Any]) -> dict:
+async def provision_itop_endpoint(
+    body: dict[str, Any], config_store: Annotated[ConfigStore, Depends(get_config_store)]
+) -> dict:
     """Create the iTop-side triggers and webhooks (see itop_provisioning).
 
     Requires one-time admin credentials in the body (`user`+`pwd` or `token`)
@@ -188,15 +193,14 @@ async def provision_itop_endpoint(request: Request, body: dict[str, Any]) -> dic
     defaults to the saved itop section; the webhook token comes from the
     saved security section.
     """
-    deps = _deps(request)
-    security = await deps.config_store.get("security", SecurityConfig)
+    security = await config_store.get("security", SecurityConfig)
     if not security.webhook_token:
         return {"ok": False, "error": "Set the webhook token first (security section)"}
     backend_url = str(body.get("backend_url") or "").strip()
     if not backend_url:
         return {"ok": False, "error": "backend_url is required"}
 
-    stored = await deps.config_store.get("itop", ItopConfig)
+    stored = await config_store.get("itop", ItopConfig)
     try:
         cfg = ItopConfig(
             url=str(body.get("url") or stored.url),
@@ -231,7 +235,9 @@ def _probe_tool(text: str) -> str:
 
 
 @router.post("/test-llm")
-async def test_llm(request: Request, body: dict[str, Any] | None = None) -> dict:
+async def test_llm(
+    config_store: Annotated[ConfigStore, Depends(get_config_store)], body: dict[str, Any] | None = None
+) -> dict:
     """Probe the LLM endpoint. Nothing is saved.
 
     Two questions, because the intake module needs both answers: does the
@@ -241,7 +247,7 @@ async def test_llm(request: Request, body: dict[str, Any] | None = None) -> dict
     Where the endpoint claims to accept a forced `tool_choice`, the second
     probe forces it, so the claim is verified rather than trusted.
     """
-    values = await _merged_with_current(request, "llm", LlmConfig, body or {})
+    values = await _merged_with_current(config_store, "llm", LlmConfig, body or {})
     try:
         cfg = LlmConfig(**values)
     except ValidationError as e:
@@ -282,14 +288,16 @@ async def test_llm(request: Request, body: dict[str, Any] | None = None) -> dict
 
 
 @router.post("/test-embeddings")
-async def test_embeddings(request: Request, body: dict[str, Any] | None = None) -> dict:
+async def test_embeddings(
+    config_store: Annotated[ConfigStore, Depends(get_config_store)], body: dict[str, Any] | None = None
+) -> dict:
     """Probe the embeddings endpoint with one text. Nothing is saved.
 
     Measures the endpoint's real vector dimension (`embed_raw` skips the
     config check) so the wizard can flag a wrong `dimension` value via
     `dimension_match` instead of failing opaquely later.
     """
-    values = await _merged_with_current(request, "embeddings", EmbeddingsConfig, body or {})
+    values = await _merged_with_current(config_store, "embeddings", EmbeddingsConfig, body or {})
     try:
         cfg = EmbeddingsConfig(**values)
     except ValidationError as e:

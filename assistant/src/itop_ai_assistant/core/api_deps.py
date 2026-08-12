@@ -4,18 +4,35 @@ They live outside any single router because more than one entry point needs
 them: the webhook and the synchronous request path both refuse to run until the
 connections are configured, and both admin-token holders and webhook callers
 reach the same effective `security` section.
+
+Every provider here names an `AppDeps` field only in a **local variable**
+annotation (`deps: AppDeps = ...`), never a real import and never a parameter
+or return annotation — PEP 526 local annotations are not evaluated at runtime,
+so this module never actually imports `core.deps`. That is what lets
+`vector/router.py` import a provider from here for real: `core/deps.py`
+imports the vector facade, whose `__init__` imports `vector/router.py`, so a
+real `AppDeps` import anywhere in this file's own import chain would deadlock
+that cycle one hop further out (see `vector/__init__.py`'s docstring). A
+provider that must return the whole container (`get_deps`) lives next to the
+class itself, in `core/deps.py`, for exactly this reason — it is only used by
+`webhook`/`request`/`admin`, none of which vector's cycle touches.
 """
 
 import logging
 import secrets
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from itop_ai_assistant.config import ItopConfig, LlmConfig, SecurityConfig, missing_setup
-from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.core.principal import Principal
+from itop_ai_assistant.settings.config_store import ConfigStore
+from itop_ai_assistant.settings.prompt_store import PromptStore
+from itop_ai_assistant.state.journal import RunJournal
+
+if TYPE_CHECKING:
+    from itop_ai_assistant.core.deps import AppDeps
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +41,32 @@ logger = logging.getLogger(__name__)
 _bearer = HTTPBearer(auto_error=False)
 
 
-async def verify_webhook_token(request: Request, x_auth_token: Annotated[str | None, Header()] = None) -> None:
+def get_config_store(request: Request) -> ConfigStore:
+    """The one `AppDeps` field every entry point reads config through.
+
+    Narrow on purpose (`.claude/rules/core.md`): a function that only needs
+    `config_store` says so in its signature instead of taking the whole
+    container off `request.app.state`.
+    """
     deps: AppDeps = request.app.state.deps
-    security = await deps.config_store.get("security", SecurityConfig)
+    return deps.config_store
+
+
+def get_prompt_store(request: Request) -> PromptStore:
+    deps: AppDeps = request.app.state.deps
+    return deps.prompt_store
+
+
+def get_journal(request: Request) -> RunJournal:
+    deps: AppDeps = request.app.state.deps
+    return deps.journal
+
+
+async def verify_webhook_token(
+    config_store: Annotated[ConfigStore, Depends(get_config_store)],
+    x_auth_token: Annotated[str | None, Header()] = None,
+) -> None:
+    security = await config_store.get("security", SecurityConfig)
     if security.webhook_token is None:
         return
     if x_auth_token is None or not secrets.compare_digest(x_auth_token, security.webhook_token):
@@ -34,11 +74,10 @@ async def verify_webhook_token(request: Request, x_auth_token: Annotated[str | N
 
 
 async def verify_admin_token(
-    request: Request,
+    config_store: Annotated[ConfigStore, Depends(get_config_store)],
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)] = None,
 ) -> None:
-    deps: AppDeps = request.app.state.deps
-    security = await deps.config_store.get("security", SecurityConfig)
+    security = await config_store.get("security", SecurityConfig)
     if security.admin_token is None:
         # First-run mode: the API stays open until the wizard sets a token
         return
@@ -67,12 +106,11 @@ async def resolve_principal(request: Request) -> Principal:
     return Principal.service()
 
 
-async def require_configured(request: Request) -> None:
+async def require_configured(config_store: Annotated[ConfigStore, Depends(get_config_store)]) -> None:
     """Reject a run request until the connections are configured (env or setup API)."""
-    deps: AppDeps = request.app.state.deps
     missing = missing_setup(
-        await deps.config_store.get("itop", ItopConfig),
-        await deps.config_store.get("llm", LlmConfig),
+        await config_store.get("itop", ItopConfig),
+        await config_store.get("llm", LlmConfig),
     )
     if missing:
         raise HTTPException(

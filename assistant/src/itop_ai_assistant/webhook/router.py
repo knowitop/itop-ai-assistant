@@ -1,13 +1,13 @@
 import asyncio
 import logging
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from itop_ai_assistant.core.api_deps import require_configured, resolve_principal, verify_webhook_token
-from itop_ai_assistant.core.deps import AppDeps
+from itop_ai_assistant.core.deps import AppDeps, get_deps
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.registry import WebhookHandler
 from itop_ai_assistant.pipelines.runner import journalled_run
@@ -42,13 +42,16 @@ async def _process_safely(handler: WebhookHandler, payload: WebhookPayload, run:
 
 
 @router.post("/webhook", status_code=202, dependencies=[Depends(verify_webhook_token), Depends(require_configured)])
-async def receive_webhook(payload: WebhookPayload, request: Request) -> WebhookResponse:
+async def receive_webhook(
+    payload: WebhookPayload,
+    request: Request,
+    deps: Annotated[AppDeps, Depends(get_deps)],
+) -> WebhookResponse:
     entry = request.app.state.registry.resolve_webhook(payload.obj_class, payload.event)
     if entry is None:
         raise HTTPException(status_code=400, detail=f"Unsupported class/event: {payload.obj_class}/{payload.event}")
     module, handler = entry
 
-    deps: AppDeps = request.app.state.deps
     run = RunContext(processing_id=uuid4(), module=module, principal=await resolve_principal(request))
     logger.info(f"[{run.processing_id}] Accepted {payload.label} ({payload.event})")
     task = asyncio.create_task(_process_safely(handler, payload, run, deps))

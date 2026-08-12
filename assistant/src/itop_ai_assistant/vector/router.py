@@ -11,25 +11,38 @@ deliberately have none.
 import logging
 from dataclasses import asdict
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
 from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
+from itop_ai_assistant.core.api_deps import get_config_store
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
+from itop_ai_assistant.repositories.sets import RepositorySet
+from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
-from itop_ai_assistant.vector.ports.store import DateRange
-from itop_ai_assistant.vector.sources.registry import build_vector_sources
+from itop_ai_assistant.vector.ports.store import ChunkStore, DateRange
+from itop_ai_assistant.vector.sources.registry import ItopRepos, build_vector_sources
 from itop_ai_assistant.vector.sources.tickets import FAMILY as TICKETS_FAMILY
+from itop_ai_assistant.vector.state.index_journal import IndexJournal
+from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 from itop_ai_assistant.vector.use_cases.indexer import SWEEP_TASK
 from itop_ai_assistant.vector.use_cases.search import FindStats, ObjectHit, SimilarSearch
 
-# core/deps.py imports the vector facade (concrete adapters); the facade's
-# own __init__ imports this module for `router` — a real import here would
-# deadlock on that cycle. Every use below is a local variable annotation,
-# never evaluated at runtime (PEP 526), so type-checking only costs nothing.
+# core/deps.py imports the vector facade (concrete adapters); the facade's own
+# __init__ imports this module for `router` — a real import of `core.deps`
+# here would deadlock on that cycle. `AppDeps` below is a local variable
+# annotation, never evaluated at runtime (PEP 526), so type-checking only
+# costs nothing. `core/api_deps.py` is safe to import from for real, unlike
+# `core/deps.py` itself: it names `AppDeps` the same way, in local variable
+# annotations only, so importing it never runs `core/deps.py` and never
+# touches this cycle. What still can't move there is any provider whose
+# *parameter or return* type is `AppDeps` itself (a real, eagerly-evaluated
+# annotation) — `get_itop`/`get_vector_store`/`get_vector_sync`/
+# `get_vector_journal` stay local for that reason, built from direct
+# submodule imports (`ports.store`, `state.*`, `sources.registry`) instead.
 if TYPE_CHECKING:
     from itop_ai_assistant.core.deps import AppDeps
 
@@ -38,7 +51,55 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/vector")
 
 
-async def require_vector(request: Request) -> VectorConfig:
+class _RouterItop(ItopRepos, Protocol):
+    """`ItopRepos` (`sources/registry.py`) plus `for_principal`, for `/search`'s
+    `principal_token` branch, which resolves under an engineer's own iTop
+    identity instead of the service account (TASK-015).
+
+    Not `pipelines.ports.ItopAccess`, which has the same two methods: that
+    file names `itop_ai_assistant.vector` for `ChunkStore`, so importing it
+    here would run this module while the vector facade is still mid-import —
+    the cycle explained above, one hop further out. TASK-029 discusses this
+    same duplication for `ItopRepos` itself.
+    """
+
+    async def for_principal(self, principal: Principal, *, comment: str) -> RepositorySet: ...
+
+
+def get_itop(request: Request) -> _RouterItop:
+    deps: AppDeps = request.app.state.deps
+    return deps.itop
+
+
+def get_vector_store(request: Request) -> ChunkStore:
+    deps: AppDeps = request.app.state.deps
+    return deps.vector_store
+
+
+def get_vector_sync(request: Request) -> VectorSyncState:
+    deps: AppDeps = request.app.state.deps
+    return deps.vector_sync
+
+
+def get_vector_journal(request: Request) -> IndexJournal:
+    deps: AppDeps = request.app.state.deps
+    return deps.vector_journal
+
+
+async def get_vector_config(config_store: Annotated[ConfigStore, Depends(get_config_store)]) -> VectorConfig:
+    return await config_store.get("vector", VectorConfig)
+
+
+async def get_embeddings_config(
+    config_store: Annotated[ConfigStore, Depends(get_config_store)],
+) -> EmbeddingsConfig:
+    return await config_store.get("embeddings", EmbeddingsConfig)
+
+
+async def require_vector(
+    vector_cfg: Annotated[VectorConfig, Depends(get_vector_config)],
+    vector_store: Annotated[ChunkStore, Depends(get_vector_store)],
+) -> VectorConfig:
     """The two gates every acting endpoint shares — and the config it needs anyway.
 
     Local to this router on purpose (`core/api_deps.py` is for what several entry
@@ -48,49 +109,52 @@ async def require_vector(request: Request) -> VectorConfig:
     a backfill request survives an unconfigured embeddings endpoint, since it
     is a flag waiting for whichever pass eventually runs.
     """
-    deps: AppDeps = request.app.state.deps
-    if not deps.vector_store.configured:
+    if not vector_store.configured:
         raise HTTPException(status_code=409, detail="Vector store is not configured (qdrant_url is not set)")
-    vector_cfg = await deps.config_store.get("vector", VectorConfig)
     if not vector_cfg.enabled:
         raise HTTPException(status_code=409, detail="Vector indexing is disabled (vector: enabled)")
     return vector_cfg
 
 
-async def require_embeddings(request: Request) -> EmbeddingsConfig:
+async def require_embeddings(
+    embeddings_cfg: Annotated[EmbeddingsConfig, Depends(get_embeddings_config)],
+) -> EmbeddingsConfig:
     """Refuse anything that would have to embed text with no endpoint to embed it at."""
-    deps: AppDeps = request.app.state.deps
-    embeddings_cfg = await deps.config_store.get("embeddings", EmbeddingsConfig)
     if not embeddings_cfg.base_url or not embeddings_cfg.model:
         raise HTTPException(status_code=409, detail="Embeddings endpoint is not configured")
     return embeddings_cfg
 
 
 @router.get("/status")
-async def vector_status(request: Request) -> dict:
-    deps: AppDeps = request.app.state.deps
+async def vector_status(
+    request: Request,
+    vector_cfg: Annotated[VectorConfig, Depends(get_vector_config)],
+    embeddings_cfg: Annotated[EmbeddingsConfig, Depends(get_embeddings_config)],
+    vector_store: Annotated[ChunkStore, Depends(get_vector_store)],
+    vector_sync: Annotated[VectorSyncState, Depends(get_vector_sync)],
+    vector_journal: Annotated[IndexJournal, Depends(get_vector_journal)],
+    itop: Annotated[_RouterItop, Depends(get_itop)],
+) -> dict:
     tasks: PeriodicTasks = request.app.state.tasks
-    vector_cfg = await deps.config_store.get("vector", VectorConfig)
-    embeddings_cfg = await deps.config_store.get("embeddings", EmbeddingsConfig)
 
-    store_status: dict = {"configured": deps.vector_store.configured, "ok": None, "error": None}
+    store_status: dict = {"configured": vector_store.configured, "ok": None, "error": None}
     index_info: list[dict] | None = None
     sync: dict | None = None
     last_reconcile = None
     reindex_pending = False
     runs: list[dict] = []
-    if deps.vector_store.configured:
+    if vector_store.configured:
         try:
             # Union of what code registers today and what Qdrant actually has
             # (TASK-008): a family dropped from the registry stays visible
             # here — `configured: false` — until its collection is dropped,
             # instead of silently disappearing from observability.
-            configured_families = {s.name for s in build_vector_sources(deps.itop, vector_cfg)}
-            known_families = set(await deps.vector_store.list_families())
+            configured_families = {s.name for s in build_vector_sources(itop, vector_cfg)}
+            known_families = set(await vector_store.list_families())
             store_status["ok"] = True
             index_info = []
             for family in sorted(configured_families | known_families):
-                meta = await deps.vector_store.active_meta(family)
+                meta = await vector_store.active_meta(family)
                 entry: dict = {
                     "family": family,
                     "configured": family in configured_families,
@@ -101,7 +165,7 @@ async def vector_status(request: Request) -> dict:
                     "rows": None,
                 }
                 if meta is not None:
-                    stats = await deps.vector_store.stats(family)
+                    stats = await vector_store.stats(family)
                     # None when no embeddings model is configured to compare against
                     fingerprint_match = (
                         (meta.model, meta.dim) == (embeddings_cfg.model, embeddings_cfg.dimension)
@@ -116,10 +180,10 @@ async def vector_status(request: Request) -> dict:
                         rows=stats.rows if stats else 0,
                     )
                 index_info.append(entry)
-            sync = await deps.vector_sync.list_cursors()
-            last_reconcile = await deps.vector_sync.get_reconcile()
-            reindex_pending = await deps.vector_sync.reindex_pending()
-            runs = await deps.vector_journal.recent(10)
+            sync = await vector_sync.list_cursors()
+            last_reconcile = await vector_sync.get_reconcile()
+            reindex_pending = await vector_sync.reindex_pending()
+            runs = await vector_journal.recent(10)
         except Exception as e:  # backend down, not provisioned yet …
             store_status["ok"] = False
             store_status["error"] = f"{type(e).__name__}: {e}"
@@ -138,7 +202,10 @@ async def vector_status(request: Request) -> dict:
 
 
 @router.get("/sources")
-async def vector_sources(request: Request) -> dict:
+async def vector_sources(
+    vector_cfg: Annotated[VectorConfig, Depends(get_vector_config)],
+    itop: Annotated[_RouterItop, Depends(get_itop)],
+) -> dict:
     """The chunking vocabulary of every registered source — what the admin UI
     renders its fragment editor from (ADR-018).
 
@@ -148,8 +215,6 @@ async def vector_sources(request: Request) -> dict:
     `prepare()` is not called: the declarations are static and iTop is not
     needed to read them.
     """
-    deps: AppDeps = request.app.state.deps
-    vector_cfg = await deps.config_store.get("vector", VectorConfig)
     return {
         "sources": [
             {
@@ -163,23 +228,26 @@ async def vector_sources(request: Request) -> dict:
                 "fields": list(source.fields),
                 "fragments": [asdict(fragment) for fragment in source.fragments],
             }
-            for source in build_vector_sources(deps.itop, vector_cfg)
+            for source in build_vector_sources(itop, vector_cfg)
         ]
     }
 
 
 @router.post("/reindex", status_code=202)
-async def vector_reindex(request: Request, vector_cfg: Annotated[VectorConfig, Depends(require_vector)]) -> dict:
+async def vector_reindex(
+    request: Request,
+    vector_cfg: Annotated[VectorConfig, Depends(require_vector)],
+    vector_sync: Annotated[VectorSyncState, Depends(get_vector_sync)],
+) -> dict:
     """Schedule a full backfill: cursor reset + an immediate sweep tick.
 
     The request is a flag in Redis, not in this process — whichever replica
     wins the sweep lock acts on it; waking the local loop only makes it
     happen sooner here.
     """
-    deps: AppDeps = request.app.state.deps
     tasks: PeriodicTasks = request.app.state.tasks
     try:
-        await deps.vector_sync.request_reindex()
+        await vector_sync.request_reindex()
     except Exception as e:  # Redis down …
         logger.warning(f"reindex request could not be stored: {e}")
         raise HTTPException(status_code=503, detail=f"Vector store is unavailable: {type(e).__name__}: {e}") from e
@@ -330,10 +398,11 @@ class SearchResponse(BaseModel):
 
 @router.post("/search")
 async def vector_search(
-    request: Request,
     body: SearchRequest,
     vector_cfg: Annotated[VectorConfig, Depends(require_vector)],
     embeddings_cfg: Annotated[EmbeddingsConfig, Depends(require_embeddings)],
+    vector_store: Annotated[ChunkStore, Depends(get_vector_store)],
+    itop: Annotated[_RouterItop, Depends(get_itop)],
 ) -> SearchResponse:
     """Debug endpoint: run one `SimilarSearch.find_with_stats()` and return the hits.
 
@@ -344,8 +413,7 @@ async def vector_search(
     caller yet (TASK-015), this is how its two layers get exercised against a
     real iTop before one exists.
     """
-    deps: AppDeps = request.app.state.deps
-    sources = {s.name: s for s in build_vector_sources(deps.itop, vector_cfg)}
+    sources = {s.name: s for s in build_vector_sources(itop, vector_cfg)}
     source = sources.get(body.family)
     if source is None:
         raise HTTPException(status_code=404, detail=f"Unknown family {body.family!r}; known: {sorted(sources)}")
@@ -361,7 +429,7 @@ async def vector_search(
                 detail=f"principal_token is only supported for family {TICKETS_FAMILY!r} today (TASK-015)",
             )
         principal = Principal.delegated(body.principal_token, login="debug", name="debug")
-        repos = await deps.itop.for_principal(principal, comment="vector debug search (TASK-015)")
+        repos = await itop.for_principal(principal, comment="vector debug search (TASK-015)")
         resolve = repos.ticket_repo.find_existing_ids
         allowed_org_ids = await repos.access_repo.allowed_org_ids()
         if allowed_org_ids is not None and (filters is None or "org_id" not in filters):
@@ -369,7 +437,7 @@ async def vector_search(
 
     embedder = EmbeddingsClient(embeddings_cfg)
     try:
-        search = SimilarSearch(deps.vector_store, embedder, resolve, family=body.family)
+        search = SimilarSearch(vector_store, embedder, resolve, family=body.family)
         hits, stats = await search.find_with_stats(
             body.text,
             classes=body.classes,

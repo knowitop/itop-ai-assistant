@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import redis.asyncio as aioredis
+from fastapi import Request
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
 
@@ -54,6 +55,18 @@ class AppDeps:
         await self.itop_connection.aclose()
         await self.state_manager.aclose()
         await self.vector_store.aclose()
+
+
+def get_deps(request: Request) -> "AppDeps":
+    """The container, off the request — for `webhook`/`request`/`admin`, which
+    hand it whole into the run core (`.claude/rules/core.md`: `AppDeps` goes to
+    entry points and no deeper, and a module's `handle` is where it is taken
+    apart into ports). A function that needs one field, not the container,
+    belongs in `core/api_deps.py` instead — kept free of a real import of this
+    module so `vector/router.py` can reuse it without reopening the facade
+    cycle documented in `vector/__init__.py`.
+    """
+    return request.app.state.deps
 
 
 def create_llm(llm: LlmConfig, model: str | None = None) -> BaseChatModel:
