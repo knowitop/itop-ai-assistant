@@ -12,9 +12,9 @@ from itop_ai_assistant.settings.config_store import RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore, RedisPromptStore
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
-from itop_ai_assistant.vector.index_journal import IndexJournal
-from itop_ai_assistant.vector.qdrant_store import QdrantChunkStore
-from itop_ai_assistant.vector.sync_state import VectorSyncState
+from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
+from itop_ai_assistant.vector.state.index_journal import IndexJournal
+from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 
 # Env/yaml on the developer machine must not leak into these tests — blank
 # out every field that feeds the runtime section defaults.

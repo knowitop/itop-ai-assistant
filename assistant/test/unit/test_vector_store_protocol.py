@@ -2,8 +2,8 @@
 
 import unittest
 
-from itop_ai_assistant.vector.qdrant_store import QdrantChunkStore
-from itop_ai_assistant.vector.store import ChunkStore
+from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
+from itop_ai_assistant.vector.ports.store import ChunkStore
 
 
 class TestChunkStoreProtocol(unittest.TestCase):

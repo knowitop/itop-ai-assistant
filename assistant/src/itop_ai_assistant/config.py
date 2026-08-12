@@ -250,7 +250,7 @@ class ChunkFragmentConfig(BaseModel):
     """What an administrator may say about one chunk fragment.
 
     Which of the two keys is read depends on how the source declared the
-    fragment (`vector/source.py::FragmentSpec`, ADR-018): a required fragment
+    fragment (`vector/ports/source.py::FragmentSpec`, ADR-018): a required fragment
     reads `fields`, an opt-in one reads `enabled` and has no fields of its own
     — its content is the source's business. The fragment's kind and its
     visibility are not here at all and cannot be: they belong to the source.
@@ -271,7 +271,7 @@ class VectorClassConfig(BaseModel):
     unit of grouping everywhere else in the architecture).
 
     Every indexed class must expose a last-modification datetime and a
-    "relevance" attribute — the VectorSource contract (`vector/source.py`).
+    "relevance" attribute — the VectorSource contract (`vector/ports/source.py`).
     Which attributes those are is the source's concern (tickets map them via
     `ticket_mapping`); this config holds only the relevance *values*.
     """
@@ -314,7 +314,7 @@ class FamilyConfig(BaseModel):
 
     # Classes this family indexes, each with its own relevance values and
     # chunk fragment settings. The family key must match a registered
-    # `VectorSource.name` (`vector_sources/registry.py`) to do anything —
+    # `VectorSource.name` (`vector/sources/registry.py`) to do anything —
     # same tolerance as an unknown class today: a key that matches nothing
     # is logged and skipped, not rejected.
     classes: dict[str, VectorClassConfig] = {}

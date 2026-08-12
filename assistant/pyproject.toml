@@ -58,7 +58,7 @@ artifacts = ["src/itop_ai_assistant/_build_info.py"]
 cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
 
 [project.scripts]
-itop-ai-reindex = "itop_ai_assistant.vector.reindex:main"
+itop-ai-reindex = "itop_ai_assistant.vector.use_cases.reindex:main"
 itop-ai-provision = "itop_ai_assistant.itop.provisioning:main"
 
 [dependency-groups]

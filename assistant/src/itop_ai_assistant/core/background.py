@@ -17,7 +17,7 @@ from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.pipelines.registry import TriggerRegistry
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.schedule.runner import register_schedules
-from itop_ai_assistant.vector.indexer import register_vector_sweep
+from itop_ai_assistant.vector import register_vector_sweep
 
 
 def build_background_tasks(deps: AppDeps, registry: TriggerRegistry) -> PeriodicTasks:

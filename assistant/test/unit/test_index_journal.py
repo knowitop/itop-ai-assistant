@@ -2,7 +2,7 @@ import unittest
 
 import fakeredis.aioredis
 
-from itop_ai_assistant.vector.index_journal import MAX_ENTRIES, IndexJournal
+from itop_ai_assistant.vector.state.index_journal import MAX_ENTRIES, IndexJournal
 
 
 def _make_journal() -> IndexJournal:

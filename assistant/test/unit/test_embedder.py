@@ -4,7 +4,7 @@ import unittest
 import httpx
 
 from itop_ai_assistant.config import EmbeddingsConfig
-from itop_ai_assistant.vector.embedder import EmbeddingsClient, EmbeddingsError
+from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient, EmbeddingsError
 
 _DIM = 4
 

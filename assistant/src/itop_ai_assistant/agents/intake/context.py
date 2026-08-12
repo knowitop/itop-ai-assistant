@@ -5,7 +5,7 @@ from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.ports import TicketStatePort
 from itop_ai_assistant.repositories.catalog import CatalogRepository
 from itop_ai_assistant.repositories.ticket import TicketRepository
-from itop_ai_assistant.vector.search import SimilarSearch
+from itop_ai_assistant.vector import SimilarSearch
 
 from .config import IntakeConfig
 

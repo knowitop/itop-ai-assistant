@@ -9,9 +9,9 @@ configured deployment, not on a blank machine.
 
 The console script (`pyproject.toml`) is the entry point; in the Docker image it
 is on `PATH` from the venv, so the same command works there. Equivalently
-`python -m itop_ai_assistant.vector.reindex`. `--full` resets the sweep
-cursors first, turning the run into a complete backfill; without it the run
-just catches up from the current cursors.
+`python -m itop_ai_assistant.vector.use_cases.reindex`. `--full` resets the
+sweep cursors first, turning the run into a complete backfill; without it the
+run just catches up from the current cursors.
 """
 
 import argparse
@@ -20,7 +20,7 @@ import sys
 
 from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.core.deps import build_deps
-from itop_ai_assistant.vector.indexer import SweepReport, VectorIndexer
+from itop_ai_assistant.vector.use_cases.indexer import SweepReport, VectorIndexer
 
 _MAX_ATTEMPTS = 3
 

@@ -31,10 +31,11 @@ from datetime import UTC, datetime
 
 from qdrant_client import AsyncQdrantClient, models
 
-from itop_ai_assistant.vector.store import (
+from itop_ai_assistant.vector.ports.store import (
     ChunkDigest,
     ChunkMetadata,
     ChunkRecord,
+    ChunkStore,
     DateRange,
     FingerprintMismatchError,
     IndexMeta,
@@ -62,7 +63,7 @@ class QdrantNotConfigured(RuntimeError):
     """Raised when the store is used while `qdrant_url` is unset."""
 
 
-class QdrantChunkStore:
+class QdrantChunkStore(ChunkStore):
     """Lazy holder of the async Qdrant client (unconfigured when the URL is None)."""
 
     def __init__(self, url: str | None) -> None:

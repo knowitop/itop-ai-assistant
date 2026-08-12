@@ -1,7 +1,6 @@
 ---
 paths:
   - "assistant/src/itop_ai_assistant/vector/**"
-  - "assistant/src/itop_ai_assistant/vector_sources/**"
   - "assistant/test/pg/**"
 ---
 
@@ -11,6 +10,19 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
 `dev-docs/architecture/vector.md`. The backend follows
 `dev-docs/decisions/ADR-001-vector-store-qdrant.md` — Qdrant, not pgvector.
 
+- **Layered internally, entered only through the facade** (TASK-026, TASK-028):
+  `router.py` (transport), `ports/` (protocols + value objects), `adapters/`
+  (`QdrantChunkStore`, `EmbeddingsClient`), `use_cases/` (`VectorIndexer`,
+  `SimilarSearch`, reindex CLI), `state/` (Redis operational state),
+  `sources/` (domain-specific `VectorSource` implementations — `Ticket`,
+  iTop-aware, unlike everything else here), `chunker.py` (domain). Code
+  outside `vector/` imports only `itop_ai_assistant.vector` (the facade in
+  `__init__.py`), never a submodule — enforced by
+  `test_package_layers.py::TestVectorFacade`. A new name a consumer needs
+  goes into `vector/__init__.py`'s re-export list, not around it — including
+  `core/deps.py`, which wires the concrete adapters through the facade like
+  any other consumer (`router.py` and `use_cases/indexer.py` name `AppDeps`
+  in `TYPE_CHECKING` only, so there is no cycle to route around).
 - **Infrastructure, not a business module.** It does not register in
   `TriggerRegistry`, has no prompts and no trigger routes. Business modules
   consume it through `AppDeps.vector_store`.
@@ -20,8 +32,13 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   stray text field.
 - The indexer knows nothing about iTop or tickets. It drives the `VectorSource`
   protocol; which iTop attributes a record maps to is the source's concern.
-  Adding a source = a new `vector_sources/<name>.py` plus one line in
-  `vector_sources/registry.py`, and **no change under `vector/`**.
+  Adding a source = a new `vector/sources/<name>.py` plus one line in
+  `vector/sources/registry.py` — **no other file under `vector/` changes**.
+  `sources/` living inside `vector/` (TASK-028) does not weaken this: the
+  invariant was always about import direction, not package boundaries —
+  `use_cases/indexer.py` still only ever reaches a concrete source through
+  `build_vector_sources()`, never `sources/tickets.py`/`sources/faq.py`
+  directly (`test_package_layers.py::TestVectorSourcesBoundary`).
 - **The source declares its fragments (`fields`, `fragments`) and their
   `visibility`; the config only picks fields and toggles opt-in fragments**
   (ADR-018). `chunker.py` sees `TextContent`/`SequenceContent` and no domain
@@ -31,11 +48,11 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
 - The whole subsystem is off when `qdrant_url` is unset — every code path must
   survive a Redis-only deployment.
 - Sweep cursors, the reindex flag and the run journal live in Redis
-  (`vector/sync_state.py`, `vector/index_journal.py`), never in the
-  `ChunkStore` — the port stays a pure vector store and grows no operational
-  state (`test_port_does_not_leak_sync_state`). Cross-replica exclusion is a
-  Redis lock renewed for the length of the pass, not the original TTL — see
-  `dev-docs/architecture/vector.md`.
+  (`vector/state/sync_state.py`, `vector/state/index_journal.py`), never in
+  the `ChunkStore` — the port stays a pure vector store and grows no
+  operational state (`test_port_does_not_leak_sync_state`). Cross-replica
+  exclusion is a Redis lock renewed for the length of the pass, not the
+  original TTL — see `dev-docs/architecture/vector.md`.
 - The index is built by the service account and is global. Search returns
   **candidates**; what a given person may see is decided by resolving hits under
   their own token.
@@ -43,13 +60,13 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   is collected by default — it runs against Qdrant's `:memory:` mode, no
   Docker needed.
 - **A payload field that filtering depends on must feed `ChunkMetadata.meta_hash`**
-  (`vector/store.py`). The sweep refreshes such a field without a re-embed
-  only through that hash (TASK-003); leave a new one out and it freezes at
-  whatever value the chunk had when it was first embedded, silently, until
-  the text changes for some unrelated reason. The rule has no exceptions —
-  `created_at` was one until TASK-020 and no longer is.
+  (`vector/ports/store.py`). The sweep refreshes such a field without a
+  re-embed only through that hash (TASK-003); leave a new one out and it
+  freezes at whatever value the chunk had when it was first embedded,
+  silently, until the text changes for some unrelated reason. The rule has no
+  exceptions — `created_at` was one until TASK-020 and no longer is.
 - **What describes the object is computed once per record, not per chunk**
-  (`_ObjectMetadata`, `vector/indexer.py`). Rewrites are per-chunk, so an
+  (`_ObjectMetadata`, `vector/use_cases/indexer.py`). Rewrites are per-chunk, so an
   object-level value recomputed per chunk drifts apart between the chunks of
   one object — that is exactly how `created_at` broke. A source with no
   creation date inherits the one already in the index (`ChunkDigest.created_at`);

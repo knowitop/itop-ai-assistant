@@ -51,7 +51,7 @@ class FaqRepository:
         stock iTop's `FAQ` class carries no date attribute at all. When that
         is the case this always does a full scan (`since` is ignored): there
         is nothing to filter by, so every sweep pass re-reads every article.
-        The hash-guard (`vector/indexer.py`) keeps that cheap — unchanged
+        The hash-guard (`vector/use_cases/indexer.py`) keeps that cheap — unchanged
         chunks are neither re-embedded nor rewritten, only re-read.
         """
         fields = self.mapping.fields.model_dump()

@@ -19,10 +19,7 @@ from itop_ai_assistant.settings.prompt_store import (
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.util.redis_keyspace import days_to_seconds
-from itop_ai_assistant.vector.index_journal import IndexJournal
-from itop_ai_assistant.vector.qdrant_store import QdrantChunkStore
-from itop_ai_assistant.vector.store import ChunkStore
-from itop_ai_assistant.vector.sync_state import VectorSyncState
+from itop_ai_assistant.vector import ChunkStore, IndexJournal, QdrantChunkStore, VectorSyncState
 
 
 @dataclass

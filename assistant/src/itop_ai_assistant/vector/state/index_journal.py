@@ -2,7 +2,7 @@
 entry plus a capped sorted index.
 
 Journal writes are observability, never correctness: the sweep treats a
-failure here as a warning (see `vector/indexer.py`), and finishing an entry
+failure here as a warning (see `vector/use_cases/indexer.py`), and finishing an entry
 that has already been evicted is a no-op rather than an error.
 """
 

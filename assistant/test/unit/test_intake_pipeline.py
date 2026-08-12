@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from itop_ai_assistant.agents.intake.config import IntakeConfig
-from itop_ai_assistant.agents.intake.pipeline import IntakeRun, handle_assigned
+from itop_ai_assistant.agents.intake.run import IntakeRun, handle_assigned
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import ObjectRef

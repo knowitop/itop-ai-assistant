@@ -11,21 +11,27 @@ deliberately have none.
 import logging
 from dataclasses import asdict
 from datetime import datetime
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
 from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
-from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
-from itop_ai_assistant.vector.embedder import EmbeddingsClient
-from itop_ai_assistant.vector.indexer import SWEEP_TASK
-from itop_ai_assistant.vector.search import FindStats, ObjectHit, SimilarSearch
-from itop_ai_assistant.vector.store import DateRange
-from itop_ai_assistant.vector_sources.registry import build_vector_sources
-from itop_ai_assistant.vector_sources.tickets import FAMILY as TICKETS_FAMILY
+from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
+from itop_ai_assistant.vector.ports.store import DateRange
+from itop_ai_assistant.vector.sources.registry import build_vector_sources
+from itop_ai_assistant.vector.sources.tickets import FAMILY as TICKETS_FAMILY
+from itop_ai_assistant.vector.use_cases.indexer import SWEEP_TASK
+from itop_ai_assistant.vector.use_cases.search import FindStats, ObjectHit, SimilarSearch
+
+# core/deps.py imports the vector facade (concrete adapters); the facade's
+# own __init__ imports this module for `router` — a real import here would
+# deadlock on that cycle. Every use below is a local variable annotation,
+# never evaluated at runtime (PEP 526), so type-checking only costs nothing.
+if TYPE_CHECKING:
+    from itop_ai_assistant.core.deps import AppDeps
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +158,7 @@ async def vector_sources(request: Request) -> dict:
                 # currently has classes configured — recovering a class an
                 # admin removed by mistake needs the family's vocabulary to
                 # still be here, not just the classes still saved (TASK-021;
-                # `vector_sources/registry.py::build_vector_sources`).
+                # `vector/sources/registry.py::build_vector_sources`).
                 "classes": list(source.classes),
                 "fields": list(source.fields),
                 "fragments": [asdict(fragment) for fragment in source.fragments],
@@ -218,7 +224,7 @@ async def vector_sweep(
 
 
 class DateRangeBody(BaseModel):
-    """`vector.store.DateRange` over the wire — same two inclusive bounds.
+    """`vector.ports.store.DateRange` over the wire — same two inclusive bounds.
 
     Validated here rather than deep in the store so an inverted or empty
     window is a 422 on parsing the body, not a 500 from inside the search.
@@ -238,10 +244,10 @@ class DateRangeBody(BaseModel):
 
 class SearchRequest(BaseModel):
     """Mirrors `SimilarSearch.__init__`'s `family` plus `find()`'s own
-    parameters (`vector/search.py`) — one-to-one, for manual testing."""
+    parameters (`vector/use_cases/search.py`) — one-to-one, for manual testing."""
 
     family: str = Field(
-        description="Which collection family to search — one name from `vector_sources/registry.py` "
+        description="Which collection family to search — one name from `vector/sources/registry.py` "
         "(e.g. 'tickets'). Fixed at `SimilarSearch` construction in production code; here it's just "
         "the family to probe. 404 if no registered `VectorSource` has this name.",
     )

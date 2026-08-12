@@ -1,8 +1,8 @@
 """Assembles the list of VectorSource instances the indexer sweeps.
 
-Adding a new source: create `src/vector_sources/<name>.py` implementing
-`vector.source.VectorSource`, and add one line to `_BUILDERS` below — same
-pattern as `pipelines/registry.py` for webhook modules.
+Adding a new source: create `vector/sources/<name>.py` implementing
+`vector.ports.source.VectorSource`, and add one line to `_BUILDERS` below —
+same pattern as `pipelines/registry.py` for webhook modules.
 """
 
 import logging
@@ -15,7 +15,7 @@ from itop_ai_assistant.repositories.sets import RepositorySet
 from itop_ai_assistant.repositories.ticket import TicketRepository
 
 if TYPE_CHECKING:
-    from itop_ai_assistant.vector.source import VectorSource
+    from itop_ai_assistant.vector.ports.source import VectorSource
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +49,12 @@ def build_vector_sources(itop: ItopRepos, cfg: VectorConfig) -> list["VectorSour
     A `cfg.families` key that matches no builder below is logged and
     skipped — the family name is not something the admin can invent from the
     UI, same tolerance as an unknown class today; making a new one requires a
-    new `vector_sources/*.py` module and a line here.
+    new `vector/sources/*.py` module and a line here.
     """
-    from itop_ai_assistant.vector_sources.faq import FAMILY as FAQ_FAMILY
-    from itop_ai_assistant.vector_sources.faq import FaqVectorSource
-    from itop_ai_assistant.vector_sources.tickets import FAMILY as TICKETS_FAMILY
-    from itop_ai_assistant.vector_sources.tickets import TicketVectorSource
+    from itop_ai_assistant.vector.sources.faq import FAMILY as FAQ_FAMILY
+    from itop_ai_assistant.vector.sources.faq import FaqVectorSource
+    from itop_ai_assistant.vector.sources.tickets import FAMILY as TICKETS_FAMILY
+    from itop_ai_assistant.vector.sources.tickets import TicketVectorSource
 
     # A source is given one repository, not the set: it has no business reaching
     # for another one, and the accessor it gets can only ever answer with the

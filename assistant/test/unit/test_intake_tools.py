@@ -11,7 +11,7 @@ from itop_ai_assistant.agents.intake.tools import ToolRejection
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.state.ticket_state import TicketState
-from itop_ai_assistant.vector.search import FindStats, ObjectHit
+from itop_ai_assistant.vector.use_cases.search import FindStats, ObjectHit
 
 
 def _ticket(**overrides) -> Ticket:

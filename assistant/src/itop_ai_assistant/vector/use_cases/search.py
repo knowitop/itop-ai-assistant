@@ -21,8 +21,8 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
-from itop_ai_assistant.vector.embedder import EmbeddingsClient
-from itop_ai_assistant.vector.store import ChunkStore, DateRange, SearchHit
+from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
+from itop_ai_assistant.vector.ports.store import ChunkStore, DateRange, SearchHit
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +60,10 @@ class SimilarSearch:
     `family` is fixed at construction, not passed to `find()`: the caller
     that builds a `SimilarSearch` already commits to one business scenario
     (the same place `resolve` gets bound, e.g. `ticket_repo.find_existing_ids`
-    in `pipeline.py`) — a wrong `family` becomes a mistake at that one
+    in `compose.py`) — a wrong `family` becomes a mistake at that one
     construction site instead of a risk on every call (D5, TASK-008). No
     registry checks that `classes` actually belongs to `family`: building one
-    here would duplicate `vector_sources/registry.py`, the very duplication
+    here would duplicate `vector/sources/registry.py`, the very duplication
     D1/D2 avoid.
     """
 

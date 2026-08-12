@@ -3,8 +3,8 @@
 The indexer, the sweep and the API speak to storage only through this
 protocol. Everything a backend cannot answer on its own — sweep cursors, the
 pending-backfill flag, the run journal, cross-replica exclusion — is
-operational state and lives in Redis (`vector/sync_state.py`,
-`vector/index_journal.py`), never here. See ADR-002 in dev-docs.
+operational state and lives in Redis (`vector/state/sync_state.py`,
+`vector/state/index_journal.py`), never here. See ADR-002 in dev-docs.
 
 `family` selects which collection a call goes to (one per `VectorSource`,
 see ADR-015) — it is never stored on `ChunkMetadata` or written to a chunk's
@@ -81,7 +81,7 @@ class ChunkMetadata:
     visibility: str  # public / internal
     content_hash: str
     # Object creation time, frozen at first indexing when the source has none
-    # of its own — see the module docstring and `vector/indexer.py`.
+    # of its own — see the module docstring and `vector/use_cases/indexer.py`.
     created_at: datetime
     filters: dict[str, str] | None = None
     # Last modification of the source object — the range filter behind "solved
@@ -184,7 +184,7 @@ class DateRange:
     `created_at` is always present; for a source that reports no creation date
     it holds the moment the object first entered the index — an approximation,
     but a stable one, identical across the object's chunks and unchanged by
-    later sweeps (`vector/indexer.py`).
+    later sweeps (`vector/use_cases/indexer.py`).
     """
 
     after: datetime | None = None

@@ -4,7 +4,7 @@ paths:
   - "assistant/src/itop_ai_assistant/repositories/**"
   - "assistant/src/itop_ai_assistant/itop/**"
   - "assistant/src/itop_ai_assistant/domain/**"
-  - "assistant/src/itop_ai_assistant/vector_sources/**"
+  - "assistant/src/itop_ai_assistant/vector/sources/**"
   - "assistant/src/itop_ai_assistant/agents/**/tools.py"
   - "assistant/test/**/test_itop_*.py"
   - "assistant/test/**/test_*repository*.py"

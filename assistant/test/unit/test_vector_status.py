@@ -14,11 +14,11 @@ from itop_ai_assistant.settings.config_store import RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore, RedisPromptStore
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
-from itop_ai_assistant.vector.index_journal import IndexJournal
-from itop_ai_assistant.vector.indexer import SWEEP_TASK
-from itop_ai_assistant.vector.qdrant_store import QdrantChunkStore
-from itop_ai_assistant.vector.store import ChunkMetadata, ChunkRecord
-from itop_ai_assistant.vector.sync_state import VectorSyncState
+from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
+from itop_ai_assistant.vector.ports.store import ChunkMetadata, ChunkRecord
+from itop_ai_assistant.vector.state.index_journal import IndexJournal
+from itop_ai_assistant.vector.state.sync_state import VectorSyncState
+from itop_ai_assistant.vector.use_cases.indexer import SWEEP_TASK
 
 _NOW = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
 

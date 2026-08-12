@@ -4,8 +4,8 @@ import unittest
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
-from itop_ai_assistant.vector.search import FindStats, ObjectHit, SimilarSearch
-from itop_ai_assistant.vector.store import DateRange, SearchHit
+from itop_ai_assistant.vector.ports.store import DateRange, SearchHit
+from itop_ai_assistant.vector.use_cases.search import FindStats, ObjectHit, SimilarSearch
 
 _NOW = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
 _FAMILY = "tickets"

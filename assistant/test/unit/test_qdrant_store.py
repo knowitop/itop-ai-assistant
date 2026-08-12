@@ -4,8 +4,8 @@ from unittest.mock import patch
 
 from qdrant_client import models
 
-from itop_ai_assistant.vector.qdrant_store import QdrantChunkStore
-from itop_ai_assistant.vector.store import (
+from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
+from itop_ai_assistant.vector.ports.store import (
     ChunkDigest,
     ChunkMetadata,
     ChunkRecord,

@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import fakeredis.aioredis
 
-from itop_ai_assistant.vector.sync_state import LOCK_TTL_SECONDS, VectorSyncState
+from itop_ai_assistant.vector.state.sync_state import LOCK_TTL_SECONDS, VectorSyncState
 
 _NOW = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
 

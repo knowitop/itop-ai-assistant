@@ -1,6 +1,6 @@
 """Recency-capped Redis sorted-set index.
 
-`state/journal.py` and `vector/index_journal.py` each keep a bounded history
+`state/journal.py` and `vector/state/index_journal.py` each keep a bounded history
 of run-shaped entries and used to duplicate the same sequence independently:
 `zadd` + `zremrangebyrank` to record and cap, `zrevrange` + prune to read back
 and self-heal past entries that expired or were evicted out from under the

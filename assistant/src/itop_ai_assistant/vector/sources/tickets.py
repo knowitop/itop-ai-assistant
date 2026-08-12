@@ -2,8 +2,8 @@
 objects.
 
 Wraps `TicketRepository` behind the generic `VectorSource` protocol
-(`vector/source.py`) — the vector indexer itself never imports `Ticket` or
-a repository; all of that domain knowledge lives here instead.
+(`vector/ports/source.py`) — the vector indexer itself never imports `Ticket`
+or a repository; all of that domain knowledge lives here instead.
 """
 
 import logging
@@ -21,12 +21,12 @@ from itop_ai_assistant.vector.chunker import (
     chunk_object,
     clean_text,
 )
-from itop_ai_assistant.vector.source import FragmentSpec, VectorRecord, VectorSource
+from itop_ai_assistant.vector.ports.source import FragmentSpec, VectorRecord, VectorSource
 
 logger = logging.getLogger(__name__)
 
 # The collection family this source writes to (`TicketVectorSource.name`) and
-# the one `SimilarSearch` in `agents/intake/pipeline.py` reads from — one
+# the one `SimilarSearch` in `agents/intake/compose.py` reads from — one
 # constant so the two never drift apart (TASK-008).
 FAMILY = "tickets"
 
@@ -61,7 +61,7 @@ class TicketVectorSource(VectorSource[Ticket]):
     `TicketRepository` is itself generic over any class the deployment's
     `ticket_mapping` covers, so this source imposes no class list of its own.
 
-    Source contract (`vector/source.py`): the relevance attribute for tickets
+    Source contract (`vector/ports/source.py`): the relevance attribute for tickets
     is the semantic `status`, the modification date is the semantic
     `last_update` — both mapped to actual iTop attributes per class by
     `ticket_mapping` (`find_modified_since` raises if `last_update` is not
@@ -84,7 +84,7 @@ class TicketVectorSource(VectorSource[Ticket]):
         # global by design (`dev-docs/architecture/platform.md` §3.5). What a searcher may see
         # is decided later, by resolving hits under their own token. Not just by
         # convention: `get_ticket_repo` is bound to the service set
-        # (`ItopRepositories.service()`, see `vector_sources/registry.py`), which
+        # (`ItopRepositories.service()`, see `vector/sources/registry.py`), which
         # never touches `for_principal` — this class has no way to reach it.
         self._ticket_repo = await self._get_ticket_repo()
 

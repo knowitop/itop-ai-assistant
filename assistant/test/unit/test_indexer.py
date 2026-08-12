@@ -13,11 +13,17 @@ from itop_ai_assistant.config import (
 )
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.vector.chunker import FragmentContent, TextContent, chunk_object
-from itop_ai_assistant.vector.index_journal import IndexJournal
-from itop_ai_assistant.vector.indexer import SWEEP_TASK, VectorIndexer, register_vector_sweep
-from itop_ai_assistant.vector.source import VectorRecord
-from itop_ai_assistant.vector.store import ChunkDigest, ChunkMetadata, ChunkRecord, FingerprintMismatchError, IndexMeta
-from itop_ai_assistant.vector.sync_state import VectorSyncState
+from itop_ai_assistant.vector.ports.source import VectorRecord
+from itop_ai_assistant.vector.ports.store import (
+    ChunkDigest,
+    ChunkMetadata,
+    ChunkRecord,
+    FingerprintMismatchError,
+    IndexMeta,
+)
+from itop_ai_assistant.vector.state.index_journal import IndexJournal
+from itop_ai_assistant.vector.state.sync_state import VectorSyncState
+from itop_ai_assistant.vector.use_cases.indexer import SWEEP_TASK, VectorIndexer, register_vector_sweep
 
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 _FAMILY = "tickets"
@@ -242,7 +248,7 @@ class IndexerTestCase(unittest.IsolatedAsyncioTestCase):
         self.indexer = indexer
         embedder = embedder or _embedder_mock()
         self.embedder = embedder
-        with patch("itop_ai_assistant.vector.indexer.EmbeddingsClient", return_value=embedder):
+        with patch("itop_ai_assistant.vector.use_cases.indexer.EmbeddingsClient", return_value=embedder):
             return await indexer.sweep_once()
 
 

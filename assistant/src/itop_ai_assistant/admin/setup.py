@@ -33,7 +33,7 @@ from itop_ai_assistant.core.llm_providers import PROVIDERS, get_provider
 from itop_ai_assistant.itop.connection import create_itop_client
 from itop_ai_assistant.itop.provisioning import provision_itop
 from itop_ai_assistant.util.text import strip_thinking
-from itop_ai_assistant.vector.embedder import EmbeddingsClient
+from itop_ai_assistant.vector import EmbeddingsClient
 
 logger = logging.getLogger(__name__)
 

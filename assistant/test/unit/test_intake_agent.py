@@ -15,14 +15,14 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 from itop_ai_assistant.agents.intake.config import IntakeConfig
-from itop_ai_assistant.agents.intake.pipeline import IntakeRun
+from itop_ai_assistant.agents.intake.run import IntakeRun
 from itop_ai_assistant.config import EmbeddingsConfig, LlmConfig, VectorConfig
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
 from itop_ai_assistant.state.ticket_state import TicketState
-from itop_ai_assistant.vector.store import SearchHit
+from itop_ai_assistant.vector.ports.store import SearchHit
 from itop_ai_assistant.webhook.models import WebhookPayload
 
 _PROMPT_FILES = read_prompt_dir(PACKAGED_PROMPTS_DIR / "intake")
@@ -143,7 +143,7 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def run_agent(self, responses: list[AIMessage]) -> FakeToolCallingModel:
         model = FakeToolCallingModel(responses=responses)
-        with patch("itop_ai_assistant.agents.intake.pipeline.create_llm", return_value=model):
+        with patch("itop_ai_assistant.agents.intake.compose.create_llm", return_value=model):
             await self.intake_run().body(self.ticket, "ai-assistant")
         return model
 
@@ -361,7 +361,7 @@ class TestClassifiedTicket(IntakeAgentTestCase):
                 return self
 
         model = Recording(responses=[ai([call("finish_handoff", {"note": "n"}, "h1")])])
-        with patch("itop_ai_assistant.agents.intake.pipeline.create_llm", return_value=model):
+        with patch("itop_ai_assistant.agents.intake.compose.create_llm", return_value=model):
             await self.intake_run().body(self.ticket, "ai-assistant")
 
         self.assertEqual(captured[0], ["post_public_question", "finish_handoff"])
@@ -448,7 +448,7 @@ class TestSimilarTicketsWiring(IntakeAgentTestCase):
         embedder = MagicMock()
         embedder.embed = AsyncMock(return_value=[[1.0, 0.0]])
         embedder.aclose = AsyncMock()
-        patcher = patch("itop_ai_assistant.agents.intake.pipeline.EmbeddingsClient", return_value=embedder)
+        patcher = patch("itop_ai_assistant.agents.intake.compose.EmbeddingsClient", return_value=embedder)
         patcher.start()
         self.addCleanup(patcher.stop)
         return embedder

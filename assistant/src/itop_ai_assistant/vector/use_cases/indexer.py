@@ -1,6 +1,6 @@
 """Vector index sweep: periodic incremental sync from registered VectorSource
-instances (see `vector/source.py`, `vector_sources/registry.py`) into the
-active `ChunkStore` (`vector/store.py`).
+instances (see `vector/ports/source.py`, `vector/sources/registry.py`) into
+the active `ChunkStore` (`vector/ports/store.py`).
 
 The sweep reads objects modified since the per-class cursor (with a
 2×interval overlap), chunks them, embeds only changed chunks (hash-guard)
@@ -10,7 +10,7 @@ pass* (max last_update seen), never per page; a crashed pass simply
 re-reads, which the hash-guard makes cheap.
 
 Backfill is the same code path with cursors reset, requested by a flag in
-Redis (`vector/sync_state.py`) rather than by a flag in memory. A weekly
+Redis (`vector/state/sync_state.py`) rather than by a flag in memory. A weekly
 reconciliation pass deletes chunks of objects that vanished from their
 source. Cross-replica exclusion is `VectorSyncState.sweep_lock()`.
 
@@ -19,7 +19,7 @@ route and writes no `RunJournal` entry — `register_vector_sweep` puts it under
 the process scheduler and that is the whole of its relationship with the core.
 
 This module is source-agnostic: it knows `VectorSource`/`VectorRecord`, never
-`Ticket` or a repository — those live in `vector_sources/tickets.py`.
+`Ticket` or a repository — those live in `vector/sources/tickets.py`.
 
 `vector.enabled` and the embeddings section are re-read from the ConfigStore
 snapshot on every tick, so enabling the feature at runtime needs no restart.
@@ -30,15 +30,14 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from itop_ai_assistant.config import EmbeddingsConfig, FamilyConfig, VectorClassConfig, VectorConfig
-from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
+from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.chunker import Chunk
-from itop_ai_assistant.vector.embedder import EmbeddingsClient
-from itop_ai_assistant.vector.source import VectorRecord, VectorSource
-from itop_ai_assistant.vector.store import (
+from itop_ai_assistant.vector.ports.source import VectorRecord, VectorSource
+from itop_ai_assistant.vector.ports.store import (
     ChunkDigest,
     ChunkMetadata,
     ChunkRecord,
@@ -46,7 +45,14 @@ from itop_ai_assistant.vector.store import (
     FingerprintMismatchError,
     IndexMeta,
 )
-from itop_ai_assistant.vector_sources.registry import build_vector_sources
+from itop_ai_assistant.vector.sources.registry import build_vector_sources
+
+# core/deps.py imports the vector facade (concrete adapters); the facade's
+# own __init__ imports this module for `register_vector_sweep` — a real
+# import here would deadlock on that cycle. Both uses below are quoted
+# (`"AppDeps"`) so the annotation is never evaluated at def-time either.
+if TYPE_CHECKING:
+    from itop_ai_assistant.core.deps import AppDeps
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +74,7 @@ class SweepReport:
 SWEEP_TASK = "vector-sweep"
 
 
-def register_vector_sweep(tasks: PeriodicTasks, deps: AppDeps) -> None:
+def register_vector_sweep(tasks: PeriodicTasks, deps: "AppDeps") -> None:
     """Put the sweep under the process-wide scheduler.
 
     Infrastructure, not a business module: no `ModuleInfo`, no trigger route
@@ -103,7 +109,7 @@ class VectorIndexer:
     mocking iTop/repository internals.
     """
 
-    def __init__(self, deps: AppDeps, sources: Sequence[VectorSource[Any]] | None = None) -> None:
+    def __init__(self, deps: "AppDeps", sources: Sequence[VectorSource[Any]] | None = None) -> None:
         self._deps = deps
         self._sources = list(sources) if sources is not None else None
 

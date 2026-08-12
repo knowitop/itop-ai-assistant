@@ -3,7 +3,7 @@
 The one fact read here (a principal's "Allowed Organizations") feeds the
 pre-filter of [[ADR-003-rights-late-binding]] (TASK-015, R4): a hint that
 narrows candidates before the walk, never the authority on what is visible.
-`SimilarSearch._keep_resolvable` (`vector/search.py`), run under the same
+`SimilarSearch._keep_resolvable` (`vector/use_cases/search.py`), run under the same
 principal's own token, remains the only place that decides that.
 """
 

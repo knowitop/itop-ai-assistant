@@ -1,9 +1,9 @@
 """FAQ vector source: iTop FAQ articles as vectorizable objects.
 
 Wraps `FaqRepository` behind the generic `VectorSource` protocol
-(`vector/source.py`) — see `vector_sources/tickets.py` for the same pattern
-applied to tickets. Simpler than tickets: one class, no catalog lookups, no
-log fragments (an FAQ article has no conversation to index).
+(`vector/ports/source.py`) — see `vector/sources/tickets.py` for the same
+pattern applied to tickets. Simpler than tickets: one class, no catalog
+lookups, no log fragments (an FAQ article has no conversation to index).
 """
 
 import logging
@@ -14,7 +14,7 @@ from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
 from itop_ai_assistant.domain.faq import FaqArticle
 from itop_ai_assistant.repositories.faq import FaqRepository, FaqRepositoryProvider
 from itop_ai_assistant.vector.chunker import Chunk, FragmentContent, TextContent, chunk_object, clean_text
-from itop_ai_assistant.vector.source import FragmentSpec, VectorRecord, VectorSource
+from itop_ai_assistant.vector.ports.source import FragmentSpec, VectorRecord, VectorSource
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ FRAGMENTS = (
 class FaqVectorSource(VectorSource[FaqArticle]):
     """VectorSource implementation for iTop FAQ articles.
 
-    Source contract (`vector/source.py`): the relevance attribute is the
+    Source contract (`vector/ports/source.py`): the relevance attribute is the
     semantic `status`, the modification date is `last_update` — both mapped
     to actual iTop attributes by `FaqMappingConfig`, both unmapped by default.
     Stock iTop's `FAQ` class carries neither a lifecycle status nor any date

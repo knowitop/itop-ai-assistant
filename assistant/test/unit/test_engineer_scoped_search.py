@@ -13,8 +13,8 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 
 from itop_ai_assistant.repositories.access import AccessRepository
-from itop_ai_assistant.vector.search import SimilarSearch
-from itop_ai_assistant.vector.store import SearchHit
+from itop_ai_assistant.vector.ports.store import SearchHit
+from itop_ai_assistant.vector.use_cases.search import SimilarSearch
 
 
 def _org_repo(allowed: list[dict] | None) -> AccessRepository:

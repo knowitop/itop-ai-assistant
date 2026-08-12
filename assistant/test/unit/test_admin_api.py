@@ -15,9 +15,9 @@ from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, FilePr
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.util.build_info import get_build_info
-from itop_ai_assistant.vector.index_journal import IndexJournal
-from itop_ai_assistant.vector.qdrant_store import QdrantChunkStore
-from itop_ai_assistant.vector.sync_state import VectorSyncState
+from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
+from itop_ai_assistant.vector.state.index_journal import IndexJournal
+from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 
 
 def _make_deps(redis, settings=None) -> AppDeps:
