@@ -8,12 +8,14 @@ iTop) but still internal — TASK-028 folded it in from the former top-level
 `vector_sources/` precisely because nothing outside `vector/` needs more of
 it than `TICKETS_FAMILY` below.
 
-`router.py` and `use_cases/indexer.py` name `core.deps.AppDeps` in
-annotations only (`TYPE_CHECKING`, never imported for real) — `core/deps.py`
-imports this facade's own adapters, so a real import in either direction
-would deadlock: importing anything here runs this file top to bottom, which
-imports `.router`/`.use_cases.indexer`, which would otherwise import
-`core.deps` while it is still mid-import itself.
+`router.py` names `core.deps.AppDeps` in annotations only (`TYPE_CHECKING`,
+never imported for real) — `core/deps.py` imports this facade's own adapters,
+so a real import in either direction would deadlock: importing anything here
+runs this file top to bottom, which imports `.router`, which would otherwise
+import `core.deps` while it is still mid-import itself. `use_cases/indexer.py`
+does not name it at all any more (TASK-029): the sweep takes its own
+`IndexerDeps` port, which is what removed the last reason for the workaround
+there rather than routing around it.
 """
 
 from .adapters.embedder import EmbeddingsClient

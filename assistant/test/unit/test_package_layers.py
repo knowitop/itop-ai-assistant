@@ -95,9 +95,10 @@ class TestVectorFacade(unittest.TestCase):
     """Nothing outside `vector/` reaches past its facade (TASK-026) —
     `vector/__init__.py` re-exports everything a consumer needs, including
     `core/deps.py`: the composition root wires the concrete adapters, but it
-    does that through the facade like everyone else (`router.py` and
-    `use_cases/indexer.py` only name `AppDeps` in `TYPE_CHECKING`, so there
-    is no cycle to route around).
+    does that through the facade like everyone else (`router.py` only names
+    `AppDeps` in `TYPE_CHECKING`, and `use_cases/indexer.py` names its own
+    `IndexerDeps` port instead since TASK-029, so there is no cycle to route
+    around).
     """
 
     def test_only_vector_itself_is_imported_from_outside(self):

@@ -9,9 +9,17 @@ a module that happens to use the missing member.
 The second test pins the deliberate *absences*. Those cannot be caught by
 `isinstance` (a protocol is satisfied by having more, never by having less), so
 they are asserted against the protocol's own member list.
+
+Every test here is annotated `-> None` for a reason that is not style: mypy
+does not check the body of an unannotated function, so without the return type
+the assertion in the first test is invisible to the very gate that is supposed
+to make it (found in TASK-029, where the same test shape was written for
+`IndexerDeps` — until the annotation went on, breaking a port on purpose was
+caught at the call sites and not here).
 """
 
 import unittest
+from typing import get_protocol_members
 
 from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.core.deps import AppDeps, build_deps
@@ -31,12 +39,12 @@ def _requires_run_deps(deps: RunDeps) -> RunDeps:
 
 
 class TestContainerSatisfiesTheContract(unittest.TestCase):
-    def test_app_deps_is_accepted_where_a_handler_expects_run_deps(self):
+    def test_app_deps_is_accepted_where_a_handler_expects_run_deps(self) -> None:
         deps: AppDeps = build_deps(get_settings())
 
         self.assertIs(_requires_run_deps(deps), deps)
 
-    def test_the_narrow_ports_are_served_by_the_container_too(self):
+    def test_the_narrow_ports_are_served_by_the_container_too(self) -> None:
         """What `TicketRun.handle` takes apart — pinned member by member."""
         deps = build_deps(get_settings())
 
@@ -54,20 +62,20 @@ class TestContainerSatisfiesTheContract(unittest.TestCase):
 class TestPortsWithholdWhatRunsMustNotReach(unittest.TestCase):
     """Ownership stays at the composition root — see `pipelines/ports.py`."""
 
-    def test_no_port_hands_out_the_shutdown_of_shared_resources(self):
+    def test_no_port_hands_out_the_shutdown_of_shared_resources(self) -> None:
         for port in (RunDeps, LockPort, TicketStatePort, ItopAccess, StepJournal, RunFrameJournal):
             with self.subTest(port=port.__name__):
-                self.assertNotIn("aclose", port.__protocol_attrs__)
+                self.assertNotIn("aclose", get_protocol_members(port))
 
-    def test_a_handler_cannot_read_startup_settings_behind_the_config_store(self):
+    def test_a_handler_cannot_read_startup_settings_behind_the_config_store(self) -> None:
         """Runtime overrides are what make an admin edit apply without a restart;
         a handler reaching `settings` directly would silently bypass them."""
-        self.assertNotIn("settings", RunDeps.__protocol_attrs__)
+        self.assertNotIn("settings", get_protocol_members(RunDeps))
 
-    def test_the_agent_loop_half_of_the_journal_cannot_open_or_close_a_run(self):
+    def test_the_agent_loop_half_of_the_journal_cannot_open_or_close_a_run(self) -> None:
         """A run is opened exactly once, by the entry point (`journalled_run`)."""
-        self.assertNotIn("start", StepJournal.__protocol_attrs__)
-        self.assertNotIn("finish", StepJournal.__protocol_attrs__)
+        self.assertNotIn("start", get_protocol_members(StepJournal))
+        self.assertNotIn("finish", get_protocol_members(StepJournal))
         # The frame half, by contrast, is exactly the one that may
-        self.assertIn("start", RunFrameJournal.__protocol_attrs__)
-        self.assertIn("finish", RunFrameJournal.__protocol_attrs__)
+        self.assertIn("start", get_protocol_members(RunFrameJournal))
+        self.assertIn("finish", get_protocol_members(RunFrameJournal))

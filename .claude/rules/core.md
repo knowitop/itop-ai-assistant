@@ -32,8 +32,9 @@ apart into them, because the registry has one handler shape for every module.
 - **`aclose()` belongs to no port.** The pool is the composition root's, and a
   run must not be typed into closing it (`test_pipelines_ports.py`).
 - Need something `RunDeps` does not carry? Declare a port at the consumer, as
-  `handle_assigned` (`_AssignedDeps`) and `build_vector_sources` (`ItopRepos`)
-  do — do not widen `RunDeps`.
+  `handle_assigned` (`_AssignedDeps`), `build_vector_sources` (`ItopRepos`)
+  and `VectorIndexer` (`IndexerDeps`, its own five-member slice of the
+  container) do — do not widen `RunDeps`.
 
 ## No module-level singletons
 

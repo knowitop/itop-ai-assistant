@@ -1,5 +1,6 @@
 import unittest
 from datetime import UTC, datetime, timedelta
+from typing import get_protocol_members
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
@@ -10,7 +11,9 @@ from itop_ai_assistant.config import (
     FamilyConfig,
     VectorClassConfig,
     VectorConfig,
+    get_settings,
 )
+from itop_ai_assistant.core.deps import AppDeps, build_deps
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.vector.chunker import FragmentContent, TextContent, chunk_object
 from itop_ai_assistant.vector.ports.source import VectorRecord
@@ -23,7 +26,12 @@ from itop_ai_assistant.vector.ports.store import (
 )
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
 from itop_ai_assistant.vector.state.sync_state import VectorSyncState
-from itop_ai_assistant.vector.use_cases.indexer import SWEEP_TASK, VectorIndexer, register_vector_sweep
+from itop_ai_assistant.vector.use_cases.indexer import (
+    SWEEP_TASK,
+    IndexerDeps,
+    VectorIndexer,
+    register_vector_sweep,
+)
 
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 _FAMILY = "tickets"
@@ -46,6 +54,11 @@ _VECTOR_CFG = VectorConfig(
     sweep_throttle_seconds=0,
 )
 _EMB_CFG = EmbeddingsConfig(base_url="http://emb/v1", model="test-model", dimension=4)
+
+
+def _requires_indexer_deps(deps: IndexerDeps) -> IndexerDeps:
+    """Typed narrowly on purpose: passing an `AppDeps` here is the assertion."""
+    return deps
 
 
 def _flat(calls: list[list]) -> list:
@@ -939,6 +952,42 @@ class TestReconciliation(IndexerTestCase):
         await self._run(deps, source)
 
         self.assertEqual(store.list_object_ids_calls, 0)
+
+
+class TestIndexerPort(unittest.TestCase):
+    """`IndexerDeps` against the real container (TASK-029), the same way
+    `test_pipelines_ports.py` pins the run core's ports.
+
+    The first test is mostly a mypy assertion that happens to also run: if
+    `AppDeps` ever stops satisfying the port — a field renamed, a type
+    narrowed the wrong way, a member declared as a plain attribute instead of
+    a read-only property — the strict mypy gate fails here, at the seam,
+    instead of somewhere inside a sweep. It is annotated `-> None` for that
+    reason and not for style: mypy skips the body of an unannotated function,
+    so without the return type the assertion below is invisible to the gate
+    that is supposed to make it.
+
+    The rest pin the deliberate absences, which `isinstance` cannot catch
+    (a protocol is satisfied by having more, never by having less), and the
+    exact width of the slice — five members out of the container's ten is the
+    whole point of the port.
+    """
+
+    def test_the_container_is_accepted_where_the_sweep_expects_the_port(self) -> None:
+        deps: AppDeps = build_deps(get_settings())
+
+        self.assertIs(_requires_indexer_deps(deps), deps)
+
+    def test_the_port_withholds_what_the_sweep_has_no_business_with(self) -> None:
+        for member in ("aclose", "settings", "state_manager", "prompt_store", "journal", "itop_connection"):
+            with self.subTest(member=member):
+                self.assertNotIn(member, get_protocol_members(IndexerDeps))
+
+    def test_the_port_carries_exactly_the_five_the_sweep_uses(self) -> None:
+        self.assertEqual(
+            {"config_store", "itop", "vector_store", "vector_sync", "vector_journal"},
+            get_protocol_members(IndexerDeps),
+        )
 
 
 if __name__ == "__main__":

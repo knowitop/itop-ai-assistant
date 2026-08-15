@@ -30,10 +30,11 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
 from itop_ai_assistant.config import EmbeddingsConfig, FamilyConfig, VectorClassConfig, VectorConfig
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
+from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.chunker import Chunk
 from itop_ai_assistant.vector.ports.source import VectorRecord, VectorSource
@@ -45,18 +46,47 @@ from itop_ai_assistant.vector.ports.store import (
     FingerprintMismatchError,
     IndexMeta,
 )
-from itop_ai_assistant.vector.sources.registry import build_vector_sources
-
-# core/deps.py imports the vector facade (concrete adapters); the facade's
-# own __init__ imports this module for `register_vector_sweep` — a real
-# import here would deadlock on that cycle. Both uses below are quoted
-# (`"AppDeps"`) so the annotation is never evaluated at def-time either.
-if TYPE_CHECKING:
-    from itop_ai_assistant.core.deps import AppDeps
+from itop_ai_assistant.vector.sources.registry import ItopRepos, build_vector_sources
+from itop_ai_assistant.vector.state.index_journal import IndexJournal
+from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 
 logger = logging.getLogger(__name__)
 
 _RECONCILE_BATCH = 200
+
+
+class IndexerDeps(Protocol):
+    """What the sweep needs from the container — declared here, by the
+    consumer, rather than taken as `AppDeps` whole (ADR-019, `core.md`:
+    "declare a port at the consumer", as `_AssignedDeps` and `ItopRepos` do).
+
+    The five members below are the whole of it. `settings`, `itop_connection`,
+    `state_manager`, `prompt_store` and the run `journal` are not here because
+    the sweep never touches them: it is infrastructure with no run frame, and
+    its own journal is `vector_journal`. `aclose()` is absent for the reason it
+    is absent from every port — the pool belongs to the composition root.
+
+    Members are read-only properties, never plain attributes: an attribute is
+    invariant, so `itop: ItopRepos` would reject an `AppDeps` whose field is
+    typed `ItopRepositories`. `AppDeps` satisfies this structurally and knows
+    nothing about it — which is also what keeps `core/deps.py` out of this
+    module entirely, cycle with the facade included.
+    """
+
+    @property
+    def config_store(self) -> ConfigStore: ...
+
+    @property
+    def itop(self) -> ItopRepos: ...
+
+    @property
+    def vector_store(self) -> ChunkStore: ...
+
+    @property
+    def vector_sync(self) -> VectorSyncState: ...
+
+    @property
+    def vector_journal(self) -> IndexJournal: ...
 
 
 @dataclass
@@ -74,7 +104,7 @@ class SweepReport:
 SWEEP_TASK = "vector-sweep"
 
 
-def register_vector_sweep(tasks: PeriodicTasks, deps: "AppDeps") -> None:
+def register_vector_sweep(tasks: PeriodicTasks, deps: IndexerDeps) -> None:
     """Put the sweep under the process-wide scheduler.
 
     Infrastructure, not a business module: no `ModuleInfo`, no trigger route
@@ -109,7 +139,7 @@ class VectorIndexer:
     mocking iTop/repository internals.
     """
 
-    def __init__(self, deps: "AppDeps", sources: Sequence[VectorSource[Any]] | None = None) -> None:
+    def __init__(self, deps: IndexerDeps, sources: Sequence[VectorSource[Any]] | None = None) -> None:
         self._deps = deps
         self._sources = list(sources) if sources is not None else None
 

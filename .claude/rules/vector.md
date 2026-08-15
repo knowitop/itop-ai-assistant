@@ -21,8 +21,9 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   `test_package_layers.py::TestVectorFacade`. A new name a consumer needs
   goes into `vector/__init__.py`'s re-export list, not around it — including
   `core/deps.py`, which wires the concrete adapters through the facade like
-  any other consumer (`router.py` and `use_cases/indexer.py` name `AppDeps`
-  in `TYPE_CHECKING` only, so there is no cycle to route around).
+  any other consumer (`router.py` names `AppDeps` in `TYPE_CHECKING` only,
+  and `use_cases/indexer.py` no longer names it at all — it takes its own
+  `IndexerDeps` port, TASK-029 — so there is no cycle to route around).
 - **Infrastructure, not a business module.** It does not register in
   `TriggerRegistry`, has no prompts and no trigger routes. Business modules
   consume it through `AppDeps.vector_store`.
