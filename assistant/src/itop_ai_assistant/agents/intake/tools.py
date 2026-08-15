@@ -11,7 +11,7 @@ the run.
 """
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TypeAlias
 
 from langchain.tools import ToolRuntime
@@ -20,10 +20,10 @@ from langchain_core.tools import BaseTool, tool
 
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.util.text import bind_oql, html_to_markdown
-from itop_ai_assistant.vector import DateRange
 
 from .context import IntakeContext
 from .prompt import format_options
+from .similar import similar_query
 
 logger = logging.getLogger(__name__)
 
@@ -184,22 +184,15 @@ async def find_similar_resolved_tickets(runtime: IntakeToolRuntime) -> tuple[str
     assert ctx.similar is not None
     _reject_if_repeated(runtime, "find_similar_resolved_tickets", {})
 
-    hits, stats = await ctx.similar.find_with_stats(
-        f"{ticket.title}\n\n{html_to_markdown(ticket.description)}",
-        filters={"status": ctx.intake.resolved_statuses},
-        chunk_kinds=ctx.intake.similar_chunk_kinds,
-        # Explicit, not the port's default: the index gets private log chunks in
-        # TASK-013, and intake must not start quoting internal correspondence
-        # without a change here.
-        visibilities=["public"],
-        exclude=(ticket.obj_class, int(ticket.id)),
-        # Lower bound only — "solved recently"; the window has an upper bound
-        # available (TASK-018) and intake has no use for one.
-        updated=DateRange(after=datetime.now(UTC) - timedelta(days=ctx.intake.similar_max_age_days)),
-        min_score=ctx.intake.similar_min_score,
-        candidates=ctx.intake.similar_candidates,
-        top=ctx.intake.similar_top,
+    result = await ctx.similar.find(
+        similar_query(
+            ctx.intake,
+            text=f"{ticket.title}\n\n{html_to_markdown(ticket.description)}",
+            exclude=(ticket.obj_class, int(ticket.id)),
+            now=datetime.now(UTC),
+        )
     )
+    hits, stats = result.hits, result.stats
     # Not sent to the model — an artifact, picked up by AgentRun._journal_update
     # for the run journal (TASK-014). "requested vs found" is the closest cheap
     # proxy for "cut by the score threshold" available without a second query.

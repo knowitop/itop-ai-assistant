@@ -18,7 +18,7 @@ from itop_ai_assistant.core.deps import create_llm
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.ports import RunDeps
 from itop_ai_assistant.repositories.sets import RepositorySet
-from itop_ai_assistant.vector import TICKETS_FAMILY, EmbeddingsClient, SimilarSearch
+from itop_ai_assistant.vector import EmbeddingsClient, SimilarSearch
 
 from .agent import build_intake_agent
 from .config import IntakeConfig
@@ -54,7 +54,7 @@ async def assemble(
     prompts = build_intake_prompts(await deps.prompt_store.get("intake"))
     embedder = await _similar_search_embedder(deps)
     similar = (
-        SimilarSearch(deps.vector_store, embedder, repos.ticket_repo.find_existing_ids, family=TICKETS_FAMILY)
+        SimilarSearch(deps.vector_store, embedder, repos.ticket_repo.find_existing_ids)
         if embedder is not None
         else None
     )

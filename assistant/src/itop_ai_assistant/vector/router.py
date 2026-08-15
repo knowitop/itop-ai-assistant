@@ -23,13 +23,14 @@ from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.repositories.sets import RepositorySet
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
+from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchQuery
 from itop_ai_assistant.vector.ports.store import ChunkStore, DateRange
 from itop_ai_assistant.vector.sources.registry import ItopRepos, build_vector_sources
 from itop_ai_assistant.vector.sources.tickets import FAMILY as TICKETS_FAMILY
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
 from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 from itop_ai_assistant.vector.use_cases.indexer import SWEEP_TASK
-from itop_ai_assistant.vector.use_cases.search import FindStats, ObjectHit, SimilarSearch
+from itop_ai_assistant.vector.use_cases.search import SimilarSearch
 
 # core/deps.py imports the vector facade (concrete adapters); the facade's own
 # __init__ imports this module for `router` — a real import of `core.deps`
@@ -311,13 +312,17 @@ class DateRangeBody(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    """Mirrors `SimilarSearch.__init__`'s `family` plus `find()`'s own
-    parameters (`vector/use_cases/search.py`) — one-to-one, for manual testing."""
+    """Mirrors `SearchQuery` (`vector/ports/query.py`) one-to-one, for manual
+    testing — plus `principal_token`, which is about *who* asks, not what for.
+
+    Kept as its own transport model rather than exposing the value directly:
+    the field descriptions below are documentation for whoever pokes this
+    endpoint by hand, and they have no business travelling with the scenario
+    into a run."""
 
     family: str = Field(
         description="Which collection family to search — one name from `vector/sources/registry.py` "
-        "(e.g. 'tickets'). Fixed at `SimilarSearch` construction in production code; here it's just "
-        "the family to probe. 404 if no registered `VectorSource` has this name.",
+        "(e.g. 'tickets'). 404 if no registered `VectorSource` has this name.",
     )
     text: str = Field(description="Query text, embedded once and matched against the index by cosine similarity.")
     classes: list[str] | None = Field(
@@ -385,6 +390,36 @@ class SearchRequest(BaseModel):
         "for the 'tickets' family today — 501 otherwise.",
     )
 
+    @model_validator(mode="after")
+    def _check(self) -> "SearchRequest":
+        """Same trick as `DateRangeBody`: build the value so its own rules
+        (an empty list where the key should have been omitted, `top` above
+        `candidates`) answer with 422 instead of a 500 from inside the
+        handler."""
+        self.to_query()
+        return self
+
+    def to_query(self, *, filters: dict[str, list[str]] | None = None) -> SearchQuery:
+        """The scenario this request describes.
+
+        `filters` overrides the body's own — the `principal_token` branch adds
+        the org pre-filter to them before searching.
+        """
+        return SearchQuery(
+            text=self.text,
+            family=self.family,
+            classes=self.classes,
+            chunk_kinds=self.chunk_kinds,
+            filters=self.filters if filters is None else filters,
+            visibilities=self.visibilities,
+            exclude=self.exclude,
+            created=self.created.to_domain() if self.created else None,
+            updated=self.updated.to_domain() if self.updated else None,
+            min_score=self.min_score,
+            candidates=self.candidates,
+            top=self.top,
+        )
+
 
 class SearchResponse(BaseModel):
     hits: list[ObjectHit]
@@ -404,7 +439,7 @@ async def vector_search(
     vector_store: Annotated[ChunkStore, Depends(get_vector_store)],
     itop: Annotated[_RouterItop, Depends(get_itop)],
 ) -> SearchResponse:
-    """Debug endpoint: run one `SimilarSearch.find_with_stats()` and return the hits.
+    """Debug endpoint: run one `SimilarSearch.find()` and return the hits.
 
     Resolves candidates under the service account (`VectorSource.prepare()`),
     not the caller's own iTop identity, unless `principal_token` is given
@@ -437,20 +472,8 @@ async def vector_search(
 
     embedder = EmbeddingsClient(embeddings_cfg)
     try:
-        search = SimilarSearch(vector_store, embedder, resolve, family=body.family)
-        hits, stats = await search.find_with_stats(
-            body.text,
-            classes=body.classes,
-            chunk_kinds=body.chunk_kinds,
-            filters=filters,
-            visibilities=body.visibilities,
-            exclude=body.exclude,
-            created=body.created.to_domain() if body.created else None,
-            updated=body.updated.to_domain() if body.updated else None,
-            min_score=body.min_score,
-            candidates=body.candidates,
-            top=body.top,
-        )
-        return SearchResponse(hits=hits, stats=stats, allowed_org_ids=allowed_org_ids)
+        search = SimilarSearch(vector_store, embedder, resolve)
+        result = await search.find(body.to_query(filters=filters))
+        return SearchResponse(hits=result.hits, stats=result.stats, allowed_org_ids=allowed_org_ids)
     finally:
         await embedder.aclose()

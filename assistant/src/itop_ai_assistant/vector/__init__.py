@@ -20,6 +20,7 @@ there rather than routing around it.
 
 from .adapters.embedder import EmbeddingsClient
 from .adapters.qdrant_store import QdrantChunkStore
+from .ports.query import FindStats, ObjectHit, SearchQuery, SearchResult
 from .ports.store import ChunkStore, DateRange
 from .router import router
 from .sources.tickets import FAMILY as TICKETS_FAMILY
@@ -32,8 +33,12 @@ __all__ = [
     "ChunkStore",
     "DateRange",
     "EmbeddingsClient",
+    "FindStats",
     "IndexJournal",
+    "ObjectHit",
     "QdrantChunkStore",
+    "SearchQuery",
+    "SearchResult",
     "SimilarSearch",
     "TICKETS_FAMILY",
     "VectorSyncState",

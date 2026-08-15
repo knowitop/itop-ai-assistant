@@ -400,6 +400,21 @@ class TestSearch(VectorStatusTestCase):
         self.assertEqual(response.status_code, 404)
         self.assertIn("kb_articles", response.json()["detail"])
 
+    def test_422_when_the_scenario_itself_is_impossible(self):
+        # `SearchQuery`'s own rule, surfaced by the request model's validator
+        # (TASK-031): a scenario that cannot work is a bad request, not a 500
+        # from inside the handler.
+        self.client.app.state.deps = _make_deps(
+            self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+        )
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+
+        response = self.client.post(
+            "/api/vector/search", json={"family": "tickets", "text": "printer", "candidates": 5, "top": 10}
+        )
+
+        self.assertEqual(response.status_code, 422)
+
     def test_no_active_index_answers_empty_without_asking_the_source(self):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"

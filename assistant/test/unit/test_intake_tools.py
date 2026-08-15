@@ -11,7 +11,7 @@ from itop_ai_assistant.agents.intake.tools import ToolRejection
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.state.ticket_state import TicketState
-from itop_ai_assistant.vector.use_cases.search import FindStats, ObjectHit
+from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchResult
 
 
 def _ticket(**overrides) -> Ticket:
@@ -333,8 +333,10 @@ class TestFinishHandoff(unittest.IsolatedAsyncioTestCase):
 class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
     def _runtime(self, hits: list[ObjectHit], *, stats: FindStats | None = None, **kwargs) -> MagicMock:
         runtime = _make_runtime(**kwargs)
-        runtime.context.similar.find_with_stats = AsyncMock(
-            return_value=(hits, stats or FindStats(requested=15, found=len(hits), dropped_by_resolve=0))
+        runtime.context.similar.find = AsyncMock(
+            return_value=SearchResult(
+                hits=hits, stats=stats or FindStats(requested=15, found=len(hits), dropped_by_resolve=0)
+            )
         )
         return runtime
 
@@ -353,7 +355,7 @@ class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
 
         await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
 
-        text = runtime.context.similar.find_with_stats.await_args.args[0]
+        text = runtime.context.similar.find.await_args.args[0].text
         self.assertIn("Printer is dead", text)
         self.assertIn("Cannot print", text)
         self.assertNotIn("<p>", text)
@@ -371,20 +373,20 @@ class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
 
         await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
 
-        kwargs = runtime.context.similar.find_with_stats.await_args.kwargs
-        # The tool no longer scopes by class at all — not the same as passing classes=None
-        self.assertNotIn("classes", kwargs)
-        self.assertEqual(kwargs["filters"], {"status": ["closed", "resolved"]})
-        self.assertEqual(kwargs["exclude"], ("Incident", 42))
-        self.assertEqual(kwargs["candidates"], 11)
-        self.assertEqual(kwargs["top"], 3)
-        self.assertEqual(kwargs["min_score"], 0.6)
-        self.assertEqual(kwargs["chunk_kinds"], ["profile", "solution"])
-        # Explicit, not the port's default — a safeguard against TASK-013
+        query = runtime.context.similar.find.await_args.args[0]
+        # The tool does not scope by class at all — the family is the scope
+        self.assertIsNone(query.classes)
+        self.assertEqual(query.filters, {"status": ["closed", "resolved"]})
+        self.assertEqual(query.exclude, ("Incident", 42))
+        self.assertEqual(query.candidates, 11)
+        self.assertEqual(query.top, 3)
+        self.assertEqual(query.min_score, 0.6)
+        self.assertEqual(query.chunk_kinds, ["profile", "solution"])
+        # Explicit, not the query's default — a safeguard against TASK-013
         # silently widening intake's search into internal chunks
-        self.assertEqual(kwargs["visibilities"], ["public"])
+        self.assertEqual(list(query.visibilities), ["public"])
         # A lower bound and nothing else: "solved recently" has no upper end
-        window = kwargs["updated"]
+        window = query.updated
         self.assertIsNone(window.before)
         age = datetime.now(UTC) - window.after
         self.assertAlmostEqual(age.total_seconds(), timedelta(days=30).total_seconds(), delta=60)
@@ -413,7 +415,7 @@ class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
             await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
 
         self.assertIn("[[UserRequest:12]]", str(ctx.exception))
-        runtime.context.similar.find_with_stats.assert_not_awaited()
+        runtime.context.similar.find.assert_not_awaited()
 
     async def test_the_journal_note_reports_counts_and_scores_even_when_empty(self):
         runtime = self._runtime([], stats=FindStats(requested=15, found=4, dropped_by_resolve=1))

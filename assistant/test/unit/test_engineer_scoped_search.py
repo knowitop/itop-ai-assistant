@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 
 from itop_ai_assistant.repositories.access import AccessRepository
+from itop_ai_assistant.vector.ports.query import SearchQuery
 from itop_ai_assistant.vector.ports.store import SearchHit
 from itop_ai_assistant.vector.use_cases.search import SimilarSearch
 
@@ -62,14 +63,16 @@ class TestOrgPrefilterFeedsSearch(unittest.IsolatedAsyncioTestCase):
         # org outside the pre-filter's (stale) guess and is not returned.
         resolve = AsyncMock(return_value={1})
         repo = _org_repo([{"allowed_org_id": "3"}])
-        search = SimilarSearch(store, embedder, resolve, family="tickets")
+        search = SimilarSearch(store, embedder, resolve)
 
         filters = _org_filter(await repo.allowed_org_ids())
-        hits, stats = await search.find_with_stats("printer", classes=["UserRequest"], filters=filters)
+        result = await search.find(
+            SearchQuery(text="printer", family="tickets", classes=["UserRequest"], filters=filters)
+        )
 
         self.assertEqual(store.search.await_args.kwargs["filters"], {"org_id": ["3"]})
-        self.assertEqual([hit.obj_id for hit in hits], [1])
-        self.assertEqual(stats.dropped_by_resolve, 1)
+        self.assertEqual([hit.obj_id for hit in result.hits], [1])
+        self.assertEqual(result.stats.dropped_by_resolve, 1)
 
 
 if __name__ == "__main__":

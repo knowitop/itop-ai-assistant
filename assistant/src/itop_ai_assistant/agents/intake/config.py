@@ -4,7 +4,7 @@ Resolved through `Settings.module_defaults` / `RedisConfigStore`, not a field
 of `Settings` — see `settings/config_store.py`.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 _CLASSIFY_SERVICE_OQL = (
     "SELECT Service AS s"
@@ -76,3 +76,20 @@ class IntakeConfig(BaseModel):
     similar_chunk_kinds: list[str] = Field(default=["profile", "body"], min_length=1)
     classify_service_oql: str = _CLASSIFY_SERVICE_OQL
     classify_subcategory_oql: str = _CLASSIFY_SUBCATEGORY_OQL
+
+    @model_validator(mode="after")
+    def _check_similar_budget(self) -> "IntakeConfig":
+        """`similar_top` out of `similar_candidates`, never more.
+
+        The same rule `SearchQuery` enforces, checked here as well because
+        this is where an administrator can get it wrong: a bad pair is
+        rejected at save time (422 from the admin API) instead of failing a
+        run over a real ticket hours later.
+        """
+        if self.similar_top > self.similar_candidates:
+            raise ValueError(
+                f"similar_top ({self.similar_top}) exceeds similar_candidates ({self.similar_candidates}): "
+                "candidates are only ever dropped when the requester's iTop no longer confirms them, "
+                "so asking for more results than candidates cannot return them"
+            )
+        return self
