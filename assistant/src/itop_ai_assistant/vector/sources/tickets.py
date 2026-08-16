@@ -11,8 +11,13 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
-from itop_ai_assistant.repositories.ticket import TicketRepository, TicketRepositoryProvider
+from itop_ai_assistant.repositories.ticket import (
+    TicketRepository,
+    TicketRepositoryForPrincipal,
+    TicketRepositoryProvider,
+)
 from itop_ai_assistant.vector.chunker import (
     Chunk,
     FragmentContent,
@@ -73,8 +78,15 @@ class TicketVectorSource(VectorSource[Ticket]):
     fields = FIELDS
     fragments = FRAGMENTS
 
-    def __init__(self, get_ticket_repo: TicketRepositoryProvider, *, classes: list[str]) -> None:
+    def __init__(
+        self,
+        get_ticket_repo: TicketRepositoryProvider,
+        get_ticket_repo_as: TicketRepositoryForPrincipal,
+        *,
+        classes: list[str],
+    ) -> None:
         self._get_ticket_repo = get_ticket_repo
+        self._get_ticket_repo_as = get_ticket_repo_as
         self.classes: Sequence[str] = classes
         self._ticket_repo: TicketRepository | None = None
 
@@ -82,10 +94,11 @@ class TicketVectorSource(VectorSource[Ticket]):
         # The plain connection, not a principal's view of it: the sweep is not a
         # run — no journal entry, nobody to act for — and the index it builds is
         # global by design (`dev-docs/architecture/platform.md` §3.5). What a searcher may see
-        # is decided later, by resolving hits under their own token. Not just by
-        # convention: `get_ticket_repo` is bound to the service set
-        # (`ItopRepositories.service()`, see `vector/sources/registry.py`), which
-        # never touches `for_principal` — this class has no way to reach it.
+        # is decided later, by `confirm_visible` under their own token. Not just
+        # by convention: `get_ticket_repo` is bound to the service set
+        # (`ItopRepositories.service()`, see `vector/sources/registry.py`), and
+        # the principal-bound accessor is a *separate* closure — sweeping as
+        # somebody else is not something this class can express.
         self._ticket_repo = await self._get_ticket_repo()
 
     async def find_modified_since(
@@ -111,6 +124,14 @@ class TicketVectorSource(VectorSource[Ticket]):
     async def find_existing_ids(self, obj_class: str, ids: list[int]) -> set[int]:
         assert self._ticket_repo is not None, "prepare() must run before find_existing_ids()"
         return await self._ticket_repo.find_existing_ids(obj_class, ids)
+
+    async def confirm_visible(self, principal: Principal, obj_class: str, ids: list[int]) -> set[int]:
+        # A repository per call, and no `prepare()` in sight: the identity is
+        # the caller's, not the sweep's, and caching a set built for one person
+        # is exactly how a search would start answering with somebody else's
+        # tickets.
+        repo = await self._get_ticket_repo_as(principal)
+        return await repo.find_existing_ids(obj_class, ids)
 
     async def chunk(
         self,

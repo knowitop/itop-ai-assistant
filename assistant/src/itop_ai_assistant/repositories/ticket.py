@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 
 from itop_ai_assistant.config import TicketMappingConfig
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.itop_client import Itop
 from itop_ai_assistant.util.text import ITOP_DATETIME_FORMAT, parse_itop_dt
@@ -142,3 +143,10 @@ class TicketRepository:
 # `ItopRepositories` (the actual factory) and projects it out of the
 # `RepositorySet`.
 type TicketRepositoryProvider = Callable[[], Awaitable[TicketRepository]]
+
+# The same, for a repository bound to a given principal. A separate type
+# rather than an optional argument on the one above (TASK-032): a holder of
+# one of these can only ever ask "as this person", a holder of the other can
+# only ever ask as the service account, and neither can be handed where the
+# other is expected.
+type TicketRepositoryForPrincipal = Callable[[Principal], Awaitable[TicketRepository]]

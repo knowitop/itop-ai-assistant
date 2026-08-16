@@ -30,7 +30,7 @@ from itop_ai_assistant.vector.sources.tickets import FAMILY as TICKETS_FAMILY
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
 from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 from itop_ai_assistant.vector.use_cases.indexer import SWEEP_TASK
-from itop_ai_assistant.vector.use_cases.search import SimilarSearch
+from itop_ai_assistant.vector.use_cases.search import SimilarSearch, UnknownFamily
 
 # core/deps.py imports the vector facade (concrete adapters); the facade's own
 # __init__ imports this module for `router` — a real import of `core.deps`
@@ -441,21 +441,22 @@ async def vector_search(
 ) -> SearchResponse:
     """Debug endpoint: run one `SimilarSearch.find()` and return the hits.
 
-    Resolves candidates under the service account (`VectorSource.prepare()`),
-    not the caller's own iTop identity, unless `principal_token` is given
-    (`.claude/rules/vector.md`: search returns candidates, resolved against a
-    principal's own token in production callers) — R4 has no production
-    caller yet (TASK-015), this is how its two layers get exercised against a
-    real iTop before one exists.
-    """
-    sources = {s.name: s for s in build_vector_sources(itop, vector_cfg)}
-    source = sources.get(body.family)
-    if source is None:
-        raise HTTPException(status_code=404, detail=f"Unknown family {body.family!r}; known: {sorted(sources)}")
-    await source.prepare()
+    Confirms candidates under the service account unless `principal_token` is
+    given (`.claude/rules/vector.md`: search returns candidates, confirmed
+    against a principal's own token) — R4 has no production caller yet
+    (TASK-015), this is how its two layers get exercised against a real iTop
+    before one exists.
 
-    resolve = source.find_existing_ids
+    What this handler still does by hand is R4's *layer 1*: reading the
+    principal's allowed organizations and turning them into a pre-filter.
+    That stayed here deliberately (TASK-032) — it shapes the walk before it
+    starts, it is over-permissive by design (ADR-003), and computing it means
+    knowing what an organization is, which is the caller's language, not the
+    subsystem's. Layer 2, the one confidentiality actually rests on, is no
+    longer assembled here at all.
+    """
     filters = body.filters
+    principal = Principal.service()
     allowed_org_ids: list[str] | None = None
     if body.principal_token:
         if body.family != TICKETS_FAMILY:
@@ -465,15 +466,16 @@ async def vector_search(
             )
         principal = Principal.delegated(body.principal_token, login="debug", name="debug")
         repos = await itop.for_principal(principal, comment="vector debug search (TASK-015)")
-        resolve = repos.ticket_repo.find_existing_ids
         allowed_org_ids = await repos.access_repo.allowed_org_ids()
         if allowed_org_ids is not None and (filters is None or "org_id" not in filters):
             filters = {**(filters or {}), "org_id": allowed_org_ids}
 
     embedder = EmbeddingsClient(embeddings_cfg)
     try:
-        search = SimilarSearch(vector_store, embedder, resolve)
-        result = await search.find(body.to_query(filters=filters))
+        search = SimilarSearch(vector_store, embedder, itop, vector_cfg)
+        result = await search.find(body.to_query(filters=filters), principal)
         return SearchResponse(hits=result.hits, stats=result.stats, allowed_org_ids=allowed_org_ids)
+    except UnknownFamily as unknown:
+        raise HTTPException(status_code=404, detail=str(unknown)) from unknown
     finally:
         await embedder.aclose()

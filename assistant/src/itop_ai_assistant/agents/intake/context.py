@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from uuid import UUID
 
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.ports import TicketStatePort
 from itop_ai_assistant.repositories.catalog import CatalogRepository
@@ -21,6 +22,11 @@ class IntakeContext:
     """
 
     processing_id: UUID
+    # Who this run acts as. Here rather than only in `RunContext` because a
+    # tool that searches has to name it (TASK-032): the vector index is global,
+    # and what a search may return is decided by confirming its candidates
+    # under this principal.
+    principal: Principal
     ticket: Ticket
     ticket_repo: TicketRepository
     catalog_repo: CatalogRepository

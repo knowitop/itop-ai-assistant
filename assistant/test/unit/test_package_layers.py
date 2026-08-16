@@ -13,14 +13,22 @@ invariant one level down, inside `vector/`: a layer expressed as a
 sub-package instead of a top-level one, and a facade (`vector/__init__.py`)
 that only works if nothing routes around it. `TestVectorSourcesBoundary`
 (TASK-028) guards the same thing one level further down again, inside
-`vector/sources/`.
+`vector/sources/`. `TestRightsCannotBeForgotten` (TASK-032) is the odd one
+out: it reads signatures rather than imports, because the invariant it guards
+(rule 9.1) is about what a call can omit, not about what a module can reach.
 """
 
 import ast
+import inspect
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import itop_ai_assistant
+from itop_ai_assistant.config import VectorConfig
+from itop_ai_assistant.core.principal import Principal
+from itop_ai_assistant.vector.sources.registry import build_vector_sources
+from itop_ai_assistant.vector.use_cases.search import SimilarSearch
 
 PACKAGE = Path(itop_ai_assistant.__file__).parent
 
@@ -131,3 +139,39 @@ class TestVectorSourcesBoundary(unittest.TestCase):
             and not m.startswith("itop_ai_assistant.vector.sources.registry")
         }
         self.assertEqual(set(), leaking)
+
+
+class TestRightsCannotBeForgotten(unittest.TestCase):
+    """Rule 9.1 as a checked fact (TASK-032): a search confirms its candidates
+    under a named principal, and there is no way to call it that skips the
+    confirmation.
+
+    This is the structural half of the guarantee — `test_vector_search.py` and
+    `test_vector_sources_*.py` cover the behaviour. What it pins is the shape
+    a future source or a future caller could quietly get wrong: an added
+    source whose `confirm_visible` defaults its principal, or a search that
+    starts accepting a rights check from outside again.
+    """
+
+    def test_the_search_takes_no_rights_check_from_its_caller(self) -> None:
+        # The `resolve: Callable[...]` this replaced was exactly such a
+        # parameter: pass the wrong function and the leak type-checks.
+        params = inspect.signature(SimilarSearch.__init__).parameters
+        callables = {
+            name: param.annotation
+            for name, param in params.items()
+            if "Callable" in str(param.annotation) or "Resolver" in str(param.annotation)
+        }
+        self.assertEqual({}, callables)
+
+    def test_the_search_cannot_be_asked_without_naming_who_asks(self) -> None:
+        principal = inspect.signature(SimilarSearch.find).parameters["principal"]
+        self.assertIs(principal.default, inspect.Parameter.empty)
+
+    def test_every_source_confirms_under_a_principal_with_no_default(self) -> None:
+        for source in build_vector_sources(MagicMock(), VectorConfig()):
+            with self.subTest(source=source.name):
+                params = list(inspect.signature(source.confirm_visible).parameters.values())
+                self.assertEqual("principal", params[0].name)
+                self.assertIs(params[0].default, inspect.Parameter.empty)
+                self.assertIs(params[0].annotation, Principal)

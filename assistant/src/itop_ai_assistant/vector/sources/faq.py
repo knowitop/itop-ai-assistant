@@ -11,8 +11,9 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.faq import FaqArticle
-from itop_ai_assistant.repositories.faq import FaqRepository, FaqRepositoryProvider
+from itop_ai_assistant.repositories.faq import FaqRepository, FaqRepositoryForPrincipal, FaqRepositoryProvider
 from itop_ai_assistant.vector.chunker import Chunk, FragmentContent, TextContent, chunk_object, clean_text
 from itop_ai_assistant.vector.ports.source import FragmentSpec, VectorRecord, VectorSource
 
@@ -58,8 +59,15 @@ class FaqVectorSource(VectorSource[FaqArticle]):
     fields = FIELDS
     fragments = FRAGMENTS
 
-    def __init__(self, get_faq_repo: FaqRepositoryProvider, *, classes: list[str]) -> None:
+    def __init__(
+        self,
+        get_faq_repo: FaqRepositoryProvider,
+        get_faq_repo_as: FaqRepositoryForPrincipal,
+        *,
+        classes: list[str],
+    ) -> None:
         self._get_faq_repo = get_faq_repo
+        self._get_faq_repo_as = get_faq_repo_as
         self.classes: Sequence[str] = classes
         self._faq_repo: FaqRepository | None = None
 
@@ -89,6 +97,14 @@ class FaqVectorSource(VectorSource[FaqArticle]):
     async def find_existing_ids(self, obj_class: str, ids: list[int]) -> set[int]:
         assert self._faq_repo is not None, "prepare() must run before find_existing_ids()"
         return await self._faq_repo.find_existing_ids(ids)
+
+    async def confirm_visible(self, principal: Principal, obj_class: str, ids: list[int]) -> set[int]:
+        # `obj_class` is dropped, same as above: this source owns one class,
+        # and `FaqRepository` queries `FAQ` by name. See
+        # `TicketVectorSource.confirm_visible` for why the repository is
+        # fetched per call rather than cached.
+        repo = await self._get_faq_repo_as(principal)
+        return await repo.find_existing_ids(ids)
 
     async def chunk(
         self,

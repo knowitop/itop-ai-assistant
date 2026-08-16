@@ -9,6 +9,7 @@ from pydantic import SecretStr
 
 from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.core.deps import AppDeps
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.main import app
 from itop_ai_assistant.settings.config_store import RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore, RedisPromptStore
@@ -48,14 +49,23 @@ class _FakeSource:
     name = "tickets"
     classes = ["UserRequest"]
 
-    def __init__(self, existing: set[int]) -> None:
+    def __init__(self, existing: set[int], *, visible_to_principal: set[int] | None = None) -> None:
         self._existing = existing
+        # What a *delegated* principal gets to see, when a test wants the two
+        # identities to answer differently (TASK-032)
+        self._visible = visible_to_principal
+        self.confirmed_for: list[Principal] = []
 
     async def prepare(self) -> None:
         pass
 
     async def find_existing_ids(self, obj_class: str, ids: list[int]) -> set[int]:
         return self._existing & set(ids)
+
+    async def confirm_visible(self, principal: Principal, obj_class: str, ids: list[int]) -> set[int]:
+        self.confirmed_for.append(principal)
+        visible = self._existing if (self._visible is None or principal.kind == "service") else self._visible
+        return visible & set(ids)
 
 
 _BLANK = {
@@ -425,18 +435,17 @@ class TestSearch(VectorStatusTestCase):
         embedder.embed = AsyncMock(return_value=[[1.0, 0.0, 0.0, 0.0]])
         embedder.aclose = AsyncMock()
         source = _FakeSource(existing=set())
-        source.find_existing_ids = AsyncMock(side_effect=source.find_existing_ids)
 
         with (
             patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
-            patch("itop_ai_assistant.vector.router.build_vector_sources", return_value=[source]),
+            patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
         ):
             response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["hits"], [])
         embedder.aclose.assert_awaited_once()
-        source.find_existing_ids.assert_not_awaited()
+        self.assertEqual(source.confirmed_for, [])
 
     def test_returns_hits_confirmed_by_the_source(self):
         deps = _make_deps(
@@ -460,7 +469,7 @@ class TestSearch(VectorStatusTestCase):
 
         with (
             patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
-            patch("itop_ai_assistant.vector.router.build_vector_sources", return_value=[source]),
+            patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
         ):
             response = self.client.post(
                 "/api/vector/search",
@@ -507,7 +516,10 @@ class TestSearch(VectorStatusTestCase):
 
         with (
             patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
-            patch("itop_ai_assistant.vector.router.build_vector_sources", return_value=[_FakeSource(existing={1, 2})]),
+            patch(
+                "itop_ai_assistant.vector.use_cases.search.build_vector_sources",
+                return_value=[_FakeSource(existing={1, 2})],
+            ),
         ):
             response = self.client.post(
                 "/api/vector/search",
@@ -555,15 +567,16 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         embedder = MagicMock()
         embedder.embed = AsyncMock(return_value=[[1.0, 0.0, 0.0, 0.0]])
         embedder.aclose = AsyncMock()
-        source = _FakeSource(existing=set())  # must not be asked — see assertion below
-        source.find_existing_ids = AsyncMock(side_effect=source.find_existing_ids)
+        # Nothing at all under the service account, `existing` under a
+        # delegated one: an answer proves the confirmation went under the
+        # principal, not the account that built the index (TASK-032).
+        source = _FakeSource(existing=set(), visible_to_principal=existing)
         repos = MagicMock()
-        repos.ticket_repo.find_existing_ids = AsyncMock(side_effect=lambda _cls, ids: existing & set(ids))
         repos.access_repo.allowed_org_ids = AsyncMock(return_value=allowed_org_ids)
         deps.itop.for_principal = AsyncMock(return_value=repos)
         return embedder, source, repos
 
-    def test_resolves_under_the_given_principal_not_the_service_account(self):
+    def test_confirms_under_the_given_principal_not_the_service_account(self):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
@@ -576,7 +589,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
 
         with (
             patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
-            patch("itop_ai_assistant.vector.router.build_vector_sources", return_value=[source]),
+            patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
         ):
             response = self.client.post(
                 "/api/vector/search",
@@ -587,11 +600,33 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         body = response.json()
         self.assertEqual({h["obj_id"] for h in body["hits"]}, {1})
         self.assertIsNone(body["allowed_org_ids"])
-        source.find_existing_ids.assert_not_awaited()
-        repos.ticket_repo.find_existing_ids.assert_awaited()
+        # The confirmation itself is the source's, under the token the request
+        # carried — the handler no longer assembles it (TASK-032)
+        self.assertEqual([p.auth.token for p in source.confirmed_for], ["engineer-token"])
+        # `for_principal` is still called here, but only for layer 1: reading
+        # the principal's allowed organizations
+        repos.access_repo.allowed_org_ids.assert_awaited_once()
         deps.itop.for_principal.assert_awaited_once()
         principal = deps.itop.for_principal.await_args.args[0]
         self.assertEqual(principal.auth.token, "engineer-token")
+
+    def test_without_a_token_the_service_account_confirms_and_itop_sees_no_principal(self):
+        deps = _make_deps(
+            self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+        )
+        self.client.app.state.deps = deps
+        self.client.patch("/api/setup/vector", json={"enabled": True})
+        embedder, source, _ = self._seed_and_patch(deps, existing={1}, allowed_org_ids=None)
+
+        with (
+            patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
+        ):
+            response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([p.kind for p in source.confirmed_for], ["service"])
+        deps.itop.for_principal.assert_not_awaited()
 
     def test_allowed_org_ids_fill_the_org_filter_by_default(self):
         deps = _make_deps(
@@ -603,7 +638,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         store_search = AsyncMock(wraps=deps.vector_store.search)
         with (
             patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
-            patch("itop_ai_assistant.vector.router.build_vector_sources", return_value=[source]),
+            patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
             patch.object(deps.vector_store, "search", store_search),
         ):
             self.client.post(
@@ -623,7 +658,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         store_search = AsyncMock(wraps=deps.vector_store.search)
         with (
             patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
-            patch("itop_ai_assistant.vector.router.build_vector_sources", return_value=[source]),
+            patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
             patch.object(deps.vector_store, "search", store_search),
         ):
             self.client.post(
@@ -648,7 +683,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         store_search = AsyncMock(wraps=deps.vector_store.search)
         with (
             patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
-            patch("itop_ai_assistant.vector.router.build_vector_sources", return_value=[source]),
+            patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
             patch.object(deps.vector_store, "search", store_search),
         ):
             response = self.client.post(
@@ -669,7 +704,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         source.name = "kb_articles"
         source.prepare = AsyncMock()
 
-        with patch("itop_ai_assistant.vector.router.build_vector_sources", return_value=[source]):
+        with patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]):
             response = self.client.post(
                 "/api/vector/search",
                 json={"family": "kb_articles", "text": "printer", "principal_token": "engineer-token"},

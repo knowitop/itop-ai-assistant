@@ -12,49 +12,108 @@ That is also why more candidates are asked for than are returned — the
 against, but this particular filter cannot be pushed into the walk: it is
 computed by iTop, not by us.
 
-Source-agnostic like the rest of `vector/`: the caller passes a
-`SearchQuery` and a `resolve` callback. Nothing here knows what a ticket is.
+The caller passes a `SearchQuery` and the principal to answer for — nothing
+else. The confirmation itself is not theirs to supply: it used to arrive as a
+`resolve` callback, which meant a caller could pass a function that confirms
+as somebody else (or as the service account) and the types would not notice
+(rule 9.1, TASK-032). What a caller names now is *who is asking*; how that
+becomes a confirmation is this module's business.
+
+Source-agnostic like the rest of `vector/`: nothing here knows what a ticket
+is. `Principal` is the one name it borrows from the platform — see
+ADR-021 for why that is not the same as knowing a consumer's domain.
 """
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Sequence
+from typing import Protocol
 
+from itop_ai_assistant.config import VectorConfig
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchQuery, SearchResult
 from itop_ai_assistant.vector.ports.store import ChunkStore, SearchHit
+from itop_ai_assistant.vector.sources.registry import ItopRepos, build_vector_sources
 
 logger = logging.getLogger(__name__)
 
-# Which ids of this class still exist and are visible to whoever is asking
-Resolver = Callable[[str, list[int]], Awaitable[set[int]]]
+
+class CandidateSource(Protocol):
+    """What the read path needs of a source: which family it answers for, and
+    whether a given person may see these ids.
+
+    Two members out of `VectorSource`'s ten, declared here rather than
+    imported whole — the same cut `IndexerDeps` and `ItopRepos` make (rule
+    3.3, port sliced by consumer). Sweeping, chunking and the source's
+    declared vocabulary are the indexer's business; a search that could name
+    them could also call them.
+    """
+
+    @property
+    def name(self) -> str: ...
+
+    async def confirm_visible(self, principal: Principal, obj_class: str, ids: list[int]) -> set[int]: ...
+
+
+class UnknownFamily(ValueError):
+    """The query names a family no source is registered for.
+
+    A caller error, not a search result: `known` is carried so a transport can
+    say what it should have asked for.
+    """
+
+    def __init__(self, family: str, known: Sequence[str]) -> None:
+        self.family = family
+        self.known = sorted(known)
+        super().__init__(f"Unknown family {family!r}; known: {self.known}")
 
 
 class SimilarSearch:
-    """One search over the vector index, resolved against its source.
+    """One search over the vector index, confirmed against its source.
 
     The scenario — including which family to search — travels in the
     `SearchQuery` rather than being fixed at construction (TASK-031): it is
-    the caller's configuration, not a property of this object. What the query
-    cannot do is name a family that has no registered source; nothing checks
-    that here, because a registry built for the check would duplicate
-    `vector/sources/registry.py` (the very duplication D1/D2 avoid) — today
-    the caller that picks the source does the checking.
+    the caller's configuration, not a property of this object. Picking the
+    source that family names is this object's own job, which is why it takes
+    the registry's ingredients rather than a ready source: a caller that had
+    to pick one would need `vector/sources/` in its imports, and the next
+    caller would pick differently (rule 6.5 — the family name comes from the
+    consumer's own configuration, and the subsystem validates it).
+
+    `sources` is the injection point for tests, exactly as in
+    `use_cases/indexer.py`: production passes nothing and gets what the
+    registry builds from `itop`/`cfg`.
     """
 
-    def __init__(self, store: ChunkStore, embedder: EmbeddingsClient, resolve: Resolver) -> None:
+    def __init__(
+        self,
+        store: ChunkStore,
+        embedder: EmbeddingsClient,
+        itop: ItopRepos,
+        cfg: VectorConfig,
+        *,
+        sources: Sequence[CandidateSource] | None = None,
+    ) -> None:
         self._store = store
         self._embedder = embedder
-        self._resolve = resolve
+        built = sources if sources is not None else build_vector_sources(itop, cfg)
+        self._sources: dict[str, CandidateSource] = {source.name: source for source in built}
 
-    async def find(self, query: SearchQuery) -> SearchResult:
-        """Objects most similar to `query.text`, best first, at most `top`.
+    async def find(self, query: SearchQuery, principal: Principal) -> SearchResult:
+        """Objects most similar to `query.text` that `principal` may see.
 
-        Returns no hits for empty text and for an index that has nothing to
-        say — a caller with no results is a normal outcome here, not a
-        failure. `stats` carries what the call saw, for the run journal
-        (TASK-014); every scenario parameter has already been validated by
-        `SearchQuery` itself.
+        Best first, at most `top`. Returns no hits for empty text and for an
+        index that has nothing to say — a caller with no results is a normal
+        outcome here, not a failure. `stats` carries what the call saw, for
+        the run journal (TASK-014); every scenario parameter has already been
+        validated by `SearchQuery` itself.
+
+        Raises `UnknownFamily` when nothing is registered for `query.family` —
+        before embedding anything, so a typo costs no round trip.
         """
+        source = self._sources.get(query.family)
+        if source is None:
+            raise UnknownFamily(query.family, list(self._sources))
         empty = SearchResult(hits=[], stats=FindStats(requested=query.candidates, found=0, dropped_by_resolve=0))
         if not query.text.strip():
             return empty
@@ -74,12 +133,14 @@ class SimilarSearch:
         )
         if not hits:
             return empty
-        kept = await self._keep_resolvable(hits)
+        kept = await self._keep_confirmed(hits, source, principal)
         stats = FindStats(requested=query.candidates, found=len(hits), dropped_by_resolve=len(hits) - len(kept))
         return SearchResult(hits=kept[: query.top], stats=stats)
 
-    async def _keep_resolvable(self, hits: list[SearchHit]) -> list[ObjectHit]:
-        """Drop candidates the source no longer returns, keeping the order.
+    async def _keep_confirmed(
+        self, hits: list[SearchHit], source: CandidateSource, principal: Principal
+    ) -> list[ObjectHit]:
+        """Drop candidates the source does not confirm for `principal`, keeping the order.
 
         One call per class rather than one per object: the probe takes a
         list of ids. The share dropped here is the metric ADR-003 asks for —
@@ -93,7 +154,9 @@ class SimilarSearch:
         for hit in hits:
             by_class.setdefault(hit.obj_class, []).append(hit.obj_id)
         existing = {
-            (obj_class, obj_id) for obj_class, ids in by_class.items() for obj_id in await self._resolve(obj_class, ids)
+            (obj_class, obj_id)
+            for obj_class, ids in by_class.items()
+            for obj_id in await source.confirm_visible(principal, obj_class, ids)
         }
 
         kept = [

@@ -190,7 +190,10 @@ async def find_similar_resolved_tickets(runtime: IntakeToolRuntime) -> tuple[str
             text=f"{ticket.title}\n\n{html_to_markdown(ticket.description)}",
             exclude=(ticket.obj_class, int(ticket.id)),
             now=datetime.now(UTC),
-        )
+        ),
+        # Whoever the run acts as — the tool has nothing to say about it, which
+        # is the point: it cannot ask for somebody else's tickets by accident.
+        ctx.principal,
     )
     hits, stats = result.hits, result.stats
     # Not sent to the model — an artifact, picked up by AgentRun._journal_update

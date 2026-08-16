@@ -8,6 +8,7 @@ from itop_ai_assistant.agents.intake import tools
 from itop_ai_assistant.agents.intake.agent import TERMINAL_TOOLS
 from itop_ai_assistant.agents.intake.config import IntakeConfig
 from itop_ai_assistant.agents.intake.tools import ToolRejection
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.state.ticket_state import TicketState
@@ -390,6 +391,18 @@ class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(window.before)
         age = datetime.now(UTC) - window.after
         self.assertAlmostEqual(age.total_seconds(), timedelta(days=30).total_seconds(), delta=60)
+
+    async def test_the_search_runs_as_whoever_the_run_acts_as(self):
+        # TASK-032: the tool names the principal and nothing else about
+        # rights — it cannot ask for somebody else's tickets by accident,
+        # because there is no other identity in its reach.
+        engineer = Principal.delegated("tok", login="ivanov", name="Ivan Ivanov")
+        runtime = self._runtime([])
+        runtime.context.principal = engineer
+
+        await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
+
+        self.assertIs(runtime.context.similar.find.await_args.args[1], engineer)
 
     async def test_finding_nothing_is_an_answer_not_a_refusal(self):
         runtime = self._runtime([])

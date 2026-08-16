@@ -1,17 +1,25 @@
 """TASK-015: the two R4 layers composed, without a console to call them yet.
 
-Layer 2 (resolve under the caller's own token) needed no new code — it is
-`ItopRepositories.for_principal()` plus `SimilarSearch(resolve=...)`, both
+Layer 2 (confirm under the caller's own token) needed no new code — it is
+`ItopRepositories.for_principal()` plus `VectorSource.confirm_visible()`, both
 already covered by `test_itop_repositories.py` and `test_vector_search.py`. What is new is layer 1
 (`AccessRepository.allowed_org_ids()`); this test pins the one thing that is
 easy to get backwards when the two are wired together: `None` (unrestricted)
 must not become `filters={"org_id": []}` — under ADR-017's convention an empty
 list under a present key is a caller error, not "no organizations".
+
+The asymmetry between the layers is deliberate and outlives TASK-032: layer 2
+is part of the subsystem's contract (a search cannot run without naming who is
+asking), layer 1 stays with the caller — it shapes the walk before it starts,
+it is over-permissive by design (ADR-003), and computing it means knowing what
+an organization is.
 """
 
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
+from itop_ai_assistant.config import VectorConfig
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.repositories.access import AccessRepository
 from itop_ai_assistant.vector.ports.query import SearchQuery
 from itop_ai_assistant.vector.ports.store import SearchHit
@@ -46,10 +54,12 @@ class TestOrgPrefilterFeedsSearch(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(filters, {"org_id": ["3", "9"]})
 
-    async def test_the_prefilter_composes_with_resolve_under_the_same_principal(self):
+    async def test_the_prefilter_composes_with_confirmation_under_the_same_principal(self):
         # Layer 1 (org guess) over-includes an org the engineer's own token
-        # (layer 2, `resolve`) then rejects — exactly the ADR-003 shape:
-        # authority stays with the source, the pre-filter only shapes the walk.
+        # (layer 2, the source's confirmation) then rejects — exactly the
+        # ADR-003 shape: authority stays with the source, the pre-filter only
+        # shapes the walk.
+        engineer = Principal.delegated("tok", login="ivanov", name="Ivan Ivanov")
         store = MagicMock()
         store.search = AsyncMock(
             return_value=[
@@ -61,18 +71,23 @@ class TestOrgPrefilterFeedsSearch(unittest.IsolatedAsyncioTestCase):
         embedder.embed = AsyncMock(return_value=[[1.0, 0.0]])
         # Simulates iTop itself: under the engineer's token, id 2 belongs to an
         # org outside the pre-filter's (stale) guess and is not returned.
-        resolve = AsyncMock(return_value={1})
+        source = MagicMock(name="tickets")
+        source.name = "tickets"
+        source.confirm_visible = AsyncMock(return_value={1})
         repo = _org_repo([{"allowed_org_id": "3"}])
-        search = SimilarSearch(store, embedder, resolve)
+        search = SimilarSearch(store, embedder, MagicMock(), VectorConfig(), sources=[source])
 
         filters = _org_filter(await repo.allowed_org_ids())
         result = await search.find(
-            SearchQuery(text="printer", family="tickets", classes=["UserRequest"], filters=filters)
+            SearchQuery(text="printer", family="tickets", classes=["UserRequest"], filters=filters), engineer
         )
 
         self.assertEqual(store.search.await_args.kwargs["filters"], {"org_id": ["3"]})
         self.assertEqual([hit.obj_id for hit in result.hits], [1])
         self.assertEqual(result.stats.dropped_by_resolve, 1)
+        # Both layers under the same identity — the thing that used to depend
+        # on the caller passing the right callback
+        self.assertEqual(source.confirm_visible.await_args.args[0], engineer)
 
 
 if __name__ == "__main__":

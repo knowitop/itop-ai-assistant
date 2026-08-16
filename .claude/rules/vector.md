@@ -55,8 +55,23 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   exclusion is a Redis lock renewed for the length of the pass, not the
   original TTL — see `dev-docs/architecture/vector.md`.
 - The index is built by the service account and is global. Search returns
-  **candidates**; what a given person may see is decided by resolving hits under
-  their own token.
+  **candidates**; what a given person may see is decided by confirming hits
+  under their own token. **That confirmation is part of contract-in, not a
+  callback** (TASK-032): a source declares two operations with two identities —
+  `find_existing_ids` (the sweep's probe, service account) and
+  `confirm_visible(principal, ...)` (the search's gate) — and
+  `SimilarSearch.find(query, principal)` takes the principal, never a rights
+  check. There is no way to call the search that skips the confirmation, and
+  no way to confirm without naming who is asking
+  (`test_package_layers.py::TestRightsCannotBeForgotten`). The subsystem names
+  the principal with the platform's own `Principal` type — ADR-021 for why
+  that is not the same as knowing a consumer's domain.
+- **The R4 org pre-filter is the caller's, deliberately.** Layer 1
+  (`AccessRepository.allowed_org_ids()` → `filters["org_id"]`) shapes the walk
+  before it starts, is over-permissive by design (ADR-003) and means knowing
+  what an organization is; only `vector/router.py`'s debug `/search` builds it
+  today. Forgetting it costs recall, not confidentiality — that guarantee is
+  layer 2's, and layer 2 is the one inside the contract.
 - The whole vector unit test suite (`test/unit/test_qdrant_*.py` and friends)
   is collected by default — it runs against Qdrant's `:memory:` mode, no
   Docker needed.

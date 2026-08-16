@@ -125,6 +125,11 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
         )
         self.repos.catalog_repo.get_service = AsyncMock(return_value=None)
         self.repos.catalog_repo.get_subcategory = AsyncMock(return_value=None)
+        # The same set the run holds, reachable the way a vector source
+        # reaches iTop (`build_vector_sources`): a search built by the module
+        # no longer receives the run's repositories, it receives the
+        # connection and asks under the run's principal (TASK-032).
+        self.deps.itop.service = AsyncMock(return_value=self.repos)
 
     def intake_run(self) -> IntakeRun:
         """A run whose body is called directly — `execute()` is the shell's job

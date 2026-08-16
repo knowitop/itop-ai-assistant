@@ -21,6 +21,7 @@ from itop_ai_assistant.agents.intake.config import IntakeConfig
 from itop_ai_assistant.agents.intake.context import IntakeContext
 from itop_ai_assistant.agents.intake.prompts import build_intake_prompts
 from itop_ai_assistant.config import get_settings
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.itop_client import Itop
 from itop_ai_assistant.repositories.catalog import CatalogRepository
@@ -103,6 +104,7 @@ def make_ctx(
     settings = get_settings()
     ctx = IntakeContext(
         processing_id=uuid4(),
+        principal=Principal.service(),
         ticket=ticket,
         ticket_repo=TicketRepository(itop, settings.ticket_mapping),
         catalog_repo=CatalogRepository(itop),

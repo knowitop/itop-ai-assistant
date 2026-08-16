@@ -21,6 +21,15 @@ A source also declares its own chunking vocabulary — `fields` and
 `fragments` (ADR-018). That declaration is what the admin UI renders its
 editor from, so a source that omits it cannot be configured by anyone but a
 person editing raw config.
+
+**Two identities, not one** (TASK-032). Sweeping is the service account's
+work: the index is global and is built once for everyone. Confirming search
+candidates is not — it answers "may *this* person see this object", and the
+only honest answer comes from the source asked under that person's own
+identity (ADR-003, rule 9.2). Hence `find_existing_ids` (the sweep's
+reconciliation probe) and `confirm_visible` (the search's gate) are separate
+operations here, and the second one cannot be called without naming a
+principal.
 """
 
 from collections.abc import Sequence
@@ -29,6 +38,7 @@ from datetime import datetime
 from typing import Generic, Protocol, TypeVar
 
 from itop_ai_assistant.config import VectorClassConfig
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.vector.chunker import Chunk
 
 # The source's own payload type (e.g. `Ticket`, `FaqArticle`) — carried through
@@ -124,7 +134,29 @@ class VectorSource(Protocol[T]):
         ...
 
     async def find_existing_ids(self, obj_class: str, ids: list[int]) -> set[int]:
-        """Which of the given ids still exist at the source (reconciliation probe)."""
+        """Which of the given ids still exist at the source (reconciliation probe).
+
+        The sweep's own question, asked as the service account: it decides
+        which chunks to delete because their object is gone, and the answer
+        must not depend on who happens to be searching. For "may this person
+        see it" use `confirm_visible` — the two are deliberately not the same
+        method with an optional argument.
+        """
+        ...
+
+    async def confirm_visible(self, principal: Principal, obj_class: str, ids: list[int]) -> set[int]:
+        """Which of the given ids `principal` may actually see (search's gate).
+
+        The index is global and its hits are candidates; this is what turns a
+        candidate into an answer (rule 9.3). The principal is a parameter with
+        no default on purpose: a caller cannot fall back to the service
+        account by omitting it, and there is no callback to pass the wrong
+        function into (rule 9.1, TASK-032).
+
+        `prepare()` is not a precondition here — it caches the service
+        account's view for the sweep, which is precisely the identity this
+        operation must not use.
+        """
         ...
 
     async def chunk(

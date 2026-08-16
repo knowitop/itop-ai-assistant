@@ -50,7 +50,7 @@ class IntakeRun(TicketRun):
     async def body(self, ticket: Ticket, ai_name: str) -> None:
         logger.info(f"[{self.processing_id}] Running intake agent for {ticket.label}")
 
-        composed = await compose.assemble(ticket, ai_name, self.processing_id, self.deps, self.repos)
+        composed = await compose.assemble(ticket, ai_name, self.run, self.deps, self.repos)
         try:
             await IntakeAgentRun(
                 composed.agent,

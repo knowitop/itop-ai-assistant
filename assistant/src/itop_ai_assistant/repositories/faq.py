@@ -2,6 +2,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 
 from itop_ai_assistant.config import FaqMappingConfig
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.faq import FaqArticle
 from itop_ai_assistant.itop_client import Itop
 from itop_ai_assistant.util.text import ITOP_DATETIME_FORMAT, parse_itop_dt
@@ -78,5 +79,7 @@ class FaqRepository:
 
 # Same reasoning as `TicketRepositoryProvider` in `repositories/ticket.py`: the
 # shape of "a way to fetch a fresh `FaqRepository`", declared once instead of
-# redeclared by each caller.
+# redeclared by each caller. The `*ForPrincipal` pair is the same distinction
+# it draws there (TASK-032).
 type FaqRepositoryProvider = Callable[[], Awaitable[FaqRepository]]
+type FaqRepositoryForPrincipal = Callable[[Principal], Awaitable[FaqRepository]]

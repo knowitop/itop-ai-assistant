@@ -11,6 +11,7 @@ from itop_ai_assistant.agents.intake.prompt import (
     format_options,
 )
 from itop_ai_assistant.agents.intake.prompts import build_intake_prompts
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
@@ -129,6 +130,7 @@ class TestInitialMessages(unittest.IsolatedAsyncioTestCase):
     def _context(self, ticket: Ticket) -> IntakeContext:
         return IntakeContext(
             processing_id=uuid4(),
+            principal=Principal.service(),
             ticket=ticket,
             ticket_repo=MagicMock(),
             catalog_repo=self.catalog,
