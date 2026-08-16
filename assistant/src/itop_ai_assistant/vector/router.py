@@ -11,7 +11,7 @@ deliberately have none.
 import logging
 from dataclasses import asdict
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Protocol
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
@@ -20,7 +20,6 @@ from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
 from itop_ai_assistant.core.api_deps import get_config_store
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
-from itop_ai_assistant.repositories.sets import RepositorySet
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchQuery
@@ -52,22 +51,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/vector")
 
 
-class _RouterItop(ItopRepos, Protocol):
-    """`ItopRepos` (`sources/registry.py`) plus `for_principal`, for `/search`'s
-    `principal_token` branch, which resolves under an engineer's own iTop
-    identity instead of the service account (TASK-015).
-
-    Not `pipelines.ports.ItopAccess`, which has the same two methods: that
-    file names `itop_ai_assistant.vector` for `ChunkStore`, so importing it
-    here would run this module while the vector facade is still mid-import —
-    the cycle explained above, one hop further out. TASK-029 discusses this
-    same duplication for `ItopRepos` itself.
+def get_itop(request: Request) -> ItopRepos:
+    """`ItopRepos` (`sources/registry.py`), not `pipelines.ports.ItopAccess`
+    which has the same one method: that file names `itop_ai_assistant.vector`
+    for `ChunkStore`, so importing it here would run this module while the
+    vector facade is still mid-import — the cycle explained above, one hop
+    further out. TASK-029 discusses this same duplication.
     """
-
-    async def for_principal(self, principal: Principal, *, comment: str) -> RepositorySet: ...
-
-
-def get_itop(request: Request) -> _RouterItop:
     deps: AppDeps = request.app.state.deps
     return deps.itop
 
@@ -134,7 +124,7 @@ async def vector_status(
     vector_store: Annotated[ChunkStore, Depends(get_vector_store)],
     vector_sync: Annotated[VectorSyncState, Depends(get_vector_sync)],
     vector_journal: Annotated[IndexJournal, Depends(get_vector_journal)],
-    itop: Annotated[_RouterItop, Depends(get_itop)],
+    itop: Annotated[ItopRepos, Depends(get_itop)],
 ) -> dict:
     tasks: PeriodicTasks = request.app.state.tasks
 
@@ -205,7 +195,7 @@ async def vector_status(
 @router.get("/sources")
 async def vector_sources(
     vector_cfg: Annotated[VectorConfig, Depends(get_vector_config)],
-    itop: Annotated[_RouterItop, Depends(get_itop)],
+    itop: Annotated[ItopRepos, Depends(get_itop)],
 ) -> dict:
     """The chunking vocabulary of every registered source — what the admin UI
     renders its fragment editor from (ADR-018).
@@ -437,7 +427,7 @@ async def vector_search(
     vector_cfg: Annotated[VectorConfig, Depends(require_vector)],
     embeddings_cfg: Annotated[EmbeddingsConfig, Depends(require_embeddings)],
     vector_store: Annotated[ChunkStore, Depends(get_vector_store)],
-    itop: Annotated[_RouterItop, Depends(get_itop)],
+    itop: Annotated[ItopRepos, Depends(get_itop)],
 ) -> SearchResponse:
     """Debug endpoint: run one `SimilarSearch.find()` and return the hits.
 

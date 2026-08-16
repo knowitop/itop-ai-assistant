@@ -104,17 +104,14 @@ class RunFrameJournal(StepJournal, Protocol):
 class ItopAccess(Protocol):
     """Getting at iTop from inside a run.
 
-    `for_principal` is the one a run is supposed to use (see
-    `.claude/rules/core.md`); `service` is here because a run that writes
-    nothing legitimately reads as the service account — `selfcheck` does exactly
-    that, and the name says so at the call site. `ai_person_name` answers off
-    the connection's own client whatever the run acts as, which is what keeps
-    the intake loop guard honest.
+    One method: every run acts through `for_principal`, naming its own
+    `principal` and `comment` (`.claude/rules/core.md`) — even a run that
+    never writes, like `selfcheck`. `ai_person_name` answers off the
+    connection's own client whatever the run acts as, which is what keeps the
+    intake loop guard honest.
     """
 
     async def for_principal(self, principal: Principal, *, comment: str) -> RepositorySet: ...
-
-    async def service(self) -> RepositorySet: ...
 
     async def ai_person_name(self) -> str: ...
 

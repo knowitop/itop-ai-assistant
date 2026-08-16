@@ -17,14 +17,12 @@ def _deps() -> MagicMock:
 
 
 def _itop() -> MagicMock:
-    """An `ItopRepos` whose two identities answer with distinguishable sets."""
+    """An `ItopRepos` that answers every call through `for_principal`."""
     itop = MagicMock()
-    service_set, principal_set = MagicMock(name="service-set"), MagicMock(name="principal-set")
-    for repo_set in (service_set, principal_set):
-        repo_set.ticket_repo.find_existing_ids = AsyncMock(return_value=set())
-        repo_set.faq_repo.find_existing_ids = AsyncMock(return_value=set())
-    itop.service = AsyncMock(return_value=service_set)
-    itop.for_principal = AsyncMock(return_value=principal_set)
+    repo_set = MagicMock(name="repo-set")
+    repo_set.ticket_repo.find_existing_ids = AsyncMock(return_value=set())
+    repo_set.faq_repo.find_existing_ids = AsyncMock(return_value=set())
+    itop.for_principal = AsyncMock(return_value=repo_set)
     return itop
 
 
@@ -90,8 +88,9 @@ class TestTheTwoIdentities(unittest.IsolatedAsyncioTestCase):
 
         await source.prepare()
 
-        itop.service.assert_awaited_once()
-        itop.for_principal.assert_not_awaited()
+        itop.for_principal.assert_awaited_once()
+        self.assertEqual(itop.for_principal.await_args.args[0], Principal.service())
+        self.assertIn("sweep", itop.for_principal.await_args.kwargs["comment"])
 
     async def test_confirming_reads_as_the_principal_that_asked(self):
         itop = _itop()
@@ -99,7 +98,6 @@ class TestTheTwoIdentities(unittest.IsolatedAsyncioTestCase):
 
         await source.confirm_visible(_ENGINEER, "UserRequest", [1])
 
-        itop.service.assert_not_awaited()
         itop.for_principal.assert_awaited_once()
         self.assertEqual(itop.for_principal.await_args.args[0], _ENGINEER)
         # A read never reaches the History, but `for_principal` asks for a
@@ -107,16 +105,17 @@ class TestTheTwoIdentities(unittest.IsolatedAsyncioTestCase):
         # what it has (TASK-032).
         self.assertIn("vector", itop.for_principal.await_args.kwargs["comment"])
 
-    async def test_a_service_principal_takes_the_bare_connection(self):
-        # `for_principal(Principal.service())` would attach a change comment
-        # where there is none (`repositories/sets.py`)
+    async def test_confirming_as_the_service_account_still_names_the_confirm_comment(self):
+        # A service principal goes through the same `for_principal` call as
+        # anyone else now — only the comment tells sweep and confirm apart.
         itop = _itop()
         source = self._tickets(itop)
 
         await source.confirm_visible(Principal.service(), "UserRequest", [1])
 
-        itop.service.assert_awaited_once()
-        itop.for_principal.assert_not_awaited()
+        itop.for_principal.assert_awaited_once()
+        self.assertEqual(itop.for_principal.await_args.args[0], Principal.service())
+        self.assertIn("confirming", itop.for_principal.await_args.kwargs["comment"])
 
 
 if __name__ == "__main__":

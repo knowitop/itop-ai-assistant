@@ -43,8 +43,8 @@ def _chunk(obj_id: int, *, obj_class: str = "UserRequest", updated_at: datetime 
 
 class _FakeSource:
     """Stands in for `TicketVectorSource` — the real one needs a live iTop
-    repository set from `deps.itop.service()`, which `_make_deps`'s `MagicMock()` can't
-    provide."""
+    repository set from `deps.itop.for_principal(...)`, which `_make_deps`'s
+    `MagicMock()` can't provide."""
 
     name = "tickets"
     classes = ["UserRequest"]

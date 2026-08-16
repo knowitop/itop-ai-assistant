@@ -96,7 +96,7 @@ async def run_selfcheck(run: RunContext, deps: RunDeps) -> RunOutcome:
         await deps.journal.add_step(run.processing_id, "guard", reason)
         return RunOutcome(status="skipped", detail=reason)
 
-    repos = await deps.itop.service()
+    repos = await deps.itop.for_principal(run.principal, comment=run.comment)
     services = await repos.catalog_repo.find_services(cfg.probe_oql)
     await deps.journal.add_step(run.processing_id, "itop", f"{len(services)} services read with {cfg.probe_oql!r}")
 

@@ -20,11 +20,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# What lands in the object's History if a confirmation ever wrote anything.
-# It never does — confirming is a read — but `for_principal` asks for a
-# comment, and this subsystem knows neither the module nor the run id
-# (TASK-032). Carrying those down just to label a read would add a parameter
-# nothing can observe.
+# Neither is a write today — sweep and confirm are both reads — but
+# `for_principal` requires a comment, and this subsystem has no run to name.
+_SWEEP_COMMENT = "AI assistant · vector · sweep"
 _CONFIRM_COMMENT = "AI assistant · vector · confirming search candidates"
 
 
@@ -32,18 +30,14 @@ class ItopRepos(Protocol):
     """How a source reaches iTop — declared here, by the consumer, rather than
     imported from the container that happens to offer it.
 
-    Both identities, because a source needs both and they are not the same
-    operation (TASK-032): the sweep reads as the service account, because the
-    index is global and built once for everyone; confirming a search candidate
-    reads as whoever is asking, because that is the only honest answer to "may
-    this person see it" (ADR-003).
-
-    What keeps them from being mixed up is not this protocol but what
-    `build_vector_sources` hands each source: two accessors, one per identity,
-    and no way to reach `for_principal` itself.
+    A source needs two identities, not one (TASK-032): the sweep reads as the
+    service account, since the index is global and built once for everyone;
+    confirming a search candidate reads as whoever is asking, since that is
+    the only honest answer to "may this person see it" (ADR-003). What keeps
+    them from being mixed up is not this protocol but what
+    `build_vector_sources` hands each source: two accessors, one per
+    identity, and no way to reach `for_principal` itself.
     """
-
-    async def service(self) -> RepositorySet: ...
 
     async def for_principal(self, principal: Principal, *, comment: str) -> RepositorySet: ...
 
@@ -77,25 +71,17 @@ def build_vector_sources(itop: ItopRepos, cfg: VectorConfig) -> list["VectorSour
     # confirmation's can only ever be the caller's (TASK-032). `for_principal`
     # itself stays here — a source cannot reach it, so `prepare()` has no way
     # to start indexing as somebody.
-    async def _principal_set(principal: Principal) -> RepositorySet:
-        # A service principal goes through `service()`, not
-        # `for_principal(Principal.service())`: the latter would attach a change
-        # comment where there is none (see `repositories/sets.py`).
-        if principal.kind == "service":
-            return await itop.service()
-        return await itop.for_principal(principal, comment=_CONFIRM_COMMENT)
-
     async def ticket_repo() -> TicketRepository:
-        return (await itop.service()).ticket_repo
+        return (await itop.for_principal(Principal.service(), comment=_SWEEP_COMMENT)).ticket_repo
 
     async def faq_repo() -> FaqRepository:
-        return (await itop.service()).faq_repo
+        return (await itop.for_principal(Principal.service(), comment=_SWEEP_COMMENT)).faq_repo
 
     async def ticket_repo_as(principal: Principal) -> TicketRepository:
-        return (await _principal_set(principal)).ticket_repo
+        return (await itop.for_principal(principal, comment=_CONFIRM_COMMENT)).ticket_repo
 
     async def faq_repo_as(principal: Principal) -> FaqRepository:
-        return (await _principal_set(principal)).faq_repo
+        return (await itop.for_principal(principal, comment=_CONFIRM_COMMENT)).faq_repo
 
     builders: dict[str, Callable[[list[str]], "VectorSource[Any]"]] = {
         TICKETS_FAMILY: lambda classes: TicketVectorSource(ticket_repo, ticket_repo_as, classes=classes),

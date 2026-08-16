@@ -42,13 +42,14 @@ apart into them, because the registry has one handler shape for every module.
 `app.state.deps`); a run builds its own context with a config snapshot and a
 per-run LLM client. Nothing reads globals or `get_settings()` at call time.
 
-## Connections: `for_principal()`, not `service()`
+## Connections: always `for_principal()`
 
 Inside a run, always `deps.itop.for_principal(principal, comment=...)`, which
 answers with a `RepositorySet` — one identity, one comment, every repository in
-it bound to the same client. `service()` compiles and works, and acts as the
-service account with no change comment; it is for code that is genuinely not a
-run: the vector sweep, the wizard probes, `selfcheck`.
+it bound to the same client. Code that is genuinely not a run — the vector
+sweep, `selfcheck` — passes `Principal.service()` with a comment naming the
+subsystem instead of a run id. The wizard probes bypass repositories entirely
+and talk to `create_itop_client` directly, so they are not part of this seam.
 
 `ai_person_name()` answers off the **connection's own** client whatever the run
 acts as. Resolving it under an engineer's token would make the loop guard —

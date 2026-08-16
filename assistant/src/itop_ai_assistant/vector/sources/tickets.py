@@ -91,14 +91,14 @@ class TicketVectorSource(VectorSource[Ticket]):
         self._ticket_repo: TicketRepository | None = None
 
     async def prepare(self) -> None:
-        # The plain connection, not a principal's view of it: the sweep is not a
+        # The service account's view, not a principal's: the sweep is not a
         # run — no journal entry, nobody to act for — and the index it builds is
         # global by design (`dev-docs/architecture/platform.md` §3.5). What a searcher may see
         # is decided later, by `confirm_visible` under their own token. Not just
-        # by convention: `get_ticket_repo` is bound to the service set
-        # (`ItopRepositories.service()`, see `vector/sources/registry.py`), and
-        # the principal-bound accessor is a *separate* closure — sweeping as
-        # somebody else is not something this class can express.
+        # by convention: `get_ticket_repo` is bound to `Principal.service()`
+        # (see `vector/sources/registry.py`), and the principal-bound accessor
+        # is a *separate* closure — sweeping as somebody else is not something
+        # this class can express.
         self._ticket_repo = await self._get_ticket_repo()
 
     async def find_modified_since(
