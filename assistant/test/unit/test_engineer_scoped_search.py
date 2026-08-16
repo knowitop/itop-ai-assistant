@@ -16,9 +16,9 @@ an organization is.
 """
 
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from itop_ai_assistant.config import VectorConfig
+from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.repositories.access import AccessRepository
 from itop_ai_assistant.vector.ports.query import SearchQuery
@@ -61,6 +61,7 @@ class TestOrgPrefilterFeedsSearch(unittest.IsolatedAsyncioTestCase):
         # shapes the walk.
         engineer = Principal.delegated("tok", login="ivanov", name="Ivan Ivanov")
         store = MagicMock()
+        store.configured = True
         store.search = AsyncMock(
             return_value=[
                 SearchHit(obj_class="UserRequest", obj_id=1, score=0.9),
@@ -69,18 +70,27 @@ class TestOrgPrefilterFeedsSearch(unittest.IsolatedAsyncioTestCase):
         )
         embedder = MagicMock()
         embedder.embed = AsyncMock(return_value=[[1.0, 0.0]])
+        embedder.aclose = AsyncMock()
         # Simulates iTop itself: under the engineer's token, id 2 belongs to an
         # org outside the pre-filter's (stale) guess and is not returned.
         source = MagicMock(name="tickets")
         source.name = "tickets"
         source.confirm_visible = AsyncMock(return_value={1})
         repo = _org_repo([{"allowed_org_id": "3"}])
-        search = SimilarSearch(store, embedder, MagicMock(), VectorConfig(), sources=[source])
+        config = MagicMock()
+        config.get = AsyncMock(
+            side_effect=lambda module, model: {
+                "vector": VectorConfig(enabled=True),
+                "embeddings": EmbeddingsConfig(base_url="http://emb/v1", model="bge-m3"),
+            }[module]
+        )
+        search = SimilarSearch(store, config, MagicMock(), sources=[source])
 
         filters = _org_filter(await repo.allowed_org_ids())
-        result = await search.find(
-            SearchQuery(text="printer", family="tickets", classes=["UserRequest"], filters=filters), engineer
-        )
+        with patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder):
+            result = await search.find(
+                SearchQuery(text="printer", family="tickets", classes=["UserRequest"], filters=filters), engineer
+            )
 
         self.assertEqual(store.search.await_args.kwargs["filters"], {"org_id": ["3"]})
         self.assertEqual([hit.obj_id for hit in result.hits], [1])

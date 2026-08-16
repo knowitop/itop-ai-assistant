@@ -19,6 +19,14 @@ as somebody else (or as the service account) and the types would not notice
 (rule 9.1, TASK-032). What a caller names now is *who is asking*; how that
 becomes a confirmation is this module's business.
 
+This is the subsystem's door (TASK-033): the details a caller used to bring —
+an embeddings client and its lifetime, the availability gates, the source
+picked from `query.family` — no longer arrive from outside. The door reads its
+own configuration on every call (an admin edit to the family list or the
+embeddings endpoint must not need a restart) and owns the embeddings client
+for the length of one `find()` (rule 9.4 — whoever creates a resource closes
+it).
+
 Source-agnostic like the rest of `vector/`: nothing here knows what a ticket
 is. `Principal` is the one name it borrows from the platform — see
 ADR-021 for why that is not the same as knowing a consumer's domain.
@@ -28,8 +36,9 @@ import logging
 from collections.abc import Sequence
 from typing import Protocol
 
-from itop_ai_assistant.config import VectorConfig
+from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
 from itop_ai_assistant.core.principal import Principal
+from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchQuery, SearchResult
 from itop_ai_assistant.vector.ports.store import ChunkStore, SearchHit
@@ -68,6 +77,12 @@ class UnknownFamily(ValueError):
         super().__init__(f"Unknown family {family!r}; known: {self.known}")
 
 
+class SearchUnavailable(RuntimeError):
+    """This deployment cannot search right now — a caller/deployment error, not
+    a search result. The three messages match the ones `/search` used to raise
+    as 409s by hand."""
+
+
 class SimilarSearch:
     """One search over the vector index, confirmed against its source.
 
@@ -80,24 +95,49 @@ class SimilarSearch:
     caller would pick differently (rule 6.5 — the family name comes from the
     consumer's own configuration, and the subsystem validates it).
 
+    Long-lived (one instance for the process, via `AppDeps.vector_search`),
+    unlike what it reads and owns per call: `config` is re-read on every
+    `find()`/`available()` so an admin edit to the family list or the
+    embeddings endpoint applies without a restart, and the embeddings client
+    is created and closed around one `find()` — the door creates it, the door
+    closes it (rule 9.4).
+
     `sources` is the injection point for tests, exactly as in
     `use_cases/indexer.py`: production passes nothing and gets what the
-    registry builds from `itop`/`cfg`.
+    registry builds from `itop`/the freshly read `VectorConfig`.
     """
 
     def __init__(
         self,
         store: ChunkStore,
-        embedder: EmbeddingsClient,
+        config: ConfigStore,
         itop: ItopRepos,
-        cfg: VectorConfig,
         *,
         sources: Sequence[CandidateSource] | None = None,
     ) -> None:
         self._store = store
-        self._embedder = embedder
-        built = sources if sources is not None else build_vector_sources(itop, cfg)
-        self._sources: dict[str, CandidateSource] = {source.name: source for source in built}
+        self._config = config
+        self._itop = itop
+        self._sources = sources
+
+    def _unavailable(self, vector_cfg: VectorConfig, embeddings_cfg: EmbeddingsConfig) -> str | None:
+        """Why this deployment cannot search, or None when it can — the same
+        three checks and messages `require_vector`/`require_embeddings`
+        (`vector/router.py`) used to gate on."""
+        if not self._store.configured:
+            return "Vector store is not configured (qdrant_url is not set)"
+        if not vector_cfg.enabled:
+            return "Vector indexing is disabled (vector: enabled)"
+        if not embeddings_cfg.base_url or not embeddings_cfg.model:
+            return "Embeddings endpoint is not configured"
+        return None
+
+    async def available(self) -> bool:
+        """Whether this deployment can search right now — the gate a module
+        checks before offering the tool that calls `find()`."""
+        vector_cfg = await self._config.get("vector", VectorConfig)
+        embeddings_cfg = await self._config.get("embeddings", EmbeddingsConfig)
+        return self._unavailable(vector_cfg, embeddings_cfg) is None
 
     async def find(self, query: SearchQuery, principal: Principal) -> SearchResult:
         """Objects most similar to `query.text` that `principal` may see.
@@ -108,29 +148,44 @@ class SimilarSearch:
         the run journal (TASK-014); every scenario parameter has already been
         validated by `SearchQuery` itself.
 
-        Raises `UnknownFamily` when nothing is registered for `query.family` —
-        before embedding anything, so a typo costs no round trip.
+        Raises `SearchUnavailable` when this deployment cannot search at all,
+        and `UnknownFamily` when nothing is registered for `query.family` —
+        both before an embeddings client is created, so a bad call costs no
+        connection and no embedding.
         """
-        source = self._sources.get(query.family)
+        vector_cfg = await self._config.get("vector", VectorConfig)
+        embeddings_cfg = await self._config.get("embeddings", EmbeddingsConfig)
+        unavailable = self._unavailable(vector_cfg, embeddings_cfg)
+        if unavailable is not None:
+            raise SearchUnavailable(unavailable)
+        sources = {
+            source.name: source
+            for source in (self._sources if self._sources is not None else build_vector_sources(self._itop, vector_cfg))
+        }
+        source = sources.get(query.family)
         if source is None:
-            raise UnknownFamily(query.family, list(self._sources))
+            raise UnknownFamily(query.family, list(sources))
         empty = SearchResult(hits=[], stats=FindStats(requested=query.candidates, found=0, dropped_by_resolve=0))
         if not query.text.strip():
             return empty
-        embedding = (await self._embedder.embed([query.text]))[0]
-        hits = await self._store.search(
-            embedding,
-            family=query.family,
-            classes=query.classes,
-            chunk_kinds=query.chunk_kinds,
-            filters=query.filters,
-            visibilities=list(query.visibilities),
-            exclude=query.exclude,
-            created=query.created,
-            updated=query.updated,
-            score_threshold=query.min_score,
-            limit=query.candidates,
-        )
+        embedder = EmbeddingsClient(embeddings_cfg)
+        try:
+            embedding = (await embedder.embed([query.text]))[0]
+            hits = await self._store.search(
+                embedding,
+                family=query.family,
+                classes=query.classes,
+                chunk_kinds=query.chunk_kinds,
+                filters=query.filters,
+                visibilities=list(query.visibilities),
+                exclude=query.exclude,
+                created=query.created,
+                updated=query.updated,
+                score_threshold=query.min_score,
+                limit=query.candidates,
+            )
+        finally:
+            await embedder.aclose()
         if not hits:
             return empty
         kept = await self._keep_confirmed(hits, source, principal)

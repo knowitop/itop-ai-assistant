@@ -21,7 +21,6 @@ from itop_ai_assistant.core.api_deps import get_config_store
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.settings.config_store import ConfigStore
-from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchQuery
 from itop_ai_assistant.vector.ports.store import ChunkStore, DateRange
 from itop_ai_assistant.vector.sources.registry import ItopRepos, build_vector_sources
@@ -29,7 +28,7 @@ from itop_ai_assistant.vector.sources.tickets import FAMILY as TICKETS_FAMILY
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
 from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 from itop_ai_assistant.vector.use_cases.indexer import SWEEP_TASK
-from itop_ai_assistant.vector.use_cases.search import SimilarSearch, UnknownFamily
+from itop_ai_assistant.vector.use_cases.search import SearchUnavailable, SimilarSearch, UnknownFamily
 
 # core/deps.py imports the vector facade (concrete adapters); the facade's own
 # __init__ imports this module for `router` — a real import of `core.deps`
@@ -75,6 +74,11 @@ def get_vector_sync(request: Request) -> VectorSyncState:
 def get_vector_journal(request: Request) -> IndexJournal:
     deps: AppDeps = request.app.state.deps
     return deps.vector_journal
+
+
+def get_vector_search(request: Request) -> SimilarSearch:
+    deps: AppDeps = request.app.state.deps
+    return deps.vector_search
 
 
 async def get_vector_config(config_store: Annotated[ConfigStore, Depends(get_config_store)]) -> VectorConfig:
@@ -424,9 +428,7 @@ class SearchResponse(BaseModel):
 @router.post("/search")
 async def vector_search(
     body: SearchRequest,
-    vector_cfg: Annotated[VectorConfig, Depends(require_vector)],
-    embeddings_cfg: Annotated[EmbeddingsConfig, Depends(require_embeddings)],
-    vector_store: Annotated[ChunkStore, Depends(get_vector_store)],
+    search: Annotated[SimilarSearch, Depends(get_vector_search)],
     itop: Annotated[ItopRepos, Depends(get_itop)],
 ) -> SearchResponse:
     """Debug endpoint: run one `SimilarSearch.find()` and return the hits.
@@ -443,7 +445,8 @@ async def vector_search(
     starts, it is over-permissive by design (ADR-003), and computing it means
     knowing what an organization is, which is the caller's language, not the
     subsystem's. Layer 2, the one confidentiality actually rests on, is no
-    longer assembled here at all.
+    longer assembled here at all — nor are the door's own availability gates:
+    `search.find()` raises `SearchUnavailable` for those (TASK-033).
     """
     filters = body.filters
     principal = Principal.service()
@@ -460,12 +463,10 @@ async def vector_search(
         if allowed_org_ids is not None and (filters is None or "org_id" not in filters):
             filters = {**(filters or {}), "org_id": allowed_org_ids}
 
-    embedder = EmbeddingsClient(embeddings_cfg)
     try:
-        search = SimilarSearch(vector_store, embedder, itop, vector_cfg)
         result = await search.find(body.to_query(filters=filters), principal)
-        return SearchResponse(hits=result.hits, stats=result.stats, allowed_org_ids=allowed_org_ids)
+    except SearchUnavailable as unavailable:
+        raise HTTPException(status_code=409, detail=str(unavailable)) from unavailable
     except UnknownFamily as unknown:
         raise HTTPException(status_code=404, detail=str(unknown)) from unknown
-    finally:
-        await embedder.aclose()
+    return SearchResponse(hits=result.hits, stats=result.stats, allowed_org_ids=allowed_org_ids)

@@ -20,7 +20,7 @@ from itop_ai_assistant.settings.prompt_store import (
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.util.redis_keyspace import days_to_seconds
-from itop_ai_assistant.vector import ChunkStore, IndexJournal, QdrantChunkStore, VectorSyncState
+from itop_ai_assistant.vector import ChunkStore, IndexJournal, QdrantChunkStore, SimilarSearch, VectorSyncState
 
 
 @dataclass
@@ -48,6 +48,7 @@ class AppDeps:
     prompt_store: PromptStore
     journal: RunJournal
     vector_store: ChunkStore
+    vector_search: SimilarSearch
     vector_sync: VectorSyncState
     vector_journal: IndexJournal
 
@@ -93,16 +94,19 @@ def build_deps(settings: Settings) -> AppDeps:
     config_store = RedisConfigStore(redis, settings)
     state_manager = TicketStateManager(redis, ttl_seconds=days_to_seconds(settings.state_ttl_days))
     itop_connection = ItopConnection(config_store)
+    itop = ItopRepositories(itop_connection, config_store)
+    # Lazy: no client (and no connection) until the vector store is used
+    vector_store = QdrantChunkStore(settings.qdrant_url)
     return AppDeps(
         settings=settings,
-        itop=ItopRepositories(itop_connection, config_store),
+        itop=itop,
         itop_connection=itop_connection,
         state_manager=state_manager,
         config_store=config_store,
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR, settings.prompts_dir), redis),
         journal=RunJournal(redis, ttl_seconds=days_to_seconds(settings.run_ttl_days)),
-        # Lazy: no client (and no connection) until the vector store is used
-        vector_store=QdrantChunkStore(settings.qdrant_url),
+        vector_store=vector_store,
+        vector_search=SimilarSearch(vector_store, config_store, itop),
         vector_sync=VectorSyncState(redis),
         vector_journal=IndexJournal(redis),
     )

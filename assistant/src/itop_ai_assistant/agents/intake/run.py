@@ -51,17 +51,13 @@ class IntakeRun(TicketRun):
         logger.info(f"[{self.processing_id}] Running intake agent for {ticket.label}")
 
         composed = await compose.assemble(ticket, ai_name, self.run, self.deps, self.repos)
-        try:
-            await IntakeAgentRun(
-                composed.agent,
-                composed.context,
-                journal=self.journal,
-                run=self.run,
-                think_tags=composed.think_tags,
-            ).stream(composed.messages)
-        finally:
-            if composed.embedder is not None:
-                await composed.embedder.aclose()
+        await IntakeAgentRun(
+            composed.agent,
+            composed.context,
+            journal=self.journal,
+            run=self.run,
+            think_tags=composed.think_tags,
+        ).stream(composed.messages)
 
 
 class IntakeAgentRun(AgentRun[IntakeContext]):

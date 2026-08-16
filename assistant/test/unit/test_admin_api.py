@@ -18,19 +18,24 @@ from itop_ai_assistant.util.build_info import get_build_info
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
 from itop_ai_assistant.vector.state.sync_state import VectorSyncState
+from itop_ai_assistant.vector.use_cases.search import SimilarSearch
 
 
 def _make_deps(redis, settings=None) -> AppDeps:
     settings = settings or get_settings()
+    config_store = RedisConfigStore(redis, settings)
+    itop = MagicMock()
+    vector_store = QdrantChunkStore(None)
     return AppDeps(
         settings=settings,
-        itop=MagicMock(),
+        itop=itop,
         itop_connection=MagicMock(),
         state_manager=TicketStateManager(redis),
-        config_store=RedisConfigStore(redis, settings),
+        config_store=config_store,
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR), redis),
         journal=RunJournal(redis),
-        vector_store=QdrantChunkStore(None),
+        vector_store=vector_store,
+        vector_search=SimilarSearch(vector_store, config_store, itop),
         vector_sync=VectorSyncState(redis),
         vector_journal=IndexJournal(redis),
     )

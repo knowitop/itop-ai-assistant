@@ -20,6 +20,7 @@ from itop_ai_assistant.vector.ports.store import ChunkMetadata, ChunkRecord
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
 from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 from itop_ai_assistant.vector.use_cases.indexer import SWEEP_TASK
+from itop_ai_assistant.vector.use_cases.search import SimilarSearch
 
 _NOW = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
 
@@ -82,15 +83,19 @@ def _make_deps(redis, store_url: str | None = None, **settings_overrides) -> App
     `qdrant_url` setting — these tests exercise `vector/router.py` against the
     `ChunkStore` port itself (configured-but-unreachable included)."""
     settings = get_settings().model_copy(update={**_BLANK, **settings_overrides})
+    config_store = RedisConfigStore(redis, settings)
+    itop = MagicMock()
+    vector_store = QdrantChunkStore(store_url)
     return AppDeps(
         settings=settings,
-        itop=MagicMock(),
+        itop=itop,
         itop_connection=MagicMock(),
         state_manager=TicketStateManager(redis),
-        config_store=RedisConfigStore(redis, settings),
+        config_store=config_store,
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR), redis),
         journal=RunJournal(redis),
-        vector_store=QdrantChunkStore(store_url),
+        vector_store=vector_store,
+        vector_search=SimilarSearch(vector_store, config_store, itop),
         vector_sync=VectorSyncState(redis),
         vector_journal=IndexJournal(redis),
     )
@@ -437,7 +442,7 @@ class TestSearch(VectorStatusTestCase):
         source = _FakeSource(existing=set())
 
         with (
-            patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
             patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
         ):
             response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
@@ -468,7 +473,7 @@ class TestSearch(VectorStatusTestCase):
         source = _FakeSource(existing={1, 3})
 
         with (
-            patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
             patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
         ):
             response = self.client.post(
@@ -515,7 +520,7 @@ class TestSearch(VectorStatusTestCase):
         embedder.aclose = AsyncMock()
 
         with (
-            patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
             patch(
                 "itop_ai_assistant.vector.use_cases.search.build_vector_sources",
                 return_value=[_FakeSource(existing={1, 2})],
@@ -588,7 +593,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         embedder, source, repos = self._seed_and_patch(deps, existing={1}, allowed_org_ids=None)
 
         with (
-            patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
             patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
         ):
             response = self.client.post(
@@ -619,7 +624,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         embedder, source, _ = self._seed_and_patch(deps, existing={1}, allowed_org_ids=None)
 
         with (
-            patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
             patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
         ):
             response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
@@ -637,7 +642,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         embedder, source, _ = self._seed_and_patch(deps, existing={1, 2}, allowed_org_ids=["3", "9"])
         store_search = AsyncMock(wraps=deps.vector_store.search)
         with (
-            patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
             patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
             patch.object(deps.vector_store, "search", store_search),
         ):
@@ -657,7 +662,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         embedder, source, _ = self._seed_and_patch(deps, existing={1, 2}, allowed_org_ids=["3"])
         store_search = AsyncMock(wraps=deps.vector_store.search)
         with (
-            patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
             patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
             patch.object(deps.vector_store, "search", store_search),
         ):
@@ -682,7 +687,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         embedder, source, _ = self._seed_and_patch(deps, existing={1, 2}, allowed_org_ids=None)
         store_search = AsyncMock(wraps=deps.vector_store.search)
         with (
-            patch("itop_ai_assistant.vector.router.EmbeddingsClient", return_value=embedder),
+            patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
             patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
             patch.object(deps.vector_store, "search", store_search),
         ):

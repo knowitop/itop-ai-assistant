@@ -33,7 +33,8 @@ class IntakeContext:
     state_manager: TicketStatePort
     intake: IntakeConfig
     ai_name: str
-    # `similar` is None on a deployment without vectors — the tool that needs
-    # it is then not in the run's tool set at all (`tools_for`), so no tool
-    # reads it expecting a value.
+    # `similar` holds the subsystem's door (TASK-033), not a search assembled
+    # for this run — None on a deployment without vectors, and the tool that
+    # needs it is then not in the run's tool set at all (`tools_for`), so no
+    # tool reads it expecting a value.
     similar: SimilarSearch | None = None

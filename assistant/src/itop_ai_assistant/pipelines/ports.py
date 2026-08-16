@@ -31,7 +31,7 @@ from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.settings.prompt_store import PromptStore
 from itop_ai_assistant.state.journal import RunStatus, TriggerKind
 from itop_ai_assistant.state.ticket_state import TicketState
-from itop_ai_assistant.vector import ChunkStore
+from itop_ai_assistant.vector import SimilarSearch
 
 
 @runtime_checkable
@@ -145,4 +145,4 @@ class RunDeps(Protocol):
     def state_manager(self) -> TicketStatePort: ...
 
     @property
-    def vector_store(self) -> ChunkStore: ...
+    def vector_search(self) -> SimilarSearch: ...

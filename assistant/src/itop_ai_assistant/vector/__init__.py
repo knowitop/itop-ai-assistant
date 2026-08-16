@@ -8,6 +8,15 @@ iTop) but still internal — TASK-028 folded it in from the former top-level
 `vector_sources/` precisely because nothing outside `vector/` needs more of
 it than `TICKETS_FAMILY` below.
 
+Two kinds of name live here (TASK-033): the contract-out a business module
+actually calls (`SimilarSearch.available()`/`find()`, its exceptions,
+`measure_embedding_dimension`) and the adapters the composition root still
+assembles by hand (`QdrantChunkStore`, `register_vector_sweep`) because the
+subsystem cannot yet build itself — that is stage 3's job, not this task's.
+`EmbeddingsClient` is deliberately *not* re-exported any more: both of its
+former external callers (`agents/intake/compose.py`, `admin/setup.py`) went
+through the door instead, so the facade has nothing left to export it for.
+
 `router.py` names `core.deps.AppDeps` in annotations only (`TYPE_CHECKING`,
 never imported for real) — `core/deps.py` imports this facade's own adapters,
 so a real import in either direction would deadlock: importing anything here
@@ -18,7 +27,6 @@ does not name it at all any more (TASK-029): the sweep takes its own
 there rather than routing around it.
 """
 
-from .adapters.embedder import EmbeddingsClient
 from .adapters.qdrant_store import QdrantChunkStore
 from .ports.query import FindStats, ObjectHit, SearchQuery, SearchResult
 from .ports.store import ChunkStore, DateRange
@@ -27,21 +35,24 @@ from .sources.tickets import FAMILY as TICKETS_FAMILY
 from .state.index_journal import IndexJournal
 from .state.sync_state import VectorSyncState
 from .use_cases.indexer import register_vector_sweep
-from .use_cases.search import SimilarSearch
+from .use_cases.probe import measure_embedding_dimension
+from .use_cases.search import SearchUnavailable, SimilarSearch, UnknownFamily
 
 __all__ = [
     "ChunkStore",
     "DateRange",
-    "EmbeddingsClient",
     "FindStats",
     "IndexJournal",
     "ObjectHit",
     "QdrantChunkStore",
     "SearchQuery",
     "SearchResult",
+    "SearchUnavailable",
     "SimilarSearch",
     "TICKETS_FAMILY",
+    "UnknownFamily",
     "VectorSyncState",
+    "measure_embedding_dimension",
     "register_vector_sweep",
     "router",
 ]

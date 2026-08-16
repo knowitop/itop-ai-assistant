@@ -16,6 +16,13 @@ that only works if nothing routes around it. `TestVectorSourcesBoundary`
 `vector/sources/`. `TestRightsCannotBeForgotten` (TASK-032) is the odd one
 out: it reads signatures rather than imports, because the invariant it guards
 (rule 9.1) is about what a call can omit, not about what a module can reach.
+
+`TestOnlyTheContractIsImportedFromOutside` (TASK-033) narrows `TestVectorFacade`
+one step further: not just "through the facade", but "which names the facade
+hands out" — a business module may take the contract-out (`SimilarSearch` and
+its value types), never an adapter the composition root still assembles by
+hand. That second half is scoped down again at stage 3, when the facade stops
+handing out adapters at all.
 """
 
 import ast
@@ -117,6 +124,61 @@ class TestVectorFacade(unittest.TestCase):
             with self.subTest(module=str(rel)):
                 deep = {m for m in _imported_modules(path) if m.startswith("itop_ai_assistant.vector.")}
                 self.assertEqual(set(), deep)
+
+
+#: What `find()`/`available()` need to be called and its scenario built: the
+#: door itself, its value types and its exceptions. Any business module may
+#: import these.
+_CONTRACT_NAMES = {
+    "DateRange",
+    "FindStats",
+    "ObjectHit",
+    "SearchQuery",
+    "SearchResult",
+    "SearchUnavailable",
+    "SimilarSearch",
+    "TICKETS_FAMILY",
+    "UnknownFamily",
+    "measure_embedding_dimension",
+}
+
+#: Concrete adapters the composition root still assembles by hand (A2/A5 in
+#: `architecture/alignment-plan.md`) — stage 3 removes this half of the
+#: allowlist, not the test.
+_ROOT_ADAPTER_NAMES = {
+    "ChunkStore",
+    "IndexJournal",
+    "QdrantChunkStore",
+    "VectorSyncState",
+    "register_vector_sweep",
+    "router",
+}
+
+
+class TestOnlyTheContractIsImportedFromOutside(unittest.TestCase):
+    """TASK-033: a business module reaches the subsystem through the contract
+    only — `SimilarSearch.available()`/`find()`, its value types, its
+    exceptions. The adapters the facade still re-exports are for the
+    composition root and entry points, not for a module to assemble a search
+    from by hand (the gap this task closes)."""
+
+    def test_a_facade_name_is_either_the_contract_or_a_root_adapter(self):
+        allowed = _CONTRACT_NAMES | _ROOT_ADAPTER_NAMES
+        for path in _sources():
+            rel = path.relative_to(PACKAGE)
+            if rel.parts[0] == "vector":
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            names = {
+                # The name exported by the facade, not the local alias
+                # (`admin/router.py` imports `router as vector_router`).
+                alias.name
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ImportFrom) and node.module == "itop_ai_assistant.vector" and not node.level
+                for alias in node.names
+            }
+            with self.subTest(module=str(rel)):
+                self.assertEqual(set(), names - allowed)
 
 
 class TestVectorSourcesBoundary(unittest.TestCase):

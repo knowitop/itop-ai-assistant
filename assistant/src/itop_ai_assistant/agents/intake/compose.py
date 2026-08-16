@@ -12,13 +12,12 @@ from dataclasses import dataclass
 from langchain_core.messages import BaseMessage
 from langgraph.graph.state import CompiledStateGraph
 
-from itop_ai_assistant.config import EmbeddingsConfig, LlmConfig, VectorConfig
+from itop_ai_assistant.config import LlmConfig
 from itop_ai_assistant.core.deps import create_llm
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.ports import RunDeps
 from itop_ai_assistant.repositories.sets import RepositorySet
-from itop_ai_assistant.vector import EmbeddingsClient, SimilarSearch
 
 from .agent import build_intake_agent
 from .config import IntakeConfig
@@ -32,34 +31,19 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ComposedRun:
-    """What `body()` needs to construct `IntakeAgentRun` and stream it.
-
-    `embedder`'s lifecycle (`aclose()`) stays the caller's: it must close
-    whether the stream succeeds, fails or is never started, and that is a
-    `body()`-level concern, not this module's.
-    """
+    """What `body()` needs to construct `IntakeAgentRun` and stream it."""
 
     agent: CompiledStateGraph
     context: IntakeContext
     messages: list[BaseMessage]
     think_tags: tuple[str, ...]
-    embedder: EmbeddingsClient | None
 
 
 async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps, repos: RepositorySet) -> ComposedRun:
     cfg = await deps.config_store.get("intake", IntakeConfig)
     llm_cfg = await deps.config_store.get("llm", LlmConfig)
     prompts = build_intake_prompts(await deps.prompt_store.get("intake"))
-    searchable = await _searchable(deps)
-    # The run's own principal, not the service account by default: what a
-    # search may return is decided by whoever this run acts as (TASK-032). For
-    # a webhook-driven intake run the two are the same thing — the point is
-    # that nothing here gets to choose.
-    similar = (
-        SimilarSearch(deps.vector_store, searchable.embedder, deps.itop, searchable.vector_cfg)
-        if searchable is not None
-        else None
-    )
+    similar = deps.vector_search if await deps.vector_search.available() else None
     context = IntakeContext(
         processing_id=run.processing_id,
         principal=run.principal,
@@ -85,35 +69,4 @@ async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps,
         context=context,
         messages=messages,
         think_tags=tuple(llm_cfg.think_tags),
-        embedder=searchable.embedder if searchable is not None else None,
     )
-
-
-@dataclass(frozen=True)
-class _Searchable:
-    """What a deployment that can search hands the search: a client of its own
-    and the vector configuration the family list is built from."""
-
-    embedder: EmbeddingsClient
-    vector_cfg: VectorConfig
-
-
-async def _searchable(deps: RunDeps) -> _Searchable | None:
-    """The ingredients of a search, or None when this deployment cannot search.
-
-    Three conditions, all necessary: a vector store to search, indexing
-    switched on — a stale index quoted as current is worse than no
-    references at all — and an embeddings endpoint to turn the ticket into
-    a query with. The client is per run and closed by the caller.
-
-    `vector_cfg` travels back out because it is already read here and the
-    search needs it too; reading the section twice per run would be the only
-    alternative.
-    """
-    if not deps.vector_store.configured:
-        return None
-    vector_cfg = await deps.config_store.get("vector", VectorConfig)
-    emb_cfg = await deps.config_store.get("embeddings", EmbeddingsConfig)
-    if not vector_cfg.enabled or not emb_cfg.base_url or not emb_cfg.model:
-        return None
-    return _Searchable(embedder=EmbeddingsClient(emb_cfg), vector_cfg=vector_cfg)

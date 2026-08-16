@@ -13,20 +13,31 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
 - **Layered internally, entered only through the facade** (TASK-026, TASK-028):
   `router.py` (transport), `ports/` (protocols + value objects), `adapters/`
   (`QdrantChunkStore`, `EmbeddingsClient`), `use_cases/` (`VectorIndexer`,
-  `SimilarSearch`, reindex CLI), `state/` (Redis operational state),
-  `sources/` (domain-specific `VectorSource` implementations — `Ticket`,
-  iTop-aware, unlike everything else here), `chunker.py` (domain). Code
-  outside `vector/` imports only `itop_ai_assistant.vector` (the facade in
-  `__init__.py`), never a submodule — enforced by
-  `test_package_layers.py::TestVectorFacade`. A new name a consumer needs
-  goes into `vector/__init__.py`'s re-export list, not around it — including
-  `core/deps.py`, which wires the concrete adapters through the facade like
-  any other consumer (`router.py` names `AppDeps` in `TYPE_CHECKING` only,
-  and `use_cases/indexer.py` no longer names it at all — it takes its own
-  `IndexerDeps` port, TASK-029 — so there is no cycle to route around).
+  `SimilarSearch`, `measure_embedding_dimension`, reindex CLI), `state/`
+  (Redis operational state), `sources/` (domain-specific `VectorSource`
+  implementations — `Ticket`, iTop-aware, unlike everything else here),
+  `chunker.py` (domain). Code outside `vector/` imports only
+  `itop_ai_assistant.vector` (the facade in `__init__.py`), never a
+  submodule — enforced by `test_package_layers.py::TestVectorFacade`. A new
+  name a consumer needs goes into `vector/__init__.py`'s re-export list, not
+  around it — including `core/deps.py`, which wires the concrete adapters
+  through the facade like any other consumer (`router.py` names `AppDeps` in
+  `TYPE_CHECKING` only, and `use_cases/indexer.py` no longer names it at
+  all — it takes its own `IndexerDeps` port, TASK-029 — so there is no cycle
+  to route around). What the facade re-exports is itself two tiers
+  (TASK-033): the contract-out (`SimilarSearch`, its value types and
+  exceptions, `measure_embedding_dimension`) any business module may import,
+  and the concrete adapters (`QdrantChunkStore`, `register_vector_sweep`,
+  `router`, …) that only the composition root and entry points may still
+  reach — `test_package_layers.py::TestOnlyTheContractIsImportedFromOutside`
+  checks the split; stage 3 of `alignment-plan.md` shrinks the adapter half
+  further, not the test.
 - **Infrastructure, not a business module.** It does not register in
   `TriggerRegistry`, has no prompts and no trigger routes. Business modules
-  consume it through `AppDeps.vector_store`.
+  consume it through `RunDeps.vector_search`/`AppDeps.vector_search` — one
+  door (`SimilarSearch.available()`/`find(query, principal)`), not a
+  `ChunkStore` a module would have to assemble a search from itself
+  (TASK-033).
 - **Never store raw object text in the chunk collections** — embeddings, ids
   and filter metadata only. This matters more on Qdrant than it did on a
   relational store: payload takes arbitrary JSON with no schema to catch a
@@ -66,6 +77,16 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   (`test_package_layers.py::TestRightsCannotBeForgotten`). The subsystem names
   the principal with the platform's own `Principal` type — ADR-021 for why
   that is not the same as knowing a consumer's domain.
+- **`SimilarSearch` owns its own configuration and the embeddings client's
+  lifetime — a caller brings only `store`/`config`/`itop` at construction, and
+  a `SearchQuery` plus a `Principal` per call** (TASK-033, rule 9.4). It is
+  long-lived (`AppDeps.vector_search`, one per process) but re-reads
+  `vector`/`embeddings` config on every `available()`/`find()`, so an admin
+  edit applies without a restart; the `EmbeddingsClient` is created and
+  `aclose()`d around one `find()`, never threaded through a run to be closed
+  by someone else. `available()` is the availability gate a module checks
+  before offering a tool; `find()` on an unavailable deployment raises
+  `SearchUnavailable` instead of quietly returning nothing.
 - **The R4 org pre-filter is the caller's, deliberately.** Layer 1
   (`AccessRepository.allowed_org_ids()` → `filters["org_id"]`) shapes the walk
   before it starts, is over-permissive by design (ADR-003) and means knowing

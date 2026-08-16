@@ -35,7 +35,7 @@ from itop_ai_assistant.itop.connection import create_itop_client
 from itop_ai_assistant.itop.provisioning import provision_itop
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.util.text import strip_thinking
-from itop_ai_assistant.vector import EmbeddingsClient
+from itop_ai_assistant.vector import measure_embedding_dimension
 
 logger = logging.getLogger(__name__)
 
@@ -307,14 +307,10 @@ async def test_embeddings(
     if not cfg.model:
         return {"ok": False, "error": "No model: set embeddings model first"}
 
-    client = EmbeddingsClient(cfg)
     try:
-        vectors = await asyncio.wait_for(client.embed_raw(["ping"]), timeout=_TEST_TIMEOUT)
+        dimension = await asyncio.wait_for(measure_embedding_dimension(cfg), timeout=_TEST_TIMEOUT)
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
-    finally:
-        await client.aclose()
-    dimension = len(vectors[0]) if vectors else 0
     return {
         "ok": True,
         "model": cfg.model,

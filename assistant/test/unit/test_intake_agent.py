@@ -23,6 +23,7 @@ from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
 from itop_ai_assistant.state.ticket_state import TicketState
 from itop_ai_assistant.vector.ports.store import SearchHit
+from itop_ai_assistant.vector.use_cases.search import SimilarSearch
 from itop_ai_assistant.webhook.models import WebhookPayload
 
 _PROMPT_FILES = read_prompt_dir(PACKAGED_PROMPTS_DIR / "intake")
@@ -130,6 +131,9 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
         # no longer receives the run's repositories, it receives the
         # connection and asks under the run's principal (TASK-032).
         self.deps.itop.for_principal = AsyncMock(return_value=self.repos)
+        # The real door (TASK-033) over mocked ingredients — `compose.assemble`
+        # only ever calls `deps.vector_search`, never assembles one itself.
+        self.deps.vector_search = SimilarSearch(self.deps.vector_store, self.deps.config_store, self.deps.itop)
 
     def intake_run(self) -> IntakeRun:
         """A run whose body is called directly — `execute()` is the shell's job
@@ -453,7 +457,7 @@ class TestSimilarTicketsWiring(IntakeAgentTestCase):
         embedder = MagicMock()
         embedder.embed = AsyncMock(return_value=[[1.0, 0.0]])
         embedder.aclose = AsyncMock()
-        patcher = patch("itop_ai_assistant.agents.intake.compose.EmbeddingsClient", return_value=embedder)
+        patcher = patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder)
         patcher.start()
         self.addCleanup(patcher.stop)
         return embedder
@@ -489,7 +493,7 @@ class TestSimilarTicketsWiring(IntakeAgentTestCase):
         self.assertNotIn("find_similar_resolved_tickets", model.bound_tools[0])
 
     async def test_a_call_reaches_the_index_and_the_source(self):
-        self.enable_vectors()
+        embedder = self.enable_vectors()
 
         await self.run_agent(
             [
@@ -503,6 +507,10 @@ class TestSimilarTicketsWiring(IntakeAgentTestCase):
         self.repos.ticket_repo.append_private_log.assert_awaited_once_with(
             self.ticket, "Printer is dead.\n[[UserRequest:12]]"
         )
+        # The door owns the embeddings client for the length of one `find()`
+        # call (rule 9.4, TASK-033) — there is no run-level lifecycle left to
+        # verify separately.
+        embedder.aclose.assert_awaited_once()
         # TASK-014: the tool's artifact (never sent to the model) reaches the
         # journal via AgentRun._journal_update, appended to the usual detail
         tool_step = next(d for n, d in self.journal_steps() if n == "tool:find_similar_resolved_tickets")
@@ -512,15 +520,6 @@ class TestSimilarTicketsWiring(IntakeAgentTestCase):
         self.assertIn("kept=1", tool_step)
         self.assertIn("dropped_by_resolve=0", tool_step)
         self.assertIn("scores=[0.9]", tool_step)
-
-    async def test_the_embeddings_client_is_closed_even_when_the_run_fails(self):
-        embedder = self.enable_vectors()
-        self.repos.ticket_repo.append_private_log = AsyncMock(side_effect=RuntimeError("iTop is down"))
-
-        with self.assertRaises(RuntimeError):
-            await self.run_agent([ai([call("finish_handoff", {"note": "Printer is dead."})])])
-
-        embedder.aclose.assert_awaited_once()
 
 
 if __name__ == "__main__":
