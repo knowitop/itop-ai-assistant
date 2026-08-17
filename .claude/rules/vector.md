@@ -11,37 +11,48 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
 `dev-docs/decisions/ADR-001-vector-store-qdrant.md` — Qdrant, not pgvector.
 
 - **Layered internally, entered only through the facade** (TASK-026, TASK-028):
-  `router.py` (transport), `ports/` (protocols + value objects), `adapters/`
-  (`QdrantChunkStore`, `EmbeddingsClient`), `use_cases/` (`VectorIndexer`,
-  `SimilarSearch`, `measure_embedding_dimension`, reindex CLI), `state/`
-  (Redis operational state), `chunker.py` (domain-agnostic packing). Content
-  providers (`Ticket`, `FaqArticle`, iTop-aware) are **not** part of this
-  list — `content_sources/` is a sibling package now, not a subpackage
-  (TASK-035, reversing TASK-028's earlier call to fold it in — see
-  `.claude/rules/content-sources.md`). Code outside `vector/` imports only
-  `itop_ai_assistant.vector` (the facade in `__init__.py`), never a
-  submodule — enforced by `test_package_layers.py::TestVectorFacade`, and
-  since TASK-035 that includes `content_sources/` itself. A new name a
-  consumer needs goes into `vector/__init__.py`'s re-export list, not
-  around it — including `core/deps.py`, which wires the concrete adapters
-  through the facade like any other consumer (`router.py` names `AppDeps` in
-  `TYPE_CHECKING` only, and `use_cases/indexer.py` no longer names it at
-  all — it takes its own `IndexerDeps` port, TASK-029 — so there is no cycle
-  to route around). What the facade re-exports is itself two tiers
-  (TASK-033): the contract-out (`SimilarSearch`, its value types and
-  exceptions, `measure_embedding_dimension`, and — since TASK-035 — the nine
-  names `content_sources/` needs to implement `VectorSource` at all:
-  `Chunk`/`FragmentContent`/`FragmentSpec`/`SequenceContent`/`TextContent`/
-  `VectorRecord`/`VectorSource`/`chunk_object`/`clean_text`) any business
-  module may import, and the concrete adapters (`QdrantChunkStore`,
-  `register_vector_sweep`, `router`, …) that only the composition root and
-  entry points may still reach —
+  `router.py` (transport), `assembly.py` (self-assembly, TASK-037), `ports/`
+  (protocols + value objects), `adapters/` (`QdrantChunkStore`,
+  `EmbeddingsClient`), `use_cases/` (`VectorIndexer`, `SimilarSearch`,
+  `measure_embedding_dimension`, reindex CLI), `state/` (Redis operational
+  state), `chunker.py` (domain-agnostic packing). Content providers (`Ticket`,
+  `FaqArticle`, iTop-aware) are **not** part of this list — `content_sources/`
+  is a sibling package now, not a subpackage (TASK-035, reversing TASK-028's
+  earlier call to fold it in — see `.claude/rules/content-sources.md`). Code
+  outside `vector/` imports only `itop_ai_assistant.vector` (the facade in
+  `__init__.py`), never a submodule — enforced by
+  `test_package_layers.py::TestVectorFacade`, and since TASK-035 that includes
+  `content_sources/` itself. A new name a consumer needs goes into
+  `vector/__init__.py`'s re-export list, not around it.
+  **The subsystem assembles and owns itself** (TASK-037, rule 6.1): one
+  operation, `build(settings, redis, config_store, itop) -> VectorSubsystem`
+  (`assembly.py`), replaces what `core/deps.py` used to import and construct
+  by hand (`QdrantChunkStore`, `IndexJournal`, `VectorSyncState`, a
+  `vector_sources` closure over `content_sources.registry.build_vector_sources`).
+  `core/deps.py` calls it once in `build_deps()`, the same way it already
+  calls `build_registry(settings)` for modules, and keeps the result in one
+  field, `AppDeps.vector`, not five. `vector/router.py` does not read
+  `AppDeps` at all any more — its `Depends` providers read
+  `request.app.state.vector`, a second attribute `main.py`'s lifespan sets
+  next to `app.state.deps`, typed `VectorSubsystem` and imported for real,
+  because nothing that reaches it is itself reachable from `core/deps.py`'s
+  own import chain. That is what retired the `TYPE_CHECKING` cycle workaround
+  this rule used to document here, in `vector/router.py` and in
+  `core/api_deps.py` — there is no cycle left to route around, so it is gone,
+  not rewritten. What the facade re-exports is one list now, not two tiers
+  (TASK-033 split it into contract-out and root-only adapters; TASK-037 folds
+  them back together): `SimilarSearch` and its value types/exceptions,
+  `measure_embedding_dimension`, the nine names `content_sources/` needs to
+  implement `VectorSource` at all, `VectorSubsystem`/`build` (what
+  `core/deps.py` calls once), `register_vector_sweep` (what
+  `core/background.py` calls once) and `router` (what `admin/router.py`
+  mounts) — `QdrantChunkStore`, `IndexJournal`, `VectorSyncState` and the
+  `ChunkStore` port are no longer re-exported at all, `core/deps.py` was
+  their last consumer outside `vector/` and it no longer needs them by name.
   `test_package_layers.py::TestOnlyTheContractIsImportedFromOutside` checks
-  the split; stage 3 of `alignment-plan.md` shrinks the adapter half
-  further, not the test. `build_vector_sources` left the facade entirely in
-  TASK-035 — it lives in `content_sources.registry` now, and `core/deps.py`
-  imports it from there directly, since there is nothing left in `vector/`
-  for the facade to shield.
+  the (now single) allowlist. `build_vector_sources` itself is called from
+  inside `assembly.py`, imported directly from `content_sources.registry` —
+  `core/deps.py` does not import `content_sources.registry` at all any more.
 - **Its own config section, not `config.py`'s** (TASK-036, rule 6.3).
   `VectorConfig`/`FamilyConfig`/`VectorClassConfig`/`ChunkFragmentConfig` live
   in `vector/config.py`, re-exported by the facade as contract-out —
@@ -61,7 +72,10 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   consume it through `RunDeps.vector_search`/`AppDeps.vector_search` — one
   door (`SimilarSearch.available()`/`find(query, principal)`), not a
   `ChunkStore` a module would have to assemble a search from itself
-  (TASK-033).
+  (TASK-033). `AppDeps.vector_search` is a computed property since TASK-037,
+  not a stored field — it delegates to `AppDeps.vector.vector_search`; the
+  property exists only because `RunDeps` (`pipelines/ports.py`, unchanged by
+  TASK-037) requires the member on the container itself.
 - **Never store raw object text in the chunk collections** — embeddings, ids
   and filter metadata only. This matters more on Qdrant than it did on a
   relational store: payload takes arbitrary JSON with no schema to catch a
@@ -112,20 +126,21 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   before offering a tool; `find()` on an unavailable deployment raises
   `SearchUnavailable` instead of quietly returning nothing.
 - **Neither `SimilarSearch` nor `VectorIndexer` imports
-  `content_sources.registry` any more (TASK-034)** — `core/deps.py` is the
-  only caller of `build_vector_sources()` left in the process, imported
-  directly from `content_sources.registry` since TASK-035 (not through the
-  vector facade — `build_vector_sources` is not this package's business any
-  more). Both take a `VectorConfig -> Sequence[...]` builder instead:
-  `SimilarSearch`'s constructor parameter `build_sources`, `VectorIndexer`'s
-  via `IndexerDeps.vector_sources(cfg)`.
+  `content_sources.registry` any more (TASK-034)** — `assembly.py::build()` is
+  the only caller of `build_vector_sources()` left in the process (TASK-037;
+  `core/deps.py` was the caller before, from TASK-035 to TASK-037, and does
+  not import `content_sources.registry` at all any more). Both take a
+  `VectorConfig -> Sequence[...]` builder instead: `SimilarSearch`'s
+  constructor parameter `build_sources`, `VectorIndexer`'s via
+  `IndexerDeps.vector_sources(cfg)`.
   The builder is called fresh on every `find()`/`sweep_once()`, never
   memoized, which is what keeps a family added or removed from the saved
   config live without a restart (TASK-021) — a list collected once at start
   would have broken that guarantee silently. `vector/router.py`'s `/status`
   and `/sources` get the same list through a `Depends` provider that reads
-  `AppDeps.vector_sources`, the same way it already reaches `get_itop`/
-  `get_vector_store` (`test_package_layers.py::TestSourcesAreInjectedNotBuilt`).
+  `request.app.state.vector.vector_sources`, the same way it reaches every
+  other member of the assembled subsystem
+  (`test_package_layers.py::TestSourcesAreInjectedNotBuilt`).
 - **The R4 org pre-filter is the caller's, deliberately.** Layer 1
   (`AccessRepository.allowed_org_ids()` → `filters["org_id"]`) shapes the walk
   before it starts, is over-permissive by design (ADR-003) and means knowing

@@ -23,13 +23,13 @@ class TestVectorStore(unittest.TestCase):
         settings = get_settings().model_copy(update={"qdrant_url": None})
         deps = build_deps(settings)
 
-        self.assertFalse(deps.vector_store.configured)
+        self.assertFalse(deps.vector.vector_store.configured)
 
     def test_vector_store_is_configured_from_qdrant_url(self):
         settings = get_settings().model_copy(update={"qdrant_url": "http://qdrant:6333"})
         deps = build_deps(settings)
 
-        self.assertTrue(deps.vector_store.configured)
+        self.assertTrue(deps.vector.vector_store.configured)
 
 
 class TestCreateLlm(unittest.TestCase):

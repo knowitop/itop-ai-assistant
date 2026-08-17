@@ -10,7 +10,7 @@ Two kinds of loop live side by side here, and they are not the same thing:
   request gets.
 
 Adding either is one line, the same idiom as `build_registry` and
-`build_vector_sources`.
+`vector.build`.
 """
 
 from itop_ai_assistant.core.deps import AppDeps
@@ -23,6 +23,6 @@ from itop_ai_assistant.vector import register_vector_sweep
 def build_background_tasks(deps: AppDeps, registry: TriggerRegistry) -> PeriodicTasks:
     """Assemble the process's periodic loops. Nothing runs until `start()`."""
     tasks = PeriodicTasks()
-    register_vector_sweep(tasks, deps)
+    register_vector_sweep(tasks, deps.vector)
     register_schedules(tasks, registry, deps)
     return tasks

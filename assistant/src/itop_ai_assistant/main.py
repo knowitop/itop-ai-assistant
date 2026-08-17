@@ -61,6 +61,9 @@ async def lifespan(app: FastAPI):
     tasks.start()
 
     app.state.deps = deps
+    # A separate attribute, not reached through `deps` — `vector/router.py`
+    # is served off this one alone, so it needs nothing from `core/` (TASK-037).
+    app.state.vector = deps.vector
     app.state.registry = registry
     app.state.tasks = tasks
     try:

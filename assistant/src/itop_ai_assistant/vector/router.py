@@ -12,17 +12,17 @@ import logging
 from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
 from itop_ai_assistant.config import EmbeddingsConfig
 from itop_ai_assistant.content_sources.registry import ItopRepos
-from itop_ai_assistant.core.api_deps import get_config_store
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.settings.config_store import ConfigStore
+from itop_ai_assistant.vector.assembly import VectorSubsystem
 from itop_ai_assistant.vector.config import VectorConfig
 from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchQuery
 from itop_ai_assistant.vector.ports.source import VectorSource
@@ -32,58 +32,41 @@ from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 from itop_ai_assistant.vector.use_cases.indexer import SWEEP_TASK
 from itop_ai_assistant.vector.use_cases.search import SearchUnavailable, SimilarSearch, UnknownFamily
 
-# core/deps.py imports the vector facade (concrete adapters); the facade's own
-# __init__ imports this module for `router` — a real import of `core.deps`
-# here would deadlock on that cycle. `AppDeps` below is a local variable
-# annotation, never evaluated at runtime (PEP 526), so type-checking only
-# costs nothing. `core/api_deps.py` is safe to import from for real, unlike
-# `core/deps.py` itself: it names `AppDeps` the same way, in local variable
-# annotations only, so importing it never runs `core/deps.py` and never
-# touches this cycle. What still can't move there is any provider whose
-# *parameter or return* type is `AppDeps` itself (a real, eagerly-evaluated
-# annotation) — `get_itop`/`get_vector_store`/`get_vector_sync`/
-# `get_vector_journal`/`get_vector_sources` stay local for that reason, built
-# from direct submodule imports (`ports.store`, `ports.source`, `state.*`,
-# `content_sources.registry`) instead. `get_vector_sources` does not call
-# `build_vector_sources` itself — it reads `AppDeps.vector_sources`, the
-# closure the composition root already built over its own `itop`.
-if TYPE_CHECKING:
-    from itop_ai_assistant.core.deps import AppDeps
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/vector")
 
 
-def get_itop(request: Request) -> ItopRepos:
-    """`ItopRepos` (`content_sources/registry.py`), not `pipelines.ports.ItopAccess`
-    which has the same one method: that file names `itop_ai_assistant.vector`
-    for `ChunkStore`, so importing it here would run this module while the
-    vector facade is still mid-import — the cycle explained above, one hop
-    further out.
+def _subsystem(request: Request) -> VectorSubsystem:
+    """The one instance `vector.build()` assembled at startup — off its own
+    `app.state.vector`, not `app.state.deps` (TASK-037): this router no
+    longer needs `AppDeps` or anything from `core/` to serve a request.
     """
-    deps: AppDeps = request.app.state.deps
-    return deps.itop
+    return request.app.state.vector
+
+
+def get_itop(request: Request) -> ItopRepos:
+    return _subsystem(request).itop
 
 
 def get_vector_store(request: Request) -> ChunkStore:
-    deps: AppDeps = request.app.state.deps
-    return deps.vector_store
+    return _subsystem(request).vector_store
 
 
 def get_vector_sync(request: Request) -> VectorSyncState:
-    deps: AppDeps = request.app.state.deps
-    return deps.vector_sync
+    return _subsystem(request).vector_sync
 
 
 def get_vector_journal(request: Request) -> IndexJournal:
-    deps: AppDeps = request.app.state.deps
-    return deps.vector_journal
+    return _subsystem(request).vector_journal
 
 
 def get_vector_search(request: Request) -> SimilarSearch:
-    deps: AppDeps = request.app.state.deps
-    return deps.vector_search
+    return _subsystem(request).vector_search
+
+
+def get_config_store(request: Request) -> ConfigStore:
+    return _subsystem(request).config_store
 
 
 async def get_vector_config(config_store: Annotated[ConfigStore, Depends(get_config_store)]) -> VectorConfig:
@@ -93,13 +76,12 @@ async def get_vector_config(config_store: Annotated[ConfigStore, Depends(get_con
 def get_vector_sources(
     request: Request, vector_cfg: Annotated[VectorConfig, Depends(get_vector_config)]
 ) -> Sequence[VectorSource[Any]]:
-    """The registered sources for the freshly-read config. `deps.vector_sources`
-    is the same builder `core/deps.py` closed over `itop` with; calling it
+    """The registered sources for the freshly-read config. `vector_sources`
+    is the same builder `vector.build()` closed over `itop` with; calling it
     here, per request, is what keeps a family added or removed from the
     saved config visible without a restart.
     """
-    deps: AppDeps = request.app.state.deps
-    return deps.vector_sources(vector_cfg)
+    return _subsystem(request).vector_sources(vector_cfg)
 
 
 async def get_embeddings_config(

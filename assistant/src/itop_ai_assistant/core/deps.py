@@ -1,4 +1,3 @@
-from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -8,7 +7,6 @@ from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from itop_ai_assistant.config import LlmConfig, Settings
-from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.core.llm_providers import get_provider
 from itop_ai_assistant.itop.connection import ItopConnection
 from itop_ai_assistant.repositories.sets import ItopRepositories
@@ -22,15 +20,8 @@ from itop_ai_assistant.settings.prompt_store import (
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.util.redis_keyspace import days_to_seconds
-from itop_ai_assistant.vector import (
-    ChunkStore,
-    IndexJournal,
-    QdrantChunkStore,
-    SimilarSearch,
-    VectorConfig,
-    VectorSource,
-    VectorSyncState,
-)
+from itop_ai_assistant.vector import SimilarSearch, VectorSubsystem
+from itop_ai_assistant.vector import build as build_vector  # aliased: this module has its own `build_deps`
 
 
 @dataclass
@@ -45,6 +36,15 @@ class AppDeps:
 
     `aclose()` is on purpose absent from every port: ownership of the connection
     pool stays here, so no run can be typed into closing it.
+
+    `vector` is one field, not five (TASK-037): the composition root calls
+    `vector.build()` once, the same way it calls `build_registry(settings)` for
+    modules, and holds whatever came back — it does not know, and does not
+    need to know, that the subsystem happens to be made of a store, two Redis
+    journals and a search door internally. `vector_search` stays a property
+    rather than a second stored field: `RunDeps.vector_search`
+    (`pipelines/ports.py`) is unchanged by this task, and structural typing
+    needs the member to exist on `AppDeps` itself, not one level down.
     """
 
     settings: Settings
@@ -57,16 +57,16 @@ class AppDeps:
     config_store: ConfigStore
     prompt_store: PromptStore
     journal: RunJournal
-    vector_store: ChunkStore
-    vector_search: SimilarSearch
-    vector_sync: VectorSyncState
-    vector_journal: IndexJournal
-    vector_sources: Callable[[VectorConfig], Sequence[VectorSource[Any]]]
+    vector: VectorSubsystem
+
+    @property
+    def vector_search(self) -> SimilarSearch:
+        return self.vector.vector_search
 
     async def aclose(self) -> None:
         await self.itop_connection.aclose()
         await self.state_manager.aclose()
-        await self.vector_store.aclose()
+        await self.vector.aclose()
 
 
 def get_deps(request: Request) -> "AppDeps":
@@ -74,9 +74,8 @@ def get_deps(request: Request) -> "AppDeps":
     hand it whole into the run core (`.claude/rules/core.md`: `AppDeps` goes to
     entry points and no deeper, and a module's `handle` is where it is taken
     apart into ports). A function that needs one field, not the container,
-    belongs in `core/api_deps.py` instead — kept free of a real import of this
-    module so `vector/router.py` can reuse it without reopening the facade
-    cycle documented in `vector/__init__.py`.
+    belongs in `core/api_deps.py` instead. `vector/router.py` does not use
+    either — it reaches its own subsystem through `request.app.state.vector`.
     """
     return request.app.state.deps
 
@@ -100,24 +99,12 @@ def create_llm(llm: LlmConfig, model: str | None = None) -> BaseChatModel:
 
 
 def build_deps(settings: Settings) -> AppDeps:
-    # One shared Redis connection pool for state, journal, config and prompts
+    # One shared Redis connection pool for state, journal, config, prompts and vector
     redis = aioredis.from_url(settings.redis_url, decode_responses=True)
     config_store = RedisConfigStore(redis, settings)
     state_manager = TicketStateManager(redis, ttl_seconds=days_to_seconds(settings.state_ttl_days))
     itop_connection = ItopConnection(config_store)
     itop = ItopRepositories(itop_connection, config_store)
-    # Lazy: no client (and no connection) until the vector store is used
-    vector_store = QdrantChunkStore(settings.qdrant_url)
-
-    # The one call site for `build_vector_sources`, imported directly from
-    # `content_sources.registry` — content providers are not part of the
-    # vector facade, so there is nothing for it to shield here. Closed over
-    # `itop` and handed to both `SimilarSearch` and `AppDeps` itself, so
-    # `search.py`/`indexer.py`/`router.py` never import the registry
-    # directly. Re-read `cfg.families` fresh on every call, not collected
-    # once here: a static list would break the live config reload.
-    def vector_sources(cfg: VectorConfig) -> list[VectorSource[Any]]:
-        return build_vector_sources(itop, cfg)
 
     return AppDeps(
         settings=settings,
@@ -127,9 +114,5 @@ def build_deps(settings: Settings) -> AppDeps:
         config_store=config_store,
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR, settings.prompts_dir), redis),
         journal=RunJournal(redis, ttl_seconds=days_to_seconds(settings.run_ttl_days)),
-        vector_store=vector_store,
-        vector_search=SimilarSearch(vector_store, config_store, build_sources=vector_sources),
-        vector_sync=VectorSyncState(redis),
-        vector_journal=IndexJournal(redis),
-        vector_sources=vector_sources,
+        vector=build_vector(settings, redis, config_store, itop),
     )

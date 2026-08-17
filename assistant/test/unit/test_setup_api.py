@@ -14,6 +14,7 @@ from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, FilePr
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
+from itop_ai_assistant.vector.assembly import VectorSubsystem
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
 from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 from itop_ai_assistant.vector.use_cases.search import SimilarSearch
@@ -67,6 +68,16 @@ def _make_deps(redis, **settings_overrides) -> AppDeps:
     def vector_sources(cfg):
         return build_vector_sources(itop, cfg)
 
+    vector = VectorSubsystem(
+        config_store=config_store,
+        itop=itop,
+        vector_store=vector_store,
+        vector_search=SimilarSearch(vector_store, config_store, build_sources=vector_sources),
+        vector_sync=VectorSyncState(redis),
+        vector_journal=IndexJournal(redis),
+        vector_sources=vector_sources,
+    )
+
     return AppDeps(
         settings=settings,
         itop=itop,
@@ -75,11 +86,7 @@ def _make_deps(redis, **settings_overrides) -> AppDeps:
         config_store=config_store,
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR), redis),
         journal=RunJournal(redis),
-        vector_store=vector_store,
-        vector_search=SimilarSearch(vector_store, config_store, build_sources=vector_sources),
-        vector_sync=VectorSyncState(redis),
-        vector_journal=IndexJournal(redis),
-        vector_sources=vector_sources,
+        vector=vector,
     )
 
 

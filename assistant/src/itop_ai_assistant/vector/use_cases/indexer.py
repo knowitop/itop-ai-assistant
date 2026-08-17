@@ -57,28 +57,26 @@ _RECONCILE_BATCH = 200
 
 class IndexerDeps(Protocol):
     """What the sweep needs from the container — declared here, by the
-    consumer, rather than taken as `AppDeps` whole (ADR-019, `core.md`:
+    consumer, rather than taken as the whole subsystem (ADR-019, `core.md`:
     "declare a port at the consumer", as `_AssignedDeps` and `ItopRepos` do).
 
-    The five members below are the whole of it. `settings`, `itop_connection`,
-    `state_manager`, `prompt_store` and the run `journal` are not here because
-    the sweep never touches them: it is infrastructure with no run frame, and
-    its own journal is `vector_journal`. `itop` is not here either — the
-    sweep never calls it directly, only the composition root does, to build
-    `vector_sources` (below) once and hand the sweep the result. `aclose()`
-    is absent for the reason it is absent from every port — the pool belongs
-    to the composition root.
+    The five members below are the whole of it. `itop` is not here — the
+    sweep never calls it directly, only `vector.build()` does, to close over
+    it once and hand the sweep the resulting `vector_sources` builder (below).
+    `aclose()` is absent for the reason it is absent from every port — the
+    pool belongs to the composition root.
 
     Read-only properties, never plain attributes, except `vector_sources`:
     an attribute is invariant, so e.g. `vector_store: ChunkStore` would
-    reject an `AppDeps` whose field is typed more narrowly. `vector_sources`
-    is a method instead, the same shape as `ItopAccess.for_principal`
-    (`pipelines/ports.py`) — it is an operation (`VectorConfig` in, a fresh
-    list out), not a stored value, so a method reads truer than a property
-    that happens to return a callable. `AppDeps` satisfies all of this
-    structurally and knows nothing about it — which is also what keeps
-    `core/deps.py` out of this module entirely, cycle with the facade
-    included.
+    reject an implementation whose field is typed more narrowly.
+    `vector_sources` is a method instead, the same shape as
+    `ItopAccess.for_principal` (`pipelines/ports.py`) — it is an operation
+    (`VectorConfig` in, a fresh list out), not a stored value, so a method
+    reads truer than a property that happens to return a callable.
+    `VectorSubsystem` (`vector/assembly.py`) satisfies all of this
+    structurally and knows nothing about it — `core/background.py` hands it
+    `deps.vector`, not `AppDeps` itself (TASK-037), which is also what keeps
+    `core/deps.py` out of this module entirely.
     """
 
     @property

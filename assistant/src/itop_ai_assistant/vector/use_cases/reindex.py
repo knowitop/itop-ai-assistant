@@ -42,9 +42,9 @@ async def _run(full: bool) -> int:
         return 1
     deps = build_deps(settings)
     try:
-        indexer = VectorIndexer(deps)
+        indexer = VectorIndexer(deps.vector)
         if full:
-            await deps.vector_sync.request_reindex()
+            await deps.vector.vector_sync.request_reindex()
         # Retry until a clean pass: per-class errors don't advance that class's
         # cursor, and the hash-guard makes re-reading already-indexed pages cheap
         for attempt in range(1, _MAX_ATTEMPTS + 1):

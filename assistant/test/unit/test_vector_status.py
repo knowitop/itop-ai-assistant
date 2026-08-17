@@ -17,6 +17,7 @@ from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, FilePr
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
+from itop_ai_assistant.vector.assembly import VectorSubsystem
 from itop_ai_assistant.vector.ports.store import ChunkMetadata, ChunkRecord
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
 from itop_ai_assistant.vector.state.sync_state import VectorSyncState
@@ -82,7 +83,9 @@ _BLANK = {
 def _make_deps(redis, store_url: str | None = None, **settings_overrides) -> AppDeps:
     """`store_url` feeds the `ChunkStore` directly, not the production
     `qdrant_url` setting — these tests exercise `vector/router.py` against the
-    `ChunkStore` port itself (configured-but-unreachable included)."""
+    `ChunkStore` port itself (configured-but-unreachable included). Builds
+    `VectorSubsystem` by hand rather than calling `vector.build()` for exactly
+    that reason — `build()` would only ever take `settings.qdrant_url`."""
     settings = get_settings().model_copy(update={**_BLANK, **settings_overrides})
     config_store = RedisConfigStore(redis, settings)
     itop = MagicMock()
@@ -90,6 +93,16 @@ def _make_deps(redis, store_url: str | None = None, **settings_overrides) -> App
 
     def vector_sources(cfg):
         return build_vector_sources(itop, cfg)
+
+    vector = VectorSubsystem(
+        config_store=config_store,
+        itop=itop,
+        vector_store=vector_store,
+        vector_search=SimilarSearch(vector_store, config_store, build_sources=vector_sources),
+        vector_sync=VectorSyncState(redis),
+        vector_journal=IndexJournal(redis),
+        vector_sources=vector_sources,
+    )
 
     return AppDeps(
         settings=settings,
@@ -99,19 +112,24 @@ def _make_deps(redis, store_url: str | None = None, **settings_overrides) -> App
         config_store=config_store,
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR), redis),
         journal=RunJournal(redis),
-        vector_store=vector_store,
-        vector_search=SimilarSearch(vector_store, config_store, build_sources=vector_sources),
-        vector_sync=VectorSyncState(redis),
-        vector_journal=IndexJournal(redis),
-        vector_sources=vector_sources,
+        vector=vector,
     )
+
+
+def _install(client: TestClient, deps: AppDeps) -> None:
+    """`vector/router.py` is served off `app.state.vector` alone (TASK-037),
+    a separate attribute from `app.state.deps` — every test that swaps in its
+    own `deps` has to set both, or `/api/vector/*` 500s on a missing state key.
+    """
+    client.app.state.deps = deps
+    client.app.state.vector = deps.vector
 
 
 class VectorStatusTestCase(unittest.TestCase):
     def setUp(self):
         self.client = self.enterContext(TestClient(app))
         self.redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
-        self.client.app.state.deps = _make_deps(self.redis)
+        _install(self.client, _make_deps(self.redis))
         # The lifespan built a real (empty) scheduler: no qdrant_url in the
         # test settings, so the sweep loop was never registered
         self.tasks = self.client.app.state.tasks
@@ -198,7 +216,7 @@ class TestVectorStatus(VectorStatusTestCase):
 
     def test_database_down_reports_error_not_500(self):
         # Port 1 is never listening — connection fails fast
-        self.client.app.state.deps = _make_deps(self.redis, store_url="http://localhost:1")
+        _install(self.client, _make_deps(self.redis, store_url="http://localhost:1"))
 
         response = self.client.get("/api/vector/status")
 
@@ -210,9 +228,7 @@ class TestVectorStatus(VectorStatusTestCase):
         self.assertIsNone(body["index"])
 
     def test_embeddings_configured_flag(self):
-        self.client.app.state.deps = _make_deps(
-            self.redis, embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
-        )
+        _install(self.client, _make_deps(self.redis, embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"))
 
         body = self.client.get("/api/vector/status").json()
 
@@ -230,7 +246,7 @@ class TestVectorStatus(VectorStatusTestCase):
         # both appear `configured: true` even with no active version yet —
         # same "no index" case the old single-block response used to report.
         deps = _make_deps(self.redis, store_url=":memory:")
-        self.client.app.state.deps = deps
+        _install(self.client, deps)
 
         body = self.client.get("/api/vector/status").json()
 
@@ -245,8 +261,8 @@ class TestVectorStatus(VectorStatusTestCase):
         # list_families() (Qdrant) knows about `kb_articles`; build_vector_sources()
         # (code) does not — the union still surfaces it, flagged instead of dropped.
         deps = _make_deps(self.redis, store_url=":memory:")
-        asyncio.run(deps.vector_store.ensure_version("kb_articles", "bge-m3", 4))
-        self.client.app.state.deps = deps
+        asyncio.run(deps.vector.vector_store.ensure_version("kb_articles", "bge-m3", 4))
+        _install(self.client, deps)
 
         body = self.client.get("/api/vector/status").json()
 
@@ -260,7 +276,7 @@ class TestVectorStatus(VectorStatusTestCase):
         self.assertEqual(families["kb_articles"]["rows"], 0)
 
     def test_requires_admin_token_when_set(self):
-        self.client.app.state.deps = _make_deps(self.redis, admin_token=SecretStr("s3cret"))
+        _install(self.client, _make_deps(self.redis, admin_token=SecretStr("s3cret")))
 
         self.assertEqual(self.client.get("/api/vector/status").status_code, 401)
         response = self.client.get("/api/vector/status", headers={"Authorization": "Bearer s3cret"})
@@ -277,7 +293,7 @@ class TestReindex(VectorStatusTestCase):
         self.assertIn("qdrant_url", response.json()["detail"])
 
     def test_409_when_vector_disabled(self):
-        self.client.app.state.deps = _make_deps(self.redis, store_url="http://localhost:1")
+        _install(self.client, _make_deps(self.redis, store_url="http://localhost:1"))
 
         response = self.client.post("/api/vector/reindex")
 
@@ -289,8 +305,8 @@ class TestReindex(VectorStatusTestCase):
         failure — it must say so instead of pretending the backfill was
         scheduled."""
         deps = _make_deps(self.redis, store_url="http://localhost:1")
-        deps.vector_sync.request_reindex = AsyncMock(side_effect=ConnectionError("redis down"))
-        self.client.app.state.deps = deps
+        deps.vector.vector_sync.request_reindex = AsyncMock(side_effect=ConnectionError("redis down"))
+        _install(self.client, deps)
         self.client.patch("/api/setup/vector", json={"enabled": True})
 
         response = self.client.post("/api/vector/reindex")
@@ -302,7 +318,7 @@ class TestReindex(VectorStatusTestCase):
         """The request is a flag in Redis — the wake-up only makes the local
         loop act on it sooner."""
         deps = _make_deps(self.redis, store_url="http://localhost:1")
-        self.client.app.state.deps = deps
+        _install(self.client, deps)
         self.client.patch("/api/setup/vector", json={"enabled": True})
         self.tasks.wake = MagicMock(return_value=True)
 
@@ -310,7 +326,7 @@ class TestReindex(VectorStatusTestCase):
 
         self.assertEqual(response.status_code, 202)
         self.assertEqual(response.json(), {"status": "scheduled"})
-        self.assertTrue(asyncio.run(deps.vector_sync.reindex_pending()))
+        self.assertTrue(asyncio.run(deps.vector.vector_sync.reindex_pending()))
         self.tasks.wake.assert_called_once_with(SWEEP_TASK)
 
 
@@ -324,7 +340,7 @@ class TestSweep(VectorStatusTestCase):
         deps = _make_deps(
             self.redis, store_url="http://localhost:1", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
-        self.client.app.state.deps = deps
+        _install(self.client, deps)
         self.client.patch("/api/setup/vector", json={"enabled": True})
         return deps
 
@@ -337,7 +353,7 @@ class TestSweep(VectorStatusTestCase):
         self.assertIn("qdrant_url", response.json()["detail"])
 
     def test_409_when_vector_disabled(self):
-        self.client.app.state.deps = _make_deps(self.redis, store_url="http://localhost:1")
+        _install(self.client, _make_deps(self.redis, store_url="http://localhost:1"))
 
         response = self.client.post("/api/vector/sweep")
 
@@ -345,7 +361,7 @@ class TestSweep(VectorStatusTestCase):
         self.assertIn("disabled", response.json()["detail"])
 
     def test_409_when_embeddings_not_configured(self):
-        self.client.app.state.deps = _make_deps(self.redis, store_url="http://localhost:1")
+        _install(self.client, _make_deps(self.redis, store_url="http://localhost:1"))
         self.client.patch("/api/setup/vector", json={"enabled": True})
         self.tasks.wake = MagicMock(return_value=True)
 
@@ -376,10 +392,10 @@ class TestSweep(VectorStatusTestCase):
         self.assertEqual(response.json(), {"status": "scheduled"})
         self.tasks.wake.assert_called_once_with(SWEEP_TASK)
         # The cursors stay where they are — that is the whole difference
-        self.assertFalse(asyncio.run(deps.vector_sync.reindex_pending()))
+        self.assertFalse(asyncio.run(deps.vector.vector_sync.reindex_pending()))
 
     def test_requires_admin_token_when_set(self):
-        self.client.app.state.deps = _make_deps(self.redis, admin_token=SecretStr("s3cret"))
+        _install(self.client, _make_deps(self.redis, admin_token=SecretStr("s3cret")))
 
         self.assertEqual(self.client.post("/api/vector/sweep").status_code, 401)
 
@@ -394,7 +410,7 @@ class TestSearch(VectorStatusTestCase):
         self.assertIn("qdrant_url", response.json()["detail"])
 
     def test_409_when_vector_disabled(self):
-        self.client.app.state.deps = _make_deps(self.redis, store_url=":memory:")
+        _install(self.client, _make_deps(self.redis, store_url=":memory:"))
 
         response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
 
@@ -402,7 +418,7 @@ class TestSearch(VectorStatusTestCase):
         self.assertIn("disabled", response.json()["detail"])
 
     def test_409_when_embeddings_not_configured(self):
-        self.client.app.state.deps = _make_deps(self.redis, store_url=":memory:")
+        _install(self.client, _make_deps(self.redis, store_url=":memory:"))
         self.client.patch("/api/setup/vector", json={"enabled": True})
 
         response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
@@ -411,8 +427,11 @@ class TestSearch(VectorStatusTestCase):
         self.assertIn("Embeddings", response.json()["detail"])
 
     def test_404_for_an_unknown_family(self):
-        self.client.app.state.deps = _make_deps(
-            self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+        _install(
+            self.client,
+            _make_deps(
+                self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+            ),
         )
         self.client.patch("/api/setup/vector", json={"enabled": True})
 
@@ -425,8 +444,11 @@ class TestSearch(VectorStatusTestCase):
         # `SearchQuery`'s own rule, surfaced by the request model's validator
         # (TASK-031): a scenario that cannot work is a bad request, not a 500
         # from inside the handler.
-        self.client.app.state.deps = _make_deps(
-            self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+        _install(
+            self.client,
+            _make_deps(
+                self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+            ),
         )
         self.client.patch("/api/setup/vector", json={"enabled": True})
 
@@ -440,7 +462,7 @@ class TestSearch(VectorStatusTestCase):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
-        self.client.app.state.deps = deps
+        _install(self.client, deps)
         self.client.patch("/api/setup/vector", json={"enabled": True})
         embedder = MagicMock()
         embedder.embed = AsyncMock(return_value=[[1.0, 0.0, 0.0, 0.0]])
@@ -449,7 +471,7 @@ class TestSearch(VectorStatusTestCase):
 
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch.object(deps.vector_search, "_build_sources", return_value=[source]),
+            patch.object(deps.vector.vector_search, "_build_sources", return_value=[source]),
         ):
             response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
 
@@ -462,12 +484,12 @@ class TestSearch(VectorStatusTestCase):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
-        self.client.app.state.deps = deps
+        _install(self.client, deps)
         self.client.patch("/api/setup/vector", json={"enabled": True})
 
         async def _seed() -> None:
-            await deps.vector_store.ensure_version("tickets", "bge-m3", 4)
-            await deps.vector_store.upsert_chunks(
+            await deps.vector.vector_store.ensure_version("tickets", "bge-m3", 4)
+            await deps.vector.vector_store.upsert_chunks(
                 [_chunk(1), _chunk(2), _chunk(3)], family="tickets", model="bge-m3", dim=4
             )
 
@@ -480,7 +502,7 @@ class TestSearch(VectorStatusTestCase):
 
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch.object(deps.vector_search, "_build_sources", return_value=[source]),
+            patch.object(deps.vector.vector_search, "_build_sources", return_value=[source]),
         ):
             response = self.client.post(
                 "/api/vector/search",
@@ -508,12 +530,12 @@ class TestSearch(VectorStatusTestCase):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
-        self.client.app.state.deps = deps
+        _install(self.client, deps)
         self.client.patch("/api/setup/vector", json={"enabled": True})
 
         async def _seed() -> None:
-            await deps.vector_store.ensure_version("tickets", "bge-m3", 4)
-            await deps.vector_store.upsert_chunks(
+            await deps.vector.vector_store.ensure_version("tickets", "bge-m3", 4)
+            await deps.vector.vector_store.upsert_chunks(
                 [_chunk(1), _chunk(2, updated_at=datetime(2020, 1, 1, tzinfo=UTC))],
                 family="tickets",
                 model="bge-m3",
@@ -527,7 +549,7 @@ class TestSearch(VectorStatusTestCase):
 
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch.object(deps.vector_search, "_build_sources", return_value=[_FakeSource(existing={1, 2})]),
+            patch.object(deps.vector.vector_search, "_build_sources", return_value=[_FakeSource(existing={1, 2})]),
         ):
             response = self.client.post(
                 "/api/vector/search",
@@ -540,8 +562,11 @@ class TestSearch(VectorStatusTestCase):
     def test_an_impossible_window_is_rejected_on_parsing(self):
         # 422 from the body validator, not a 500 out of the store: the domain
         # `DateRange` invariants are checked before the search runs at all
-        self.client.app.state.deps = _make_deps(
-            self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+        _install(
+            self.client,
+            _make_deps(
+                self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
+            ),
         )
         self.client.patch("/api/setup/vector", json={"enabled": True})
 
@@ -554,7 +579,7 @@ class TestSearch(VectorStatusTestCase):
                 self.assertEqual(response.status_code, 422)
 
     def test_requires_admin_token_when_set(self):
-        self.client.app.state.deps = _make_deps(self.redis, admin_token=SecretStr("s3cret"))
+        _install(self.client, _make_deps(self.redis, admin_token=SecretStr("s3cret")))
 
         response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
 
@@ -568,8 +593,10 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
 
     def _seed_and_patch(self, deps, *, existing, allowed_org_ids):
         async def _seed() -> None:
-            await deps.vector_store.ensure_version("tickets", "bge-m3", 4)
-            await deps.vector_store.upsert_chunks([_chunk(1), _chunk(2)], family="tickets", model="bge-m3", dim=4)
+            await deps.vector.vector_store.ensure_version("tickets", "bge-m3", 4)
+            await deps.vector.vector_store.upsert_chunks(
+                [_chunk(1), _chunk(2)], family="tickets", model="bge-m3", dim=4
+            )
 
         asyncio.run(_seed())
         embedder = MagicMock()
@@ -588,7 +615,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
-        self.client.app.state.deps = deps
+        _install(self.client, deps)
         self.client.patch("/api/setup/vector", json={"enabled": True})
         # Unrestricted org scope here — the seeded chunks carry no `org_id`
         # filter value, so an org pre-filter would (correctly) match nothing;
@@ -597,7 +624,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
 
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch.object(deps.vector_search, "_build_sources", return_value=[source]),
+            patch.object(deps.vector.vector_search, "_build_sources", return_value=[source]),
         ):
             response = self.client.post(
                 "/api/vector/search",
@@ -622,13 +649,13 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
-        self.client.app.state.deps = deps
+        _install(self.client, deps)
         self.client.patch("/api/setup/vector", json={"enabled": True})
         embedder, source, _ = self._seed_and_patch(deps, existing={1}, allowed_org_ids=None)
 
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch.object(deps.vector_search, "_build_sources", return_value=[source]),
+            patch.object(deps.vector.vector_search, "_build_sources", return_value=[source]),
         ):
             response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
 
@@ -640,14 +667,14 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
-        self.client.app.state.deps = deps
+        _install(self.client, deps)
         self.client.patch("/api/setup/vector", json={"enabled": True})
         embedder, source, _ = self._seed_and_patch(deps, existing={1, 2}, allowed_org_ids=["3", "9"])
-        store_search = AsyncMock(wraps=deps.vector_store.search)
+        store_search = AsyncMock(wraps=deps.vector.vector_store.search)
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch.object(deps.vector_search, "_build_sources", return_value=[source]),
-            patch.object(deps.vector_store, "search", store_search),
+            patch.object(deps.vector.vector_search, "_build_sources", return_value=[source]),
+            patch.object(deps.vector.vector_store, "search", store_search),
         ):
             self.client.post(
                 "/api/vector/search",
@@ -660,14 +687,14 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
-        self.client.app.state.deps = deps
+        _install(self.client, deps)
         self.client.patch("/api/setup/vector", json={"enabled": True})
         embedder, source, _ = self._seed_and_patch(deps, existing={1, 2}, allowed_org_ids=["3"])
-        store_search = AsyncMock(wraps=deps.vector_store.search)
+        store_search = AsyncMock(wraps=deps.vector.vector_store.search)
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch.object(deps.vector_search, "_build_sources", return_value=[source]),
-            patch.object(deps.vector_store, "search", store_search),
+            patch.object(deps.vector.vector_search, "_build_sources", return_value=[source]),
+            patch.object(deps.vector.vector_store, "search", store_search),
         ):
             self.client.post(
                 "/api/vector/search",
@@ -685,14 +712,14 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
-        self.client.app.state.deps = deps
+        _install(self.client, deps)
         self.client.patch("/api/setup/vector", json={"enabled": True})
         embedder, source, _ = self._seed_and_patch(deps, existing={1, 2}, allowed_org_ids=None)
-        store_search = AsyncMock(wraps=deps.vector_store.search)
+        store_search = AsyncMock(wraps=deps.vector.vector_store.search)
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch.object(deps.vector_search, "_build_sources", return_value=[source]),
-            patch.object(deps.vector_store, "search", store_search),
+            patch.object(deps.vector.vector_search, "_build_sources", return_value=[source]),
+            patch.object(deps.vector.vector_store, "search", store_search),
         ):
             response = self.client.post(
                 "/api/vector/search",
@@ -710,12 +737,12 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
-        self.client.app.state.deps = deps
+        _install(self.client, deps)
         self.client.patch("/api/setup/vector", json={"enabled": True})
 
         async def _seed() -> None:
-            await deps.vector_store.ensure_version("kb_articles", "bge-m3", 4)
-            await deps.vector_store.upsert_chunks([_chunk(1)], family="kb_articles", model="bge-m3", dim=4)
+            await deps.vector.vector_store.ensure_version("kb_articles", "bge-m3", 4)
+            await deps.vector.vector_store.upsert_chunks([_chunk(1)], family="kb_articles", model="bge-m3", dim=4)
 
         asyncio.run(_seed())
         embedder = MagicMock()
@@ -729,7 +756,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
 
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch.object(deps.vector_search, "_build_sources", return_value=[source]),
+            patch.object(deps.vector.vector_search, "_build_sources", return_value=[source]),
         ):
             response = self.client.post(
                 "/api/vector/search",

@@ -5,34 +5,28 @@ them: the webhook and the synchronous request path both refuse to run until the
 connections are configured, and both admin-token holders and webhook callers
 reach the same effective `security` section.
 
-Every provider here names an `AppDeps` field only in a **local variable**
-annotation (`deps: AppDeps = ...`), never a real import and never a parameter
-or return annotation — PEP 526 local annotations are not evaluated at runtime,
-so this module never actually imports `core.deps`. That is what lets
-`vector/router.py` import a provider from here for real: `core/deps.py`
-imports the vector facade, whose `__init__` imports `vector/router.py`, so a
-real `AppDeps` import anywhere in this file's own import chain would deadlock
-that cycle one hop further out (see `vector/__init__.py`'s docstring). A
-provider that must return the whole container (`get_deps`) lives next to the
-class itself, in `core/deps.py`, for exactly this reason — it is only used by
-`webhook`/`request`/`admin`, none of which vector's cycle touches.
+A provider that must return the whole container (`get_deps`) lives next to the
+class itself, in `core/deps.py`, not here — it is only used by
+`webhook`/`request`/`admin`. `vector/router.py` does not import from this
+module at all (TASK-037): it reaches its own assembled subsystem through
+`request.app.state.vector` instead, which is what makes the plain top-level
+`AppDeps` import below safe — nothing that imports this file is itself
+imported by `core/deps.py`.
 """
 
 import logging
 import secrets
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from itop_ai_assistant.config import ItopConfig, LlmConfig, SecurityConfig, missing_setup
+from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.settings.prompt_store import PromptStore
 from itop_ai_assistant.state.journal import RunJournal
-
-if TYPE_CHECKING:
-    from itop_ai_assistant.core.deps import AppDeps
 
 logger = logging.getLogger(__name__)
 

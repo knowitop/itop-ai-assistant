@@ -21,9 +21,10 @@ reach.
 
 `TestOnlyTheContractIsImportedFromOutside` narrows `TestVectorFacade` one
 step further: not just "through the facade", but "which names the facade
-hands out" — a business module may take the contract-out (`SimilarSearch`
-and its value types), never an adapter the composition root still assembles
-by hand.
+hands out" — every name it re-exports, and nothing it does not (TASK-037
+retired the composition root's own back door: `core/deps.py` no longer
+assembles concrete adapters by hand, so there is nothing left that needs a
+wider allowance than everyone else).
 """
 
 import ast
@@ -144,12 +145,17 @@ class TestVectorFacade(unittest.TestCase):
                 self.assertEqual(set(), deep)
 
 
-#: What `find()`/`available()` need to be called and its scenario built: the
-#: door itself, its value types and its exceptions. Plus the vocabulary
-#: `content_sources/` needs to implement `VectorSource` at all — the same
-#: kind of "contract-in" as `SimilarSearch`/`SearchQuery` are contract-out:
-#: not an adapter a caller assembles, but names required to speak the
-#: subsystem's language. Any business module may import these.
+#: What a caller from outside `vector/` may take from the facade — the whole
+#: of it, one list, not two (TASK-037 folds what used to be `_CONTRACT_NAMES`
+#: and a separate `_ROOT_ADAPTER_NAMES` together: since `core/deps.py` stopped
+#: assembling concrete adapters by hand, there is no more special back door
+#: for the composition root to have — everyone importing this facade reaches
+#: it the same way). `SimilarSearch.available()`/`find()`, its value types and
+#: exceptions, and the vocabulary `content_sources/` needs to implement
+#: `VectorSource` at all are the contract-out a business module calls;
+#: `build`/`VectorSubsystem` are what `core/deps.py` calls once to assemble
+#: the subsystem; `register_vector_sweep` is what `core/background.py` calls
+#: once to schedule it; `router` is what `admin/router.py` mounts.
 _CONTRACT_NAMES = {
     "Chunk",
     "ChunkFragmentConfig",
@@ -170,34 +176,26 @@ _CONTRACT_NAMES = {
     "VectorConfig",
     "VectorRecord",
     "VectorSource",
+    "VectorSubsystem",
+    "build",
     "chunk_object",
     "clean_text",
     "measure_embedding_dimension",
-}
-
-#: Concrete adapters the composition root still assembles by hand (A2/A5 in
-#: `architecture/alignment-plan.md`) — a future stage removes this half of the
-#: allowlist, not the test. `build_vector_sources` is not one of them: it
-#: lives in `content_sources.registry`, and `core/deps.py` imports it from
-#: there directly, not through this facade.
-_ROOT_ADAPTER_NAMES = {
-    "ChunkStore",
-    "IndexJournal",
-    "QdrantChunkStore",
-    "VectorSyncState",
     "register_vector_sweep",
     "router",
 }
 
 
 class TestOnlyTheContractIsImportedFromOutside(unittest.TestCase):
-    """A business module reaches the subsystem through the contract only —
-    `SimilarSearch.available()`/`find()`, its value types, its exceptions.
-    The adapters the facade still re-exports are for the composition root
-    and entry points, not for a module to assemble a search from by hand."""
+    """A caller from outside `vector/` reaches the subsystem through the
+    facade's own names only — never a submodule, and never a concrete
+    adapter the facade itself no longer re-exports (`QdrantChunkStore`,
+    `IndexJournal`, `VectorSyncState`, `ChunkStore`: `core/deps.py` was their
+    last consumer, and it now takes the assembled `VectorSubsystem` instead,
+    TASK-037)."""
 
-    def test_a_facade_name_is_either_the_contract_or_a_root_adapter(self):
-        allowed = _CONTRACT_NAMES | _ROOT_ADAPTER_NAMES
+    def test_a_facade_name_is_allowed(self):
+        allowed = _CONTRACT_NAMES
         for path in _sources():
             rel = path.relative_to(PACKAGE)
             if rel.parts[0] == "vector":
@@ -251,9 +249,10 @@ class TestSourcesAreInjectedNotBuilt(unittest.TestCase):
     one keeps the domain out of `vector/` entirely, this one keeps
     `search.py`, `indexer.py` and `router.py` from building the source *list*
     themselves even via the door `content_sources.registry` leaves open:
-    `core/deps.py` is the one caller of `build_vector_sources()` in the
-    process, reached directly, not through the vector facade (see
-    `_ROOT_ADAPTER_NAMES` above).
+    `vector/assembly.py` is the one caller of `build_vector_sources()` in the
+    process (TASK-037 — `core/deps.py` imported it directly before; now it
+    takes the already-assembled `VectorSubsystem` and never names
+    `content_sources.registry` at all).
 
     Checks the one name, not the whole module: `router.py` legitimately
     imports `ItopRepos` from `content_sources.registry` (`/search`'s R4 org

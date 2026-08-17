@@ -51,7 +51,7 @@ _EMB_CFG = EmbeddingsConfig(base_url="http://emb/v1", model="test-model", dimens
 
 
 def _requires_indexer_deps(deps: IndexerDeps) -> IndexerDeps:
-    """Typed narrowly on purpose: passing an `AppDeps` here is the assertion."""
+    """Typed narrowly on purpose: passing `AppDeps.vector` here is the assertion."""
     return deps
 
 
@@ -949,11 +949,13 @@ class TestReconciliation(IndexerTestCase):
 
 
 class TestIndexerPort(unittest.TestCase):
-    """`IndexerDeps` against the real container (TASK-029), the same way
-    `test_pipelines_ports.py` pins the run core's ports.
+    """`IndexerDeps` against the real `VectorSubsystem` (TASK-029, narrowed to
+    the assembled subsystem rather than the whole container in TASK-037 —
+    `core/background.py` hands the sweep `deps.vector`, not `deps`), the same
+    way `test_pipelines_ports.py` pins the run core's ports.
 
     The first test is mostly a mypy assertion that happens to also run: if
-    `AppDeps` ever stops satisfying the port — a field renamed, a type
+    `VectorSubsystem` ever stops satisfying the port — a field renamed, a type
     narrowed the wrong way, a member declared as a plain attribute instead of
     a read-only property — the strict mypy gate fails here, at the seam,
     instead of somewhere inside a sweep. It is annotated `-> None` for that
@@ -970,7 +972,7 @@ class TestIndexerPort(unittest.TestCase):
     def test_the_container_is_accepted_where_the_sweep_expects_the_port(self) -> None:
         deps: AppDeps = build_deps(get_settings())
 
-        self.assertIs(_requires_indexer_deps(deps), deps)
+        self.assertIs(_requires_indexer_deps(deps.vector), deps.vector)
 
     def test_the_port_withholds_what_the_sweep_has_no_business_with(self) -> None:
         # `itop` moved out in TASK-034: the sweep never called it directly,
