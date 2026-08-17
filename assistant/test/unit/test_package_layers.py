@@ -33,9 +33,9 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import itop_ai_assistant
-from itop_ai_assistant.config import VectorConfig
 from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.core.principal import Principal
+from itop_ai_assistant.vector import VectorConfig
 from itop_ai_assistant.vector.use_cases.search import SimilarSearch
 
 PACKAGE = Path(itop_ai_assistant.__file__).parent
@@ -83,6 +83,24 @@ class TestTheRootStaysThin(unittest.TestCase):
         found = {p.name for p in PACKAGE.glob("*.py")}
 
         self.assertEqual(set(), found - ROOT_MODULES)
+
+
+#: Rule 6.3, TASK-036: the subsystem's own config models, checked as
+#: declarations rather than imports — `TestVectorFacade` below guards who may
+#: *import* past the facade, this guards who may *declare* the section at all.
+_VECTOR_CONFIG_MODELS = {"ChunkFragmentConfig", "FamilyConfig", "VectorClassConfig", "VectorConfig"}
+
+
+class TestVectorOwnsItsConfig(unittest.TestCase):
+    def test_no_file_outside_vector_declares_a_vector_config_model(self):
+        for path in _sources():
+            rel = path.relative_to(PACKAGE)
+            if rel.parts[0] == "vector":
+                continue
+            with self.subTest(module=str(rel)):
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                declared = {node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
+                self.assertEqual(set(), declared & _VECTOR_CONFIG_MODELS)
 
 
 class TestVectorLayers(unittest.TestCase):
@@ -134,7 +152,9 @@ class TestVectorFacade(unittest.TestCase):
 #: subsystem's language. Any business module may import these.
 _CONTRACT_NAMES = {
     "Chunk",
+    "ChunkFragmentConfig",
     "DateRange",
+    "FamilyConfig",
     "FindStats",
     "FragmentContent",
     "FragmentSpec",
@@ -146,6 +166,8 @@ _CONTRACT_NAMES = {
     "SimilarSearch",
     "TextContent",
     "UnknownFamily",
+    "VectorClassConfig",
+    "VectorConfig",
     "VectorRecord",
     "VectorSource",
     "chunk_object",

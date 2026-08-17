@@ -32,11 +32,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
-from itop_ai_assistant.config import EmbeddingsConfig, FamilyConfig, VectorClassConfig, VectorConfig
+from itop_ai_assistant.config import EmbeddingsConfig
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.chunker import Chunk
+from itop_ai_assistant.vector.config import FamilyConfig, VectorClassConfig, VectorConfig
 from itop_ai_assistant.vector.ports.source import VectorRecord, VectorSource
 from itop_ai_assistant.vector.ports.store import (
     ChunkDigest,

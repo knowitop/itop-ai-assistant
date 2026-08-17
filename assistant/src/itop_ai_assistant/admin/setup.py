@@ -25,7 +25,6 @@ from itop_ai_assistant.config import (
     LlmConfig,
     SecurityConfig,
     TicketMappingConfig,
-    VectorConfig,
     missing_setup,
 )
 from itop_ai_assistant.core.api_deps import get_config_store
@@ -35,7 +34,7 @@ from itop_ai_assistant.itop.connection import create_itop_client
 from itop_ai_assistant.itop.provisioning import provision_itop
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.util.text import strip_thinking
-from itop_ai_assistant.vector import measure_embedding_dimension
+from itop_ai_assistant.vector import VectorConfig, measure_embedding_dimension
 
 logger = logging.getLogger(__name__)
 

@@ -42,6 +42,20 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   TASK-035 — it lives in `content_sources.registry` now, and `core/deps.py`
   imports it from there directly, since there is nothing left in `vector/`
   for the facade to shield.
+- **Its own config section, not `config.py`'s** (TASK-036, rule 6.3).
+  `VectorConfig`/`FamilyConfig`/`VectorClassConfig`/`ChunkFragmentConfig` live
+  in `vector/config.py`, re-exported by the facade as contract-out —
+  `content_sources/` needs the class-level pair to implement
+  `VectorSource.chunk()` at all, and `content_sources/registry.py`'s
+  `build_vector_sources`/`admin/setup.py`'s `SETUP_SECTIONS` need the section
+  pair. `Settings` carries no `vector` field any more: the section resolves
+  through the same `module_defaults`/`module_config` fallback a business
+  module's section does, even though `vector` is infrastructure, not a
+  module (see the bullet below) — `RedisConfigStore._defaults` falls back to
+  it for any section without a `Settings` attribute, not only for a
+  registered one. `test_package_layers.py::TestVectorOwnsItsConfig` pins the
+  rule directly: no file outside `vector/` may declare any of the four
+  classes.
 - **Infrastructure, not a business module.** It does not register in
   `TriggerRegistry`, has no prompts and no trigger routes. Business modules
   consume it through `RunDeps.vector_search`/`AppDeps.vector_search` — one

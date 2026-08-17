@@ -1,11 +1,11 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from itop_ai_assistant.config import FamilyConfig, VectorClassConfig, VectorConfig
 from itop_ai_assistant.content_sources.faq import FAMILY as FAQ_FAMILY
 from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.content_sources.tickets import FAMILY as TICKETS_FAMILY
 from itop_ai_assistant.core.principal import Principal
+from itop_ai_assistant.vector import FamilyConfig, VectorClassConfig, VectorConfig
 
 _ENGINEER = Principal.delegated("tok", login="ivanov", name="Ivan Ivanov")
 

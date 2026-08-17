@@ -9,14 +9,20 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
-from itop_ai_assistant.config import FamilyConfig, VectorConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.repositories.faq import FaqRepository
 from itop_ai_assistant.repositories.sets import RepositorySet
 from itop_ai_assistant.repositories.ticket import TicketRepository
 
 if TYPE_CHECKING:
-    from itop_ai_assistant.vector import VectorSource
+    # `vector/router.py` imports this module for real (`ItopRepos`), and
+    # `vector/__init__.py` imports `.router` — a real import of the facade
+    # here, at module level, would deadlock on that cycle the same way a real
+    # `core.deps` import would (see `vector/__init__.py`'s own docstring).
+    # `FamilyConfig` is imported again, for real, inside `build_vector_sources`
+    # below, where it is actually instantiated — by then every module involved
+    # has finished importing, so the same cycle cannot occur.
+    from itop_ai_assistant.vector import VectorConfig, VectorSource
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +48,7 @@ class ItopRepos(Protocol):
     async def for_principal(self, principal: Principal, *, comment: str) -> RepositorySet: ...
 
 
-def build_vector_sources(itop: ItopRepos, cfg: VectorConfig) -> list["VectorSource[Any]"]:
+def build_vector_sources(itop: ItopRepos, cfg: "VectorConfig") -> list["VectorSource[Any]"]:
     """One instance per *registered* family, not per family the saved config
     happens to still mention.
 
@@ -63,6 +69,7 @@ def build_vector_sources(itop: ItopRepos, cfg: VectorConfig) -> list["VectorSour
     from itop_ai_assistant.content_sources.faq import FaqVectorSource
     from itop_ai_assistant.content_sources.tickets import FAMILY as TICKETS_FAMILY
     from itop_ai_assistant.content_sources.tickets import TicketVectorSource
+    from itop_ai_assistant.vector import FamilyConfig
 
     # A source is given one repository, not the set: it has no business reaching
     # for another one. Two accessors, not one, and neither can answer as the

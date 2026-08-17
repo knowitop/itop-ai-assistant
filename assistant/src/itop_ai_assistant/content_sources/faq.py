@@ -10,15 +10,16 @@ import logging
 from collections.abc import Sequence
 from datetime import datetime
 
-from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.faq import FaqArticle
 from itop_ai_assistant.repositories.faq import FaqRepository, FaqRepositoryForPrincipal, FaqRepositoryProvider
 from itop_ai_assistant.vector import (
     Chunk,
+    ChunkFragmentConfig,
     FragmentContent,
     FragmentSpec,
     TextContent,
+    VectorClassConfig,
     VectorRecord,
     VectorSource,
     chunk_object,

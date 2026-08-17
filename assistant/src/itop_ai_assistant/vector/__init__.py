@@ -12,9 +12,14 @@ calls (`SimilarSearch.available()`/`find()`, its exceptions,
 `measure_embedding_dimension`, plus the vocabulary `content_sources/` needs
 to implement `VectorSource` at all: `Chunk`, `FragmentContent`,
 `FragmentSpec`, `SequenceContent`, `TextContent`, `VectorRecord`,
-`VectorSource`, `chunk_object`, `clean_text`) and the adapters the
-composition root still assembles by hand (`QdrantChunkStore`,
-`register_vector_sweep`) because the subsystem cannot yet build itself.
+`VectorSource`, `chunk_object`, `clean_text`, `ChunkFragmentConfig`,
+`VectorClassConfig` — the last two are `content_sources/`'s own chunking
+config, not an adapter, TASK-036) and the adapters the composition root still
+assembles by hand (`QdrantChunkStore`, `register_vector_sweep`) because the
+subsystem cannot yet build itself. `VectorConfig`/`FamilyConfig` (TASK-036,
+`vector/config.py`) are contract-out too, for the same reason as the pair
+above: `content_sources/registry.py::build_vector_sources` and
+`admin/setup.py` both need the section's shape, not an adapter built from it.
 `EmbeddingsClient` and `build_vector_sources` are deliberately *not*
 re-exported: neither is this package's business to shield — every caller of
 `EmbeddingsClient` goes through the `SimilarSearch`/`measure_embedding_dimension`
@@ -35,6 +40,7 @@ not.
 
 from .adapters.qdrant_store import QdrantChunkStore
 from .chunker import Chunk, FragmentContent, SequenceContent, TextContent, chunk_object, clean_text
+from .config import ChunkFragmentConfig, FamilyConfig, VectorClassConfig, VectorConfig
 from .ports.query import FindStats, ObjectHit, SearchQuery, SearchResult
 from .ports.source import FragmentSpec, VectorRecord, VectorSource
 from .ports.store import ChunkStore, DateRange
@@ -47,8 +53,10 @@ from .use_cases.search import SearchUnavailable, SimilarSearch, UnknownFamily
 
 __all__ = [
     "Chunk",
+    "ChunkFragmentConfig",
     "ChunkStore",
     "DateRange",
+    "FamilyConfig",
     "FindStats",
     "FragmentContent",
     "FragmentSpec",
@@ -62,6 +70,8 @@ __all__ = [
     "SimilarSearch",
     "TextContent",
     "UnknownFamily",
+    "VectorClassConfig",
+    "VectorConfig",
     "VectorRecord",
     "VectorSource",
     "VectorSyncState",

@@ -18,9 +18,10 @@ an organization is.
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
+from itop_ai_assistant.config import EmbeddingsConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.repositories.access import AccessRepository
+from itop_ai_assistant.vector import VectorConfig
 from itop_ai_assistant.vector.ports.query import SearchQuery
 from itop_ai_assistant.vector.ports.store import SearchHit
 from itop_ai_assistant.vector.use_cases.search import SimilarSearch

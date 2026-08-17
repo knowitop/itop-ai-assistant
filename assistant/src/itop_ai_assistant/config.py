@@ -246,120 +246,6 @@ def missing_setup(itop: ItopConfig, llm: LlmConfig) -> list[str]:
     return missing
 
 
-class ChunkFragmentConfig(BaseModel):
-    """What an administrator may say about one chunk fragment.
-
-    Which of the two keys is read depends on how the source declared the
-    fragment (`vector/ports/source.py::FragmentSpec`, ADR-018): a required fragment
-    reads `fields`, an opt-in one reads `enabled` and has no fields of its own
-    — its content is the source's business. The fragment's kind and its
-    visibility are not here at all and cannot be: they belong to the source.
-    """
-
-    # Semantic field names, from the source's `fields` vocabulary. Empty means
-    # the fragment produces nothing — valid, but almost always a mistake.
-    fields: list[str] = []
-    # Only meaningful for opt-in fragments; a fragment missing from the
-    # `chunks` map entirely is off.
-    enabled: bool = True
-
-
-class VectorClassConfig(BaseModel):
-    """Per-class vector index settings (one entry per indexed object class,
-    nested under the family — `vector.families[<family>].classes[<class>]` —
-    that owns it, ADR-015/TASK-021: the family, not the class, is the real
-    unit of grouping everywhere else in the architecture).
-
-    Every indexed class must expose a last-modification datetime and a
-    "relevance" attribute — the VectorSource contract (`vector/ports/source.py`).
-    Which attributes those are is the source's concern (tickets map them via
-    `ticket_mapping`); this config holds only the relevance *values*.
-    """
-
-    # Values of the class's relevance attribute that keep an object in the
-    # index (similar-tickets searches want resolved knowledge, not open
-    # noise); [] = index every object of the class
-    index_values: list[str] = []
-    # Chunking settings keyed by fragment kind. The keys are not free-form:
-    # they must be fragments the class's source declares, and a key it does
-    # not know is ignored with a warning at sweep time.
-    chunks: dict[str, ChunkFragmentConfig] = {}
-
-
-_TICKET_CHUNKS = {
-    "profile": ChunkFragmentConfig(fields=["title", "service", "subcategory"]),
-    "body": ChunkFragmentConfig(fields=["description"]),
-    "solution": ChunkFragmentConfig(fields=["solution"]),
-    # The two log fragments are opt-in and deliberately absent: indexing
-    # internal notes is a privacy decision, not a default (TASK-013).
-}
-
-_FAQ_CHUNKS = {
-    "profile": ChunkFragmentConfig(fields=["title", "summary", "category_name", "error_code", "key_words"]),
-    "body": ChunkFragmentConfig(fields=["description"]),
-}
-
-
-class FamilyConfig(BaseModel):
-    """Per-family vector index settings — one entry per `VectorSource.name`
-    (ADR-015: one collection per family, `dev-docs/tasks/TASK-021-*`).
-
-    The family, not the class, is the unit `sweep_interval_seconds` and
-    `log_entries_per_chunk` actually belong to: both are about how one
-    collection's sweep behaves (incremental cursor overlap, log-window
-    chunking), and a source without a cheap incremental scan (FAQ has no
-    `last_update`) may want a slower cadence than the rest of the deployment
-    without slowing everything else down.
-    """
-
-    # Classes this family indexes, each with its own relevance values and
-    # chunk fragment settings. The family key must match a registered
-    # `VectorSource.name` (`content_sources/registry.py`) to do anything —
-    # same tolerance as an unknown class today: a key that matches nothing
-    # is logged and skipped, not rejected.
-    classes: dict[str, VectorClassConfig] = {}
-    # None = use VectorConfig's system-wide value.
-    sweep_interval_seconds: int | None = Field(default=None, gt=0)
-    log_entries_per_chunk: int | None = Field(default=None, gt=0)
-
-
-class VectorConfig(BaseModel):
-    """Vector index settings — infrastructure section "vector" (setup API).
-
-    Off by default: the base deployment stays Redis-only. The chunking
-    profiles and sweep settings are consumed by the indexer (Stage 2);
-    they live here from the start so the section schema is stable.
-    """
-
-    enabled: bool = False
-    # Indexed families (one Qdrant collection each, ADR-015) with their
-    # per-family settings.
-    families: dict[str, FamilyConfig] = {
-        "tickets": FamilyConfig(
-            classes={
-                "UserRequest": VectorClassConfig(index_values=["resolved", "closed"], chunks=_TICKET_CHUNKS),
-                "Incident": VectorClassConfig(index_values=["resolved", "closed"], chunks=_TICKET_CHUNKS),
-            }
-        ),
-        "faq": FamilyConfig(
-            classes={
-                # No status attribute for FAQ in stock iTop — [] indexes every
-                # article (ADR-005: "no attribute to filter by" degrades to
-                # "index everything", not an error). Set explicit values if a
-                # deployment adds a status.
-                "FAQ": VectorClassConfig(index_values=[], chunks=_FAQ_CHUNKS),
-            }
-        ),
-    }
-    sweep_interval_seconds: int = Field(default=300, gt=0)
-    sweep_page_size: int = Field(default=100, gt=0)
-    # Pause between iTop pages so a backfill doesn't hammer the REST API
-    sweep_throttle_seconds: float = Field(default=0.5, ge=0)
-    reconcile_interval_days: int = Field(default=7, gt=0)
-    max_chunk_tokens: int = Field(default=480, gt=0)
-    log_entries_per_chunk: int = Field(default=5, gt=0)
-
-
 class Settings(BaseSettings):
     # config.yaml ships inside the package, so it is found from any working
     # directory. `.env` cannot be: it is gitignored, per-developer and absent
@@ -430,11 +316,12 @@ class Settings(BaseSettings):
     # this raw bucket. A module resolves its own section via
     # `module_defaults(name, its_own_model)`, both at registration
     # (`agents/<module>/pipeline.py::register`) and through
-    # `RedisConfigStore` (which merges Redis overrides on top).
+    # `RedisConfigStore` (which merges Redis overrides on top). The same
+    # bucket also serves `vector` (`vector/config.py`, TASK-036): it is not a
+    # business module, but has no `Settings` attribute either, so it falls
+    # back to the exact same path — `module_defaults` needs nothing but a
+    # name and a model, not a module registration.
     module_config: dict[str, dict[str, Any]] = {}
-
-    # Vector store (infrastructure; editable via /api/setup/vector)
-    vector: VectorConfig = VectorConfig()
 
     @field_validator("llm_params", "llm_supports_forced_tool_choice", mode="before")
     @classmethod

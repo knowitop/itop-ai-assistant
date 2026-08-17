@@ -36,10 +36,11 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import Protocol
 
-from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
+from itop_ai_assistant.config import EmbeddingsConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
+from itop_ai_assistant.vector.config import VectorConfig
 from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchQuery, SearchResult
 from itop_ai_assistant.vector.ports.store import ChunkStore, SearchHit
 

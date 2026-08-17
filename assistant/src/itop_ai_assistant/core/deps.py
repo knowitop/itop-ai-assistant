@@ -7,7 +7,7 @@ from fastapi import Request
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from itop_ai_assistant.config import LlmConfig, Settings, VectorConfig
+from itop_ai_assistant.config import LlmConfig, Settings
 from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.core.llm_providers import get_provider
 from itop_ai_assistant.itop.connection import ItopConnection
@@ -27,6 +27,7 @@ from itop_ai_assistant.vector import (
     IndexJournal,
     QdrantChunkStore,
     SimilarSearch,
+    VectorConfig,
     VectorSource,
     VectorSyncState,
 )

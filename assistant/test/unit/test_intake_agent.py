@@ -16,13 +16,14 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 
 from itop_ai_assistant.agents.intake.config import IntakeConfig
 from itop_ai_assistant.agents.intake.run import IntakeRun
-from itop_ai_assistant.config import EmbeddingsConfig, LlmConfig, VectorConfig
+from itop_ai_assistant.config import EmbeddingsConfig, LlmConfig
 from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
 from itop_ai_assistant.state.ticket_state import TicketState
+from itop_ai_assistant.vector import VectorConfig
 from itop_ai_assistant.vector.ports.store import SearchHit
 from itop_ai_assistant.vector.use_cases.search import SimilarSearch
 from itop_ai_assistant.webhook.models import WebhookPayload

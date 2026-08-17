@@ -5,17 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
 
-from itop_ai_assistant.config import (
-    ChunkFragmentConfig,
-    EmbeddingsConfig,
-    FamilyConfig,
-    VectorClassConfig,
-    VectorConfig,
-    get_settings,
-)
+from itop_ai_assistant.config import EmbeddingsConfig, get_settings
 from itop_ai_assistant.core.deps import AppDeps, build_deps
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.vector.chunker import FragmentContent, TextContent, chunk_object
+from itop_ai_assistant.vector.config import ChunkFragmentConfig, FamilyConfig, VectorClassConfig, VectorConfig
 from itop_ai_assistant.vector.ports.source import VectorRecord
 from itop_ai_assistant.vector.ports.store import (
     ChunkDigest,

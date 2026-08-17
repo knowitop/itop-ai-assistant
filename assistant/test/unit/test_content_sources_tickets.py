@@ -2,10 +2,10 @@ import unittest
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
-from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
 from itop_ai_assistant.content_sources.tickets import FIELDS, FRAGMENTS, TicketVectorSource, _conversation
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
+from itop_ai_assistant.vector import ChunkFragmentConfig, VectorClassConfig
 
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 _ENGINEER = Principal.delegated("tok", login="ivanov", name="Ivan Ivanov")

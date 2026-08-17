@@ -10,7 +10,6 @@ from itop_ai_assistant.config import (
     LlmConfig,
     Settings,
     TicketMappingConfig,
-    VectorConfig,
     get_settings,
     missing_setup,
 )
@@ -162,30 +161,11 @@ class TestRuntimeSections(unittest.TestCase):
         self.assertIsNone(s.embeddings.model)
 
 
-class TestVectorConfig(unittest.TestCase):
-    def test_disabled_by_default(self):
-        cfg = VectorConfig()
-        self.assertFalse(cfg.enabled)
-        self.assertEqual(list(cfg.families), ["tickets", "faq"])
-        tickets = cfg.families["tickets"].classes
-        self.assertEqual(list(tickets), ["UserRequest", "Incident"])
-        self.assertEqual(tickets["UserRequest"].index_values, ["resolved", "closed"])
-        self.assertEqual(tickets["UserRequest"].chunks["body"].fields, ["description"])
-        faq = cfg.families["faq"].classes
-        self.assertEqual(faq["FAQ"].index_values, [])  # no status attribute in stock iTop
-        self.assertEqual(faq["FAQ"].chunks["body"].fields, ["description"])
-        self.assertIsNone(cfg.families["tickets"].sweep_interval_seconds)
-        self.assertIsNone(cfg.families["tickets"].log_entries_per_chunk)
-
+class TestQdrantUrl(unittest.TestCase):
     def test_qdrant_url_defaults_to_none(self):
         with patch.dict(os.environ, _REQUIRED, clear=True):
             s = Settings(_env_file=None)
         self.assertIsNone(s.qdrant_url)
-
-    def test_settings_expose_vector_section(self):
-        with patch.dict(os.environ, _REQUIRED, clear=True):
-            s = Settings(_env_file=None)
-        self.assertFalse(s.vector.enabled)
 
 
 class _DummyModuleConfig(BaseModel):
@@ -219,10 +199,13 @@ class TestModuleDefaults(unittest.TestCase):
     def test_settings_has_no_attribute_for_a_business_module(self):
         # The whole point: config.py does not know "intake" or any other
         # module name — there is no typed field to accidentally shadow.
+        # "vector" belongs here too (TASK-036): not a module, but resolved
+        # through the exact same fallback since it has no attribute either.
         with patch.dict(os.environ, {}, clear=True):
             s = Settings(_env_file=None)
         self.assertFalse(hasattr(s, "intake"))
         self.assertFalse(hasattr(s, "selfcheck"))
+        self.assertFalse(hasattr(s, "vector"))
 
 
 class TestMissingSetup(unittest.TestCase):

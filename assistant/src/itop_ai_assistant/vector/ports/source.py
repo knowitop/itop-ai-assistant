@@ -37,9 +37,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Generic, Protocol, TypeVar
 
-from itop_ai_assistant.config import VectorClassConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.vector.chunker import Chunk
+from itop_ai_assistant.vector.config import VectorClassConfig
 
 # The source's own payload type (e.g. `Ticket`, `FaqArticle`) — carried through
 # `VectorRecord`/`VectorSource` so each source's `chunk()` gets it back typed,
