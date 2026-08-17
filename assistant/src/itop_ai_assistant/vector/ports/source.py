@@ -4,9 +4,9 @@ VectorIndexer.
 The indexer knows nothing about iTop, tickets, or any other domain: it reads
 `VectorRecord`s from registered sources, hands them back for chunking, and
 writes the resulting `Chunk`s through the `ChunkStore` port. Adding a new source
-(KB articles, KnownErrors, ...) means writing a new `vector/sources/<name>.py`
+(KB articles, KnownErrors, ...) means writing a new `content_sources/<name>.py`
 module implementing this protocol and registering it in
-`vector/sources/registry.py` — no change needed here or in
+`content_sources/registry.py` — no change needed here or in
 `vector/use_cases/indexer.py`.
 
 The contract: every indexed class must expose (a) a last-modification
@@ -22,7 +22,7 @@ A source also declares its own chunking vocabulary — `fields` and
 editor from, so a source that omits it cannot be configured by anyone but a
 person editing raw config.
 
-**Two identities, not one** (TASK-032). Sweeping is the service account's
+**Two identities, not one.** Sweeping is the service account's
 work: the index is global and is built once for everyone. Confirming search
 candidates is not — it answers "may *this* person see this object", and the
 only honest answer comes from the source asked under that person's own
@@ -151,7 +151,7 @@ class VectorSource(Protocol[T]):
         candidate into an answer (rule 9.3). The principal is a parameter with
         no default on purpose: a caller cannot fall back to the service
         account by omitting it, and there is no callback to pass the wrong
-        function into (rule 9.1, TASK-032).
+        function into (rule 9.1).
 
         `prepare()` is not a precondition here — it caches the service
         account's view for the sweep, which is precisely the identity this

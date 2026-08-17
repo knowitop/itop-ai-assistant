@@ -86,11 +86,11 @@ class SimilarSearch:
     """One search over the vector index, confirmed against its source.
 
     The scenario — including which family to search — travels in the
-    `SearchQuery` rather than being fixed at construction (TASK-031): it is
-    the caller's configuration, not a property of this object. Picking the
-    source that family names is this object's own job, which is why it takes
-    a builder rather than a ready source: a caller that had to pick one would
-    need `vector/sources/` in its imports, and the next caller would pick
+    `SearchQuery` rather than being fixed at construction: it is the caller's
+    configuration, not a property of this object. Picking the source that
+    family names is this object's own job, which is why it takes a builder
+    rather than a ready source: a caller that had to pick one would need
+    `content_sources/` in its imports, and the next caller would pick
     differently (rule 6.5 — the family name comes from the consumer's own
     configuration, and the subsystem validates it).
 
@@ -102,14 +102,13 @@ class SimilarSearch:
     closes it (rule 9.4).
 
     `build_sources` is a `VectorConfig -> Sequence[CandidateSource]` builder
-    the composition root closes over its own `itop` to make (TASK-034) —
-    called fresh on every `find()`, never memoized, which is what keeps a
-    family added or removed from the saved config live without a restart
-    (TASK-021). This module does not import `vector/sources/registry.py`
-    itself any more; `build_sources` is how it reaches the same builder
-    without knowing where it lives. `sources` stays the separate injection
-    point for tests: production always passes `build_sources` and no
-    `sources` override, a test does the opposite.
+    the composition root closes over its own `itop` to make — called fresh on
+    every `find()`, never memoized, which is what keeps a family added or
+    removed from the saved config live without a restart. This module does
+    not import `content_sources.registry` itself; `build_sources` is how it
+    reaches the same builder without knowing where it lives. `sources` stays
+    the separate injection point for tests: production always passes
+    `build_sources` and no `sources` override, a test does the opposite.
     """
 
     def __init__(

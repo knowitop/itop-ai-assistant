@@ -314,7 +314,7 @@ class FamilyConfig(BaseModel):
 
     # Classes this family indexes, each with its own relevance values and
     # chunk fragment settings. The family key must match a registered
-    # `VectorSource.name` (`vector/sources/registry.py`) to do anything —
+    # `VectorSource.name` (`content_sources/registry.py`) to do anything —
     # same tolerance as an unknown class today: a key that matches nothing
     # is logged and skipped, not rejected.
     classes: dict[str, VectorClassConfig] = {}

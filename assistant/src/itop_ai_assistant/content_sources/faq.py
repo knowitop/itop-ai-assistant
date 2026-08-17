@@ -1,7 +1,7 @@
 """FAQ vector source: iTop FAQ articles as vectorizable objects.
 
 Wraps `FaqRepository` behind the generic `VectorSource` protocol
-(`vector/ports/source.py`) — see `vector/sources/tickets.py` for the same
+(`vector/ports/source.py`) — see `content_sources/tickets.py` for the same
 pattern applied to tickets. Simpler than tickets: one class, no catalog
 lookups, no log fragments (an FAQ article has no conversation to index).
 """
@@ -14,8 +14,16 @@ from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.faq import FaqArticle
 from itop_ai_assistant.repositories.faq import FaqRepository, FaqRepositoryForPrincipal, FaqRepositoryProvider
-from itop_ai_assistant.vector.chunker import Chunk, FragmentContent, TextContent, chunk_object, clean_text
-from itop_ai_assistant.vector.ports.source import FragmentSpec, VectorRecord, VectorSource
+from itop_ai_assistant.vector import (
+    Chunk,
+    FragmentContent,
+    FragmentSpec,
+    TextContent,
+    VectorRecord,
+    VectorSource,
+    chunk_object,
+    clean_text,
+)
 
 logger = logging.getLogger(__name__)
 

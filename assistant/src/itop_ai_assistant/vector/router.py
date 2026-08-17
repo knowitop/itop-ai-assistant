@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
 from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
+from itop_ai_assistant.content_sources.registry import ItopRepos
 from itop_ai_assistant.core.api_deps import get_config_store
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
@@ -25,8 +26,6 @@ from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchQuery
 from itop_ai_assistant.vector.ports.source import VectorSource
 from itop_ai_assistant.vector.ports.store import ChunkStore, DateRange
-from itop_ai_assistant.vector.sources.registry import ItopRepos
-from itop_ai_assistant.vector.sources.tickets import FAMILY as TICKETS_FAMILY
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
 from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 from itop_ai_assistant.vector.use_cases.indexer import SWEEP_TASK
@@ -44,9 +43,9 @@ from itop_ai_assistant.vector.use_cases.search import SearchUnavailable, Similar
 # annotation) — `get_itop`/`get_vector_store`/`get_vector_sync`/
 # `get_vector_journal`/`get_vector_sources` stay local for that reason, built
 # from direct submodule imports (`ports.store`, `ports.source`, `state.*`,
-# `sources.registry`) instead. `get_vector_sources` (TASK-034) does not call
-# `build_vector_sources` itself any more — it reads `AppDeps.vector_sources`,
-# the closure the composition root already built over its own `itop`.
+# `content_sources.registry`) instead. `get_vector_sources` does not call
+# `build_vector_sources` itself — it reads `AppDeps.vector_sources`, the
+# closure the composition root already built over its own `itop`.
 if TYPE_CHECKING:
     from itop_ai_assistant.core.deps import AppDeps
 
@@ -56,11 +55,11 @@ router = APIRouter(prefix="/vector")
 
 
 def get_itop(request: Request) -> ItopRepos:
-    """`ItopRepos` (`sources/registry.py`), not `pipelines.ports.ItopAccess`
+    """`ItopRepos` (`content_sources/registry.py`), not `pipelines.ports.ItopAccess`
     which has the same one method: that file names `itop_ai_assistant.vector`
     for `ChunkStore`, so importing it here would run this module while the
     vector facade is still mid-import — the cycle explained above, one hop
-    further out. TASK-029 discusses this same duplication.
+    further out.
     """
     deps: AppDeps = request.app.state.deps
     return deps.itop
@@ -93,13 +92,10 @@ async def get_vector_config(config_store: Annotated[ConfigStore, Depends(get_con
 def get_vector_sources(
     request: Request, vector_cfg: Annotated[VectorConfig, Depends(get_vector_config)]
 ) -> Sequence[VectorSource[Any]]:
-    """The registered sources for the freshly-read config (TASK-034) — what
-    `/status` and `/sources` used to build themselves by calling
-    `build_vector_sources(itop, vector_cfg)` directly. `deps.vector_sources`
+    """The registered sources for the freshly-read config. `deps.vector_sources`
     is the same builder `core/deps.py` closed over `itop` with; calling it
     here, per request, is what keeps a family added or removed from the
-    saved config visible without a restart (TASK-021) — same guarantee, one
-    fewer file that has to know how a source gets built.
+    saved config visible without a restart.
     """
     deps: AppDeps = request.app.state.deps
     return deps.vector_sources(vector_cfg)
@@ -160,10 +156,10 @@ async def vector_status(
     runs: list[dict] = []
     if vector_store.configured:
         try:
-            # Union of what code registers today and what Qdrant actually has
-            # (TASK-008): a family dropped from the registry stays visible
-            # here — `configured: false` — until its collection is dropped,
-            # instead of silently disappearing from observability.
+            # Union of what code registers today and what Qdrant actually has:
+            # a family dropped from the registry stays visible here —
+            # `configured: false` — until its collection is dropped, instead
+            # of silently disappearing from observability.
             configured_families = {s.name for s in sources}
             known_families = set(await vector_store.list_families())
             store_status["ok"] = True
@@ -236,8 +232,8 @@ async def vector_sources(
                 # Every registered family is always present, whether or not it
                 # currently has classes configured — recovering a class an
                 # admin removed by mistake needs the family's vocabulary to
-                # still be here, not just the classes still saved (TASK-021;
-                # `vector/sources/registry.py::build_vector_sources`).
+                # still be here, not just the classes still saved
+                # (`content_sources/registry.py::build_vector_sources`).
                 "classes": list(source.classes),
                 "fields": list(source.fields),
                 "fragments": [asdict(fragment) for fragment in source.fragments],
@@ -334,7 +330,7 @@ class SearchRequest(BaseModel):
     into a run."""
 
     family: str = Field(
-        description="Which collection family to search — one name from `vector/sources/registry.py` "
+        description="Which collection family to search — one name from `content_sources/registry.py` "
         "(e.g. 'tickets'). 404 if no registered `VectorSource` has this name.",
     )
     text: str = Field(description="Query text, embedded once and matched against the index by cosine similarity.")
@@ -396,11 +392,10 @@ class SearchRequest(BaseModel):
     principal_token: str | None = Field(
         default=None,
         description="An iTop personal/application token to resolve candidates under and to read the "
-        "R4 org pre-filter from, instead of the service account (TASK-015) — paste an engineer's own "
+        "R4 org pre-filter from, instead of the service account — paste an engineer's own "
         "token to check what `AccessRepository.allowed_org_ids()` returns for them and whether the "
         "org pre-filter and the source's own resolve agree (`stats.dropped_by_resolve`). When given, "
-        "it also fills `filters['org_id']` unless the request already sets that key. Only supported "
-        "for the 'tickets' family today — 501 otherwise.",
+        "it also fills `filters['org_id']` unless the request already sets that key.",
     )
 
     @model_validator(mode="after")
@@ -454,28 +449,25 @@ async def vector_search(
 
     Confirms candidates under the service account unless `principal_token` is
     given (`.claude/rules/vector.md`: search returns candidates, confirmed
-    against a principal's own token) — R4 has no production caller yet
-    (TASK-015), this is how its two layers get exercised against a real iTop
-    before one exists.
+    against a principal's own token) — R4 has no production caller yet, this
+    is how its two layers get exercised against a real iTop before one
+    exists. Works the same for any registered family: `confirm_visible` is
+    part of the `VectorSource` contract itself, not a callback wired up per
+    source, so there is nothing here that could only work for tickets.
 
     What this handler still does by hand is R4's *layer 1*: reading the
     principal's allowed organizations and turning them into a pre-filter.
-    That stayed here deliberately (TASK-032) — it shapes the walk before it
-    starts, it is over-permissive by design (ADR-003), and computing it means
-    knowing what an organization is, which is the caller's language, not the
-    subsystem's. Layer 2, the one confidentiality actually rests on, is no
-    longer assembled here at all — nor are the door's own availability gates:
-    `search.find()` raises `SearchUnavailable` for those (TASK-033).
+    That stays here deliberately — it shapes the walk before it starts, it is
+    over-permissive by design (ADR-003), and computing it means knowing what
+    an organization is, which is the caller's language, not the subsystem's.
+    Layer 2, the one confidentiality actually rests on, is not assembled here
+    at all — nor are the door's own availability gates: `search.find()`
+    raises `SearchUnavailable` for those.
     """
     filters = body.filters
     principal = Principal.service()
     allowed_org_ids: list[str] | None = None
     if body.principal_token:
-        if body.family != TICKETS_FAMILY:
-            raise HTTPException(
-                status_code=501,
-                detail=f"principal_token is only supported for family {TICKETS_FAMILY!r} today (TASK-015)",
-            )
         principal = Principal.delegated(body.principal_token, login="debug", name="debug")
         repos = await itop.for_principal(principal, comment="vector debug search (TASK-015)")
         allowed_org_ids = await repos.access_repo.allowed_org_ids()

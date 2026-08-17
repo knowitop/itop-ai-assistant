@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from itop_ai_assistant.config import get_settings
+from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.main import app
@@ -15,7 +16,6 @@ from itop_ai_assistant.settings.config_store import RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore, RedisPromptStore
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
-from itop_ai_assistant.vector import build_vector_sources
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.ports.store import ChunkMetadata, ChunkRecord
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
@@ -702,23 +702,42 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         self.assertIsNone(store_search.await_args.kwargs["filters"])
         self.assertIsNone(response.json()["allowed_org_ids"])
 
-    def test_other_families_are_not_supported_yet(self):
+    def test_any_registered_family_supports_principal_token(self):
+        # `confirm_visible` is part of the `VectorSource` contract for every
+        # source, so nothing about this endpoint is tickets-specific. Seeded
+        # under a non-ticket family directly, rather than through
+        # `_seed_and_patch` (hardcoded to "tickets"), to prove exactly that.
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
         self.client.app.state.deps = deps
         self.client.patch("/api/setup/vector", json={"enabled": True})
-        source = MagicMock()
-        source.name = "kb_articles"
-        source.prepare = AsyncMock()
 
-        with patch.object(deps.vector_search, "_build_sources", return_value=[source]):
+        async def _seed() -> None:
+            await deps.vector_store.ensure_version("kb_articles", "bge-m3", 4)
+            await deps.vector_store.upsert_chunks([_chunk(1)], family="kb_articles", model="bge-m3", dim=4)
+
+        asyncio.run(_seed())
+        embedder = MagicMock()
+        embedder.embed = AsyncMock(return_value=[[1.0, 0.0, 0.0, 0.0]])
+        embedder.aclose = AsyncMock()
+        source = _FakeSource(existing=set(), visible_to_principal={1})
+        source.name = "kb_articles"
+        repos = MagicMock()
+        repos.access_repo.allowed_org_ids = AsyncMock(return_value=None)
+        deps.itop.for_principal = AsyncMock(return_value=repos)
+
+        with (
+            patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
+            patch.object(deps.vector_search, "_build_sources", return_value=[source]),
+        ):
             response = self.client.post(
                 "/api/vector/search",
                 json={"family": "kb_articles", "text": "printer", "principal_token": "engineer-token"},
             )
 
-        self.assertEqual(response.status_code, 501)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([p.auth.token for p in source.confirmed_for], ["engineer-token"])
 
 
 if __name__ == "__main__":

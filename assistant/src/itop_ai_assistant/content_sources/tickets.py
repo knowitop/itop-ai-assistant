@@ -18,21 +18,21 @@ from itop_ai_assistant.repositories.ticket import (
     TicketRepositoryForPrincipal,
     TicketRepositoryProvider,
 )
-from itop_ai_assistant.vector.chunker import (
+from itop_ai_assistant.vector import (
     Chunk,
     FragmentContent,
+    FragmentSpec,
     SequenceContent,
     TextContent,
+    VectorRecord,
+    VectorSource,
     chunk_object,
     clean_text,
 )
-from itop_ai_assistant.vector.ports.source import FragmentSpec, VectorRecord, VectorSource
 
 logger = logging.getLogger(__name__)
 
-# The collection family this source writes to (`TicketVectorSource.name`) and
-# the one `SimilarSearch` in `agents/intake/compose.py` reads from — one
-# constant so the two never drift apart (TASK-008).
+# The collection family this source writes to (`TicketVectorSource.name`).
 FAMILY = "tickets"
 
 # The semantic fields an administrator composes the required fragments from
@@ -42,9 +42,8 @@ FAMILY = "tickets"
 FIELDS = ("title", "description", "solution", "service", "subcategory")
 
 # Every fragment this source can produce. The two log fragments are opt-in:
-# whether internal notes get embedded at all is the administrator's call
-# (TASK-013), and `log:private` is the only fragment here that is not
-# caller-facing.
+# whether internal notes get embedded at all is the administrator's call,
+# and `log:private` is the only fragment here that is not caller-facing.
 FRAGMENTS = (
     FragmentSpec(kind="profile", visibility="public"),
     FragmentSpec(kind="body", visibility="public"),
@@ -96,7 +95,7 @@ class TicketVectorSource(VectorSource[Ticket]):
         # global by design (`dev-docs/architecture/platform.md` §3.5). What a searcher may see
         # is decided later, by `confirm_visible` under their own token. Not just
         # by convention: `get_ticket_repo` is bound to `Principal.service()`
-        # (see `vector/sources/registry.py`), and the principal-bound accessor
+        # (see `content_sources/registry.py`), and the principal-bound accessor
         # is a *separate* closure — sweeping as somebody else is not something
         # this class can express.
         self._ticket_repo = await self._get_ticket_repo()
@@ -154,7 +153,7 @@ class TicketVectorSource(VectorSource[Ticket]):
     def _semantic_fields(self, ticket: Ticket) -> dict[str, str]:
         """`FIELDS` bound to this ticket's content, canonicalized.
 
-        The one place the two are tied together — `test_vector_sources_tickets`
+        The one place the two are tied together — `test_content_sources_tickets`
         keeps the key set equal to `FIELDS`, so the vocabulary served to the
         admin UI cannot drift away from what is actually chunkable.
         """

@@ -1,6 +1,6 @@
 """Assembles the list of VectorSource instances the indexer sweeps.
 
-Adding a new source: create `vector/sources/<name>.py` implementing
+Adding a new source: create `content_sources/<name>.py` implementing
 `vector.ports.source.VectorSource`, and add one line to `_BUILDERS` below —
 same pattern as `pipelines/registry.py` for webhook modules.
 """
@@ -16,7 +16,7 @@ from itop_ai_assistant.repositories.sets import RepositorySet
 from itop_ai_assistant.repositories.ticket import TicketRepository
 
 if TYPE_CHECKING:
-    from itop_ai_assistant.vector.ports.source import VectorSource
+    from itop_ai_assistant.vector import VectorSource
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class ItopRepos(Protocol):
     """How a source reaches iTop — declared here, by the consumer, rather than
     imported from the container that happens to offer it.
 
-    A source needs two identities, not one (TASK-032): the sweep reads as the
+    A source needs two identities, not one: the sweep reads as the
     service account, since the index is global and built once for everyone;
     confirming a search candidate reads as whoever is asking, since that is
     the only honest answer to "may this person see it" (ADR-003). What keeps
@@ -44,31 +44,30 @@ class ItopRepos(Protocol):
 
 def build_vector_sources(itop: ItopRepos, cfg: VectorConfig) -> list["VectorSource[Any]"]:
     """One instance per *registered* family, not per family the saved config
-    happens to still mention (TASK-021).
+    happens to still mention.
 
     Every known family is built unconditionally, with `classes` taken from
     `cfg.families.get(name, FamilyConfig()).classes` — empty if the admin
     cleared it or the key is missing entirely. That is what lets the admin UI
     (`GET /api/vector/sources`) always show a family's full chunking
-    vocabulary, including recovering a class that was removed by mistake:
-    before this, a family absent from the saved config had no vocabulary to
-    offer at all, because this function only built what the config already
-    contained.
+    vocabulary: a family absent from the saved config still gets a vocabulary
+    to offer, so an admin can recover a class removed by mistake instead of
+    the family disappearing from the editor entirely.
 
     A `cfg.families` key that matches no builder below is logged and
     skipped — the family name is not something the admin can invent from the
     UI, same tolerance as an unknown class today; making a new one requires a
-    new `vector/sources/*.py` module and a line here.
+    new `content_sources/*.py` module and a line here.
     """
-    from itop_ai_assistant.vector.sources.faq import FAMILY as FAQ_FAMILY
-    from itop_ai_assistant.vector.sources.faq import FaqVectorSource
-    from itop_ai_assistant.vector.sources.tickets import FAMILY as TICKETS_FAMILY
-    from itop_ai_assistant.vector.sources.tickets import TicketVectorSource
+    from itop_ai_assistant.content_sources.faq import FAMILY as FAQ_FAMILY
+    from itop_ai_assistant.content_sources.faq import FaqVectorSource
+    from itop_ai_assistant.content_sources.tickets import FAMILY as TICKETS_FAMILY
+    from itop_ai_assistant.content_sources.tickets import TicketVectorSource
 
     # A source is given one repository, not the set: it has no business reaching
     # for another one. Two accessors, not one, and neither can answer as the
     # other identity: the sweep's can only ever be the service account's, the
-    # confirmation's can only ever be the caller's (TASK-032). `for_principal`
+    # confirmation's can only ever be the caller's. `for_principal`
     # itself stays here — a source cannot reach it, so `prepare()` has no way
     # to start indexing as somebody.
     async def ticket_repo() -> TicketRepository:

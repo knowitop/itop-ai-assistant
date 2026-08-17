@@ -8,6 +8,7 @@ from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from itop_ai_assistant.config import LlmConfig, Settings, VectorConfig
+from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.core.llm_providers import get_provider
 from itop_ai_assistant.itop.connection import ItopConnection
 from itop_ai_assistant.repositories.sets import ItopRepositories
@@ -26,8 +27,8 @@ from itop_ai_assistant.vector import (
     IndexJournal,
     QdrantChunkStore,
     SimilarSearch,
+    VectorSource,
     VectorSyncState,
-    build_vector_sources,
 )
 
 
@@ -59,10 +60,7 @@ class AppDeps:
     vector_search: SimilarSearch
     vector_sync: VectorSyncState
     vector_journal: IndexJournal
-    # Would be `Callable[[VectorConfig], Sequence[VectorSource[Any]]]`;
-    # `VectorSource` isn't on the facade yet (that's TASK-035), so this one
-    # field stays `Any` at the boundary rather than deep-importing around it.
-    vector_sources: Callable[[VectorConfig], Sequence[Any]]
+    vector_sources: Callable[[VectorConfig], Sequence[VectorSource[Any]]]
 
     async def aclose(self) -> None:
         await self.itop_connection.aclose()
@@ -110,13 +108,14 @@ def build_deps(settings: Settings) -> AppDeps:
     # Lazy: no client (and no connection) until the vector store is used
     vector_store = QdrantChunkStore(settings.qdrant_url)
 
-    # The one call site left for `build_vector_sources` (TASK-034) — closed
-    # over `itop` here and handed to both `SimilarSearch` and `AppDeps`
-    # itself, so `search.py`/`indexer.py`/`router.py` never import the
-    # registry directly. Re-read `cfg.families` fresh on every call, not
-    # collected once here: a static list would break the live reload TASK-021
-    # relies on.
-    def vector_sources(cfg: VectorConfig) -> list[Any]:
+    # The one call site for `build_vector_sources`, imported directly from
+    # `content_sources.registry` — content providers are not part of the
+    # vector facade, so there is nothing for it to shield here. Closed over
+    # `itop` and handed to both `SimilarSearch` and `AppDeps` itself, so
+    # `search.py`/`indexer.py`/`router.py` never import the registry
+    # directly. Re-read `cfg.families` fresh on every call, not collected
+    # once here: a static list would break the live config reload.
+    def vector_sources(cfg: VectorConfig) -> list[VectorSource[Any]]:
         return build_vector_sources(itop, cfg)
 
     return AppDeps(

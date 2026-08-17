@@ -10,7 +10,6 @@ from datetime import UTC, datetime, timedelta
 
 from itop_ai_assistant.agents.intake.config import IntakeConfig
 from itop_ai_assistant.agents.intake.similar import similar_query
-from itop_ai_assistant.vector import TICKETS_FAMILY
 
 _NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 
@@ -26,7 +25,14 @@ def _query(cfg: IntakeConfig | None = None):
 
 class TestSimilarQuery(unittest.TestCase):
     def test_the_family_is_the_ticket_index(self):
-        self.assertEqual(_query().family, TICKETS_FAMILY)
+        self.assertEqual(_query().family, "tickets")
+
+    def test_the_family_comes_from_the_config(self):
+        # Not a shared identifier with `content_sources/tickets.py` (A8) —
+        # intake's own setting, checked here the same as any other.
+        query = _query(IntakeConfig(similar_family="kb_articles"))
+
+        self.assertEqual(query.family, "kb_articles")
 
     def test_only_solved_tickets_are_asked_for(self):
         query = _query(IntakeConfig(resolved_statuses=["closed", "resolved"]))

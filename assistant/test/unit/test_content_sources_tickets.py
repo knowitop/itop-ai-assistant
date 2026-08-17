@@ -3,9 +3,9 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
+from itop_ai_assistant.content_sources.tickets import FIELDS, FRAGMENTS, TicketVectorSource, _conversation
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
-from itop_ai_assistant.vector.sources.tickets import FIELDS, FRAGMENTS, TicketVectorSource, _conversation
 
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 _ENGINEER = Principal.delegated("tok", login="ivanov", name="Ivan Ivanov")
@@ -269,7 +269,7 @@ class TestDeclaration(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_field_warns_and_is_treated_as_empty(self):
         cfg = _cfg({"body": ChunkFragmentConfig(fields=["description", "no_such_field"])})
 
-        with self.assertLogs("itop_ai_assistant.vector.sources.tickets", level="WARNING"):
+        with self.assertLogs("itop_ai_assistant.content_sources.tickets", level="WARNING"):
             chunks = await self._chunk(cfg)
 
         self.assertEqual([c.text for c in chunks], ["Not printing."])

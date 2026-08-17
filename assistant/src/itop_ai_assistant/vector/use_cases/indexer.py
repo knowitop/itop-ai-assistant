@@ -1,5 +1,5 @@
 """Vector index sweep: periodic incremental sync from registered VectorSource
-instances (see `vector/ports/source.py`, `vector/sources/registry.py`) into
+instances (see `vector/ports/source.py`, `content_sources/registry.py`) into
 the active `ChunkStore` (`vector/ports/store.py`).
 
 The sweep reads objects modified since the per-class cursor (with a
@@ -19,7 +19,7 @@ route and writes no `RunJournal` entry — `register_vector_sweep` puts it under
 the process scheduler and that is the whole of its relationship with the core.
 
 This module is source-agnostic: it knows `VectorSource`/`VectorRecord`, never
-`Ticket` or a repository — those live in `vector/sources/tickets.py`.
+`Ticket` or a repository — those live in `content_sources/tickets.py`.
 
 `vector.enabled` and the embeddings section are re-read from the ConfigStore
 snapshot on every tick, so enabling the feature at runtime needs no restart.
@@ -62,12 +62,11 @@ class IndexerDeps(Protocol):
     The five members below are the whole of it. `settings`, `itop_connection`,
     `state_manager`, `prompt_store` and the run `journal` are not here because
     the sweep never touches them: it is infrastructure with no run frame, and
-    its own journal is `vector_journal`. `itop` is not here either, as of
-    TASK-034 — the sweep never called it directly, only handed it to
-    `build_vector_sources()`; that call moved to the composition root, so
-    what the sweep needs now is `vector_sources` (below), not the raw
-    connection. `aclose()` is absent for the reason it is absent from every
-    port — the pool belongs to the composition root.
+    its own journal is `vector_journal`. `itop` is not here either — the
+    sweep never calls it directly, only the composition root does, to build
+    `vector_sources` (below) once and hand the sweep the result. `aclose()`
+    is absent for the reason it is absent from every port — the pool belongs
+    to the composition root.
 
     Read-only properties, never plain attributes, except `vector_sources`:
     an attribute is invariant, so e.g. `vector_store: ChunkStore` would
