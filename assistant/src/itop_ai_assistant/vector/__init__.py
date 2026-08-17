@@ -11,11 +11,19 @@ it than `TICKETS_FAMILY` below.
 Two kinds of name live here (TASK-033): the contract-out a business module
 actually calls (`SimilarSearch.available()`/`find()`, its exceptions,
 `measure_embedding_dimension`) and the adapters the composition root still
-assembles by hand (`QdrantChunkStore`, `register_vector_sweep`) because the
-subsystem cannot yet build itself — that is stage 3's job, not this task's.
-`EmbeddingsClient` is deliberately *not* re-exported any more: both of its
-former external callers (`agents/intake/compose.py`, `admin/setup.py`) went
-through the door instead, so the facade has nothing left to export it for.
+assembles by hand (`QdrantChunkStore`, `register_vector_sweep`,
+`build_vector_sources`) because the subsystem cannot yet build itself — that
+is stage 3's job, not this task's. `EmbeddingsClient` is deliberately *not*
+re-exported any more: both of its former external callers
+(`agents/intake/compose.py`, `admin/setup.py`) went through the door
+instead, so the facade has nothing left to export it for.
+
+`build_vector_sources` joined the second tier in TASK-034: `search.py`,
+`indexer.py` and `router.py` used to import it from `sources/registry.py`
+directly, which meant three internal files reaching past their own package's
+door. `core/deps.py` is now the only caller, and it reaches the function
+through this facade like everything else it wires — not around it, even
+though it is the composition root.
 
 `router.py` names `core.deps.AppDeps` in annotations only (`TYPE_CHECKING`,
 never imported for real) — `core/deps.py` imports this facade's own adapters,
@@ -31,6 +39,7 @@ from .adapters.qdrant_store import QdrantChunkStore
 from .ports.query import FindStats, ObjectHit, SearchQuery, SearchResult
 from .ports.store import ChunkStore, DateRange
 from .router import router
+from .sources.registry import build_vector_sources
 from .sources.tickets import FAMILY as TICKETS_FAMILY
 from .state.index_journal import IndexJournal
 from .state.sync_state import VectorSyncState
@@ -52,6 +61,7 @@ __all__ = [
     "TICKETS_FAMILY",
     "UnknownFamily",
     "VectorSyncState",
+    "build_vector_sources",
     "measure_embedding_dimension",
     "register_vector_sweep",
     "router",

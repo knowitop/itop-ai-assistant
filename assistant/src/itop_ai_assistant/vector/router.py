@@ -9,9 +9,10 @@ deliberately have none.
 """
 
 import logging
+from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
@@ -22,8 +23,9 @@ from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchQuery
+from itop_ai_assistant.vector.ports.source import VectorSource
 from itop_ai_assistant.vector.ports.store import ChunkStore, DateRange
-from itop_ai_assistant.vector.sources.registry import ItopRepos, build_vector_sources
+from itop_ai_assistant.vector.sources.registry import ItopRepos
 from itop_ai_assistant.vector.sources.tickets import FAMILY as TICKETS_FAMILY
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
 from itop_ai_assistant.vector.state.sync_state import VectorSyncState
@@ -40,8 +42,11 @@ from itop_ai_assistant.vector.use_cases.search import SearchUnavailable, Similar
 # touches this cycle. What still can't move there is any provider whose
 # *parameter or return* type is `AppDeps` itself (a real, eagerly-evaluated
 # annotation) — `get_itop`/`get_vector_store`/`get_vector_sync`/
-# `get_vector_journal` stay local for that reason, built from direct
-# submodule imports (`ports.store`, `state.*`, `sources.registry`) instead.
+# `get_vector_journal`/`get_vector_sources` stay local for that reason, built
+# from direct submodule imports (`ports.store`, `ports.source`, `state.*`,
+# `sources.registry`) instead. `get_vector_sources` (TASK-034) does not call
+# `build_vector_sources` itself any more — it reads `AppDeps.vector_sources`,
+# the closure the composition root already built over its own `itop`.
 if TYPE_CHECKING:
     from itop_ai_assistant.core.deps import AppDeps
 
@@ -83,6 +88,21 @@ def get_vector_search(request: Request) -> SimilarSearch:
 
 async def get_vector_config(config_store: Annotated[ConfigStore, Depends(get_config_store)]) -> VectorConfig:
     return await config_store.get("vector", VectorConfig)
+
+
+def get_vector_sources(
+    request: Request, vector_cfg: Annotated[VectorConfig, Depends(get_vector_config)]
+) -> Sequence[VectorSource[Any]]:
+    """The registered sources for the freshly-read config (TASK-034) — what
+    `/status` and `/sources` used to build themselves by calling
+    `build_vector_sources(itop, vector_cfg)` directly. `deps.vector_sources`
+    is the same builder `core/deps.py` closed over `itop` with; calling it
+    here, per request, is what keeps a family added or removed from the
+    saved config visible without a restart (TASK-021) — same guarantee, one
+    fewer file that has to know how a source gets built.
+    """
+    deps: AppDeps = request.app.state.deps
+    return deps.vector_sources(vector_cfg)
 
 
 async def get_embeddings_config(
@@ -128,7 +148,7 @@ async def vector_status(
     vector_store: Annotated[ChunkStore, Depends(get_vector_store)],
     vector_sync: Annotated[VectorSyncState, Depends(get_vector_sync)],
     vector_journal: Annotated[IndexJournal, Depends(get_vector_journal)],
-    itop: Annotated[ItopRepos, Depends(get_itop)],
+    sources: Annotated[Sequence[VectorSource[Any]], Depends(get_vector_sources)],
 ) -> dict:
     tasks: PeriodicTasks = request.app.state.tasks
 
@@ -144,7 +164,7 @@ async def vector_status(
             # (TASK-008): a family dropped from the registry stays visible
             # here — `configured: false` — until its collection is dropped,
             # instead of silently disappearing from observability.
-            configured_families = {s.name for s in build_vector_sources(itop, vector_cfg)}
+            configured_families = {s.name for s in sources}
             known_families = set(await vector_store.list_families())
             store_status["ok"] = True
             index_info = []
@@ -198,8 +218,7 @@ async def vector_status(
 
 @router.get("/sources")
 async def vector_sources(
-    vector_cfg: Annotated[VectorConfig, Depends(get_vector_config)],
-    itop: Annotated[ItopRepos, Depends(get_itop)],
+    sources: Annotated[Sequence[VectorSource[Any]], Depends(get_vector_sources)],
 ) -> dict:
     """The chunking vocabulary of every registered source — what the admin UI
     renders its fragment editor from (ADR-018).
@@ -223,7 +242,7 @@ async def vector_sources(
                 "fields": list(source.fields),
                 "fragments": [asdict(fragment) for fragment in source.fragments],
             }
-            for source in build_vector_sources(itop, vector_cfg)
+            for source in sources
         ]
     }
 

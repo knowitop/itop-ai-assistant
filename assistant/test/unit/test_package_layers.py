@@ -150,6 +150,7 @@ _ROOT_ADAPTER_NAMES = {
     "IndexJournal",
     "QdrantChunkStore",
     "VectorSyncState",
+    "build_vector_sources",
     "register_vector_sweep",
     "router",
 }
@@ -203,6 +204,43 @@ class TestVectorSourcesBoundary(unittest.TestCase):
         self.assertEqual(set(), leaking)
 
 
+class TestSourcesAreInjectedNotBuilt(unittest.TestCase):
+    """TASK-034: the mirror image of `TestVectorSourcesBoundary` above — that
+    one keeps the indexer from reaching a *concrete* source directly, this one
+    keeps `search.py`, `indexer.py` and `router.py` from building the source
+    *list* themselves. All three used to call `build_vector_sources()`
+    (`sources/registry.py`) directly; now they take it from the composition
+    root (`core/deps.py`, the one remaining caller — reached through the
+    facade, see `_ROOT_ADAPTER_NAMES` above, not by a deep import).
+
+    Checks the one name, not the whole module: `router.py` still imports
+    `ItopRepos` from `sources/registry.py` (`/search`'s R4 org pre-filter) —
+    pre-existing, unrelated to building the source list, out of this task's
+    scope. Banning the module wholesale would also catch
+    `sources.tickets.FAMILY` (the debug family gate), which TASK-035 owns
+    (A8), not this test.
+    """
+
+    def test_the_three_former_callers_no_longer_import_the_builder(self):
+        targets = [
+            PACKAGE / "vector" / "use_cases" / "search.py",
+            PACKAGE / "vector" / "use_cases" / "indexer.py",
+            PACKAGE / "vector" / "router.py",
+        ]
+        for path in targets:
+            with self.subTest(module=str(path.relative_to(PACKAGE))):
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                names = {
+                    alias.name
+                    for node in ast.walk(tree)
+                    if isinstance(node, ast.ImportFrom)
+                    and node.module == "itop_ai_assistant.vector.sources.registry"
+                    and not node.level
+                    for alias in node.names
+                }
+                self.assertNotIn("build_vector_sources", names)
+
+
 class TestRightsCannotBeForgotten(unittest.TestCase):
     """Rule 9.1 as a checked fact (TASK-032): a search confirms its candidates
     under a named principal, and there is no way to call it that skips the
@@ -218,11 +256,17 @@ class TestRightsCannotBeForgotten(unittest.TestCase):
     def test_the_search_takes_no_rights_check_from_its_caller(self) -> None:
         # The `resolve: Callable[...]` this replaced was exactly such a
         # parameter: pass the wrong function and the leak type-checks.
+        # `build_sources` (TASK-034) is a different callable — it returns a
+        # list of *sources*, not a rights decision, and `find()` still calls
+        # `source.confirm_visible(principal, ...)` on whatever it returns, so
+        # it cannot stand in for the check this test guards. Excluded by
+        # name, not by shape, so a second, genuinely risky `Callable`
+        # parameter still trips this test.
         params = inspect.signature(SimilarSearch.__init__).parameters
         callables = {
             name: param.annotation
             for name, param in params.items()
-            if "Callable" in str(param.annotation) or "Resolver" in str(param.annotation)
+            if name != "build_sources" and ("Callable" in str(param.annotation) or "Resolver" in str(param.annotation))
         }
         self.assertEqual({}, callables)
 

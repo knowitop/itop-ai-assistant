@@ -22,6 +22,7 @@ from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
 from itop_ai_assistant.state.ticket_state import TicketState
+from itop_ai_assistant.vector import build_vector_sources
 from itop_ai_assistant.vector.ports.store import SearchHit
 from itop_ai_assistant.vector.use_cases.search import SimilarSearch
 from itop_ai_assistant.webhook.models import WebhookPayload
@@ -133,7 +134,11 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
         self.deps.itop.for_principal = AsyncMock(return_value=self.repos)
         # The real door (TASK-033) over mocked ingredients — `compose.assemble`
         # only ever calls `deps.vector_search`, never assembles one itself.
-        self.deps.vector_search = SimilarSearch(self.deps.vector_store, self.deps.config_store, self.deps.itop)
+        self.deps.vector_search = SimilarSearch(
+            self.deps.vector_store,
+            self.deps.config_store,
+            build_sources=lambda cfg: build_vector_sources(self.deps.itop, cfg),
+        )
 
     def intake_run(self) -> IntakeRun:
         """A run whose body is called directly — `execute()` is the shell's job

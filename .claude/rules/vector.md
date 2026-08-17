@@ -78,15 +78,28 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   the principal with the platform's own `Principal` type — ADR-021 for why
   that is not the same as knowing a consumer's domain.
 - **`SimilarSearch` owns its own configuration and the embeddings client's
-  lifetime — a caller brings only `store`/`config`/`itop` at construction, and
-  a `SearchQuery` plus a `Principal` per call** (TASK-033, rule 9.4). It is
-  long-lived (`AppDeps.vector_search`, one per process) but re-reads
-  `vector`/`embeddings` config on every `available()`/`find()`, so an admin
-  edit applies without a restart; the `EmbeddingsClient` is created and
+  lifetime — a caller brings only `store`/`config`/`build_sources` at
+  construction, and a `SearchQuery` plus a `Principal` per call** (TASK-033,
+  rule 9.4). It is long-lived (`AppDeps.vector_search`, one per process) but
+  re-reads `vector`/`embeddings` config on every `available()`/`find()`, so an
+  admin edit applies without a restart; the `EmbeddingsClient` is created and
   `aclose()`d around one `find()`, never threaded through a run to be closed
   by someone else. `available()` is the availability gate a module checks
   before offering a tool; `find()` on an unavailable deployment raises
   `SearchUnavailable` instead of quietly returning nothing.
+- **Neither `SimilarSearch` nor `VectorIndexer` imports `sources/registry.py`
+  any more (TASK-034)** — `core/deps.py` is the only caller of
+  `build_vector_sources()` left in the process, reached through the facade
+  like every other adapter it wires. Both take a `VectorConfig ->
+  Sequence[...]` builder instead: `SimilarSearch`'s constructor parameter
+  `build_sources`, `VectorIndexer`'s via `IndexerDeps.vector_sources(cfg)`.
+  The builder is called fresh on every `find()`/`sweep_once()`, never
+  memoized, which is what keeps a family added or removed from the saved
+  config live without a restart (TASK-021) — a list collected once at start
+  would have broken that guarantee silently. `vector/router.py`'s `/status`
+  and `/sources` get the same list through a `Depends` provider that reads
+  `AppDeps.vector_sources`, the same way it already reaches `get_itop`/
+  `get_vector_store` (`test_package_layers.py::TestSourcesAreInjectedNotBuilt`).
 - **The R4 org pre-filter is the caller's, deliberately.** Layer 1
   (`AccessRepository.allowed_org_ids()` → `filters["org_id"]`) shapes the walk
   before it starts, is over-permissive by design (ADR-003) and means knowing

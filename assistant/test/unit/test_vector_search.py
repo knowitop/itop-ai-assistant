@@ -99,8 +99,8 @@ class _SearchTestCase(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(patcher.stop)
         sources = [_FakeSource(name, existing=existing) for name in families]
         config = _FakeConfigStore(vector=vector_cfg, embeddings=embeddings_cfg)
-        # `itop` goes unused once `sources` is injected — same seam as
-        # `VectorIndexer`'s, and for the same reason.
+        # `build_sources` goes unused once `sources` is injected — same seam
+        # as `VectorIndexer`'s, and for the same reason.
         search = SimilarSearch(store, config, MagicMock(), sources=sources)
         return search, store, embedder, sources[0]
 

@@ -33,7 +33,7 @@ ADR-021 for why that is not the same as knowing a consumer's domain.
 """
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Protocol
 
 from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
@@ -42,7 +42,6 @@ from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchQuery, SearchResult
 from itop_ai_assistant.vector.ports.store import ChunkStore, SearchHit
-from itop_ai_assistant.vector.sources.registry import ItopRepos, build_vector_sources
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +89,10 @@ class SimilarSearch:
     `SearchQuery` rather than being fixed at construction (TASK-031): it is
     the caller's configuration, not a property of this object. Picking the
     source that family names is this object's own job, which is why it takes
-    the registry's ingredients rather than a ready source: a caller that had
-    to pick one would need `vector/sources/` in its imports, and the next
-    caller would pick differently (rule 6.5 — the family name comes from the
-    consumer's own configuration, and the subsystem validates it).
+    a builder rather than a ready source: a caller that had to pick one would
+    need `vector/sources/` in its imports, and the next caller would pick
+    differently (rule 6.5 — the family name comes from the consumer's own
+    configuration, and the subsystem validates it).
 
     Long-lived (one instance for the process, via `AppDeps.vector_search`),
     unlike what it reads and owns per call: `config` is re-read on every
@@ -102,22 +101,28 @@ class SimilarSearch:
     is created and closed around one `find()` — the door creates it, the door
     closes it (rule 9.4).
 
-    `sources` is the injection point for tests, exactly as in
-    `use_cases/indexer.py`: production passes nothing and gets what the
-    registry builds from `itop`/the freshly read `VectorConfig`.
+    `build_sources` is a `VectorConfig -> Sequence[CandidateSource]` builder
+    the composition root closes over its own `itop` to make (TASK-034) —
+    called fresh on every `find()`, never memoized, which is what keeps a
+    family added or removed from the saved config live without a restart
+    (TASK-021). This module does not import `vector/sources/registry.py`
+    itself any more; `build_sources` is how it reaches the same builder
+    without knowing where it lives. `sources` stays the separate injection
+    point for tests: production always passes `build_sources` and no
+    `sources` override, a test does the opposite.
     """
 
     def __init__(
         self,
         store: ChunkStore,
         config: ConfigStore,
-        itop: ItopRepos,
+        build_sources: Callable[[VectorConfig], Sequence[CandidateSource]],
         *,
         sources: Sequence[CandidateSource] | None = None,
     ) -> None:
         self._store = store
         self._config = config
-        self._itop = itop
+        self._build_sources = build_sources
         self._sources = sources
 
     def _unavailable(self, vector_cfg: VectorConfig, embeddings_cfg: EmbeddingsConfig) -> str | None:
@@ -160,7 +165,7 @@ class SimilarSearch:
             raise SearchUnavailable(unavailable)
         sources = {
             source.name: source
-            for source in (self._sources if self._sources is not None else build_vector_sources(self._itop, vector_cfg))
+            for source in (self._sources if self._sources is not None else self._build_sources(vector_cfg))
         }
         source = sources.get(query.family)
         if source is None:

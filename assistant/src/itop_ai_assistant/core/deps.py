@@ -1,3 +1,4 @@
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -6,7 +7,7 @@ from fastapi import Request
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models.chat_models import BaseChatModel
 
-from itop_ai_assistant.config import LlmConfig, Settings
+from itop_ai_assistant.config import LlmConfig, Settings, VectorConfig
 from itop_ai_assistant.core.llm_providers import get_provider
 from itop_ai_assistant.itop.connection import ItopConnection
 from itop_ai_assistant.repositories.sets import ItopRepositories
@@ -20,7 +21,14 @@ from itop_ai_assistant.settings.prompt_store import (
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.util.redis_keyspace import days_to_seconds
-from itop_ai_assistant.vector import ChunkStore, IndexJournal, QdrantChunkStore, SimilarSearch, VectorSyncState
+from itop_ai_assistant.vector import (
+    ChunkStore,
+    IndexJournal,
+    QdrantChunkStore,
+    SimilarSearch,
+    VectorSyncState,
+    build_vector_sources,
+)
 
 
 @dataclass
@@ -51,6 +59,10 @@ class AppDeps:
     vector_search: SimilarSearch
     vector_sync: VectorSyncState
     vector_journal: IndexJournal
+    # Would be `Callable[[VectorConfig], Sequence[VectorSource[Any]]]`;
+    # `VectorSource` isn't on the facade yet (that's TASK-035), so this one
+    # field stays `Any` at the boundary rather than deep-importing around it.
+    vector_sources: Callable[[VectorConfig], Sequence[Any]]
 
     async def aclose(self) -> None:
         await self.itop_connection.aclose()
@@ -97,6 +109,16 @@ def build_deps(settings: Settings) -> AppDeps:
     itop = ItopRepositories(itop_connection, config_store)
     # Lazy: no client (and no connection) until the vector store is used
     vector_store = QdrantChunkStore(settings.qdrant_url)
+
+    # The one call site left for `build_vector_sources` (TASK-034) — closed
+    # over `itop` here and handed to both `SimilarSearch` and `AppDeps`
+    # itself, so `search.py`/`indexer.py`/`router.py` never import the
+    # registry directly. Re-read `cfg.families` fresh on every call, not
+    # collected once here: a static list would break the live reload TASK-021
+    # relies on.
+    def vector_sources(cfg: VectorConfig) -> list[Any]:
+        return build_vector_sources(itop, cfg)
+
     return AppDeps(
         settings=settings,
         itop=itop,
@@ -106,7 +128,8 @@ def build_deps(settings: Settings) -> AppDeps:
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR, settings.prompts_dir), redis),
         journal=RunJournal(redis, ttl_seconds=days_to_seconds(settings.run_ttl_days)),
         vector_store=vector_store,
-        vector_search=SimilarSearch(vector_store, config_store, itop),
+        vector_search=SimilarSearch(vector_store, config_store, build_sources=vector_sources),
         vector_sync=VectorSyncState(redis),
         vector_journal=IndexJournal(redis),
+        vector_sources=vector_sources,
     )

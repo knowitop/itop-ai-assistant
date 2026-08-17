@@ -979,13 +979,17 @@ class TestIndexerPort(unittest.TestCase):
         self.assertIs(_requires_indexer_deps(deps), deps)
 
     def test_the_port_withholds_what_the_sweep_has_no_business_with(self) -> None:
-        for member in ("aclose", "settings", "state_manager", "prompt_store", "journal", "itop_connection"):
+        # `itop` moved out in TASK-034: the sweep never called it directly,
+        # only handed it to `build_vector_sources()` — that call is the
+        # composition root's now, and the port carries its result
+        # (`vector_sources`) instead of the raw connection.
+        for member in ("aclose", "settings", "state_manager", "prompt_store", "journal", "itop_connection", "itop"):
             with self.subTest(member=member):
                 self.assertNotIn(member, get_protocol_members(IndexerDeps))
 
     def test_the_port_carries_exactly_the_five_the_sweep_uses(self) -> None:
         self.assertEqual(
-            {"config_store", "itop", "vector_store", "vector_sync", "vector_journal"},
+            {"config_store", "vector_sources", "vector_store", "vector_sync", "vector_journal"},
             get_protocol_members(IndexerDeps),
         )
 

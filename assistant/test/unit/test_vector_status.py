@@ -15,6 +15,7 @@ from itop_ai_assistant.settings.config_store import RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore, RedisPromptStore
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
+from itop_ai_assistant.vector import build_vector_sources
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.ports.store import ChunkMetadata, ChunkRecord
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
@@ -86,6 +87,10 @@ def _make_deps(redis, store_url: str | None = None, **settings_overrides) -> App
     config_store = RedisConfigStore(redis, settings)
     itop = MagicMock()
     vector_store = QdrantChunkStore(store_url)
+
+    def vector_sources(cfg):
+        return build_vector_sources(itop, cfg)
+
     return AppDeps(
         settings=settings,
         itop=itop,
@@ -95,9 +100,10 @@ def _make_deps(redis, store_url: str | None = None, **settings_overrides) -> App
         prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR), redis),
         journal=RunJournal(redis),
         vector_store=vector_store,
-        vector_search=SimilarSearch(vector_store, config_store, itop),
+        vector_search=SimilarSearch(vector_store, config_store, build_sources=vector_sources),
         vector_sync=VectorSyncState(redis),
         vector_journal=IndexJournal(redis),
+        vector_sources=vector_sources,
     )
 
 
@@ -443,7 +449,7 @@ class TestSearch(VectorStatusTestCase):
 
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
+            patch.object(deps.vector_search, "_build_sources", return_value=[source]),
         ):
             response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
 
@@ -474,7 +480,7 @@ class TestSearch(VectorStatusTestCase):
 
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
+            patch.object(deps.vector_search, "_build_sources", return_value=[source]),
         ):
             response = self.client.post(
                 "/api/vector/search",
@@ -521,10 +527,7 @@ class TestSearch(VectorStatusTestCase):
 
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch(
-                "itop_ai_assistant.vector.use_cases.search.build_vector_sources",
-                return_value=[_FakeSource(existing={1, 2})],
-            ),
+            patch.object(deps.vector_search, "_build_sources", return_value=[_FakeSource(existing={1, 2})]),
         ):
             response = self.client.post(
                 "/api/vector/search",
@@ -594,7 +597,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
 
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
+            patch.object(deps.vector_search, "_build_sources", return_value=[source]),
         ):
             response = self.client.post(
                 "/api/vector/search",
@@ -625,7 +628,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
 
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
+            patch.object(deps.vector_search, "_build_sources", return_value=[source]),
         ):
             response = self.client.post("/api/vector/search", json={"family": "tickets", "text": "printer"})
 
@@ -643,7 +646,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         store_search = AsyncMock(wraps=deps.vector_store.search)
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
+            patch.object(deps.vector_search, "_build_sources", return_value=[source]),
             patch.object(deps.vector_store, "search", store_search),
         ):
             self.client.post(
@@ -663,7 +666,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         store_search = AsyncMock(wraps=deps.vector_store.search)
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
+            patch.object(deps.vector_search, "_build_sources", return_value=[source]),
             patch.object(deps.vector_store, "search", store_search),
         ):
             self.client.post(
@@ -688,7 +691,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         store_search = AsyncMock(wraps=deps.vector_store.search)
         with (
             patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder),
-            patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]),
+            patch.object(deps.vector_search, "_build_sources", return_value=[source]),
             patch.object(deps.vector_store, "search", store_search),
         ):
             response = self.client.post(
@@ -709,7 +712,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         source.name = "kb_articles"
         source.prepare = AsyncMock()
 
-        with patch("itop_ai_assistant.vector.use_cases.search.build_vector_sources", return_value=[source]):
+        with patch.object(deps.vector_search, "_build_sources", return_value=[source]):
             response = self.client.post(
                 "/api/vector/search",
                 json={"family": "kb_articles", "text": "printer", "principal_token": "engineer-token"},

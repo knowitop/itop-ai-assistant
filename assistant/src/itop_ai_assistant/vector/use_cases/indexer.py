@@ -46,7 +46,6 @@ from itop_ai_assistant.vector.ports.store import (
     FingerprintMismatchError,
     IndexMeta,
 )
-from itop_ai_assistant.vector.sources.registry import ItopRepos, build_vector_sources
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
 from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 
@@ -63,21 +62,29 @@ class IndexerDeps(Protocol):
     The five members below are the whole of it. `settings`, `itop_connection`,
     `state_manager`, `prompt_store` and the run `journal` are not here because
     the sweep never touches them: it is infrastructure with no run frame, and
-    its own journal is `vector_journal`. `aclose()` is absent for the reason it
-    is absent from every port — the pool belongs to the composition root.
+    its own journal is `vector_journal`. `itop` is not here either, as of
+    TASK-034 — the sweep never called it directly, only handed it to
+    `build_vector_sources()`; that call moved to the composition root, so
+    what the sweep needs now is `vector_sources` (below), not the raw
+    connection. `aclose()` is absent for the reason it is absent from every
+    port — the pool belongs to the composition root.
 
-    Members are read-only properties, never plain attributes: an attribute is
-    invariant, so `itop: ItopRepos` would reject an `AppDeps` whose field is
-    typed `ItopRepositories`. `AppDeps` satisfies this structurally and knows
-    nothing about it — which is also what keeps `core/deps.py` out of this
-    module entirely, cycle with the facade included.
+    Read-only properties, never plain attributes, except `vector_sources`:
+    an attribute is invariant, so e.g. `vector_store: ChunkStore` would
+    reject an `AppDeps` whose field is typed more narrowly. `vector_sources`
+    is a method instead, the same shape as `ItopAccess.for_principal`
+    (`pipelines/ports.py`) — it is an operation (`VectorConfig` in, a fresh
+    list out), not a stored value, so a method reads truer than a property
+    that happens to return a callable. `AppDeps` satisfies all of this
+    structurally and knows nothing about it — which is also what keeps
+    `core/deps.py` out of this module entirely, cycle with the facade
+    included.
     """
 
     @property
     def config_store(self) -> ConfigStore: ...
 
-    @property
-    def itop(self) -> ItopRepos: ...
+    def vector_sources(self, cfg: VectorConfig) -> Sequence[VectorSource[Any]]: ...
 
     @property
     def vector_store(self) -> ChunkStore: ...
@@ -135,8 +142,8 @@ class VectorIndexer:
     or replica ends up serving the next tick.
 
     `sources` overrides the registered `VectorSource`s (built by
-    `build_vector_sources` when omitted) — tests inject fakes here instead of
-    mocking iTop/repository internals.
+    `deps.vector_sources(cfg)` when omitted) — tests inject fakes here
+    instead of mocking iTop/repository internals.
     """
 
     def __init__(self, deps: IndexerDeps, sources: Sequence[VectorSource[Any]] | None = None) -> None:
@@ -185,7 +192,7 @@ class VectorIndexer:
                 # Drops the pending-reindex flag along with the cursors — an
                 # attempt that fails earlier leaves the request standing
                 await self._deps.vector_sync.reset_cursors()
-            sources = self._sources if self._sources is not None else build_vector_sources(self._deps.itop, cfg)
+            sources = self._sources if self._sources is not None else self._deps.vector_sources(cfg)
             # A source may be prepared once here and again by reconcile below,
             # in the same pass — `prepared` keeps that to one call per source.
             prepared: set[int] = set()
