@@ -6,9 +6,11 @@ paths:
 
 # Testing
 
-- Unit tests live in `test/unit/` and are the only suite collected by default
-  (`testpaths`). `pytest.toml` sets `importmode = importlib`; the package is on
-  the path because `uv sync` installs it editable.
+- Unit tests live in `test/unit/`, mirroring the module tree
+  (`test/unit/agents/<module>/`) where a module owns tests, flat otherwise, and
+  are the only suite collected by default (`testpaths`). `pytest.toml` sets
+  `importmode = importlib`; the package is on the path because `uv sync`
+  installs it editable.
 - LLM calls and HTTP are mocked (`ItopMockTransport`), Redis is `fakeredis`.
 - `get_settings()` is `lru_cache`d — call `get_settings.cache_clear()` in
   `setUp`/`tearDown` when a test controls env vars.

@@ -12,4 +12,4 @@ known-first-party = ["itop_ai_assistant"]
 
 [lint.per-file-ignores]
 # conftest must load .env.test before any project import touches get_settings()
-"test/integration/conftest.py" = ["E402"]
+"test/integration/agents/intake/conftest.py" = ["E402"]
