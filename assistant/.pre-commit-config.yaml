@@ -11,4 +11,14 @@ repos:
     rev: v1.19.1
     hooks:
       - id: mypy
-        additional_dependencies: [types-PyYAML, sqlalchemy, alembic, pgvector]
+        additional_dependencies: [types-PyYAML]
+
+  - repo: local
+    hooks:
+      - id: lint-imports
+        name: lint-imports
+        # pre-commit runs hooks from the git root, one level above this
+        # config and .importlinter — pin uv to this project explicitly.
+        entry: uv run --directory assistant lint-imports
+        language: system
+        pass_filenames: false

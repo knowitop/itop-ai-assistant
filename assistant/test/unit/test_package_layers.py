@@ -1,23 +1,20 @@
 """The layers the package tree claims are real — checked against the tree.
 
-Two invariants that would otherwise be held by prose only. The first is the
-iTop boundary of `.claude/rules/itop.md` ("Nothing outside the repositories
-touches iTop"): everything speaking the protocol lives in `itop/` and
-everything returning a domain object in `repositories/`, so the rule is a
-fact about imports and can be read off the source. The second guards the
-layout itself — a flat package root would grow back one file at a time, and
-nothing would notice.
+Module-boundary invariants that reduce to a plain import graph live in
+`assistant/.importlinter`, checked by `lint-imports` (wired into
+`pre-commit`) — the iTop boundary of `.claude/rules/itop.md`, `vector/`'s own
+internal layering, the content-domain and webhook-transport boundaries, and
+which modules may reach `content_sources.registry`. What stays here is what
+an import-graph contract has no vocabulary for: declared names, class
+shapes, function signatures, file layout.
 
-`TestVectorLayers` and `TestVectorFacade` guard the same kind of invariant
-one level down, inside `vector/`: a layer expressed as a sub-package instead
-of a top-level one, and a facade (`vector/__init__.py`) that only works if
-nothing routes around it. `TestVectorDoesNotKnowContentDomains` guards the
-same thing from the other direction: not just "the indexer only reaches a
-source through the registry", but "nothing under `vector/` at all knows the
-domain a source is written for". `TestRightsCannotBeForgotten` is the odd
-one out: it reads signatures rather than imports, because the invariant it
-guards (rule 9.1) is about what a call can omit, not about what a module can
-reach.
+`TestTheRootStaysThin` guards the layout itself — a flat package root would
+grow back one file at a time, and nothing would notice.
+
+`TestVectorFacade` guards a facade (`vector/__init__.py`) that only works if
+nothing routes around it. `TestRightsCannotBeForgotten` is the odd one out:
+it reads signatures rather than imports, because the invariant it guards
+(rule 9.1) is about what a call can omit, not about what a module can reach.
 
 `TestOnlyTheContractIsImportedFromOutside` narrows `TestVectorFacade` one
 step further: not just "through the facade", but "which names the facade
@@ -25,11 +22,6 @@ hands out" — every name it re-exports, and nothing it does not (TASK-037
 retired the composition root's own back door: `core/deps.py` no longer
 assembles concrete adapters by hand, so there is nothing left that needs a
 wider allowance than everyone else).
-
-`TestAgentsDoNotImportTheWebhookTransport` guards the same kind of boundary
-one layer up: `agents/` is business logic, `webhook/` is one entry point's
-transport shape, and nothing under `agents/` may import it — a run reaches
-what it needs (`TicketEvent` included) through `pipelines/models.py` instead.
 """
 
 import ast
@@ -45,12 +37,6 @@ from itop_ai_assistant.vector import VectorConfig
 from itop_ai_assistant.vector.use_cases.search import SimilarSearch
 
 PACKAGE = Path(itop_ai_assistant.__file__).parent
-
-#: `itop_client/` is the vendored library; these are the modules allowed to
-#: import it. `core/principal.py` is not an exception to the rule but to its
-#: wording: it names `ItopAuth` as the type of a principal's credentials, and
-#: never calls iTop.
-CLIENT_IMPORTERS = ("itop", "repositories", "core/principal.py")
 
 #: The root is the application itself: its entry point, its configuration and
 #: the build stamp generated into the package (`hatch_build.py`). Anything else
@@ -71,17 +57,6 @@ def _imported_modules(path: Path) -> set[str]:
         elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
             modules.add(node.module)
     return modules
-
-
-class TestTheItopBoundary(unittest.TestCase):
-    def test_only_the_itop_layers_import_the_vendored_client(self):
-        for path in _sources():
-            rel = path.relative_to(PACKAGE)
-            if rel.parts[0] == "itop_client" or str(rel).startswith(CLIENT_IMPORTERS):
-                continue
-            with self.subTest(module=str(rel)):
-                client_imports = {m for m in _imported_modules(path) if "itop_client" in m}
-                self.assertEqual(set(), client_imports)
 
 
 class TestTheRootStaysThin(unittest.TestCase):
@@ -107,45 +82,6 @@ class TestVectorOwnsItsConfig(unittest.TestCase):
                 tree = ast.parse(path.read_text(encoding="utf-8"))
                 declared = {node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)}
                 self.assertEqual(set(), declared & _VECTOR_CONFIG_MODELS)
-
-
-class TestVectorLayers(unittest.TestCase):
-    """`ports/` and `state/` are the bottom of `vector/`'s own dependency
-    graph — they must not import `adapters/`, `use_cases/` or `router.py`,
-    which are built on top of them.
-    """
-
-    def test_ports_and_state_do_not_import_adapters_use_cases_or_router(self):
-        for path in _sources():
-            rel = path.relative_to(PACKAGE)
-            if rel.parts[:2] not in {("vector", "ports"), ("vector", "state")}:
-                continue
-            with self.subTest(module=str(rel)):
-                leaking = {
-                    m
-                    for m in _imported_modules(path)
-                    if m.startswith("itop_ai_assistant.vector.adapters")
-                    or m.startswith("itop_ai_assistant.vector.use_cases")
-                    or m == "itop_ai_assistant.vector.router"
-                }
-                self.assertEqual(set(), leaking)
-
-
-class TestSourcePortShedsConfig(unittest.TestCase):
-    """Rule 3.4, TASK-040: a port must not import a settings section — checked
-    directly for `vector/ports/source.py`, the one port that used to take
-    `VectorClassConfig` in `VectorSource.chunk()`'s signature and now takes
-    `ChunkPlan` instead, a value object the port declares itself."""
-
-    _TARGETS = {"vector/ports/source.py"}
-
-    def test_the_source_port_does_not_import_vector_config(self):
-        for path in _sources():
-            rel = path.relative_to(PACKAGE)
-            if str(rel) not in self._TARGETS:
-                continue
-            with self.subTest(module=str(rel)):
-                self.assertNotIn("itop_ai_assistant.vector.config", _imported_modules(path))
 
 
 class TestStorePortShedsDomainTypes(unittest.TestCase):
@@ -271,89 +207,6 @@ class TestOnlyTheContractIsImportedFromOutside(unittest.TestCase):
             }
             with self.subTest(module=str(rel)):
                 self.assertEqual(set(), names - allowed)
-
-
-#: Rule 6.4, as a checked fact rather than "the indexer knows nothing about
-#: iTop or tickets" prose. Deliberately narrow to these four: `router.py`
-#: legitimately imports `repositories.sets.ItopRepositories` (a concrete class
-#: about reaching iTop generically, not domain knowledge, ADR-022) for
-#: `/search`'s R4 pre-filter, and that is not what this test is about.
-_CONTENT_DOMAIN_MODULES = {
-    "itop_ai_assistant.domain.ticket",
-    "itop_ai_assistant.domain.faq",
-    "itop_ai_assistant.repositories.ticket",
-    "itop_ai_assistant.repositories.faq",
-}
-
-
-class TestVectorDoesNotKnowContentDomains(unittest.TestCase):
-    """The form `architecture/alignment-plan.md` §5 asks for: not one file,
-    but everything under `vector/` — none of it may import the ticket/FAQ
-    domain models or their repositories, because content providers live
-    outside `vector/` entirely, not because an import happens to be routed
-    through one particular module.
-    """
-
-    def test_nothing_under_vector_imports_ticket_or_faq_domain_code(self):
-        for path in _sources():
-            rel = path.relative_to(PACKAGE)
-            if rel.parts[0] != "vector":
-                continue
-            with self.subTest(module=str(rel)):
-                leaking = _imported_modules(path) & _CONTENT_DOMAIN_MODULES
-                self.assertEqual(set(), leaking)
-
-
-class TestAgentsDoNotImportTheWebhookTransport(unittest.TestCase):
-    """Rule 6.10, TASK-044: `agents/` is business logic, `webhook/` is one
-    entry point's transport shape — nothing under `agents/` may import it.
-    """
-
-    def test_nothing_under_agents_imports_the_webhook_module(self):
-        for path in _sources():
-            rel = path.relative_to(PACKAGE)
-            if rel.parts[0] != "agents":
-                continue
-            with self.subTest(module=str(rel)):
-                leaking = {m for m in _imported_modules(path) if m.startswith("itop_ai_assistant.webhook")}
-                self.assertEqual(set(), leaking)
-
-
-class TestSourcesAreInjectedNotBuilt(unittest.TestCase):
-    """The mirror image of `TestVectorDoesNotKnowContentDomains` above — that
-    one keeps the domain out of `vector/` entirely, this one keeps
-    `search.py`, `indexer.py` and `router.py` from building the source *list*
-    themselves even via the door `content_sources.registry` leaves open:
-    `vector/assembly.py` is the one caller of `build_vector_sources()` in the
-    process (TASK-037 — `core/deps.py` imported it directly before; now it
-    takes the already-assembled `VectorSubsystem` and never names
-    `content_sources.registry` at all).
-
-    Checks the one name, not the whole module: after TASK-038, `router.py`
-    does not import `content_sources.registry` at all any more — it reaches
-    iTop through `repositories.sets.ItopRepositories` directly (see
-    `_CONTENT_DOMAIN_MODULES` above for why that import is not domain
-    knowledge either).
-    """
-
-    def test_the_three_former_callers_no_longer_import_the_builder(self):
-        targets = [
-            PACKAGE / "vector" / "use_cases" / "search.py",
-            PACKAGE / "vector" / "use_cases" / "indexer.py",
-            PACKAGE / "vector" / "router.py",
-        ]
-        for path in targets:
-            with self.subTest(module=str(path.relative_to(PACKAGE))):
-                tree = ast.parse(path.read_text(encoding="utf-8"))
-                names = {
-                    alias.name
-                    for node in ast.walk(tree)
-                    if isinstance(node, ast.ImportFrom)
-                    and node.module == "itop_ai_assistant.content_sources.registry"
-                    and not node.level
-                    for alias in node.names
-                }
-                self.assertNotIn("build_vector_sources", names)
 
 
 class TestRightsCannotBeForgotten(unittest.TestCase):
