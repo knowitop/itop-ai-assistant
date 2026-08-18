@@ -42,7 +42,13 @@ async def _run(full: bool) -> int:
         return 1
     deps = build_deps(settings)
     try:
-        indexer = VectorIndexer(deps.vector)
+        indexer = VectorIndexer(
+            deps.vector.config_store,
+            deps.vector.vector_sources,
+            deps.vector.vector_store,
+            deps.vector.vector_sync,
+            deps.vector.vector_journal,
+        )
         if full:
             await deps.vector.vector_sync.request_reindex()
         # Retry until a clean pass: per-class errors don't advance that class's

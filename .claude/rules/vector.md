@@ -131,8 +131,9 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   `core/deps.py` was the caller before, from TASK-035 to TASK-037, and does
   not import `content_sources.registry` at all any more). Both take a
   `VectorConfig -> Sequence[...]` builder instead: `SimilarSearch`'s
-  constructor parameter `build_sources`, `VectorIndexer`'s via
-  `IndexerDeps.vector_sources(cfg)`.
+  constructor parameter `build_sources`, `VectorIndexer`'s via its
+  `vector_sources` constructor parameter, called as `vector_sources(cfg)`
+  (a plain parameter, not a protocol member, since TASK-039).
   The builder is called fresh on every `find()`/`sweep_once()`, never
   memoized, which is what keeps a family added or removed from the saved
   config live without a restart (TASK-021) — a list collected once at start

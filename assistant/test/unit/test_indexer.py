@@ -1,12 +1,11 @@
+import inspect
 import unittest
 from datetime import UTC, datetime, timedelta
-from typing import get_protocol_members
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
 
-from itop_ai_assistant.config import EmbeddingsConfig, get_settings
-from itop_ai_assistant.core.deps import AppDeps, build_deps
+from itop_ai_assistant.config import EmbeddingsConfig
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.vector.chunker import FragmentContent, TextContent, chunk_object
 from itop_ai_assistant.vector.config import ChunkFragmentConfig, FamilyConfig, VectorClassConfig, VectorConfig
@@ -22,7 +21,6 @@ from itop_ai_assistant.vector.state.index_journal import IndexJournal
 from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 from itop_ai_assistant.vector.use_cases.indexer import (
     SWEEP_TASK,
-    IndexerDeps,
     VectorIndexer,
     register_vector_sweep,
 )
@@ -48,11 +46,6 @@ _VECTOR_CFG = VectorConfig(
     sweep_throttle_seconds=0,
 )
 _EMB_CFG = EmbeddingsConfig(base_url="http://emb/v1", model="test-model", dimension=4)
-
-
-def _requires_indexer_deps(deps: IndexerDeps) -> IndexerDeps:
-    """Typed narrowly on purpose: passing `AppDeps.vector` here is the assertion."""
-    return deps
 
 
 def _flat(calls: list[list]) -> list:
@@ -246,12 +239,29 @@ def _deps_mock(
     return deps
 
 
+def _indexer(deps, sources=None) -> VectorIndexer:
+    return VectorIndexer(
+        deps.config_store,
+        deps.vector_sources,
+        deps.vector_store,
+        deps.vector_sync,
+        deps.vector_journal,
+        sources=sources,
+    )
+
+
+def _register_sweep(tasks, deps) -> None:
+    register_vector_sweep(
+        tasks, deps.config_store, deps.vector_sources, deps.vector_store, deps.vector_sync, deps.vector_journal
+    )
+
+
 class IndexerTestCase(unittest.IsolatedAsyncioTestCase):
     async def _run(self, deps, source, embedder=None):
         return await self._run_sources(deps, [source], embedder=embedder)
 
     async def _run_sources(self, deps, sources, embedder=None):
-        indexer = VectorIndexer(deps, sources=sources)
+        indexer = _indexer(deps, sources)
         self.indexer = indexer
         embedder = embedder or _embedder_mock()
         self.embedder = embedder
@@ -839,20 +849,20 @@ class TestSweepRegistration(unittest.IsolatedAsyncioTestCase):
 
     async def test_registers_a_loop_when_the_database_is_configured(self):
         tasks = PeriodicTasks()
-        register_vector_sweep(tasks, _deps_mock())
+        _register_sweep(tasks, _deps_mock())
 
         self.assertEqual(tasks.names, [SWEEP_TASK])
 
     async def test_no_loop_without_a_database(self):
         tasks = PeriodicTasks()
-        register_vector_sweep(tasks, _deps_mock(configured=False))
+        _register_sweep(tasks, _deps_mock(configured=False))
 
         self.assertEqual(tasks.names, [])
 
     async def test_interval_comes_from_the_runtime_config(self):
         tasks = PeriodicTasks()
         deps = _deps_mock(vector_cfg=_VECTOR_CFG.model_copy(update={"sweep_interval_seconds": 42}))
-        register_vector_sweep(tasks, deps)
+        _register_sweep(tasks, deps)
 
         self.assertEqual(await tasks._entries[SWEEP_TASK].interval(), 42)
 
@@ -864,7 +874,7 @@ class TestReindex(IndexerTestCase):
 
     async def test_request_reindex_marks_it_in_the_index(self):
         deps = _deps_mock()
-        indexer = VectorIndexer(deps)
+        indexer = _indexer(deps)
         await indexer.request_reindex()
 
         self.assertTrue(await deps.vector_sync.reindex_pending())
@@ -948,46 +958,21 @@ class TestReconciliation(IndexerTestCase):
         self.assertEqual(store.list_object_ids_calls, 0)
 
 
-class TestIndexerPort(unittest.TestCase):
-    """`IndexerDeps` against the real `VectorSubsystem` (TASK-029, narrowed to
-    the assembled subsystem rather than the whole container in TASK-037 —
-    `core/background.py` hands the sweep `deps.vector`, not `deps`), the same
-    way `test_pipelines_ports.py` pins the run core's ports.
-
-    The first test is mostly a mypy assertion that happens to also run: if
-    `VectorSubsystem` ever stops satisfying the port — a field renamed, a type
-    narrowed the wrong way, a member declared as a plain attribute instead of
-    a read-only property — the strict mypy gate fails here, at the seam,
-    instead of somewhere inside a sweep. It is annotated `-> None` for that
-    reason and not for style: mypy skips the body of an unannotated function,
-    so without the return type the assertion below is invisible to the gate
-    that is supposed to make it.
-
-    The rest pin the deliberate absences, which `isinstance` cannot catch
-    (a protocol is satisfied by having more, never by having less), and the
-    exact width of the slice — five members out of the container's ten is the
-    whole point of the port.
+class TestIndexerSignature(unittest.TestCase):
+    """VectorIndexer/register_vector_sweep take the sweep's five
+    dependencies as explicit parameters (TASK-039) — pinned the same way
+    test_pipelines_ports.py pins the run core's ports.
     """
 
-    def test_the_container_is_accepted_where_the_sweep_expects_the_port(self) -> None:
-        deps: AppDeps = build_deps(get_settings())
+    _EXPECTED = {"config_store", "vector_sources", "vector_store", "vector_sync", "vector_journal"}
 
-        self.assertIs(_requires_indexer_deps(deps.vector), deps.vector)
+    def test_vector_indexer_init_takes_the_five_by_name(self) -> None:
+        params = set(inspect.signature(VectorIndexer.__init__).parameters) - {"self", "sources"}
+        self.assertEqual(self._EXPECTED, params)
 
-    def test_the_port_withholds_what_the_sweep_has_no_business_with(self) -> None:
-        # `itop` moved out in TASK-034: the sweep never called it directly,
-        # only handed it to `build_vector_sources()` — that call is the
-        # composition root's now, and the port carries its result
-        # (`vector_sources`) instead of the raw connection.
-        for member in ("aclose", "settings", "state_manager", "prompt_store", "journal", "itop_connection", "itop"):
-            with self.subTest(member=member):
-                self.assertNotIn(member, get_protocol_members(IndexerDeps))
-
-    def test_the_port_carries_exactly_the_five_the_sweep_uses(self) -> None:
-        self.assertEqual(
-            {"config_store", "vector_sources", "vector_store", "vector_sync", "vector_journal"},
-            get_protocol_members(IndexerDeps),
-        )
+    def test_register_vector_sweep_takes_the_five_by_name(self) -> None:
+        params = set(inspect.signature(register_vector_sweep).parameters) - {"tasks"}
+        self.assertEqual(self._EXPECTED, params)
 
 
 if __name__ == "__main__":

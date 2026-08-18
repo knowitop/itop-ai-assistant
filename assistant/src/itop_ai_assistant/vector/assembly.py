@@ -50,9 +50,10 @@ class VectorSubsystem:
     """What the rest of the process may hold onto — `AppDeps.vector`, one
     field, and `vector/router.py`'s own `request.app.state.vector`.
 
-    Field names match `IndexerDeps` (`vector/use_cases/indexer.py`) member for
-    member on purpose: `register_vector_sweep(tasks, deps.vector)` needs no
-    adapter, this dataclass satisfies that protocol structurally as-is.
+    Field names match the parameters of `VectorIndexer.__init__`/
+    `register_vector_sweep` (`vector/use_cases/indexer.py`) one for one on
+    purpose (TASK-039): `core/background.py`/`reindex.py` unpack `deps.vector`
+    into those five arguments without renaming anything.
     `itop` and `config_store` are kept, not just consumed and dropped, because
     `vector/router.py` needs both back (`/search`'s R4 pre-filter, and every
     endpoint's own read of the `vector`/`embeddings` sections) and it no

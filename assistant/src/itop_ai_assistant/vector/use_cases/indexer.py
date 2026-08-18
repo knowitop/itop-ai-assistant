@@ -30,7 +30,7 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any
 
 from itop_ai_assistant.config import EmbeddingsConfig
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
@@ -55,45 +55,6 @@ logger = logging.getLogger(__name__)
 _RECONCILE_BATCH = 200
 
 
-class IndexerDeps(Protocol):
-    """What the sweep needs from the container — declared here, by the
-    consumer, rather than taken as the whole subsystem (ADR-019, `core.md`:
-    "declare a port at the consumer", as `_AssignedDeps` and `ItopRepos` do).
-
-    The five members below are the whole of it. `itop` is not here — the
-    sweep never calls it directly, only `vector.build()` does, to close over
-    it once and hand the sweep the resulting `vector_sources` builder (below).
-    `aclose()` is absent for the reason it is absent from every port — the
-    pool belongs to the composition root.
-
-    Read-only properties, never plain attributes, except `vector_sources`:
-    an attribute is invariant, so e.g. `vector_store: ChunkStore` would
-    reject an implementation whose field is typed more narrowly.
-    `vector_sources` is a method instead, the same shape as
-    `ItopAccess.for_principal` (`pipelines/ports.py`) — it is an operation
-    (`VectorConfig` in, a fresh list out), not a stored value, so a method
-    reads truer than a property that happens to return a callable.
-    `VectorSubsystem` (`vector/assembly.py`) satisfies all of this
-    structurally and knows nothing about it — `core/background.py` hands it
-    `deps.vector`, not `AppDeps` itself (TASK-037), which is also what keeps
-    `core/deps.py` out of this module entirely.
-    """
-
-    @property
-    def config_store(self) -> ConfigStore: ...
-
-    def vector_sources(self, cfg: VectorConfig) -> Sequence[VectorSource[Any]]: ...
-
-    @property
-    def vector_store(self) -> ChunkStore: ...
-
-    @property
-    def vector_sync(self) -> VectorSyncState: ...
-
-    @property
-    def vector_journal(self) -> IndexJournal: ...
-
-
 @dataclass
 class SweepReport:
     kind: str  # sweep / backfill
@@ -109,23 +70,30 @@ class SweepReport:
 SWEEP_TASK = "vector-sweep"
 
 
-def register_vector_sweep(tasks: PeriodicTasks, deps: IndexerDeps) -> None:
+def register_vector_sweep(
+    tasks: PeriodicTasks,
+    config_store: ConfigStore,
+    vector_sources: Callable[[VectorConfig], Sequence[VectorSource[Any]]],
+    vector_store: ChunkStore,
+    vector_sync: VectorSyncState,
+    vector_journal: IndexJournal,
+) -> None:
     """Put the sweep under the process-wide scheduler.
 
     Infrastructure, not a business module: no `ModuleInfo`, no trigger route
     and no `RunJournal` entry — the sweep keeps its own `index_journal` in
     Redis. What it needs from the core is pacing, and that is all it takes.
     """
-    if not deps.vector_store.configured:
+    if not vector_store.configured:
         logger.info("Vector store is not configured (qdrant_url), the sweep will not run")
         return
 
     async def interval() -> float:
-        return (await deps.config_store.get("vector", VectorConfig)).sweep_interval_seconds
+        return (await config_store.get("vector", VectorConfig)).sweep_interval_seconds
 
     tasks.add(
         SWEEP_TASK,
-        VectorIndexer(deps).tick,
+        VectorIndexer(config_store, vector_sources, vector_store, vector_sync, vector_journal).tick,
         interval=interval,
         default_interval=VectorConfig().sweep_interval_seconds,
     )
@@ -140,12 +108,24 @@ class VectorIndexer:
     or replica ends up serving the next tick.
 
     `sources` overrides the registered `VectorSource`s (built by
-    `deps.vector_sources(cfg)` when omitted) — tests inject fakes here
-    instead of mocking iTop/repository internals.
+    `vector_sources(cfg)` when omitted) — tests inject fakes here instead of
+    mocking iTop/repository internals.
     """
 
-    def __init__(self, deps: IndexerDeps, sources: Sequence[VectorSource[Any]] | None = None) -> None:
-        self._deps = deps
+    def __init__(
+        self,
+        config_store: ConfigStore,
+        vector_sources: Callable[[VectorConfig], Sequence[VectorSource[Any]]],
+        vector_store: ChunkStore,
+        vector_sync: VectorSyncState,
+        vector_journal: IndexJournal,
+        sources: Sequence[VectorSource[Any]] | None = None,
+    ) -> None:
+        self._config_store = config_store
+        self._vector_sources = vector_sources
+        self._vector_store = vector_store
+        self._vector_sync = vector_sync
+        self._vector_journal = vector_journal
         self._sources = list(sources) if sources is not None else None
 
     async def tick(self) -> SweepReport:
@@ -158,30 +138,29 @@ class VectorIndexer:
         """Schedule a full backfill: the next sweep resets all cursors and
         runs as kind="backfill". No truncate — unchanged chunks are cheap
         thanks to the hash-guard, and reconciliation cleans orphans."""
-        await self._deps.vector_sync.request_reindex()
+        await self._vector_sync.request_reindex()
 
     async def sweep_once(self) -> SweepReport:
-        deps = self._deps
-        if not deps.vector_store.configured:
+        if not self._vector_store.configured:
             return SweepReport(kind="sweep", status="skipped", skip_reason="qdrant_url is not set")
-        vector_cfg = await deps.config_store.get("vector", VectorConfig)
+        vector_cfg = await self._config_store.get("vector", VectorConfig)
         if not vector_cfg.enabled:
             return SweepReport(kind="sweep", status="skipped", skip_reason="vector indexing is disabled")
-        emb_cfg = await deps.config_store.get("embeddings", EmbeddingsConfig)
+        emb_cfg = await self._config_store.get("embeddings", EmbeddingsConfig)
         model = emb_cfg.model
         if not emb_cfg.base_url or not model:
             return SweepReport(kind="sweep", status="skipped", skip_reason="embeddings endpoint is not configured")
 
-        async with deps.vector_sync.sweep_lock() as locked:
+        async with self._vector_sync.sweep_lock() as locked:
             if not locked:
                 return SweepReport(kind="sweep", status="skipped", skip_reason="another sweep holds the lock")
-            return await self._sweep_locked(deps.vector_store, vector_cfg, emb_cfg, model)
+            return await self._sweep_locked(self._vector_store, vector_cfg, emb_cfg, model)
 
     async def _sweep_locked(
         self, store: ChunkStore, cfg: VectorConfig, emb_cfg: EmbeddingsConfig, model: str
     ) -> SweepReport:
         started_at = datetime.now(UTC)
-        full = await self._deps.vector_sync.reindex_pending()
+        full = await self._vector_sync.reindex_pending()
         report = SweepReport(kind="backfill" if full else "sweep", status="ok")
         journal_id = await self._journal_start(report.kind)
         embedder = EmbeddingsClient(emb_cfg)
@@ -189,8 +168,8 @@ class VectorIndexer:
             if full:
                 # Drops the pending-reindex flag along with the cursors — an
                 # attempt that fails earlier leaves the request standing
-                await self._deps.vector_sync.reset_cursors()
-            sources = self._sources if self._sources is not None else self._deps.vector_sources(cfg)
+                await self._vector_sync.reset_cursors()
+            sources = self._sources if self._sources is not None else self._vector_sources(cfg)
             # A source may be prepared once here and again by reconcile below,
             # in the same pass — `prepared` keeps that to one call per source.
             prepared: set[int] = set()
@@ -216,7 +195,7 @@ class VectorIndexer:
                 # the scheduler firing a hair early) that arrives before a
                 # full system interval has elapsed since the last one.
                 if not full and family_cfg.sweep_interval_seconds is not None:
-                    last_swept = await self._deps.vector_sync.get_family_swept(family)
+                    last_swept = await self._vector_sync.get_family_swept(family)
                     if last_swept is not None and started_at - last_swept < timedelta(
                         seconds=family_cfg.sweep_interval_seconds
                     ):
@@ -261,7 +240,7 @@ class VectorIndexer:
                         # Class isolation: this class's cursor stays put, others proceed
                         logger.exception(f"vector sweep: class {obj_class} failed")
                         report.errors.append(f"{obj_class}: {e}")
-                await self._deps.vector_sync.set_family_swept(family, started_at)
+                await self._vector_sync.set_family_swept(family, started_at)
             if not report.errors and await self._reconcile_due(cfg):
                 await self._reconcile(store, sources, cfg, report, ensure_prepared)
         except Exception as e:
@@ -302,7 +281,7 @@ class VectorIndexer:
             return
         interval = family_cfg.sweep_interval_seconds or cfg.sweep_interval_seconds
         log_entries_per_chunk = family_cfg.log_entries_per_chunk or cfg.log_entries_per_chunk
-        cursor = await self._deps.vector_sync.get_cursor(obj_class)
+        cursor = await self._vector_sync.get_cursor(obj_class)
         # Overlap covers pages drifting while a previous pass ran; derived
         # from the family's own interval instead of being one more config knob
         since = cursor - timedelta(seconds=2 * interval) if cursor else None
@@ -369,10 +348,10 @@ class VectorIndexer:
             await asyncio.sleep(cfg.sweep_throttle_seconds)
 
         if max_seen is not None and max_seen != cursor:
-            await self._deps.vector_sync.set_cursor(obj_class, max_seen)
+            await self._vector_sync.set_cursor(obj_class, max_seen)
 
     async def _reconcile_due(self, cfg: VectorConfig) -> bool:
-        last = await self._deps.vector_sync.get_reconcile()
+        last = await self._vector_sync.get_reconcile()
         return last is None or datetime.now(UTC) - last >= timedelta(days=cfg.reconcile_interval_days)
 
     async def _reconcile(
@@ -411,7 +390,7 @@ class VectorIndexer:
                             deleted += await store.delete_object(family, obj_class, orphan)
                         after = ids[-1]
                         await asyncio.sleep(cfg.sweep_throttle_seconds)
-            await self._deps.vector_sync.set_reconcile(datetime.now(UTC))
+            await self._vector_sync.set_reconcile(datetime.now(UTC))
         except Exception as e:
             logger.exception("vector reconciliation failed")
             status = "error"
@@ -426,7 +405,7 @@ class VectorIndexer:
 
     async def _journal_start(self, kind: str) -> str | None:
         try:
-            return await self._deps.vector_journal.start(kind)
+            return await self._vector_journal.start(kind)
         except Exception as e:
             logger.warning(f"index journal start failed (non-fatal): {e}")
             return None
@@ -435,7 +414,7 @@ class VectorIndexer:
         if journal_id is None:
             return
         try:
-            await self._deps.vector_journal.finish(journal_id, **kwargs)
+            await self._vector_journal.finish(journal_id, **kwargs)
         except Exception as e:
             logger.warning(f"index journal finish failed (non-fatal): {e}")
 

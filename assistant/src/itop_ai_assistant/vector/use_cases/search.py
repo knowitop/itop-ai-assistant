@@ -52,10 +52,14 @@ class CandidateSource(Protocol):
     whether a given person may see these ids.
 
     Two members out of `VectorSource`'s ten, declared here rather than
-    imported whole — the same cut `IndexerDeps` and `ItopRepos` make (rule
-    3.3, port sliced by consumer). Sweeping, chunking and the source's
-    declared vocabulary are the indexer's business; a search that could name
-    them could also call them.
+    imported whole — the same cut `ItopRepos` makes (rule 3.3, port sliced by
+    consumer). Sweeping, chunking and the source's declared vocabulary are the
+    indexer's business; a search that could name them could also call them.
+
+    Stays a `Protocol` where the indexer's five-member, disjoint slice does
+    not (TASK-039): two closely related members describing one source versus
+    five unrelated dependencies of a sweep — rule 3.2's actual criterion is
+    cohesion, not member count.
     """
 
     @property

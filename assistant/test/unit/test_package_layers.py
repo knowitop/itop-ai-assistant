@@ -131,8 +131,9 @@ class TestVectorFacade(unittest.TestCase):
     re-exports everything a consumer needs, including `core/deps.py`: the
     composition root wires the concrete adapters, but it does that through
     the facade like everyone else (`router.py` only names `AppDeps` in
-    `TYPE_CHECKING`, and `use_cases/indexer.py` names its own `IndexerDeps`
-    port instead, so there is no cycle to route around).
+    `TYPE_CHECKING`, and `use_cases/indexer.py` takes its five dependencies
+    as explicit parameters instead (TASK-039), so there is no cycle to route
+    around).
     """
 
     def test_only_vector_itself_is_imported_from_outside(self):
