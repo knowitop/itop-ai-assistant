@@ -31,8 +31,8 @@ build = get_build_info()
 async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info(f"iTop AI Assistant {build.version} ({build.commit or 'no commit'})")
-    deps = build_deps(settings)
     registry = build_registry(settings)
+    deps = build_deps(settings, registry)
     # Fail fast on missing or broken prompt templates instead of on a live ticket
     for module in registry.modules:
         if module.validate_prompts:

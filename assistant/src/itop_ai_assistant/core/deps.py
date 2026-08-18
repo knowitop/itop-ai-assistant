@@ -9,14 +9,10 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from itop_ai_assistant.config import LlmConfig, Settings
 from itop_ai_assistant.core.llm_providers import get_provider
 from itop_ai_assistant.itop.connection import AiIdentity, ItopConnection
+from itop_ai_assistant.pipelines.registry import TriggerRegistry
 from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.settings.config_store import ConfigStore, RedisConfigStore
-from itop_ai_assistant.settings.prompt_store import (
-    PACKAGED_PROMPTS_DIR,
-    FilePromptStore,
-    PromptStore,
-    RedisPromptStore,
-)
+from itop_ai_assistant.settings.prompt_store import FilePromptStore, PromptStore, RedisPromptStore
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.util.redis_keyspace import days_to_seconds
@@ -106,13 +102,14 @@ def create_llm(llm: LlmConfig, model: str | None = None) -> BaseChatModel:
     return init_chat_model(model or llm.model or "", model_provider=provider.langchain_provider, **kwargs)
 
 
-def build_deps(settings: Settings) -> AppDeps:
+def build_deps(settings: Settings, registry: TriggerRegistry) -> AppDeps:
     # One shared Redis connection pool for state, journal, config, prompts and vector
     redis = aioredis.from_url(settings.redis_url, decode_responses=True)
     config_store = RedisConfigStore(redis, settings)
     state_manager = TicketStateManager(redis, ttl_seconds=days_to_seconds(settings.state_ttl_days))
     itop_connection = ItopConnection(config_store)
     itop = ItopRepositories(itop_connection, config_store)
+    prompts_dirs = {m.name: m.prompts_dir for m in registry.modules if m.prompts_dir is not None}
 
     return AppDeps(
         settings=settings,
@@ -120,7 +117,7 @@ def build_deps(settings: Settings) -> AppDeps:
         itop_connection=itop_connection,
         state_manager=state_manager,
         config_store=config_store,
-        prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR, settings.prompts_dir), redis),
+        prompt_store=RedisPromptStore(FilePromptStore(prompts_dirs, settings.prompts_dir), redis),
         journal=RunJournal(redis, ttl_seconds=days_to_seconds(settings.run_ttl_days)),
         vector=build_vector(settings, redis, config_store, itop),
     )

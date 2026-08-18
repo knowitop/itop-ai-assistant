@@ -5,12 +5,14 @@ import fakeredis.aioredis
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from itop_ai_assistant.agents.intake.prompts import PROMPTS_DIR as INTAKE_PROMPTS_DIR
+from itop_ai_assistant.agents.selfcheck.prompts import PROMPTS_DIR as SELFCHECK_PROMPTS_DIR
 from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.main import app
 from itop_ai_assistant.settings.config_store import RedisConfigStore
-from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore, RedisPromptStore
+from itop_ai_assistant.settings.prompt_store import FilePromptStore, RedisPromptStore
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
@@ -84,7 +86,9 @@ def _make_deps(redis, **settings_overrides) -> AppDeps:
         itop_connection=MagicMock(),
         state_manager=TicketStateManager(redis),
         config_store=config_store,
-        prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR), redis),
+        prompt_store=RedisPromptStore(
+            FilePromptStore({"intake": INTAKE_PROMPTS_DIR, "selfcheck": SELFCHECK_PROMPTS_DIR}), redis
+        ),
         journal=RunJournal(redis),
         vector=vector,
     )

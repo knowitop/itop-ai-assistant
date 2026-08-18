@@ -5,29 +5,29 @@ from pathlib import Path
 import fakeredis.aioredis
 
 from itop_ai_assistant.agents.intake.prompts import PROMPT_VARIABLES, build_intake_prompts
+from itop_ai_assistant.agents.intake.prompts import PROMPTS_DIR as INTAKE_PROMPTS_DIR
 from itop_ai_assistant.settings.prompt_store import (
-    PACKAGED_PROMPTS_DIR,
     FilePromptStore,
     PromptStoreError,
     RedisPromptStore,
     read_prompt_dir,
 )
 
-_DEFAULTS_DIR = PACKAGED_PROMPTS_DIR
+_DEFAULTS_DIRS = {"intake": INTAKE_PROMPTS_DIR}
 
 
 def _default_prompts() -> dict[str, str]:
-    return read_prompt_dir(_DEFAULTS_DIR / "intake")
+    return read_prompt_dir(INTAKE_PROMPTS_DIR)
 
 
 class TestFilePromptStore(unittest.IsolatedAsyncioTestCase):
     async def test_loads_packaged_defaults(self):
-        store = FilePromptStore(_DEFAULTS_DIR)
+        store = FilePromptStore(_DEFAULTS_DIRS)
         prompts = await store.get("intake")
         self.assertEqual(prompts.keys(), PROMPT_VARIABLES.keys())
 
     async def test_missing_module_raises(self):
-        store = FilePromptStore(_DEFAULTS_DIR)
+        store = FilePromptStore(_DEFAULTS_DIRS)
         with self.assertRaises(PromptStoreError):
             await store.get("no_such_module")
 
@@ -37,7 +37,7 @@ class TestFilePromptStore(unittest.IsolatedAsyncioTestCase):
             override_dir.mkdir()
             (override_dir / "system.md").write_text("Custom system prompt", encoding="utf-8")
 
-            store = FilePromptStore(_DEFAULTS_DIR, Path(tmp))
+            store = FilePromptStore(_DEFAULTS_DIRS, Path(tmp))
             prompts = await store.get("intake")
 
         self.assertEqual(prompts["system"], "Custom system prompt")
@@ -50,14 +50,14 @@ class TestFilePromptStore(unittest.IsolatedAsyncioTestCase):
             override_dir.mkdir()
             (override_dir / "sytem.md").write_text("typo in filename", encoding="utf-8")
 
-            store = FilePromptStore(_DEFAULTS_DIR, Path(tmp))
+            store = FilePromptStore(_DEFAULTS_DIRS, Path(tmp))
             with self.assertRaises(PromptStoreError) as ctx:
                 await store.get("intake")
 
         self.assertIn("sytem", str(ctx.exception))
 
     async def test_missing_overrides_dir_is_fine(self):
-        store = FilePromptStore(_DEFAULTS_DIR, Path("/nonexistent"))
+        store = FilePromptStore(_DEFAULTS_DIRS, Path("/nonexistent"))
         prompts = await store.get("intake")
         self.assertEqual(prompts.keys(), PROMPT_VARIABLES.keys())
 
@@ -65,7 +65,7 @@ class TestFilePromptStore(unittest.IsolatedAsyncioTestCase):
 class TestRedisPromptStore(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
-        self.store = RedisPromptStore(FilePromptStore(_DEFAULTS_DIR), self.redis)
+        self.store = RedisPromptStore(FilePromptStore(_DEFAULTS_DIRS), self.redis)
 
     async def test_get_without_overrides_returns_files(self):
         prompts = await self.store.get("intake")

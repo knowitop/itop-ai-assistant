@@ -27,11 +27,9 @@ from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, Sched
 from itop_ai_assistant.util.text import strip_thinking
 
 from .config import SelfCheckConfig
-from .prompts import PROMPT_VARIABLES, build_selfcheck_prompts
+from .prompts import MODULE, PROMPT_VARIABLES, PROMPTS_DIR, build_selfcheck_prompts
 
 logger = logging.getLogger(__name__)
-
-MODULE = "selfcheck"
 
 
 class SelfCheckInput(BaseModel):
@@ -50,6 +48,7 @@ def register(registry: TriggerRegistry, settings: Settings) -> None:
         config_model=SelfCheckConfig,
         prompt_names=tuple(PROMPT_VARIABLES),
         validate_prompts=build_selfcheck_prompts,
+        prompts_dir=PROMPTS_DIR,
     )
     # The same work on two triggers, which is the contract being demonstrated:
     # the clock and an operator start the identical run, and only the delivery

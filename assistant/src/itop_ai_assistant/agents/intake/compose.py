@@ -23,7 +23,7 @@ from .agent import build_intake_agent
 from .config import IntakeConfig
 from .context import IntakeContext
 from .prompt import build_initial_messages
-from .prompts import build_intake_prompts
+from .prompts import MODULE, build_intake_prompts
 from .tools import tools_for
 
 logger = logging.getLogger(__name__)
@@ -40,9 +40,9 @@ class ComposedRun:
 
 
 async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps, repos: RepositorySet) -> ComposedRun:
-    cfg = await deps.config_store.get("intake", IntakeConfig)
+    cfg = await deps.config_store.get(MODULE, IntakeConfig)
     llm_cfg = await deps.config_store.get("llm", LlmConfig)
-    prompts = build_intake_prompts(await deps.prompt_store.get("intake"))
+    prompts = build_intake_prompts(await deps.prompt_store.get(MODULE))
     similar = deps.vector_search if await deps.vector_search.available() else None
     context = IntakeContext(
         processing_id=run.processing_id,

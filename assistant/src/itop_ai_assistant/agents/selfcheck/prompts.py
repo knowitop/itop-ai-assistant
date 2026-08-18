@@ -1,11 +1,19 @@
 """Typed prompt set for the selfcheck module.
 
-Default template lives in `prompts/selfcheck/greeting.md` and can be
+Default template lives in `agents/selfcheck/prompts/greeting.md` and can be
 overridden per deployment — see `prompt_store.FilePromptStore`.
 """
 
+from pathlib import Path
+
 from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel
+
+#: This module's own identifier — the config section it owns and the
+#: prompt-store lookup key.
+MODULE = "selfcheck"
+
+PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 # Allowed placeholders per template — everything `pipeline.py` passes when it
 # builds the message.

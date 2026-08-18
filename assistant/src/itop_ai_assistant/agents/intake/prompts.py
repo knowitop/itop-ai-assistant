@@ -1,11 +1,21 @@
 """Typed prompt set for the intake module.
 
-Default templates live in `prompts/intake/*.md` (app root) and can be
-overridden per deployment — see `prompt_store.FilePromptStore`.
+Default templates live in `agents/intake/prompts/*.md` and can be overridden
+per deployment — see `prompt_store.FilePromptStore`.
 """
+
+from pathlib import Path
 
 from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel
+
+#: This module's own identifier — the config section it owns and the
+#: prompt-store lookup key. Declared here, not in `pipeline.py`, so that
+#: `compose.py`/`run.py` can import it without a cycle through `run.py`'s own
+#: import of `compose.py`.
+MODULE = "intake"
+
+PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 # Allowed placeholders per template — everything `prompt.py` passes when it
 # builds the agent's initial messages. `conversation` is a rendered XML block,

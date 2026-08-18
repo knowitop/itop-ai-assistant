@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Protocol
 
@@ -10,13 +11,6 @@ from redis.exceptions import RedisError
 from itop_ai_assistant.util.redis_keyspace import PROMPTS_PREFIX
 
 logger = logging.getLogger(__name__)
-
-#: Prompt templates shipped inside the package — the bottom of the override
-#: chain, and the only copy guaranteed to exist in an installed deployment.
-#: They sit next to the package root rather than next to this store: the store
-#: is one of two layered settings (`config_store.py` is the other), the
-#: templates are packaged data.
-PACKAGED_PROMPTS_DIR = Path(__file__).resolve().parents[1] / "prompts"
 
 
 class PromptStoreError(Exception):
@@ -52,20 +46,26 @@ def read_prompt_dir(path: Path) -> dict[str, str]:
 class FilePromptStore:
     """Reads prompt templates from disk: customer overrides shadow packaged defaults.
 
-    Layout: `<dir>/<module>/<prompt_name>.md`. A customer overrides a single
-    prompt by placing a file with the same name under `overrides_dir` — the
-    remaining prompts keep their defaults. Files are re-read on every call,
-    so prompt edits apply to the next run without a restart.
+    Defaults come from a `{module: directory}` map — each business module owns
+    its own `agents/<module>/prompts/` directory and hands it in via
+    `ModuleInfo.prompts_dir`; there is no shared packaged root to derive a
+    per-module path from. Overrides stay a single shared deploy directory:
+    `overrides_dir/<module>/<prompt_name>.md` shadows a default of the same
+    name — the remaining prompts keep their defaults. Files are re-read on
+    every call, so prompt edits apply to the next run without a restart.
     """
 
-    def __init__(self, defaults_dir: Path, overrides_dir: Path | None = None):
-        self._defaults_dir = defaults_dir
+    def __init__(self, defaults_dirs: Mapping[str, Path], overrides_dir: Path | None = None):
+        self._defaults_dirs = defaults_dirs
         self._overrides_dir = overrides_dir
 
     async def get(self, module: str) -> dict[str, str]:
-        prompts = read_prompt_dir(self._defaults_dir / module)
+        defaults_dir = self._defaults_dirs.get(module)
+        if defaults_dir is None:
+            raise PromptStoreError(f"No prompt directory registered for module {module!r}")
+        prompts = read_prompt_dir(defaults_dir)
         if not prompts:
-            raise PromptStoreError(f"No default prompts found in {self._defaults_dir / module}")
+            raise PromptStoreError(f"No default prompts found in {defaults_dir}")
 
         if self._overrides_dir:
             overrides = read_prompt_dir(self._overrides_dir / module)

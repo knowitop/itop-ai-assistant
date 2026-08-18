@@ -20,6 +20,7 @@ import sys
 
 from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.core.deps import build_deps
+from itop_ai_assistant.pipelines.registry import build_registry
 from itop_ai_assistant.vector.use_cases.indexer import SweepReport, VectorIndexer
 
 _MAX_ATTEMPTS = 3
@@ -40,7 +41,7 @@ async def _run(full: bool) -> int:
     if not settings.qdrant_url:
         print("qdrant_url is not set — the vector store is unavailable", file=sys.stderr)
         return 1
-    deps = build_deps(settings)
+    deps = build_deps(settings, build_registry(settings))
     try:
         indexer = VectorIndexer(
             deps.vector.config_store,

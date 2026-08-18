@@ -22,6 +22,7 @@ from . import compose
 from .agent import TERMINAL_TOOLS
 from .config import IntakeConfig
 from .context import IntakeContext
+from .prompts import MODULE
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class IntakeRun(TicketRun):
         if ticket_state.ai_done:
             return "already processed (ai_done)"
 
-        cfg = await self.deps.config_store.get("intake", IntakeConfig)
+        cfg = await self.deps.config_store.get(MODULE, IntakeConfig)
         if ticket.status not in cfg.active_statuses:
             return f"status={ticket.status} not in {cfg.active_statuses}"
 

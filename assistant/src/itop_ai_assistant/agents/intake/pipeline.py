@@ -14,24 +14,25 @@ from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, Trigg
 from itop_ai_assistant.webhook.models import TicketEvent
 
 from .config import IntakeConfig
-from .prompts import PROMPT_VARIABLES, build_intake_prompts
+from .prompts import MODULE, PROMPT_VARIABLES, PROMPTS_DIR, build_intake_prompts
 from .run import IntakeRun, handle_assigned
 
 logger = logging.getLogger(__name__)
 
 
 def register(registry: TriggerRegistry, settings: Settings) -> None:
-    cfg = settings.module_defaults("intake", IntakeConfig)
+    cfg = settings.module_defaults(MODULE, IntakeConfig)
     if not cfg.enabled:
         logger.info("Intake module is disabled, skipping registration")
         return
 
     info = ModuleInfo(
-        name="intake",
+        name=MODULE,
         description="Agentic (tool-calling) ticket intake: classify, ask, hand off",
         config_model=IntakeConfig,
         prompt_names=tuple(PROMPT_VARIABLES),
         validate_prompts=build_intake_prompts,
+        prompts_dir=PROMPTS_DIR,
     )
     webhooks = {}
     for obj_class in cfg.classes:

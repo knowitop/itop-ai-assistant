@@ -393,3 +393,15 @@ class TestOneClassReachesItop(unittest.TestCase):
                 ):
                     declared.append(f"{path.relative_to(PACKAGE)}::{node.name}")
         self.assertEqual(["repositories/sets.py::ItopRepositories"], declared)
+
+
+class TestModulesOwnTheirPromptFiles(unittest.TestCase):
+    """Rule 6.7, TASK-042: packaged prompt text is a module's own artifact,
+    which validates it itself through `validate_prompts`; it cannot live
+    anywhere outside `agents/<module>/prompts/`."""
+
+    def test_every_packaged_prompt_file_lives_inside_its_module(self):
+        for path in PACKAGE.rglob("*.md"):
+            rel = path.relative_to(PACKAGE)
+            with self.subTest(path=str(rel)):
+                self.assertEqual(("agents", rel.parts[1], "prompts"), rel.parts[:3])

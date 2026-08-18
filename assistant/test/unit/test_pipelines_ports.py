@@ -31,6 +31,7 @@ from itop_ai_assistant.pipelines.ports import (
     StepJournal,
     TicketStatePort,
 )
+from itop_ai_assistant.pipelines.registry import build_registry
 from itop_ai_assistant.repositories.sets import ItopRepositories
 
 
@@ -41,13 +42,15 @@ def _requires_run_deps(deps: RunDeps) -> RunDeps:
 
 class TestContainerSatisfiesTheContract(unittest.TestCase):
     def test_app_deps_is_accepted_where_a_handler_expects_run_deps(self) -> None:
-        deps: AppDeps = build_deps(get_settings())
+        settings = get_settings()
+        deps: AppDeps = build_deps(settings, build_registry(settings))
 
         self.assertIs(_requires_run_deps(deps), deps)
 
     def test_the_narrow_ports_are_served_by_the_container_too(self) -> None:
         """What `TicketRun.handle` takes apart — pinned member by member."""
-        deps = build_deps(get_settings())
+        settings = get_settings()
+        deps = build_deps(settings, build_registry(settings))
 
         lock: LockPort = deps.state_manager
         state: TicketStatePort = deps.state_manager

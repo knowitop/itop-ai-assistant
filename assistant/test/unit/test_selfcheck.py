@@ -22,12 +22,13 @@ from itop_ai_assistant.agents.selfcheck.pipeline import (
     register,
     run_selfcheck,
 )
+from itop_ai_assistant.agents.selfcheck.prompts import PROMPTS_DIR as SELFCHECK_PROMPTS_DIR
 from itop_ai_assistant.agents.selfcheck.prompts import build_selfcheck_prompts
 from itop_ai_assistant.config import ItopConfig, LlmConfig
 from itop_ai_assistant.domain.catalog import Service
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.registry import TriggerRegistry
-from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore
+from itop_ai_assistant.settings.prompt_store import FilePromptStore
 from itop_ai_assistant.state.journal import RunJournal
 
 _ITOP = ItopConfig(url="https://itop.example", token="t")
@@ -43,7 +44,7 @@ def _deps(*, itop=_ITOP, llm=_LLM, selfcheck=None, services=2) -> MagicMock:
     sections = {"itop": itop, "llm": llm, MODULE: selfcheck or SelfCheckConfig(enabled=True)}
     deps = MagicMock()
     deps.config_store.get = AsyncMock(side_effect=lambda name, model: sections[name])
-    deps.prompt_store = FilePromptStore(PACKAGED_PROMPTS_DIR)
+    deps.prompt_store = FilePromptStore({MODULE: SELFCHECK_PROMPTS_DIR})
     deps.journal = RunJournal(fakeredis.aioredis.FakeRedis(decode_responses=True))
     catalog = MagicMock()
     catalog.find_services = AsyncMock(
@@ -112,7 +113,7 @@ class TestPrompts(unittest.IsolatedAsyncioTestCase):
     async def test_packaged_prompt_validates(self):
         """The same call the lifespan makes — a broken template fails the boot,
         not a live run."""
-        raw = await FilePromptStore(PACKAGED_PROMPTS_DIR).get(MODULE)
+        raw = await FilePromptStore({MODULE: SELFCHECK_PROMPTS_DIR}).get(MODULE)
 
         self.assertIn("{services}", build_selfcheck_prompts(raw).greeting)
 

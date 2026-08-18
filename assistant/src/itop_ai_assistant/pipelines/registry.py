@@ -32,6 +32,7 @@ Adding a new module:
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
@@ -69,6 +70,10 @@ class ModuleInfo:
     # Validates a full {name: template} set; raises ValueError on bad templates.
     # Used at startup and by the admin API before saving prompt edits.
     validate_prompts: Callable[[dict[str, str]], object] | None = None
+    # Not every module has prompt text, symmetric with `config_model`.
+    # `FilePromptStore` skips a module for which this is unset when it builds
+    # its map of default directories.
+    prompts_dir: Path | None = None
 
 
 @dataclass(frozen=True)
