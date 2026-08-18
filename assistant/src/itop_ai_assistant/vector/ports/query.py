@@ -22,7 +22,7 @@ configuration should fail where it is built, not halfway through a run
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from itop_ai_assistant.vector.ports.store import DateRange
+from itop_ai_assistant.vector.domain import DateRange
 
 
 @dataclass(frozen=True)

@@ -37,9 +37,9 @@ door instead, and `build_vector_sources` has exactly one caller left,
 from .assembly import VectorSubsystem, build
 from .chunker import Chunk, FragmentContent, SequenceContent, TextContent, chunk_object, clean_text
 from .config import FamilyConfig, VectorConfig
+from .domain import DateRange
 from .ports.query import FindStats, ObjectHit, SearchQuery, SearchResult
 from .ports.source import ChunkPlan, FragmentSpec, VectorRecord, VectorSource
-from .ports.store import DateRange
 from .router import router
 from .use_cases.indexer import register_vector_sweep
 from .use_cases.probe import measure_embedding_dimension

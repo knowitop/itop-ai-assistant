@@ -143,6 +143,44 @@ class TestSourcePortShedsConfig(unittest.TestCase):
                 self.assertNotIn("itop_ai_assistant.vector.config", _imported_modules(path))
 
 
+class TestStorePortShedsDomainTypes(unittest.TestCase):
+    """Rule 2.3, TASK-041: a port module must declare data, not compute or
+    validate it. `ChunkMetadata`/`DateRange` moved to `vector/domain.py`;
+    this checks the negative directly — no `@property`, no `__post_init__`,
+    no branching left in `vector/ports/store.py` itself. `ChunkStore`'s
+    protocol methods (bodies are `...`) trip none of these."""
+
+    _TARGET = "vector/ports/store.py"
+
+    def test_the_store_port_has_no_computed_or_validated_fields(self):
+        path = next(p for p in _sources() if str(p.relative_to(PACKAGE)) == self._TARGET)
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        properties = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and any(_is_property_decorator(d) for d in node.decorator_list)
+            and not _is_stub_body(node)
+        ]
+        post_inits = [
+            node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "__post_init__"
+        ]
+        branches = [node for node in ast.walk(tree) if isinstance(node, ast.If)]
+        self.assertEqual([], properties)
+        self.assertEqual([], post_inits)
+        self.assertEqual([], branches)
+
+
+def _is_property_decorator(node: ast.expr) -> bool:
+    return isinstance(node, ast.Name) and node.id == "property"
+
+
+def _is_stub_body(node: ast.FunctionDef) -> bool:
+    """A `Protocol` member's body — no docstring, just `...` — computes nothing."""
+    body = [stmt for stmt in node.body if not (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant))]
+    return body == []
+
+
 class TestVectorFacade(unittest.TestCase):
     """Nothing outside `vector/` reaches past its facade — `vector/__init__.py`
     re-exports everything a consumer needs, including `core/deps.py`: the

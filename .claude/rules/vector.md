@@ -12,7 +12,9 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
 
 - **Layered internally, entered only through the facade** (TASK-026, TASK-028):
   `router.py` (transport), `assembly.py` (self-assembly, TASK-037), `ports/`
-  (protocols + value objects), `adapters/` (`QdrantChunkStore`,
+  (protocols + value objects), `domain.py` (computed/validated value objects
+  the ports reference but do not own — `ChunkMetadata`, `DateRange`; TASK-041,
+  rule 2.3), `adapters/` (`QdrantChunkStore`,
   `EmbeddingsClient`), `use_cases/` (`VectorIndexer`, `SimilarSearch`,
   `measure_embedding_dimension`, reindex CLI), `state/` (Redis operational
   state), `chunker.py` (domain-agnostic packing). Content providers (`Ticket`,
@@ -154,7 +156,7 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   is collected by default — it runs against Qdrant's `:memory:` mode, no
   Docker needed.
 - **A payload field that filtering depends on must feed `ChunkMetadata.meta_hash`**
-  (`vector/ports/store.py`). The sweep refreshes such a field without a
+  (`vector/domain.py`). The sweep refreshes such a field without a
   re-embed only through that hash (TASK-003); leave a new one out and it
   freezes at whatever value the chunk had when it was first embedded,
   silently, until the text changes for some unrelated reason. The rule has no
