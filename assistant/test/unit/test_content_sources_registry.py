@@ -5,7 +5,8 @@ from itop_ai_assistant.content_sources.faq import FAMILY as FAQ_FAMILY
 from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.content_sources.tickets import FAMILY as TICKETS_FAMILY
 from itop_ai_assistant.core.principal import Principal
-from itop_ai_assistant.vector import FamilyConfig, VectorClassConfig, VectorConfig
+from itop_ai_assistant.vector import FamilyConfig, VectorConfig
+from itop_ai_assistant.vector.config import VectorClassConfig
 
 _ENGINEER = Principal.delegated("tok", login="ivanov", name="Ivan Ivanov")
 

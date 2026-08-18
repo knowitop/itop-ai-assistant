@@ -19,12 +19,11 @@ from itop_ai_assistant.repositories.ticket import (
 )
 from itop_ai_assistant.vector import (
     Chunk,
-    ChunkFragmentConfig,
+    ChunkPlan,
     FragmentContent,
     FragmentSpec,
     SequenceContent,
     TextContent,
-    VectorClassConfig,
     VectorRecord,
     VectorSource,
     chunk_object,
@@ -137,7 +136,7 @@ class TicketVectorSource(VectorSource[Ticket]):
         self,
         obj_class: str,
         record: VectorRecord[Ticket],
-        cfg: VectorClassConfig,
+        plan: ChunkPlan,
         *,
         max_chunk_tokens: int,
         log_entries_per_chunk: int,
@@ -145,9 +144,7 @@ class TicketVectorSource(VectorSource[Ticket]):
         ticket = record.payload
         fields = self._semantic_fields(ticket)
         fragments = [
-            content
-            for spec in FRAGMENTS
-            if (content := self._resolve(spec, cfg.chunks.get(spec.kind), ticket, fields)) is not None
+            content for spec in FRAGMENTS if (content := self._resolve(spec, plan, ticket, fields)) is not None
         ]
         return chunk_object(fragments, max_chunk_tokens=max_chunk_tokens, items_per_window=log_entries_per_chunk)
 
@@ -167,18 +164,19 @@ class TicketVectorSource(VectorSource[Ticket]):
         }
 
     def _resolve(
-        self, spec: FragmentSpec, cfg: ChunkFragmentConfig | None, ticket: Ticket, fields: dict[str, str]
+        self, spec: FragmentSpec, plan: ChunkPlan, ticket: Ticket, fields: dict[str, str]
     ) -> FragmentContent | None:
         """One fragment's configured content, or None if it is switched off."""
         if spec.optional:
-            if cfg is None or not cfg.enabled:
+            if spec.kind not in plan.enabled:
                 return None
             entries: list[LogEntry] = getattr(ticket, _LOG_SOURCES[spec.kind])
             return FragmentContent(spec.kind, spec.visibility, SequenceContent(_conversation(entries, ticket)))
-        if cfg is None or not cfg.fields:
+        field_names = plan.fields.get(spec.kind)
+        if not field_names:
             return None
         parts = []
-        for name in cfg.fields:
+        for name in field_names:
             if name not in fields:
                 logger.warning(f"tickets source: fragment {spec.kind!r} references unknown field {name!r} — ignored")
                 continue

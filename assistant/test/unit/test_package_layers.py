@@ -126,6 +126,23 @@ class TestVectorLayers(unittest.TestCase):
                 self.assertEqual(set(), leaking)
 
 
+class TestSourcePortShedsConfig(unittest.TestCase):
+    """Rule 3.4, TASK-040: a port must not import a settings section — checked
+    directly for `vector/ports/source.py`, the one port that used to take
+    `VectorClassConfig` in `VectorSource.chunk()`'s signature and now takes
+    `ChunkPlan` instead, a value object the port declares itself."""
+
+    _TARGETS = {"vector/ports/source.py"}
+
+    def test_the_source_port_does_not_import_vector_config(self):
+        for path in _sources():
+            rel = path.relative_to(PACKAGE)
+            if str(rel) not in self._TARGETS:
+                continue
+            with self.subTest(module=str(rel)):
+                self.assertNotIn("itop_ai_assistant.vector.config", _imported_modules(path))
+
+
 class TestVectorFacade(unittest.TestCase):
     """Nothing outside `vector/` reaches past its facade — `vector/__init__.py`
     re-exports everything a consumer needs, including `core/deps.py`: the
@@ -159,7 +176,7 @@ class TestVectorFacade(unittest.TestCase):
 #: once to schedule it; `router` is what `admin/router.py` mounts.
 _CONTRACT_NAMES = {
     "Chunk",
-    "ChunkFragmentConfig",
+    "ChunkPlan",
     "DateRange",
     "FamilyConfig",
     "FindStats",
@@ -173,7 +190,6 @@ _CONTRACT_NAMES = {
     "SimilarSearch",
     "TextContent",
     "UnknownFamily",
-    "VectorClassConfig",
     "VectorConfig",
     "VectorRecord",
     "VectorSource",

@@ -55,11 +55,13 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   `core/deps.py` does not import `content_sources.registry` at all any more.
 - **Its own config section, not `config.py`'s** (TASK-036, rule 6.3).
   `VectorConfig`/`FamilyConfig`/`VectorClassConfig`/`ChunkFragmentConfig` live
-  in `vector/config.py`, re-exported by the facade as contract-out —
-  `content_sources/` needs the class-level pair to implement
-  `VectorSource.chunk()` at all, and `content_sources/registry.py`'s
+  in `vector/config.py`. Only `VectorConfig`/`FamilyConfig` are re-exported by
+  the facade as contract-out — `content_sources/registry.py`'s
   `build_vector_sources`/`admin/setup.py`'s `SETUP_SECTIONS` need the section
-  pair. `Settings` carries no `vector` field any more: the section resolves
+  pair; the class-level pair stopped being part of the contract with TASK-040
+  (`VectorSource.chunk()` now takes `ChunkPlan`, a port-owned value object,
+  never the settings model itself — see `.claude/rules/content-sources.md`).
+  `Settings` carries no `vector` field any more: the section resolves
   through the same `module_defaults`/`module_config` fallback a business
   module's section does, even though `vector` is infrastructure, not a
   module (see the bullet below) — `RedisConfigStore._defaults` falls back to

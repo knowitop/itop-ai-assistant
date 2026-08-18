@@ -5,21 +5,18 @@ from unittest.mock import AsyncMock, MagicMock
 from itop_ai_assistant.content_sources.faq import FIELDS, FRAGMENTS, FaqVectorSource
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.faq import FaqArticle
-from itop_ai_assistant.vector import ChunkFragmentConfig, VectorClassConfig
+from itop_ai_assistant.vector import ChunkPlan
 
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 _ENGINEER = Principal.delegated("tok", login="ivanov", name="Ivan Ivanov")
 
 
-def _cfg(fragments: dict[str, ChunkFragmentConfig]) -> VectorClassConfig:
-    return VectorClassConfig(chunks=fragments)
+def _plan(*, fields: dict[str, list[str]] | None = None) -> ChunkPlan:
+    return ChunkPlan(fields=fields or {})
 
 
-_CFG = _cfg(
-    {
-        "profile": ChunkFragmentConfig(fields=["title", "summary", "category_name", "error_code", "key_words"]),
-        "body": ChunkFragmentConfig(fields=["description"]),
-    }
+_CFG = _plan(
+    fields={"profile": ["title", "summary", "category_name", "error_code", "key_words"], "body": ["description"]}
 )
 
 
@@ -135,13 +132,13 @@ class TestDeclaration(unittest.IsolatedAsyncioTestCase):
     source can actually do — a stale declaration would put fields and
     fragments in the editor that quietly produce nothing."""
 
-    async def _chunk(self, cfg: VectorClassConfig, article: FaqArticle | None = None):
+    async def _chunk(self, plan: ChunkPlan, article: FaqArticle | None = None):
         get_faq_repo, get_faq_repo_as, faq_repo, _ = _faq_repo_factory()
         faq_repo.find_modified_since = AsyncMock(return_value=[article or _article()])
         source = FaqVectorSource(get_faq_repo, get_faq_repo_as, classes=["FAQ"])
         await source.prepare()
         [record] = await source.find_modified_since("FAQ", None, page=1, page_size=100)
-        return await source.chunk("FAQ", record, cfg, max_chunk_tokens=100, log_entries_per_chunk=5)
+        return await source.chunk("FAQ", record, plan, max_chunk_tokens=100, log_entries_per_chunk=5)
 
     async def test_declared_fields_are_exactly_the_chunkable_ones(self):
         get_faq_repo, get_faq_repo_as, faq_repo, _ = _faq_repo_factory()
@@ -153,27 +150,27 @@ class TestDeclaration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(FIELDS), set(fields))
 
     async def test_every_declared_fragment_can_be_produced(self):
-        cfg = _cfg({spec.kind: ChunkFragmentConfig(fields=list(FIELDS)) for spec in FRAGMENTS})
+        plan = _plan(fields={spec.kind: list(FIELDS) for spec in FRAGMENTS})
 
-        chunks = await self._chunk(cfg)
+        chunks = await self._chunk(plan)
 
         self.assertEqual({c.kind for c in chunks}, {spec.kind for spec in FRAGMENTS})
 
     async def test_fragment_without_fields_produces_nothing(self):
-        self.assertEqual(await self._chunk(_cfg({"body": ChunkFragmentConfig(fields=[])})), [])
+        self.assertEqual(await self._chunk(_plan(fields={"body": []})), [])
 
     async def test_unknown_field_warns_and_is_treated_as_empty(self):
-        cfg = _cfg({"body": ChunkFragmentConfig(fields=["description", "no_such_field"])})
+        plan = _plan(fields={"body": ["description", "no_such_field"]})
 
         with self.assertLogs("itop_ai_assistant.content_sources.faq", level="WARNING"):
-            chunks = await self._chunk(cfg)
+            chunks = await self._chunk(plan)
 
         self.assertEqual([c.text for c in chunks], ["Go to the login page and click reset."])
 
     async def test_unknown_fragment_kind_in_config_is_ignored(self):
-        cfg = _cfg({"no_such_fragment": ChunkFragmentConfig(fields=["description"])})
+        plan = _plan(fields={"no_such_fragment": ["description"]})
 
-        self.assertEqual(await self._chunk(cfg), [])
+        self.assertEqual(await self._chunk(plan), [])
 
 
 class TestPrepare(unittest.IsolatedAsyncioTestCase):

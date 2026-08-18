@@ -106,13 +106,13 @@ class FakeTicketSource:
             return self.find_existing_ids_result
         return set(ids)
 
-    async def chunk(self, obj_class, record, cfg, *, max_chunk_tokens, log_entries_per_chunk):
-        # Resolving config into fragment content is the real source's job;
+    async def chunk(self, obj_class, record, plan, *, max_chunk_tokens, log_entries_per_chunk):
+        # Resolving a plan into fragment content is the real source's job;
         # this probe maps each configured fragment to the payload field of
         # the same name and stops there.
         fragments = [
             FragmentContent(kind=kind, visibility="public", content=TextContent(record.payload[kind]))
-            for kind in cfg.chunks
+            for kind in set(plan.fields) | plan.enabled
             if kind in record.payload
         ]
         return chunk_object(fragments, max_chunk_tokens=max_chunk_tokens, items_per_window=log_entries_per_chunk)

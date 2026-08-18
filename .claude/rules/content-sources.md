@@ -23,18 +23,21 @@ repositories) to do its job at all.
   (`intake.similar_chunk_kinds`) decides which fragments to search. Getting
   this backwards — the chunker inferring `visibility` from a chunk-kind name,
   for instance — is exactly the bug ADR-018 fixed.
-- **A source needs the vector facade's eleven contract names to implement
-  `VectorSource` at all** — `Chunk`/`FragmentContent`/`FragmentSpec`/
-  `SequenceContent`/`TextContent`/`VectorRecord`/`VectorSource`/
-  `chunk_object`/`clean_text`/`ChunkFragmentConfig`/`VectorClassConfig` (the
-  last two since TASK-036: `vector/config.py`'s per-class chunking config,
-  not an adapter), imported from `itop_ai_assistant.vector` (never a deep
-  `vector.chunker`/`vector.ports.source`/`vector.config` import —
-  `test_package_layers.py::TestVectorFacade` catches that from any file
-  outside `vector/`, `content_sources/` included since TASK-035).
-  `registry.py` additionally takes `VectorConfig`/`FamilyConfig` from the
-  same facade — the section as a whole, not just the per-class vocabulary —
-  to build `build_vector_sources(itop, cfg)`.
+- **A source needs the vector facade's ten contract names to implement
+  `VectorSource` at all** — `Chunk`/`ChunkPlan`/`FragmentContent`/
+  `FragmentSpec`/`SequenceContent`/`TextContent`/`VectorRecord`/
+  `VectorSource`/`chunk_object`/`clean_text`, imported from
+  `itop_ai_assistant.vector` (never a deep `vector.chunker`/
+  `vector.ports.source` import — `test_package_layers.py::TestVectorFacade`
+  catches that from any file outside `vector/`, `content_sources/` included
+  since TASK-035). `chunk()`'s configuration parameter is `ChunkPlan`
+  (`vector/ports/source.py`), not the settings model `VectorClassConfig` —
+  the source never sees that pydantic type at all since TASK-040, only its
+  two fields (`fields`, `enabled`) already resolved by the caller
+  (`vector/use_cases/indexer.py::_chunk_plan`). `registry.py` additionally
+  takes `VectorConfig`/`FamilyConfig` from the same facade — the section as
+  a whole, not just the per-class vocabulary — to build
+  `build_vector_sources(itop, cfg)`.
 - **Two identities, not one** (TASK-032). A source's `prepare()`/
   `find_modified_since()`/`find_existing_ids()` run as the service account —
   the sweep is not a run, the index it builds is global. `confirm_visible(principal,

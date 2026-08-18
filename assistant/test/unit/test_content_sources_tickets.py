@@ -5,22 +5,22 @@ from unittest.mock import AsyncMock, MagicMock
 from itop_ai_assistant.content_sources.tickets import FIELDS, FRAGMENTS, TicketVectorSource, _conversation
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
-from itop_ai_assistant.vector import ChunkFragmentConfig, VectorClassConfig
+from itop_ai_assistant.vector import ChunkPlan
 
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 _ENGINEER = Principal.delegated("tok", login="ivanov", name="Ivan Ivanov")
 
 
-def _cfg(fragments: dict[str, ChunkFragmentConfig]) -> VectorClassConfig:
-    return VectorClassConfig(chunks=fragments)
+def _plan(*, fields: dict[str, list[str]] | None = None, enabled: set[str] | None = None) -> ChunkPlan:
+    return ChunkPlan(fields=fields or {}, enabled=frozenset(enabled or ()))
 
 
-_CFG = _cfg(
-    {
-        "profile": ChunkFragmentConfig(fields=["title", "service", "subcategory"]),
-        "body": ChunkFragmentConfig(fields=["description"]),
-        "log:public": ChunkFragmentConfig(),
-    }
+_CFG = _plan(
+    fields={
+        "profile": ["title", "service", "subcategory"],
+        "body": ["description"],
+    },
+    enabled={"log:public"},
 )
 
 
@@ -197,8 +197,8 @@ class TestChunk(unittest.IsolatedAsyncioTestCase):
         await source.prepare()
         [record] = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
 
-        cfg = _cfg({"log:private": ChunkFragmentConfig()})
-        chunks = await source.chunk("UserRequest", record, cfg, max_chunk_tokens=100, log_entries_per_chunk=5)
+        plan = _plan(enabled={"log:private"})
+        chunks = await source.chunk("UserRequest", record, plan, max_chunk_tokens=100, log_entries_per_chunk=5)
 
         log_chunk = next(c for c in chunks if c.kind == "log:private")
         self.assertIn("agent: Ordered a replacement part", log_chunk.text)
@@ -210,13 +210,13 @@ class TestDeclaration(unittest.IsolatedAsyncioTestCase):
     source can actually do — a stale declaration would put fields and
     fragments in the editor that quietly produce nothing."""
 
-    async def _chunk(self, cfg: VectorClassConfig, ticket: Ticket | None = None):
+    async def _chunk(self, plan: ChunkPlan, ticket: Ticket | None = None):
         get_ticket_repo, get_ticket_repo_as, ticket_repo, _ = _ticket_repo_factory()
         ticket_repo.find_modified_since = AsyncMock(return_value=[ticket or _ticket()])
         source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, classes=["UserRequest"])
         await source.prepare()
         [record] = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
-        return await source.chunk("UserRequest", record, cfg, max_chunk_tokens=100, log_entries_per_chunk=5)
+        return await source.chunk("UserRequest", record, plan, max_chunk_tokens=100, log_entries_per_chunk=5)
 
     async def test_declared_fields_are_exactly_the_chunkable_ones(self):
         get_ticket_repo, get_ticket_repo_as, _repo, _ = _ticket_repo_factory()
@@ -233,19 +233,20 @@ class TestDeclaration(unittest.IsolatedAsyncioTestCase):
             public_log=[LogEntry(user_login="John Doe", message="hi")],
             private_log=[LogEntry(user_login="Jane Agent", message="ordered a part")],
         )
-        cfg = _cfg(
-            {spec.kind: ChunkFragmentConfig(fields=list(FIELDS) if not spec.optional else []) for spec in FRAGMENTS}
+        plan = _plan(
+            fields={spec.kind: list(FIELDS) for spec in FRAGMENTS if not spec.optional},
+            enabled={spec.kind for spec in FRAGMENTS if spec.optional},
         )
 
-        chunks = await self._chunk(cfg, ticket)
+        chunks = await self._chunk(plan, ticket)
 
         self.assertEqual({c.kind for c in chunks}, {spec.kind for spec in FRAGMENTS})
 
     async def test_declared_visibility_reaches_the_chunk(self):
         ticket = _ticket(private_log=[LogEntry(user_login="Jane Agent", message="ordered a part")])
-        cfg = _cfg({"log:private": ChunkFragmentConfig(), "body": ChunkFragmentConfig(fields=["description"])})
+        plan = _plan(fields={"body": ["description"]}, enabled={"log:private"})
 
-        chunks = await self._chunk(cfg, ticket)
+        chunks = await self._chunk(plan, ticket)
 
         by_kind = {c.kind: c.visibility for c in chunks}
         self.assertEqual(by_kind, {"log:private": "internal", "body": "public"})
@@ -253,31 +254,31 @@ class TestDeclaration(unittest.IsolatedAsyncioTestCase):
     async def test_optional_fragment_absent_from_config_is_off(self):
         ticket = _ticket(private_log=[LogEntry(user_login="Jane Agent", message="ordered a part")])
 
-        chunks = await self._chunk(_cfg({"body": ChunkFragmentConfig(fields=["description"])}), ticket)
+        chunks = await self._chunk(_plan(fields={"body": ["description"]}), ticket)
 
         self.assertEqual({c.kind for c in chunks}, {"body"})
 
     async def test_optional_fragment_switched_off_explicitly(self):
         ticket = _ticket(private_log=[LogEntry(user_login="Jane Agent", message="ordered a part")])
-        cfg = _cfg({"log:private": ChunkFragmentConfig(enabled=False)})
+        plan = _plan()
 
-        self.assertEqual(await self._chunk(cfg, ticket), [])
+        self.assertEqual(await self._chunk(plan, ticket), [])
 
     async def test_required_fragment_without_fields_produces_nothing(self):
-        self.assertEqual(await self._chunk(_cfg({"body": ChunkFragmentConfig(fields=[])})), [])
+        self.assertEqual(await self._chunk(_plan(fields={"body": []})), [])
 
     async def test_unknown_field_warns_and_is_treated_as_empty(self):
-        cfg = _cfg({"body": ChunkFragmentConfig(fields=["description", "no_such_field"])})
+        plan = _plan(fields={"body": ["description", "no_such_field"]})
 
         with self.assertLogs("itop_ai_assistant.content_sources.tickets", level="WARNING"):
-            chunks = await self._chunk(cfg)
+            chunks = await self._chunk(plan)
 
         self.assertEqual([c.text for c in chunks], ["Not printing."])
 
     async def test_unknown_fragment_kind_in_config_is_ignored(self):
-        cfg = _cfg({"no_such_fragment": ChunkFragmentConfig(fields=["description"])})
+        plan = _plan(fields={"no_such_fragment": ["description"]})
 
-        self.assertEqual(await self._chunk(cfg), [])
+        self.assertEqual(await self._chunk(plan), [])
 
 
 class TestConversation(unittest.TestCase):

@@ -22,11 +22,11 @@ there is nothing left for `router.py` or `core/api_deps.py` to route around.
 Everything else here is the contract-out a business module actually calls:
 `SimilarSearch.available()`/`find()`, its exceptions, `measure_embedding_dimension`,
 plus the vocabulary `content_sources/` needs to implement `VectorSource` at
-all (`Chunk`, `FragmentContent`, `FragmentSpec`, `SequenceContent`,
+all (`Chunk`, `ChunkPlan`, `FragmentContent`, `FragmentSpec`, `SequenceContent`,
 `TextContent`, `VectorRecord`, `VectorSource`, `chunk_object`, `clean_text`,
-`ChunkFragmentConfig`, `VectorClassConfig`, TASK-036), and `VectorConfig`/
-`FamilyConfig` for the same reason: `content_sources/registry.py`'s
-`build_vector_sources` and `admin/setup.py` both need the section's shape.
+TASK-040), and `VectorConfig`/`FamilyConfig` for the same reason:
+`content_sources/registry.py`'s `build_vector_sources` and `admin/setup.py`
+both need the section's shape.
 `EmbeddingsClient` and `build_vector_sources` are deliberately *not*
 re-exported — neither is this package's business to shield; every caller of
 `EmbeddingsClient` goes through the `SimilarSearch`/`measure_embedding_dimension`
@@ -36,9 +36,9 @@ door instead, and `build_vector_sources` has exactly one caller left,
 
 from .assembly import VectorSubsystem, build
 from .chunker import Chunk, FragmentContent, SequenceContent, TextContent, chunk_object, clean_text
-from .config import ChunkFragmentConfig, FamilyConfig, VectorClassConfig, VectorConfig
+from .config import FamilyConfig, VectorConfig
 from .ports.query import FindStats, ObjectHit, SearchQuery, SearchResult
-from .ports.source import FragmentSpec, VectorRecord, VectorSource
+from .ports.source import ChunkPlan, FragmentSpec, VectorRecord, VectorSource
 from .ports.store import DateRange
 from .router import router
 from .use_cases.indexer import register_vector_sweep
@@ -47,7 +47,7 @@ from .use_cases.search import SearchUnavailable, SimilarSearch, UnknownFamily
 
 __all__ = [
     "Chunk",
-    "ChunkFragmentConfig",
+    "ChunkPlan",
     "DateRange",
     "FamilyConfig",
     "FindStats",
@@ -61,7 +61,6 @@ __all__ = [
     "SimilarSearch",
     "TextContent",
     "UnknownFamily",
-    "VectorClassConfig",
     "VectorConfig",
     "VectorRecord",
     "VectorSource",

@@ -38,7 +38,7 @@ from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.chunker import Chunk
 from itop_ai_assistant.vector.config import FamilyConfig, VectorClassConfig, VectorConfig
-from itop_ai_assistant.vector.ports.source import VectorRecord, VectorSource
+from itop_ai_assistant.vector.ports.source import ChunkPlan, VectorRecord, VectorSource
 from itop_ai_assistant.vector.ports.store import (
     ChunkDigest,
     ChunkMetadata,
@@ -279,6 +279,7 @@ class VectorIndexer:
         if not class_cfg.chunks:
             logger.warning(f"vector sweep: no chunk fragments configured for {obj_class} — skipping the class")
             return
+        plan = _chunk_plan(class_cfg)
         interval = family_cfg.sweep_interval_seconds or cfg.sweep_interval_seconds
         log_entries_per_chunk = family_cfg.log_entries_per_chunk or cfg.log_entries_per_chunk
         cursor = await self._vector_sync.get_cursor(obj_class)
@@ -306,7 +307,7 @@ class VectorIndexer:
                 chunks = await source.chunk(
                     obj_class,
                     record,
-                    class_cfg,
+                    plan,
                     max_chunk_tokens=cfg.max_chunk_tokens,
                     log_entries_per_chunk=log_entries_per_chunk,
                 )
@@ -417,6 +418,16 @@ class VectorIndexer:
             await self._vector_journal.finish(journal_id, **kwargs)
         except Exception as e:
             logger.warning(f"index journal finish failed (non-fatal): {e}")
+
+
+def _chunk_plan(class_cfg: VectorClassConfig) -> ChunkPlan:
+    """`class_cfg.chunks` translated into the value `VectorSource.chunk()`
+    actually takes (TASK-040) — computed once per class per pass, since
+    `class_cfg` does not change within `_sweep_class`'s per-page loop."""
+    return ChunkPlan(
+        fields={kind: frag.fields for kind, frag in class_cfg.chunks.items()},
+        enabled=frozenset(kind for kind, frag in class_cfg.chunks.items() if frag.enabled),
+    )
 
 
 @dataclass(frozen=True)

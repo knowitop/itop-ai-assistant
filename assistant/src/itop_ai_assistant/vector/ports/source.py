@@ -32,14 +32,13 @@ operations here, and the second one cannot be called without naming a
 principal.
 """
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Generic, Protocol, TypeVar
 
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.vector.chunker import Chunk
-from itop_ai_assistant.vector.config import VectorClassConfig
 
 # The source's own payload type (e.g. `Ticket`, `FaqArticle`) — carried through
 # `VectorRecord`/`VectorSource` so each source's `chunk()` gets it back typed,
@@ -68,6 +67,27 @@ class FragmentSpec:
     kind: str
     visibility: str  # public / internal
     optional: bool = False
+
+
+@dataclass(frozen=True)
+class ChunkPlan:
+    """`VectorClassConfig.chunks` resolved for one class, translated by the
+    caller (`vector/use_cases/indexer.py::_chunk_plan`) the same way
+    `vector/ports/query.py::SearchQuery` turns a search request into a value
+    object next to what consumes it — a port must not import a settings
+    section (rule 3.4), so this is what reaches `VectorSource.chunk()` instead
+    of `VectorClassConfig`.
+
+    Two separate projections, not a copy of `ChunkFragmentConfig`'s
+    `fields`/`enabled` pair: a required fragment (`FragmentSpec.optional is
+    False`) only ever reads `fields`, an opt-in one only ever reads
+    `enabled` (ADR-018) — no caller needs both for the same kind. A kind
+    absent from `fields`/`enabled` means the same thing `cfg.chunks.get(kind)
+    is None` used to: nothing configured, produce nothing.
+    """
+
+    fields: Mapping[str, Sequence[str]] = field(default_factory=dict)
+    enabled: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -163,14 +183,14 @@ class VectorSource(Protocol[T]):
         self,
         obj_class: str,
         record: VectorRecord[T],
-        cfg: VectorClassConfig,
+        plan: ChunkPlan,
         *,
         max_chunk_tokens: int,
         log_entries_per_chunk: int,
     ) -> list[Chunk]:
-        """Build this object's chunks from `cfg.chunks`.
+        """Build this object's chunks from `plan`.
 
-        Resolving the config against the source's own datamodel happens here,
+        Resolving the plan against the source's own datamodel happens here,
         not in the chunker: which field name means what, which fragment reads
         which log, and what to do with a field name the source does not know
         (warn and treat as empty — a stale config must not fail a sweep)."""

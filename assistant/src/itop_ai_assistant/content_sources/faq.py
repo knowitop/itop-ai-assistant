@@ -15,11 +15,10 @@ from itop_ai_assistant.domain.faq import FaqArticle
 from itop_ai_assistant.repositories.faq import FaqRepository, FaqRepositoryForPrincipal, FaqRepositoryProvider
 from itop_ai_assistant.vector import (
     Chunk,
-    ChunkFragmentConfig,
+    ChunkPlan,
     FragmentContent,
     FragmentSpec,
     TextContent,
-    VectorClassConfig,
     VectorRecord,
     VectorSource,
     chunk_object,
@@ -119,18 +118,14 @@ class FaqVectorSource(VectorSource[FaqArticle]):
         self,
         obj_class: str,
         record: VectorRecord[FaqArticle],
-        cfg: VectorClassConfig,
+        plan: ChunkPlan,
         *,
         max_chunk_tokens: int,
         log_entries_per_chunk: int,
     ) -> list[Chunk]:
         article = record.payload
         fields = self._semantic_fields(article)
-        fragments = [
-            content
-            for spec in FRAGMENTS
-            if (content := self._resolve(spec, cfg.chunks.get(spec.kind), fields)) is not None
-        ]
+        fragments = [content for spec in FRAGMENTS if (content := self._resolve(spec, plan, fields)) is not None]
         return chunk_object(fragments, max_chunk_tokens=max_chunk_tokens, items_per_window=log_entries_per_chunk)
 
     def _semantic_fields(self, article: FaqArticle) -> dict[str, str]:
@@ -144,14 +139,13 @@ class FaqVectorSource(VectorSource[FaqArticle]):
             "description": clean_text(article.description),
         }
 
-    def _resolve(
-        self, spec: FragmentSpec, cfg: ChunkFragmentConfig | None, fields: dict[str, str]
-    ) -> FragmentContent | None:
+    def _resolve(self, spec: FragmentSpec, plan: ChunkPlan, fields: dict[str, str]) -> FragmentContent | None:
         """One fragment's configured content, or None if it produces nothing."""
-        if cfg is None or not cfg.fields:
+        field_names = plan.fields.get(spec.kind)
+        if not field_names:
             return None
         parts = []
-        for name in cfg.fields:
+        for name in field_names:
             if name not in fields:
                 logger.warning(f"faq source: fragment {spec.kind!r} references unknown field {name!r} — ignored")
                 continue
