@@ -25,6 +25,11 @@ hands out" — every name it re-exports, and nothing it does not (TASK-037
 retired the composition root's own back door: `core/deps.py` no longer
 assembles concrete adapters by hand, so there is nothing left that needs a
 wider allowance than everyone else).
+
+`TestAgentsDoNotImportTheWebhookTransport` guards the same kind of boundary
+one layer up: `agents/` is business logic, `webhook/` is one entry point's
+transport shape, and nothing under `agents/` may import it — a run reaches
+what it needs (`TicketEvent` included) through `pipelines/models.py` instead.
 """
 
 import ast
@@ -296,6 +301,21 @@ class TestVectorDoesNotKnowContentDomains(unittest.TestCase):
                 continue
             with self.subTest(module=str(rel)):
                 leaking = _imported_modules(path) & _CONTENT_DOMAIN_MODULES
+                self.assertEqual(set(), leaking)
+
+
+class TestAgentsDoNotImportTheWebhookTransport(unittest.TestCase):
+    """Rule 6.10, TASK-044: `agents/` is business logic, `webhook/` is one
+    entry point's transport shape — nothing under `agents/` may import it.
+    """
+
+    def test_nothing_under_agents_imports_the_webhook_module(self):
+        for path in _sources():
+            rel = path.relative_to(PACKAGE)
+            if rel.parts[0] != "agents":
+                continue
+            with self.subTest(module=str(rel)):
+                leaking = {m for m in _imported_modules(path) if m.startswith("itop_ai_assistant.webhook")}
                 self.assertEqual(set(), leaking)
 
 

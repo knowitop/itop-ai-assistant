@@ -9,9 +9,8 @@ module exposes the same way (`<module>/pipeline.py::register`,
 import logging
 
 from itop_ai_assistant.config import Settings
-from itop_ai_assistant.pipelines.models import ObjectRef
+from itop_ai_assistant.pipelines.models import ObjectRef, TicketEvent
 from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, TriggerRegistry
-from itop_ai_assistant.webhook.models import TicketEvent
 
 from .config import IntakeConfig
 from .prompts import MODULE, PROMPT_VARIABLES, PROMPTS_DIR, build_intake_prompts

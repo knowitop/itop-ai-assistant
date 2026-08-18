@@ -5,6 +5,7 @@ webhook payload shape nor any other entry point: a webhook, a synchronous
 request and (later) a schedule all name the same object the same way.
 """
 
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -21,6 +22,12 @@ class ObjectRef(BaseModel):
     @property
     def label(self) -> str:
         return f"{self.obj_class}::{self.id}"
+
+
+class TicketEvent(StrEnum):
+    CREATED = "created"
+    USER_COMMENTED = "user_commented"
+    ASSIGNED = "assigned"
 
 
 class RunOutcome(BaseModel):
