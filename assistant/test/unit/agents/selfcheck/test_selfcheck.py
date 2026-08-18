@@ -8,7 +8,7 @@ read from the package, iTop reached only through the repository.
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import fakeredis.aioredis
@@ -65,8 +65,8 @@ class SelfCheckTestCase(unittest.IsolatedAsyncioTestCase):
         self.llm = llm or _llm_mock()
         self.pid = uuid4()
         await deps.journal.start(self.pid, subject=MODULE, event="tick", module=MODULE, kind="schedule")
-        with patch("itop_ai_assistant.agents.selfcheck.pipeline.create_llm", return_value=self.llm):
-            return await run_selfcheck(RunContext(processing_id=self.pid, module=MODULE), deps)
+        deps.create_llm = MagicMock(return_value=self.llm)
+        return await run_selfcheck(RunContext(processing_id=self.pid, module=MODULE), deps)
 
     async def _steps(self, deps) -> dict[str, str]:
         run = await deps.journal.get(self.pid)
@@ -177,8 +177,8 @@ class TestRun(SelfCheckTestCase):
         pid = uuid4()
         await deps.journal.start(pid, subject=MODULE, event="run", module=MODULE, kind="request")
 
-        with patch("itop_ai_assistant.agents.selfcheck.pipeline.create_llm", return_value=_llm_mock()):
-            outcome = await handle_request(SelfCheckInput(), RunContext(processing_id=pid, module=MODULE), deps)
+        deps.create_llm = MagicMock(return_value=_llm_mock())
+        outcome = await handle_request(SelfCheckInput(), RunContext(processing_id=pid, module=MODULE), deps)
 
         self.assertEqual(outcome.status, "done")
         run = await deps.journal.get(pid)

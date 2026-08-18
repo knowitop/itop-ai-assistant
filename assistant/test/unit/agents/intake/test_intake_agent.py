@@ -161,8 +161,8 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def run_agent(self, responses: list[AIMessage]) -> FakeToolCallingModel:
         model = FakeToolCallingModel(responses=responses)
-        with patch("itop_ai_assistant.agents.intake.compose.create_llm", return_value=model):
-            await self.intake_run().body(self.ticket, "ai-assistant")
+        self.deps.create_llm = MagicMock(return_value=model)
+        await self.intake_run().body(self.ticket, "ai-assistant")
         return model
 
     def journal_steps(self) -> list[tuple[str, str]]:
@@ -379,8 +379,8 @@ class TestClassifiedTicket(IntakeAgentTestCase):
                 return self
 
         model = Recording(responses=[ai([call("finish_handoff", {"note": "n"}, "h1")])])
-        with patch("itop_ai_assistant.agents.intake.compose.create_llm", return_value=model):
-            await self.intake_run().body(self.ticket, "ai-assistant")
+        self.deps.create_llm = MagicMock(return_value=model)
+        await self.intake_run().body(self.ticket, "ai-assistant")
 
         self.assertEqual(captured[0], ["post_public_question", "finish_handoff"])
 

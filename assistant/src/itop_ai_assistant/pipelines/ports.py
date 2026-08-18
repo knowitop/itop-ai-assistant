@@ -25,6 +25,9 @@ composition root, and no run should be able to close it.
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
+from langchain_core.language_models.chat_models import BaseChatModel
+
+from itop_ai_assistant.config import LlmConfig
 from itop_ai_assistant.itop.connection import AiIdentity
 from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.settings.config_store import ConfigStore
@@ -134,3 +137,5 @@ class RunDeps(Protocol):
 
     @property
     def vector_search(self) -> SimilarSearch: ...
+
+    def create_llm(self, llm: LlmConfig, model: str | None = None) -> BaseChatModel: ...

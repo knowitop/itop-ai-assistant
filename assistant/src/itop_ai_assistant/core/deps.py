@@ -44,7 +44,10 @@ class AppDeps:
     `ai_identity` is the same trick again (TASK-038): `RunDeps.ai_identity`
     needs the member on `AppDeps` itself, and the value is just
     `itop_connection` under its narrower name — no second field for the same
-    object.
+    object. `create_llm` delegates to the free function below rather than
+    wrapping a field: the function stays the one construction site
+    `agents.md` documents, this method is only how a module reaches it
+    through the port instead of importing the composition root directly.
     """
 
     settings: Settings
@@ -66,6 +69,9 @@ class AppDeps:
     @property
     def ai_identity(self) -> AiIdentity:
         return self.itop_connection
+
+    def create_llm(self, llm: LlmConfig, model: str | None = None) -> BaseChatModel:
+        return create_llm(llm, model)
 
     async def aclose(self) -> None:
         await self.itop_connection.aclose()

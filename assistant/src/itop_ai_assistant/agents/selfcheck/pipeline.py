@@ -19,7 +19,6 @@ from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel
 
 from itop_ai_assistant.config import ItopConfig, LlmConfig, Settings, missing_setup
-from itop_ai_assistant.core.deps import create_llm
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import RunOutcome
 from itop_ai_assistant.pipelines.ports import RunDeps
@@ -101,7 +100,7 @@ async def run_selfcheck(run: RunContext, deps: RunDeps) -> RunOutcome:
 
     prompts = build_selfcheck_prompts(await deps.prompt_store.get(MODULE))
     message = PromptTemplate.from_template(prompts.greeting).format(services=len(services))
-    response = await create_llm(llm_cfg, cfg.model).ainvoke([HumanMessage(content=message)])
+    response = await deps.create_llm(llm_cfg, cfg.model).ainvoke([HumanMessage(content=message)])
     answer = strip_thinking(response.content, tuple(llm_cfg.think_tags)).strip()
     await deps.journal.add_step(run.processing_id, "llm", answer[:500])
 

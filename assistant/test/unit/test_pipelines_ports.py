@@ -21,7 +21,7 @@ caught at the call sites and not here).
 import unittest
 from typing import get_protocol_members
 
-from itop_ai_assistant.config import get_settings
+from itop_ai_assistant.config import LlmConfig, get_settings
 from itop_ai_assistant.core.deps import AppDeps, build_deps
 from itop_ai_assistant.itop.connection import AiIdentity
 from itop_ai_assistant.pipelines.ports import (
@@ -63,6 +63,9 @@ class TestContainerSatisfiesTheContract(unittest.TestCase):
         self.assertIs(step, frame)
         self.assertIs(itop, deps.itop)
         self.assertIs(identity, deps.itop_connection)
+
+        llm = deps.create_llm(LlmConfig(model="m"))
+        self.assertEqual(llm.model_name, "m")
 
 
 class TestPortsWithholdWhatRunsMustNotReach(unittest.TestCase):

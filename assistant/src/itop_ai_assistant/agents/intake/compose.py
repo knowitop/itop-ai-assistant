@@ -13,7 +13,6 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.state import CompiledStateGraph
 
 from itop_ai_assistant.config import LlmConfig
-from itop_ai_assistant.core.deps import create_llm
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.ports import RunDeps
@@ -56,7 +55,7 @@ async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps,
         similar=similar,
     )
     agent = build_intake_agent(
-        create_llm(llm_cfg, cfg.model),
+        deps.create_llm(llm_cfg, cfg.model),
         cfg,
         tools_for(ticket, similar=similar is not None),
         # Nothing here can deliver prose, so force a tool call wherever the
