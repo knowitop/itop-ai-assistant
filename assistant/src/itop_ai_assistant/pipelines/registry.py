@@ -19,20 +19,24 @@ route answers only the second one.
 
 Adding a new module:
 1. Create a package (e.g. `src/agents/<module>/`) with a `pipeline.py` exposing
-   `register(registry, settings)`.
+   `register(registry, settings)` — `build_registry()` below finds it by that
+   shape alone, nothing to register it by name.
 2. Subclass `shell.TicketRun` for the work itself — the lock, the object read,
    the journal steps and the guaranteed closure come from there; the module
    supplies `stop_reason` and `body`, and registers `<Run>.handle` as its route.
-3. Call it from `build_registry()` below — one line.
-4. If it owns config, define the model in its own package
+3. If it owns config, define the model in its own package
    (`agents/<module>/config.py`) and read defaults with
    `settings.module_defaults(name, Model)` — nothing to add to `config.py`.
 """
 
+import importlib
+import importlib.util
 import logging
+import pkgutil
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
@@ -190,12 +194,32 @@ class TriggerRegistry:
         return list(self._modules.values())
 
 
+def discover_pipeline_modules(package: ModuleType) -> list[ModuleType]:
+    """Every `pipeline.py` a direct subpackage of `package` exposes.
+
+    A subpackage counts as a business module by this shape alone — having a
+    `pipeline.py` — nothing else marks it. Sorted by subpackage name so
+    registration order (and the startup log it produces) is stable across
+    runs and filesystems, which `pkgutil.iter_modules` does not promise.
+    """
+    names = sorted(info.name for info in pkgutil.iter_modules(package.__path__) if info.ispkg)
+    modules = []
+    for name in names:
+        if importlib.util.find_spec(f"{package.__name__}.{name}.pipeline") is None:
+            continue
+        modules.append(importlib.import_module(f"{package.__name__}.{name}.pipeline"))
+    return modules
+
+
 def build_registry(settings) -> "TriggerRegistry":
-    """Assemble the registry from all known modules. New module = one line here."""
-    from itop_ai_assistant.agents.intake import pipeline as intake_pipeline
-    from itop_ai_assistant.agents.selfcheck import pipeline as selfcheck_pipeline
+    """Assemble the registry from every module `agents/` contains.
+
+    A new module needs no line here: it is found by
+    `discover_pipeline_modules`, not named.
+    """
+    from itop_ai_assistant import agents
 
     registry = TriggerRegistry()
-    intake_pipeline.register(registry, settings)
-    selfcheck_pipeline.register(registry, settings)
+    for pipeline in discover_pipeline_modules(agents):
+        pipeline.register(registry, settings)
     return registry

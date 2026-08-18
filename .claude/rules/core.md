@@ -115,7 +115,9 @@ live in the same file and are deliberately not the same thing.
 ## Adding a module
 
 `agents/<module>/pipeline.py` with `register(registry, settings)` exposing a
-`ModuleInfo` and its routes, one call in `build_registry`. Object-scoped work
+`ModuleInfo` and its routes — `build_registry` finds it by that shape alone
+(`pipelines/registry.py::discover_pipeline_modules`), nothing to add there by
+name. Object-scoped work
 subclasses `TicketRun`; work that is not about an object is a plain coroutine
 `(run, deps) -> RunOutcome`. Every handler takes a `RunContext`, never a bare
 id. `validate_prompts` runs at startup for every module, so a broken template

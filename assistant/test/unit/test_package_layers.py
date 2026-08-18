@@ -278,3 +278,22 @@ class TestModulesOwnTheirPromptFiles(unittest.TestCase):
             rel = path.relative_to(PACKAGE)
             with self.subTest(path=str(rel)):
                 self.assertEqual(("agents", rel.parts[1], "prompts"), rel.parts[:3])
+
+
+class TestModulesAreDiscoveredNotNamed(unittest.TestCase):
+    """Rule 6.8, TASK-046: `build_registry` finds a business module by
+    scanning `agents/` (`pipelines/registry.py::discover_pipeline_modules`)
+    — nothing outside a module's own directory may import one of its
+    submodules by name, or the scan is decorative and a hidden list still
+    exists somewhere."""
+
+    def test_no_file_outside_a_modules_directory_imports_one_by_name(self):
+        violations = {}
+        for path in _sources():
+            rel = path.relative_to(PACKAGE)
+            if rel.parts[0] == "agents" and len(rel.parts) > 1:
+                continue  # inside a module's own directory
+            named = {m for m in _imported_modules(path) if m.startswith("itop_ai_assistant.agents.")}
+            if named:
+                violations[str(rel)] = named
+        self.assertEqual({}, violations)

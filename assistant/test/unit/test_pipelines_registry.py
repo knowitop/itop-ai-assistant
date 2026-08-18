@@ -1,4 +1,8 @@
+import importlib
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -11,6 +15,7 @@ from itop_ai_assistant.pipelines.registry import (
     ScheduleRoute,
     TriggerRegistry,
     build_registry,
+    discover_pipeline_modules,
 )
 
 
@@ -207,6 +212,55 @@ class TestBuildRegistry(unittest.TestCase):
         self.assertEqual([m.name for m in registry.modules], ["intake", "other"])
         self.assertEqual(registry.resolve_webhook("UserRequest", "created")[0], "intake")
         self.assertEqual(registry.resolve_webhook("Change", "created")[0], "other")
+
+
+class TestDiscoverPipelineModules(unittest.TestCase):
+    """`intake`/`selfcheck` (via `TestBuildRegistry` above) are one
+    implementation of "a subpackage with a `pipeline.py`"; a throwaway
+    fixture package built here on disk is the second — same rule as the
+    request/schedule routes, `.claude/rules/testing.md`. TASK-046 scope
+    item 3: a one-off module-package registers without touching
+    `pipelines/registry.py`.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._root = Path(self._tmp.name)
+        sys.path.insert(0, self._tmp.name)
+        self.addCleanup(sys.path.remove, self._tmp.name)
+        self.addCleanup(self._forget_fixture_modules)
+
+    def _forget_fixture_modules(self):
+        for name in [n for n in sys.modules if n == "fixture_agents" or n.startswith("fixture_agents.")]:
+            del sys.modules[name]
+
+    def _package(self, subpackages: dict[str, bool]):
+        """`subpackages` maps subpackage name to whether it gets a `pipeline.py`."""
+        package_dir = self._root / "fixture_agents"
+        package_dir.mkdir()
+        (package_dir / "__init__.py").write_text("")
+        for name, has_pipeline in subpackages.items():
+            module_dir = package_dir / name
+            module_dir.mkdir()
+            (module_dir / "__init__.py").write_text("")
+            if has_pipeline:
+                (module_dir / "pipeline.py").write_text("def register(registry, settings):\n    pass\n")
+        return importlib.import_module("fixture_agents")
+
+    def test_finds_a_throwaway_module_without_naming_it(self):
+        package = self._package({"acme": True})
+
+        modules = discover_pipeline_modules(package)
+
+        self.assertEqual([m.__name__ for m in modules], ["fixture_agents.acme.pipeline"])
+
+    def test_a_subpackage_without_pipeline_py_is_skipped(self):
+        package = self._package({"acme": True, "not_a_module": False})
+
+        modules = discover_pipeline_modules(package)
+
+        self.assertEqual([m.__name__ for m in modules], ["fixture_agents.acme.pipeline"])
 
 
 if __name__ == "__main__":
