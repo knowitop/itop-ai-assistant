@@ -25,8 +25,8 @@ composition root, and no run should be able to close it.
 from typing import Protocol, runtime_checkable
 from uuid import UUID
 
-from itop_ai_assistant.core.principal import Principal
-from itop_ai_assistant.repositories.sets import RepositorySet
+from itop_ai_assistant.itop.connection import AiIdentity
+from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.settings.prompt_store import PromptStore
 from itop_ai_assistant.state.journal import RunStatus, TriggerKind
@@ -101,21 +101,6 @@ class RunFrameJournal(StepJournal, Protocol):
     async def finish(self, processing_id: UUID | str, status: RunStatus, error: str | None = None) -> None: ...
 
 
-class ItopAccess(Protocol):
-    """Getting at iTop from inside a run.
-
-    One method: every run acts through `for_principal`, naming its own
-    `principal` and `comment` (`.claude/rules/core.md`) — even a run that
-    never writes, like `selfcheck`. `ai_person_name` answers off the
-    connection's own client whatever the run acts as, which is what keeps the
-    intake loop guard honest.
-    """
-
-    async def for_principal(self, principal: Principal, *, comment: str) -> RepositorySet: ...
-
-    async def ai_person_name(self) -> str: ...
-
-
 class RunDeps(Protocol):
     """What a module's handler is handed — the boundary, not the core.
 
@@ -139,7 +124,10 @@ class RunDeps(Protocol):
     def journal(self) -> RunFrameJournal: ...
 
     @property
-    def itop(self) -> ItopAccess: ...
+    def itop(self) -> ItopRepositories: ...
+
+    @property
+    def ai_identity(self) -> AiIdentity: ...
 
     @property
     def state_manager(self) -> TicketStatePort: ...

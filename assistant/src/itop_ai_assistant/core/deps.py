@@ -8,7 +8,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from itop_ai_assistant.config import LlmConfig, Settings
 from itop_ai_assistant.core.llm_providers import get_provider
-from itop_ai_assistant.itop.connection import ItopConnection
+from itop_ai_assistant.itop.connection import AiIdentity, ItopConnection
 from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.settings.config_store import ConfigStore, RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import (
@@ -45,6 +45,10 @@ class AppDeps:
     rather than a second stored field: `RunDeps.vector_search`
     (`pipelines/ports.py`) is unchanged by this task, and structural typing
     needs the member to exist on `AppDeps` itself, not one level down.
+    `ai_identity` is the same trick again (TASK-038): `RunDeps.ai_identity`
+    needs the member on `AppDeps` itself, and the value is just
+    `itop_connection` under its narrower name — no second field for the same
+    object.
     """
 
     settings: Settings
@@ -62,6 +66,10 @@ class AppDeps:
     @property
     def vector_search(self) -> SimilarSearch:
         return self.vector.vector_search
+
+    @property
+    def ai_identity(self) -> AiIdentity:
+        return self.itop_connection
 
     async def aclose(self) -> None:
         await self.itop_connection.aclose()

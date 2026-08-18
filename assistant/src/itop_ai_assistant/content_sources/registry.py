@@ -7,21 +7,22 @@ same pattern as `pipelines/registry.py` for webhook modules.
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.repositories.faq import FaqRepository
-from itop_ai_assistant.repositories.sets import RepositorySet
+from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.repositories.ticket import TicketRepository
 
 if TYPE_CHECKING:
-    # `vector/router.py` imports this module for real (`ItopRepos`), and
-    # `vector/__init__.py` imports `.router` — a real import of the facade
-    # here, at module level, would deadlock on that cycle the same way a real
-    # `core.deps` import would (see `vector/__init__.py`'s own docstring).
-    # `FamilyConfig` is imported again, for real, inside `build_vector_sources`
-    # below, where it is actually instantiated — by then every module involved
-    # has finished importing, so the same cycle cannot occur.
+    # `vector/assembly.py` imports this module for real (`build_vector_sources`),
+    # and `vector/__init__.py` imports `.assembly` — a real import of the
+    # facade here, at module level, would deadlock on that cycle the same way
+    # a real `core.deps` import would (see `vector/__init__.py`'s own
+    # docstring). `FamilyConfig` is imported again, for real, inside
+    # `build_vector_sources` below, where it is actually instantiated — by
+    # then every module involved has finished importing, so the same cycle
+    # cannot occur.
     from itop_ai_assistant.vector import VectorConfig, VectorSource
 
 logger = logging.getLogger(__name__)
@@ -32,23 +33,7 @@ _SWEEP_COMMENT = "AI assistant · vector · sweep"
 _CONFIRM_COMMENT = "AI assistant · vector · confirming search candidates"
 
 
-class ItopRepos(Protocol):
-    """How a source reaches iTop — declared here, by the consumer, rather than
-    imported from the container that happens to offer it.
-
-    A source needs two identities, not one: the sweep reads as the
-    service account, since the index is global and built once for everyone;
-    confirming a search candidate reads as whoever is asking, since that is
-    the only honest answer to "may this person see it" (ADR-003). What keeps
-    them from being mixed up is not this protocol but what
-    `build_vector_sources` hands each source: two accessors, one per
-    identity, and no way to reach `for_principal` itself.
-    """
-
-    async def for_principal(self, principal: Principal, *, comment: str) -> RepositorySet: ...
-
-
-def build_vector_sources(itop: ItopRepos, cfg: "VectorConfig") -> list["VectorSource[Any]"]:
+def build_vector_sources(itop: ItopRepositories, cfg: "VectorConfig") -> list["VectorSource[Any]"]:
     """One instance per *registered* family, not per family the saved config
     happens to still mention.
 

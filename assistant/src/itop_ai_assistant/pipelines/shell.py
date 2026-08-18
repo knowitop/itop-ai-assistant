@@ -22,10 +22,11 @@ from abc import ABC, abstractmethod
 from uuid import UUID
 
 from itop_ai_assistant.domain.ticket import Ticket
+from itop_ai_assistant.itop.connection import AiIdentity
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import ObjectRef, RunOutcome
-from itop_ai_assistant.pipelines.ports import ItopAccess, LockPort, RunDeps, StepJournal
-from itop_ai_assistant.repositories.sets import RepositorySet
+from itop_ai_assistant.pipelines.ports import LockPort, RunDeps, StepJournal
+from itop_ai_assistant.repositories.sets import ItopRepositories, RepositorySet
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +38,9 @@ class TicketRun(ABC):
     this run's state, and a single shared instance in the registry would race
     between concurrent webhooks for the same object.
 
-    Takes the three ports it actually uses, not the container: the shell locks,
-    reads iTop and records steps, and its type says so. `handle()` is where the
+    Takes the four ports it actually uses, not the container: the shell locks,
+    reads iTop, knows the AI's own name and records steps, and its type says
+    so. `handle()` is where the
     container handed to a module gets taken apart into them.
     """
 
@@ -53,7 +55,8 @@ class TicketRun(ABC):
         deps: RunDeps,
         *,
         lock: LockPort,
-        itop: ItopAccess,
+        itop: ItopRepositories,
+        ai_identity: AiIdentity,
         journal: StepJournal,
     ) -> None:
         self.ref = ref
@@ -63,6 +66,7 @@ class TicketRun(ABC):
         self.deps = deps
         self.lock = lock
         self.itop = itop
+        self.ai_identity = ai_identity
         self.journal = journal
         self.label = ref.label
 
@@ -87,6 +91,7 @@ class TicketRun(ABC):
             deps,
             lock=deps.state_manager,
             itop=deps.itop,
+            ai_identity=deps.ai_identity,
             journal=deps.journal,
         ).execute()
 
@@ -100,7 +105,7 @@ class TicketRun(ABC):
             if ticket is None:
                 logger.warning(f"[{self.processing_id}] {self.label} not found in iTop, skipping")
                 return await self.skip("fetch", "ticket not found in iTop")
-            ai_name = await self.itop.ai_person_name()
+            ai_name = await self.ai_identity.ai_person_name()
             # The guard runs before the body, not as middleware: it needs no LLM
             # and it saves the catalog round-trip to iTop on a no-op webhook
             reason = await self.stop_reason(ticket, ai_name)

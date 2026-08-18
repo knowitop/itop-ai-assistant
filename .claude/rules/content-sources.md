@@ -41,17 +41,17 @@ repositories) to do its job at all.
   obj_class, ids)` runs as whoever is asking — the only honest answer to "may
   this person see it" (ADR-003). `content_sources/registry.py::build_vector_sources`
   hands each source two separate closures, one per identity, and neither
-  reaches `ItopRepos.for_principal` itself — a source cannot start sweeping
-  as somebody, and cannot answer a confirmation as the service account by
-  accident. `test_package_layers.py::TestRightsCannotBeForgotten` pins that
-  `confirm_visible`'s `principal` parameter has no default, in every
+  reaches `ItopRepositories.for_principal` itself — a source cannot start
+  sweeping as somebody, and cannot answer a confirmation as the service
+  account by accident. `test_package_layers.py::TestRightsCannotBeForgotten`
+  pins that `confirm_visible`'s `principal` parameter has no default, in every
   registered source.
-- **`registry.py`'s `ItopRepos` protocol is declared here, by the consumer**
-  (`.claude/rules/core.md`: declare a port at the consumer rather than import
-  one from wherever it happens to be defined) — not the same type as
-  `pipelines.ports.ItopAccess`, which has the identical one method, because
-  importing that one here would reach back into a package that itself imports
-  the vector facade.
+- **`build_vector_sources` takes `repositories.sets.ItopRepositories` directly,
+  no protocol wrapping it** (`TASK-038`, `ADR-022`): one real implementation,
+  a surface already as narrow as `for_principal` alone — a protocol here would
+  duplicate it for no reader's benefit. It is the same class every other
+  consumer of iTop repositories imports, not a second declaration local to
+  this package.
 - Every registered family is built unconditionally by `build_vector_sources`,
   with `classes` read fresh from `cfg.families` on every call — not once at
   startup — so the admin UI's chunking vocabulary (`GET /api/vector/sources`)

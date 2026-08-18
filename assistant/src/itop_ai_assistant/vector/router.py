@@ -18,9 +18,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
 from itop_ai_assistant.config import EmbeddingsConfig
-from itop_ai_assistant.content_sources.registry import ItopRepos
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
+from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.vector.assembly import VectorSubsystem
 from itop_ai_assistant.vector.config import VectorConfig
@@ -45,7 +45,7 @@ def _subsystem(request: Request) -> VectorSubsystem:
     return request.app.state.vector
 
 
-def get_itop(request: Request) -> ItopRepos:
+def get_itop(request: Request) -> ItopRepositories:
     return _subsystem(request).itop
 
 
@@ -426,7 +426,7 @@ class SearchResponse(BaseModel):
 async def vector_search(
     body: SearchRequest,
     search: Annotated[SimilarSearch, Depends(get_vector_search)],
-    itop: Annotated[ItopRepos, Depends(get_itop)],
+    itop: Annotated[ItopRepositories, Depends(get_itop)],
 ) -> SearchResponse:
     """Debug endpoint: run one `SimilarSearch.find()` and return the hits.
 

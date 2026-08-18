@@ -215,9 +215,9 @@ class TestOnlyTheContractIsImportedFromOutside(unittest.TestCase):
 
 #: Rule 6.4, as a checked fact rather than "the indexer knows nothing about
 #: iTop or tickets" prose. Deliberately narrow to these four: `router.py`
-#: legitimately imports `content_sources.registry.ItopRepos` (a protocol
-#: about reaching iTop generically, not domain knowledge) for `/search`'s R4
-#: pre-filter, and that is not what this test is about.
+#: legitimately imports `repositories.sets.ItopRepositories` (a concrete class
+#: about reaching iTop generically, not domain knowledge, ADR-022) for
+#: `/search`'s R4 pre-filter, and that is not what this test is about.
 _CONTENT_DOMAIN_MODULES = {
     "itop_ai_assistant.domain.ticket",
     "itop_ai_assistant.domain.faq",
@@ -254,11 +254,11 @@ class TestSourcesAreInjectedNotBuilt(unittest.TestCase):
     takes the already-assembled `VectorSubsystem` and never names
     `content_sources.registry` at all).
 
-    Checks the one name, not the whole module: `router.py` legitimately
-    imports `ItopRepos` from `content_sources.registry` (`/search`'s R4 org
-    pre-filter), unrelated to building the source list and out of this
-    test's scope (see `_CONTENT_DOMAIN_MODULES` above for why that import is
-    not domain knowledge either).
+    Checks the one name, not the whole module: after TASK-038, `router.py`
+    does not import `content_sources.registry` at all any more — it reaches
+    iTop through `repositories.sets.ItopRepositories` directly (see
+    `_CONTENT_DOMAIN_MODULES` above for why that import is not domain
+    knowledge either).
     """
 
     def test_the_three_former_callers_no_longer_import_the_builder(self):
@@ -320,3 +320,21 @@ class TestRightsCannotBeForgotten(unittest.TestCase):
                 self.assertEqual("principal", params[0].name)
                 self.assertIs(params[0].default, inspect.Parameter.empty)
                 self.assertIs(params[0].annotation, Principal)
+
+
+class TestOneClassReachesItop(unittest.TestCase):
+    """Rule 3.1, TASK-038, ADR-022: `for_principal` is a method on exactly
+    one class in the whole tree — `ItopRepositories`. No protocol
+    duplicates it: every consumer that only needs to reach iTop for a
+    principal imports that class directly (`repositories/sets.py`)."""
+
+    def test_exactly_one_class_declares_for_principal(self):
+        declared = []
+        for path in _sources():
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef) and any(
+                    isinstance(n, ast.AsyncFunctionDef) and n.name == "for_principal" for n in node.body
+                ):
+                    declared.append(f"{path.relative_to(PACKAGE)}::{node.name}")
+        self.assertEqual(["repositories/sets.py::ItopRepositories"], declared)

@@ -133,6 +133,7 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
         # no longer receives the run's repositories, it receives the
         # connection and asks under the run's principal (TASK-032).
         self.deps.itop.for_principal = AsyncMock(return_value=self.repos)
+        self.deps.ai_identity.ai_person_name = AsyncMock(return_value="ai-assistant")
         # The real door (TASK-033) over mocked ingredients — `compose.assemble`
         # only ever calls `deps.vector_search`, never assembles one itself.
         self.deps.vector_search = SimilarSearch(
@@ -151,6 +152,7 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
             self.deps,
             lock=self.deps.state_manager,
             itop=self.deps.itop,
+            ai_identity=self.deps.ai_identity,
             journal=self.deps.journal,
         )
         run.repos = self.repos

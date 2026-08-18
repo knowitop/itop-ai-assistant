@@ -52,7 +52,7 @@ class ShellTestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.ticket = Ticket(obj_class="Change", id="123", status="new")
 
-        # The three ports the shell actually names, built one by one. The
+        # The four ports the shell actually names, built one by one. The
         # container below is assembled *from* them, so `handle()` — which takes
         # a container apart — and direct construction exercise the same doubles.
         self.lock = MagicMock()
@@ -64,15 +64,26 @@ class ShellTestCase(unittest.IsolatedAsyncioTestCase):
         self.repos = MagicMock()
         self.repos.ticket_repo.fetch = AsyncMock(return_value=self.ticket)
         self.itop = MagicMock()
-        self.itop.ai_person_name = AsyncMock(return_value="ai-assistant")
         self.itop.for_principal = AsyncMock(return_value=self.repos)
+
+        self.ai_identity = MagicMock()
+        self.ai_identity.ai_person_name = AsyncMock(return_value="ai-assistant")
 
         self.deps = MagicMock()
         self.deps.state_manager = self.lock
         self.deps.journal = self.journal
         self.deps.itop = self.itop
+        self.deps.ai_identity = self.ai_identity
 
-        self.run = _ProbeRun(_payload(), _run(), self.deps, lock=self.lock, itop=self.itop, journal=self.journal)
+        self.run = _ProbeRun(
+            _payload(),
+            _run(),
+            self.deps,
+            lock=self.lock,
+            itop=self.itop,
+            ai_identity=self.ai_identity,
+            journal=self.journal,
+        )
 
     def journalled(self) -> list[str]:
         return [call.args[1] for call in self.journal.add_step.await_args_list]

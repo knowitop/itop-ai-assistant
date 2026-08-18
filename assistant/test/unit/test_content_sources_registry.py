@@ -17,7 +17,7 @@ def _deps() -> MagicMock:
 
 
 def _itop() -> MagicMock:
-    """An `ItopRepos` that answers every call through `for_principal`."""
+    """An `ItopRepositories` that answers every call through `for_principal`."""
     itop = MagicMock()
     repo_set = MagicMock(name="repo-set")
     repo_set.ticket_repo.find_existing_ids = AsyncMock(return_value=set())

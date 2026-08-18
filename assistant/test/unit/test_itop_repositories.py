@@ -106,9 +106,6 @@ class TestRepositorySet(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second.ticket_repo.mapping.fields.title, "short_desc")
         self.assertIs(await self.connection.client(), client)
 
-    async def test_ai_person_name_is_answered_by_the_connection(self):
-        self.assertTrue(hasattr(self.repositories, "ai_person_name"))
-
     async def test_the_set_is_a_record_not_a_factory(self):
         repos = await self.repositories.for_principal(Principal.service(), comment=_SWEEP)
 

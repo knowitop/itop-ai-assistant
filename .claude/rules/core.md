@@ -19,22 +19,30 @@ Which file implements what: `dev-docs/reference/source-map.md`.
 
 `ADR-019`. `AppDeps` goes to entry points and no deeper. The core is constructed
 with the narrow protocols of `pipelines/ports.py` — `TicketRun` with `LockPort`,
-`ItopAccess`, `StepJournal`; `AgentRun` with `StepJournal`; `journalled_run` with
-`RunFrameJournal`. A module's `<Run>.handle` is where the container is taken
-apart into them, because the registry has one handler shape for every module.
+`AiIdentity`, `StepJournal`, plus the concrete `ItopRepositories`; `AgentRun`
+with `StepJournal`; `journalled_run` with `RunFrameJournal`. Not every port is
+a `Protocol`: `ItopRepositories` has one real implementation and a surface
+already as narrow as a protocol would make it, so wrapping it in one would add
+nothing (`ADR-022`) — `AiIdentity` stays a `Protocol` because it hides most of
+`ItopConnection` (`client()`/`as_principal()`/`aclose()`), the honest reason
+the rule exists at all. A module's `<Run>.handle` is where the container is
+taken apart into them, because the registry has one handler shape for every
+module.
 
 - **A protocol member is a method or a read-only `@property`, never a plain
   attribute** — attributes are invariant, and `AppDeps` (whose fields are typed
   concretely) would stop satisfying the port. Strict mypy catches this.
-- **Nothing implements these protocols by inheritance.** `AppDeps` satisfies
-  them structurally; making it inherit would drag Redis/Qdrant/langchain back
-  into the core.
+- **Nothing implements a protocol port by inheritance at the composition
+  root.** `AppDeps` satisfies them structurally; making it inherit would drag
+  Redis/Qdrant/langchain back into the core. This is about `AppDeps`, not
+  about every class anywhere: `ItopConnection(AiIdentity)` (`itop/connection.py`)
+  inherits its own port explicitly, declared in the same file — it drags in
+  nothing the file didn't already import (`ADR-022`).
 - **`aclose()` belongs to no port.** The pool is the composition root's, and a
   run must not be typed into closing it (`test_pipelines_ports.py`).
 - Need something `RunDeps` does not carry? Declare a port at the consumer, as
-  `handle_assigned` (`_AssignedDeps`), `build_vector_sources` (`ItopRepos`)
-  and `VectorIndexer` (`IndexerDeps`, its own five-member slice of the
-  container) do — do not widen `RunDeps`.
+  `handle_assigned` (`_AssignedDeps`) and `VectorIndexer` (`IndexerDeps`, its
+  own five-member slice of the container) do — do not widen `RunDeps`.
 
 ## No module-level singletons
 
@@ -55,7 +63,12 @@ and talk to `create_itop_client` directly, so they are not part of this seam.
 acts as. Resolving it under an engineer's token would make the loop guard —
 which compares it against the author of the last public comment — lie. That is
 why `IdentityRepository` is built by `ItopConnection` and is not a member of
-`RepositorySet`: from inside a run it is not merely wrong to call, it is absent.
+`RepositorySet`: from inside a run it is not merely wrong to call, it is
+absent. A run reaches it as `RunDeps.ai_identity` (`AiIdentity`,
+`itop/connection.py`), a separate property from `RunDeps.itop` — mixing
+"repositories for an arbitrary principal" and "the name of the one fixed
+service persona" into a single property was the wrong shape (`TASK-038`,
+`ADR-022`).
 
 ## A class owns one config section
 

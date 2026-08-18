@@ -65,9 +65,6 @@ class ItopRepositories:
         """
         return await self._build(await self._connection.as_principal(principal, comment=comment))
 
-    async def ai_person_name(self) -> str:
-        return await self._connection.ai_person_name()
-
     async def _build(self, client: Itop) -> RepositorySet:
         ticket_mapping = await self._config_store.get("ticket_mapping", TicketMappingConfig)
         faq_mapping = await self._config_store.get("faq_mapping", FaqMappingConfig)
