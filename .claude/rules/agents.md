@@ -42,12 +42,13 @@ convention; `graph/` is reserved for a genuinely deterministic multi-step flow.
 
 ## Prompts
 
-Files, not code: package defaults in `prompts/<module>/`, deployment overrides by
-same-named file under `<prompts_dir>/<module>/`, re-read every run.
+Files, not code: package defaults in `agents/<module>/prompts/`, deployment
+overrides by same-named file under `<prompts_dir>/<module>/`, re-read every
+run.
 
 A new placeholder requires an entry in the module's `PROMPT_VARIABLES` and a
 value passed where the messages are built — otherwise startup validation fails
-the boot. After touching `prompts/intake/*.md` or a tool signature, run
+the boot. After touching `agents/intake/prompts/*.md` or a tool signature, run
 `uv run pytest test/integration` (needs a real endpoint).
 
 ## LLM client

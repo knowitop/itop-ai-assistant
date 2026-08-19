@@ -10,6 +10,7 @@ returns a domain object — belongs to `repositories/`.
 """
 
 import asyncio
+from typing import Protocol
 
 from itop_ai_assistant.config import ItopConfig
 from itop_ai_assistant.core.principal import Principal
@@ -18,7 +19,19 @@ from itop_ai_assistant.repositories.identity import IdentityRepository
 from itop_ai_assistant.settings.config_store import ConfigStore
 
 
-class ItopConnection:
+class AiIdentity(Protocol):
+    """Who the connection is, off its own (always service-account) client —
+    never a delegated principal's — for the loop guard
+    (`pipelines/shell.py`, `.claude/rules/core.md`). Declared next to
+    `ItopConnection`, its one real implementation, so it can inherit it
+    explicitly and hide `client()`/`as_principal()`/`aclose()` the way
+    `LockPort` already hides the rest of `TicketStateManager` (ADR-022).
+    """
+
+    async def ai_person_name(self) -> str: ...
+
+
+class ItopConnection(AiIdentity):
     """One iTop connection, rebuilt when — and only when — its own section changes.
 
     The client is cached by the fingerprint of section `itop`; a connection edit

@@ -16,7 +16,8 @@ CONFIG_PREFIX = "config:"
 # settings/prompt_store.py — runtime prompt overrides, no TTL (persist until reset)
 PROMPTS_PREFIX = "prompts:"
 
-# state/ticket_state.py — per-ticket AI state and its processing lock
+# state/ticket_state.py — per (ticket, module) AI state, and the one
+# processing lock per ticket shared by whichever module claims it
 TICKET_STATE_PREFIX = "ticket:"
 TICKET_LOCK_PREFIX = "lock:"
 # Safety timeout: the lock self-expires if processing dies without releasing it.

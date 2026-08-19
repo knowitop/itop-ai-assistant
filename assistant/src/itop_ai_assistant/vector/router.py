@@ -9,86 +9,79 @@ deliberately have none.
 """
 
 import logging
+from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Protocol
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 
-from itop_ai_assistant.config import EmbeddingsConfig, VectorConfig
-from itop_ai_assistant.core.api_deps import get_config_store
+from itop_ai_assistant.config import EmbeddingsConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
-from itop_ai_assistant.repositories.sets import RepositorySet
+from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.settings.config_store import ConfigStore
-from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
+from itop_ai_assistant.vector.assembly import VectorSubsystem
+from itop_ai_assistant.vector.config import VectorConfig
 from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchQuery
+from itop_ai_assistant.vector.ports.source import VectorSource
 from itop_ai_assistant.vector.ports.store import ChunkStore, DateRange
-from itop_ai_assistant.vector.sources.registry import ItopRepos, build_vector_sources
-from itop_ai_assistant.vector.sources.tickets import FAMILY as TICKETS_FAMILY
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
 from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 from itop_ai_assistant.vector.use_cases.indexer import SWEEP_TASK
-from itop_ai_assistant.vector.use_cases.search import SimilarSearch
-
-# core/deps.py imports the vector facade (concrete adapters); the facade's own
-# __init__ imports this module for `router` — a real import of `core.deps`
-# here would deadlock on that cycle. `AppDeps` below is a local variable
-# annotation, never evaluated at runtime (PEP 526), so type-checking only
-# costs nothing. `core/api_deps.py` is safe to import from for real, unlike
-# `core/deps.py` itself: it names `AppDeps` the same way, in local variable
-# annotations only, so importing it never runs `core/deps.py` and never
-# touches this cycle. What still can't move there is any provider whose
-# *parameter or return* type is `AppDeps` itself (a real, eagerly-evaluated
-# annotation) — `get_itop`/`get_vector_store`/`get_vector_sync`/
-# `get_vector_journal` stay local for that reason, built from direct
-# submodule imports (`ports.store`, `state.*`, `sources.registry`) instead.
-if TYPE_CHECKING:
-    from itop_ai_assistant.core.deps import AppDeps
+from itop_ai_assistant.vector.use_cases.search import SearchUnavailable, SimilarSearch, UnknownFamily
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/vector")
 
 
-class _RouterItop(ItopRepos, Protocol):
-    """`ItopRepos` (`sources/registry.py`) plus `for_principal`, for `/search`'s
-    `principal_token` branch, which resolves under an engineer's own iTop
-    identity instead of the service account (TASK-015).
-
-    Not `pipelines.ports.ItopAccess`, which has the same two methods: that
-    file names `itop_ai_assistant.vector` for `ChunkStore`, so importing it
-    here would run this module while the vector facade is still mid-import —
-    the cycle explained above, one hop further out. TASK-029 discusses this
-    same duplication for `ItopRepos` itself.
+def _subsystem(request: Request) -> VectorSubsystem:
+    """The one instance `vector.build()` assembled at startup — off its own
+    `app.state.vector`, not `app.state.deps` (TASK-037): this router no
+    longer needs `AppDeps` or anything from `core/` to serve a request.
     """
+    return request.app.state.vector
 
-    async def for_principal(self, principal: Principal, *, comment: str) -> RepositorySet: ...
 
-
-def get_itop(request: Request) -> _RouterItop:
-    deps: AppDeps = request.app.state.deps
-    return deps.itop
+def get_itop(request: Request) -> ItopRepositories:
+    return _subsystem(request).itop
 
 
 def get_vector_store(request: Request) -> ChunkStore:
-    deps: AppDeps = request.app.state.deps
-    return deps.vector_store
+    return _subsystem(request).vector_store
 
 
 def get_vector_sync(request: Request) -> VectorSyncState:
-    deps: AppDeps = request.app.state.deps
-    return deps.vector_sync
+    return _subsystem(request).vector_sync
 
 
 def get_vector_journal(request: Request) -> IndexJournal:
-    deps: AppDeps = request.app.state.deps
-    return deps.vector_journal
+    return _subsystem(request).vector_journal
+
+
+def get_vector_search(request: Request) -> SimilarSearch:
+    return _subsystem(request).vector_search
+
+
+def get_config_store(request: Request) -> ConfigStore:
+    return _subsystem(request).config_store
 
 
 async def get_vector_config(config_store: Annotated[ConfigStore, Depends(get_config_store)]) -> VectorConfig:
     return await config_store.get("vector", VectorConfig)
+
+
+def get_vector_sources(
+    request: Request, vector_cfg: Annotated[VectorConfig, Depends(get_vector_config)]
+) -> Sequence[VectorSource[Any]]:
+    """The registered sources for the freshly-read config. `vector_sources`
+    is the same builder `vector.build()` closed over `itop` with; calling it
+    here, per request, is what keeps a family added or removed from the
+    saved config visible without a restart.
+    """
+    return _subsystem(request).vector_sources(vector_cfg)
 
 
 async def get_embeddings_config(
@@ -134,7 +127,7 @@ async def vector_status(
     vector_store: Annotated[ChunkStore, Depends(get_vector_store)],
     vector_sync: Annotated[VectorSyncState, Depends(get_vector_sync)],
     vector_journal: Annotated[IndexJournal, Depends(get_vector_journal)],
-    itop: Annotated[_RouterItop, Depends(get_itop)],
+    sources: Annotated[Sequence[VectorSource[Any]], Depends(get_vector_sources)],
 ) -> dict:
     tasks: PeriodicTasks = request.app.state.tasks
 
@@ -146,11 +139,11 @@ async def vector_status(
     runs: list[dict] = []
     if vector_store.configured:
         try:
-            # Union of what code registers today and what Qdrant actually has
-            # (TASK-008): a family dropped from the registry stays visible
-            # here — `configured: false` — until its collection is dropped,
-            # instead of silently disappearing from observability.
-            configured_families = {s.name for s in build_vector_sources(itop, vector_cfg)}
+            # Union of what code registers today and what Qdrant actually has:
+            # a family dropped from the registry stays visible here —
+            # `configured: false` — until its collection is dropped, instead
+            # of silently disappearing from observability.
+            configured_families = {s.name for s in sources}
             known_families = set(await vector_store.list_families())
             store_status["ok"] = True
             index_info = []
@@ -204,8 +197,7 @@ async def vector_status(
 
 @router.get("/sources")
 async def vector_sources(
-    vector_cfg: Annotated[VectorConfig, Depends(get_vector_config)],
-    itop: Annotated[_RouterItop, Depends(get_itop)],
+    sources: Annotated[Sequence[VectorSource[Any]], Depends(get_vector_sources)],
 ) -> dict:
     """The chunking vocabulary of every registered source — what the admin UI
     renders its fragment editor from (ADR-018).
@@ -223,13 +215,13 @@ async def vector_sources(
                 # Every registered family is always present, whether or not it
                 # currently has classes configured — recovering a class an
                 # admin removed by mistake needs the family's vocabulary to
-                # still be here, not just the classes still saved (TASK-021;
-                # `vector/sources/registry.py::build_vector_sources`).
+                # still be here, not just the classes still saved
+                # (`content_sources/registry.py::build_vector_sources`).
                 "classes": list(source.classes),
                 "fields": list(source.fields),
                 "fragments": [asdict(fragment) for fragment in source.fragments],
             }
-            for source in build_vector_sources(itop, vector_cfg)
+            for source in sources
         ]
     }
 
@@ -321,7 +313,7 @@ class SearchRequest(BaseModel):
     into a run."""
 
     family: str = Field(
-        description="Which collection family to search — one name from `vector/sources/registry.py` "
+        description="Which collection family to search — one name from `content_sources/registry.py` "
         "(e.g. 'tickets'). 404 if no registered `VectorSource` has this name.",
     )
     text: str = Field(description="Query text, embedded once and matched against the index by cosine similarity.")
@@ -383,11 +375,10 @@ class SearchRequest(BaseModel):
     principal_token: str | None = Field(
         default=None,
         description="An iTop personal/application token to resolve candidates under and to read the "
-        "R4 org pre-filter from, instead of the service account (TASK-015) — paste an engineer's own "
+        "R4 org pre-filter from, instead of the service account — paste an engineer's own "
         "token to check what `AccessRepository.allowed_org_ids()` returns for them and whether the "
         "org pre-filter and the source's own resolve agree (`stats.dropped_by_resolve`). When given, "
-        "it also fills `filters['org_id']` unless the request already sets that key. Only supported "
-        "for the 'tickets' family today — 501 otherwise.",
+        "it also fills `filters['org_id']` unless the request already sets that key.",
     )
 
     @model_validator(mode="after")
@@ -434,46 +425,42 @@ class SearchResponse(BaseModel):
 @router.post("/search")
 async def vector_search(
     body: SearchRequest,
-    vector_cfg: Annotated[VectorConfig, Depends(require_vector)],
-    embeddings_cfg: Annotated[EmbeddingsConfig, Depends(require_embeddings)],
-    vector_store: Annotated[ChunkStore, Depends(get_vector_store)],
-    itop: Annotated[_RouterItop, Depends(get_itop)],
+    search: Annotated[SimilarSearch, Depends(get_vector_search)],
+    itop: Annotated[ItopRepositories, Depends(get_itop)],
 ) -> SearchResponse:
     """Debug endpoint: run one `SimilarSearch.find()` and return the hits.
 
-    Resolves candidates under the service account (`VectorSource.prepare()`),
-    not the caller's own iTop identity, unless `principal_token` is given
-    (`.claude/rules/vector.md`: search returns candidates, resolved against a
-    principal's own token in production callers) — R4 has no production
-    caller yet (TASK-015), this is how its two layers get exercised against a
-    real iTop before one exists.
-    """
-    sources = {s.name: s for s in build_vector_sources(itop, vector_cfg)}
-    source = sources.get(body.family)
-    if source is None:
-        raise HTTPException(status_code=404, detail=f"Unknown family {body.family!r}; known: {sorted(sources)}")
-    await source.prepare()
+    Confirms candidates under the service account unless `principal_token` is
+    given (`.claude/rules/vector.md`: search returns candidates, confirmed
+    against a principal's own token) — R4 has no production caller yet, this
+    is how its two layers get exercised against a real iTop before one
+    exists. Works the same for any registered family: `confirm_visible` is
+    part of the `VectorSource` contract itself, not a callback wired up per
+    source, so there is nothing here that could only work for tickets.
 
-    resolve = source.find_existing_ids
+    What this handler still does by hand is R4's *layer 1*: reading the
+    principal's allowed organizations and turning them into a pre-filter.
+    That stays here deliberately — it shapes the walk before it starts, it is
+    over-permissive by design (ADR-003), and computing it means knowing what
+    an organization is, which is the caller's language, not the subsystem's.
+    Layer 2, the one confidentiality actually rests on, is not assembled here
+    at all — nor are the door's own availability gates: `search.find()`
+    raises `SearchUnavailable` for those.
+    """
     filters = body.filters
+    principal = Principal.service()
     allowed_org_ids: list[str] | None = None
     if body.principal_token:
-        if body.family != TICKETS_FAMILY:
-            raise HTTPException(
-                status_code=501,
-                detail=f"principal_token is only supported for family {TICKETS_FAMILY!r} today (TASK-015)",
-            )
         principal = Principal.delegated(body.principal_token, login="debug", name="debug")
         repos = await itop.for_principal(principal, comment="vector debug search (TASK-015)")
-        resolve = repos.ticket_repo.find_existing_ids
         allowed_org_ids = await repos.access_repo.allowed_org_ids()
         if allowed_org_ids is not None and (filters is None or "org_id" not in filters):
             filters = {**(filters or {}), "org_id": allowed_org_ids}
 
-    embedder = EmbeddingsClient(embeddings_cfg)
     try:
-        search = SimilarSearch(vector_store, embedder, resolve)
-        result = await search.find(body.to_query(filters=filters))
-        return SearchResponse(hits=result.hits, stats=result.stats, allowed_org_ids=allowed_org_ids)
-    finally:
-        await embedder.aclose()
+        result = await search.find(body.to_query(filters=filters), principal)
+    except SearchUnavailable as unavailable:
+        raise HTTPException(status_code=409, detail=str(unavailable)) from unavailable
+    except UnknownFamily as unknown:
+        raise HTTPException(status_code=404, detail=str(unknown)) from unknown
+    return SearchResponse(hits=result.hits, stats=result.stats, allowed_org_ids=allowed_org_ids)

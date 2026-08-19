@@ -1,26 +1,21 @@
-"""What a run is started with and what it ends as — shared by every trigger type.
+"""What a run ends as — shared by every trigger type.
 
-Kept apart from `webhook/models.py` so the run shell depends on neither the
-webhook payload shape nor any other entry point: a webhook, a synchronous
-request and (later) a schedule all name the same object the same way.
+What a run is *started* with is `domain.identity.ObjectIdentity` — a webhook,
+a synchronous request and (later) a schedule all name the same object the same
+way, and the shell depends on neither the webhook payload shape nor any other
+entry point.
 """
 
+from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
-class ObjectRef(BaseModel):
-    """An iTop object — all the shell needs to start a run over one."""
-
-    obj_class: str = Field(alias="class")
-    id: str
-
-    model_config = {"populate_by_name": True}
-
-    @property
-    def label(self) -> str:
-        return f"{self.obj_class}::{self.id}"
+class TicketEvent(StrEnum):
+    CREATED = "created"
+    USER_COMMENTED = "user_commented"
+    ASSIGNED = "assigned"
 
 
 class RunOutcome(BaseModel):

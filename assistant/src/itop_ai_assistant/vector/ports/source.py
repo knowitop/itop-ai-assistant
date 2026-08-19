@@ -4,9 +4,9 @@ VectorIndexer.
 The indexer knows nothing about iTop, tickets, or any other domain: it reads
 `VectorRecord`s from registered sources, hands them back for chunking, and
 writes the resulting `Chunk`s through the `ChunkStore` port. Adding a new source
-(KB articles, KnownErrors, ...) means writing a new `vector/sources/<name>.py`
+(KB articles, KnownErrors, ...) means writing a new `content_sources/<name>.py`
 module implementing this protocol and registering it in
-`vector/sources/registry.py` — no change needed here or in
+`content_sources/registry.py` — no change needed here or in
 `vector/use_cases/indexer.py`.
 
 The contract: every indexed class must expose (a) a last-modification
@@ -21,14 +21,23 @@ A source also declares its own chunking vocabulary — `fields` and
 `fragments` (ADR-018). That declaration is what the admin UI renders its
 editor from, so a source that omits it cannot be configured by anyone but a
 person editing raw config.
+
+**Two identities, not one.** Sweeping is the service account's
+work: the index is global and is built once for everyone. Confirming search
+candidates is not — it answers "may *this* person see this object", and the
+only honest answer comes from the source asked under that person's own
+identity (ADR-003, rule 9.2). Hence `find_existing_ids` (the sweep's
+reconciliation probe) and `confirm_visible` (the search's gate) are separate
+operations here, and the second one cannot be called without naming a
+principal.
 """
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Generic, Protocol, TypeVar
 
-from itop_ai_assistant.config import VectorClassConfig
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.vector.chunker import Chunk
 
 # The source's own payload type (e.g. `Ticket`, `FaqArticle`) — carried through
@@ -58,6 +67,27 @@ class FragmentSpec:
     kind: str
     visibility: str  # public / internal
     optional: bool = False
+
+
+@dataclass(frozen=True)
+class ChunkPlan:
+    """`VectorClassConfig.chunks` resolved for one class, translated by the
+    caller (`vector/use_cases/indexer.py::_chunk_plan`) the same way
+    `vector/ports/query.py::SearchQuery` turns a search request into a value
+    object next to what consumes it — a port must not import a settings
+    section (rule 3.4), so this is what reaches `VectorSource.chunk()` instead
+    of `VectorClassConfig`.
+
+    Two separate projections, not a copy of `ChunkFragmentConfig`'s
+    `fields`/`enabled` pair: a required fragment (`FragmentSpec.optional is
+    False`) only ever reads `fields`, an opt-in one only ever reads
+    `enabled` (ADR-018) — no caller needs both for the same kind. A kind
+    absent from `fields`/`enabled` means the same thing `cfg.chunks.get(kind)
+    is None` used to: nothing configured, produce nothing.
+    """
+
+    fields: Mapping[str, Sequence[str]] = field(default_factory=dict)
+    enabled: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -124,21 +154,43 @@ class VectorSource(Protocol[T]):
         ...
 
     async def find_existing_ids(self, obj_class: str, ids: list[int]) -> set[int]:
-        """Which of the given ids still exist at the source (reconciliation probe)."""
+        """Which of the given ids still exist at the source (reconciliation probe).
+
+        The sweep's own question, asked as the service account: it decides
+        which chunks to delete because their object is gone, and the answer
+        must not depend on who happens to be searching. For "may this person
+        see it" use `confirm_visible` — the two are deliberately not the same
+        method with an optional argument.
+        """
+        ...
+
+    async def confirm_visible(self, principal: Principal, obj_class: str, ids: list[int]) -> set[int]:
+        """Which of the given ids `principal` may actually see (search's gate).
+
+        The index is global and its hits are candidates; this is what turns a
+        candidate into an answer (rule 9.3). The principal is a parameter with
+        no default on purpose: a caller cannot fall back to the service
+        account by omitting it, and there is no callback to pass the wrong
+        function into (rule 9.1).
+
+        `prepare()` is not a precondition here — it caches the service
+        account's view for the sweep, which is precisely the identity this
+        operation must not use.
+        """
         ...
 
     async def chunk(
         self,
         obj_class: str,
         record: VectorRecord[T],
-        cfg: VectorClassConfig,
+        plan: ChunkPlan,
         *,
         max_chunk_tokens: int,
         log_entries_per_chunk: int,
     ) -> list[Chunk]:
-        """Build this object's chunks from `cfg.chunks`.
+        """Build this object's chunks from `plan`.
 
-        Resolving the config against the source's own datamodel happens here,
+        Resolving the plan against the source's own datamodel happens here,
         not in the chunker: which field name means what, which fragment reads
         which log, and what to do with a field name the source does not know
         (warn and treat as empty — a stale config must not fail a sweep)."""

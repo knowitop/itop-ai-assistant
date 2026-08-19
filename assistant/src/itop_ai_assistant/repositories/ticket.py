@@ -3,6 +3,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 
 from itop_ai_assistant.config import TicketMappingConfig
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.itop_client import Itop
 from itop_ai_assistant.util.text import ITOP_DATETIME_FORMAT, parse_itop_dt
@@ -12,6 +13,14 @@ logger = logging.getLogger(__name__)
 
 def _parse_log_entries(log_raw: dict | None) -> list[LogEntry]:
     return [LogEntry(user_login=e["user_login"], message=e["message"]) for e in ((log_raw or {}).get("entries") or [])]
+
+
+def _external_key(raw: str | None) -> str | None:
+    """iTop returns "0" for an unset external key."""
+    try:
+        return str(raw) if int(raw or 0) else None
+    except ValueError:
+        return None
 
 
 class TicketRepository:
@@ -53,8 +62,8 @@ class TicketRepository:
             title=attr("title") or "",
             description=attr("description") or "",
             status=attr("status") or "",
-            service_id=str(attr("service_id") or "0"),
-            subcategory_id=str(attr("subcategory_id") or "0"),
+            service_id=_external_key(attr("service_id")),
+            subcategory_id=_external_key(attr("subcategory_id")),
             service_name=attr("service_name") or "",
             subcategory_name=attr("subcategory_name") or "",
             caller_name=attr("caller_name") or "",
@@ -113,7 +122,7 @@ class TicketRepository:
         for semantic, value in fields.items():
             attr_code = mapped.get(semantic)
             if attr_code is None:
-                logger.warning(f"{ticket.label}: field {semantic!r} is not mapped for {ticket.obj_class}, skipping")
+                logger.warning(f"{ticket.identity}: field {semantic!r} is not mapped for {ticket.obj_class}, skipping")
                 continue
             raw_fields[attr_code] = value
         if raw_fields:
@@ -142,3 +151,10 @@ class TicketRepository:
 # `ItopRepositories` (the actual factory) and projects it out of the
 # `RepositorySet`.
 type TicketRepositoryProvider = Callable[[], Awaitable[TicketRepository]]
+
+# The same, for a repository bound to a given principal. A separate type
+# rather than an optional argument on the one above (TASK-032): a holder of
+# one of these can only ever ask "as this person", a holder of the other can
+# only ever ask as the service account, and neither can be handed where the
+# other is expected.
+type TicketRepositoryForPrincipal = Callable[[Principal], Awaitable[TicketRepository]]

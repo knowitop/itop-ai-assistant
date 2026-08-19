@@ -6,33 +6,55 @@ import fakeredis.aioredis
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
+from itop_ai_assistant.agents.intake.prompts import PROMPTS_DIR as INTAKE_PROMPTS_DIR
+from itop_ai_assistant.agents.selfcheck.prompts import PROMPTS_DIR as SELFCHECK_PROMPTS_DIR
 from itop_ai_assistant.config import get_settings
+from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.main import app
 from itop_ai_assistant.pipelines.registry import ModuleInfo, ScheduleRoute, TriggerRegistry
 from itop_ai_assistant.settings.config_store import RedisConfigStore
-from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore, RedisPromptStore
+from itop_ai_assistant.settings.prompt_store import FilePromptStore, RedisPromptStore
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.util.build_info import get_build_info
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
+from itop_ai_assistant.vector.assembly import VectorSubsystem
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
 from itop_ai_assistant.vector.state.sync_state import VectorSyncState
+from itop_ai_assistant.vector.use_cases.search import SimilarSearch
 
 
 def _make_deps(redis, settings=None) -> AppDeps:
     settings = settings or get_settings()
-    return AppDeps(
-        settings=settings,
-        itop=MagicMock(),
-        itop_connection=MagicMock(),
-        state_manager=TicketStateManager(redis),
-        config_store=RedisConfigStore(redis, settings),
-        prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR), redis),
-        journal=RunJournal(redis),
-        vector_store=QdrantChunkStore(None),
+    config_store = RedisConfigStore(redis, settings)
+    itop = MagicMock()
+    vector_store = QdrantChunkStore(None)
+
+    def vector_sources(cfg):
+        return build_vector_sources(itop, cfg)
+
+    vector = VectorSubsystem(
+        config_store=config_store,
+        itop=itop,
+        vector_store=vector_store,
+        vector_search=SimilarSearch(vector_store, config_store, build_sources=vector_sources),
         vector_sync=VectorSyncState(redis),
         vector_journal=IndexJournal(redis),
+        vector_sources=vector_sources,
+    )
+
+    return AppDeps(
+        settings=settings,
+        itop=itop,
+        itop_connection=MagicMock(),
+        state_manager=TicketStateManager(redis),
+        config_store=config_store,
+        prompt_store=RedisPromptStore(
+            FilePromptStore({"intake": INTAKE_PROMPTS_DIR, "selfcheck": SELFCHECK_PROMPTS_DIR}), redis
+        ),
+        journal=RunJournal(redis),
+        vector=vector,
     )
 
 

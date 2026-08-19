@@ -56,22 +56,14 @@ class ItopRepositories:
         self._connection = connection
         self._config_store = config_store
 
-    async def service(self) -> RepositorySet:
-        """The set for the service account, on the bare connection.
-
-        Deliberately not `for_principal(Principal.service())`: that would attach
-        a change comment where there is none today. A bare call reads as the
-        statement it is — no run, no principal, no writes (the vector sweep, the
-        wizard probes, `selfcheck`).
-        """
-        return await self._build(await self._connection.client())
-
     async def for_principal(self, principal: Principal, *, comment: str) -> RepositorySet:
-        """The set a run uses: one connection view, one identity, one comment."""
-        return await self._build(await self._connection.as_principal(principal, comment=comment))
+        """The only way to get a set: one connection view, one identity, one comment.
 
-    async def ai_person_name(self) -> str:
-        return await self._connection.ai_person_name()
+        A caller with nothing to attribute (the vector sweep, `selfcheck`)
+        passes `Principal.service()` with a comment naming the subsystem
+        instead of a run.
+        """
+        return await self._build(await self._connection.as_principal(principal, comment=comment))
 
     async def _build(self, client: Itop) -> RepositorySet:
         ticket_mapping = await self._config_store.get("ticket_mapping", TicketMappingConfig)

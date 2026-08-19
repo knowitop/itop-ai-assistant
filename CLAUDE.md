@@ -74,6 +74,7 @@ opened it yet.
 | Agents, tools, prompts, LLM client | `agents.md` | `dev-docs/architecture/intake.md` |
 | iTop calls, repositories, domain model | `itop.md` | `dev-docs/reference/itop-api.md` |
 | Vector layer | `vector.md` | `dev-docs/architecture/vector.md` |
+| Content providers (tickets, FAQ) | `content-sources.md` | `dev-docs/architecture/vector.md` |
 | Tests | `testing.md` | — |
 | Admin SPA | `ui.md` | `docs/admin-ui.md` |
 | Config, setup API, prompt loading | — | `dev-docs/architecture/config-and-setup.md`, `docs/configuration.md` |

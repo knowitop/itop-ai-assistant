@@ -1,0 +1,88 @@
+"""Assembles the list of VectorSource instances the indexer sweeps.
+
+Adding a new source: create `content_sources/<name>.py` implementing
+`vector.ports.source.VectorSource`, and add one line to `_BUILDERS` below —
+same pattern as `pipelines/registry.py` for webhook modules.
+"""
+
+import logging
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
+from itop_ai_assistant.core.principal import Principal
+from itop_ai_assistant.repositories.faq import FaqRepository
+from itop_ai_assistant.repositories.sets import ItopRepositories
+from itop_ai_assistant.repositories.ticket import TicketRepository
+
+if TYPE_CHECKING:
+    # `vector/assembly.py` imports this module for real (`build_vector_sources`),
+    # and `vector/__init__.py` imports `.assembly` — a real import of the
+    # facade here, at module level, would deadlock on that cycle the same way
+    # a real `core.deps` import would (see `vector/__init__.py`'s own
+    # docstring). `FamilyConfig` is imported again, for real, inside
+    # `build_vector_sources` below, where it is actually instantiated — by
+    # then every module involved has finished importing, so the same cycle
+    # cannot occur.
+    from itop_ai_assistant.vector import VectorConfig, VectorSource
+
+logger = logging.getLogger(__name__)
+
+# Neither is a write today — sweep and confirm are both reads — but
+# `for_principal` requires a comment, and this subsystem has no run to name.
+_SWEEP_COMMENT = "AI assistant · vector · sweep"
+_CONFIRM_COMMENT = "AI assistant · vector · confirming search candidates"
+
+
+def build_vector_sources(itop: ItopRepositories, cfg: "VectorConfig") -> list["VectorSource[Any]"]:
+    """One instance per *registered* family, not per family the saved config
+    happens to still mention.
+
+    Every known family is built unconditionally, with `classes` taken from
+    `cfg.families.get(name, FamilyConfig()).classes` — empty if the admin
+    cleared it or the key is missing entirely. That is what lets the admin UI
+    (`GET /api/vector/sources`) always show a family's full chunking
+    vocabulary: a family absent from the saved config still gets a vocabulary
+    to offer, so an admin can recover a class removed by mistake instead of
+    the family disappearing from the editor entirely.
+
+    A `cfg.families` key that matches no builder below is logged and
+    skipped — the family name is not something the admin can invent from the
+    UI, same tolerance as an unknown class today; making a new one requires a
+    new `content_sources/*.py` module and a line here.
+    """
+    from itop_ai_assistant.content_sources.faq import FAMILY as FAQ_FAMILY
+    from itop_ai_assistant.content_sources.faq import FaqVectorSource
+    from itop_ai_assistant.content_sources.tickets import FAMILY as TICKETS_FAMILY
+    from itop_ai_assistant.content_sources.tickets import TicketVectorSource
+    from itop_ai_assistant.vector import FamilyConfig
+
+    # A source is given one repository, not the set: it has no business reaching
+    # for another one. Two accessors, not one, and neither can answer as the
+    # other identity: the sweep's can only ever be the service account's, the
+    # confirmation's can only ever be the caller's. `for_principal`
+    # itself stays here — a source cannot reach it, so `prepare()` has no way
+    # to start indexing as somebody.
+    async def ticket_repo() -> TicketRepository:
+        return (await itop.for_principal(Principal.service(), comment=_SWEEP_COMMENT)).ticket_repo
+
+    async def faq_repo() -> FaqRepository:
+        return (await itop.for_principal(Principal.service(), comment=_SWEEP_COMMENT)).faq_repo
+
+    async def ticket_repo_as(principal: Principal) -> TicketRepository:
+        return (await itop.for_principal(principal, comment=_CONFIRM_COMMENT)).ticket_repo
+
+    async def faq_repo_as(principal: Principal) -> FaqRepository:
+        return (await itop.for_principal(principal, comment=_CONFIRM_COMMENT)).faq_repo
+
+    builders: dict[str, Callable[[list[str]], "VectorSource[Any]"]] = {
+        TICKETS_FAMILY: lambda classes: TicketVectorSource(ticket_repo, ticket_repo_as, classes=classes),
+        FAQ_FAMILY: lambda classes: FaqVectorSource(faq_repo, faq_repo_as, classes=classes),
+    }
+    sources: list["VectorSource[Any]"] = []
+    for name, builder in builders.items():
+        family_cfg = cfg.families.get(name, FamilyConfig())
+        sources.append(builder(list(family_cfg.classes)))
+    for name in cfg.families:
+        if name not in builders:
+            logger.warning(f"vector: family {name!r} in config matches no registered source — ignoring")
+    return sources

@@ -10,24 +10,29 @@ import logging
 from collections.abc import Sequence
 from datetime import datetime
 
-from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
-from itop_ai_assistant.repositories.ticket import TicketRepository, TicketRepositoryProvider
-from itop_ai_assistant.vector.chunker import (
+from itop_ai_assistant.repositories.ticket import (
+    TicketRepository,
+    TicketRepositoryForPrincipal,
+    TicketRepositoryProvider,
+)
+from itop_ai_assistant.vector import (
     Chunk,
+    ChunkPlan,
     FragmentContent,
+    FragmentSpec,
     SequenceContent,
     TextContent,
+    VectorRecord,
+    VectorSource,
     chunk_object,
     clean_text,
 )
-from itop_ai_assistant.vector.ports.source import FragmentSpec, VectorRecord, VectorSource
 
 logger = logging.getLogger(__name__)
 
-# The collection family this source writes to (`TicketVectorSource.name`) and
-# the one `SimilarSearch` in `agents/intake/compose.py` reads from — one
-# constant so the two never drift apart (TASK-008).
+# The collection family this source writes to (`TicketVectorSource.name`).
 FAMILY = "tickets"
 
 # The semantic fields an administrator composes the required fragments from
@@ -37,9 +42,8 @@ FAMILY = "tickets"
 FIELDS = ("title", "description", "solution", "service", "subcategory")
 
 # Every fragment this source can produce. The two log fragments are opt-in:
-# whether internal notes get embedded at all is the administrator's call
-# (TASK-013), and `log:private` is the only fragment here that is not
-# caller-facing.
+# whether internal notes get embedded at all is the administrator's call,
+# and `log:private` is the only fragment here that is not caller-facing.
 FRAGMENTS = (
     FragmentSpec(kind="profile", visibility="public"),
     FragmentSpec(kind="body", visibility="public"),
@@ -73,19 +77,27 @@ class TicketVectorSource(VectorSource[Ticket]):
     fields = FIELDS
     fragments = FRAGMENTS
 
-    def __init__(self, get_ticket_repo: TicketRepositoryProvider, *, classes: list[str]) -> None:
+    def __init__(
+        self,
+        get_ticket_repo: TicketRepositoryProvider,
+        get_ticket_repo_as: TicketRepositoryForPrincipal,
+        *,
+        classes: list[str],
+    ) -> None:
         self._get_ticket_repo = get_ticket_repo
+        self._get_ticket_repo_as = get_ticket_repo_as
         self.classes: Sequence[str] = classes
         self._ticket_repo: TicketRepository | None = None
 
     async def prepare(self) -> None:
-        # The plain connection, not a principal's view of it: the sweep is not a
+        # The service account's view, not a principal's: the sweep is not a
         # run — no journal entry, nobody to act for — and the index it builds is
         # global by design (`dev-docs/architecture/platform.md` §3.5). What a searcher may see
-        # is decided later, by resolving hits under their own token. Not just by
-        # convention: `get_ticket_repo` is bound to the service set
-        # (`ItopRepositories.service()`, see `vector/sources/registry.py`), which
-        # never touches `for_principal` — this class has no way to reach it.
+        # is decided later, by `confirm_visible` under their own token. Not just
+        # by convention: `get_ticket_repo` is bound to `Principal.service()`
+        # (see `content_sources/registry.py`), and the principal-bound accessor
+        # is a *separate* closure — sweeping as somebody else is not something
+        # this class can express.
         self._ticket_repo = await self._get_ticket_repo()
 
     async def find_modified_since(
@@ -102,7 +114,7 @@ class TicketVectorSource(VectorSource[Ticket]):
                 updated_at=ticket.last_update,
                 created_at=ticket.start_date,
                 org_id=ticket.org_id,
-                filters={"service_id": ticket.service_id} if ticket.has_service else None,
+                filters={"service_id": ticket.service_id} if ticket.service_id is not None else None,
                 payload=ticket,
             )
             for ticket in tickets
@@ -112,11 +124,19 @@ class TicketVectorSource(VectorSource[Ticket]):
         assert self._ticket_repo is not None, "prepare() must run before find_existing_ids()"
         return await self._ticket_repo.find_existing_ids(obj_class, ids)
 
+    async def confirm_visible(self, principal: Principal, obj_class: str, ids: list[int]) -> set[int]:
+        # A repository per call, and no `prepare()` in sight: the identity is
+        # the caller's, not the sweep's, and caching a set built for one person
+        # is exactly how a search would start answering with somebody else's
+        # tickets.
+        repo = await self._get_ticket_repo_as(principal)
+        return await repo.find_existing_ids(obj_class, ids)
+
     async def chunk(
         self,
         obj_class: str,
         record: VectorRecord[Ticket],
-        cfg: VectorClassConfig,
+        plan: ChunkPlan,
         *,
         max_chunk_tokens: int,
         log_entries_per_chunk: int,
@@ -124,16 +144,14 @@ class TicketVectorSource(VectorSource[Ticket]):
         ticket = record.payload
         fields = self._semantic_fields(ticket)
         fragments = [
-            content
-            for spec in FRAGMENTS
-            if (content := self._resolve(spec, cfg.chunks.get(spec.kind), ticket, fields)) is not None
+            content for spec in FRAGMENTS if (content := self._resolve(spec, plan, ticket, fields)) is not None
         ]
         return chunk_object(fragments, max_chunk_tokens=max_chunk_tokens, items_per_window=log_entries_per_chunk)
 
     def _semantic_fields(self, ticket: Ticket) -> dict[str, str]:
         """`FIELDS` bound to this ticket's content, canonicalized.
 
-        The one place the two are tied together — `test_vector_sources_tickets`
+        The one place the two are tied together — `test_content_sources_tickets`
         keeps the key set equal to `FIELDS`, so the vocabulary served to the
         admin UI cannot drift away from what is actually chunkable.
         """
@@ -146,18 +164,19 @@ class TicketVectorSource(VectorSource[Ticket]):
         }
 
     def _resolve(
-        self, spec: FragmentSpec, cfg: ChunkFragmentConfig | None, ticket: Ticket, fields: dict[str, str]
+        self, spec: FragmentSpec, plan: ChunkPlan, ticket: Ticket, fields: dict[str, str]
     ) -> FragmentContent | None:
         """One fragment's configured content, or None if it is switched off."""
         if spec.optional:
-            if cfg is None or not cfg.enabled:
+            if spec.kind not in plan.enabled:
                 return None
             entries: list[LogEntry] = getattr(ticket, _LOG_SOURCES[spec.kind])
             return FragmentContent(spec.kind, spec.visibility, SequenceContent(_conversation(entries, ticket)))
-        if cfg is None or not cfg.fields:
+        field_names = plan.fields.get(spec.kind)
+        if not field_names:
             return None
         parts = []
-        for name in cfg.fields:
+        for name in field_names:
             if name not in fields:
                 logger.warning(f"tickets source: fragment {spec.kind!r} references unknown field {name!r} — ignored")
                 continue

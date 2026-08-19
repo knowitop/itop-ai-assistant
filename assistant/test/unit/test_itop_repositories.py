@@ -20,6 +20,7 @@ from itop_ai_assistant.itop.connection import ItopConnection
 from itop_ai_assistant.repositories.sets import ItopRepositories, RepositorySet
 
 _ENGINEER = Principal.delegated("engineer-token", login="jdoe", name="John Doe")
+_SWEEP = "AI assistant · sweep"
 
 
 class FakeConfigStore:
@@ -57,7 +58,7 @@ class TestRepositorySet(unittest.IsolatedAsyncioTestCase):
         """`ItopBundle.client` was public and unused outside the provider —
         an open door nobody walked through, against the rule that nothing
         outside the repositories touches iTop."""
-        repos = await self.repositories.service()
+        repos = await self.repositories.for_principal(Principal.service(), comment=_SWEEP)
 
         self.assertFalse(hasattr(repos, "client"))
 
@@ -69,10 +70,14 @@ class TestRepositorySet(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(hasattr(repos, "identity_repo"))
 
-    async def test_the_service_set_runs_on_the_bare_connection(self):
-        repos = await self.repositories.service()
+    async def test_a_service_principal_shares_the_connections_pool(self):
+        base = await self.connection.client()
 
-        self.assertIs(repos.ticket_repo._itop, await self.connection.client())
+        repos = await self.repositories.for_principal(Principal.service(), comment=_SWEEP)
+
+        self.assertIs(repos.ticket_repo._itop._http, base._http)
+        self.assertEqual(repos.ticket_repo._itop.auth.token, base.auth.token)
+        self.assertEqual(repos.ticket_repo._itop.comment, _SWEEP)
 
     async def test_the_pool_is_shared_with_the_connection(self):
         base = await self.connection.client()
@@ -85,27 +90,24 @@ class TestRepositorySet(unittest.IsolatedAsyncioTestCase):
         self.store.sections["ticket_mapping"] = TicketMappingConfig(fields=TicketFieldMap(title="short_desc"))
         self.store.sections["faq_mapping"] = FaqMappingConfig(fields=FaqFieldMap(title="headline"))
 
-        repos = await self.repositories.service()
+        repos = await self.repositories.for_principal(Principal.service(), comment=_SWEEP)
 
         self.assertEqual(repos.ticket_repo.mapping.fields.title, "short_desc")
         self.assertEqual(repos.faq_repo.mapping.fields.title, "headline")
 
     async def test_a_mapping_edit_applies_to_the_next_set_without_a_reconnect(self):
-        first = await self.repositories.service()
+        first = await self.repositories.for_principal(Principal.service(), comment=_SWEEP)
         client = await self.connection.client()
 
         self.store.sections["ticket_mapping"] = TicketMappingConfig(fields=TicketFieldMap(title="short_desc"))
-        second = await self.repositories.service()
+        second = await self.repositories.for_principal(Principal.service(), comment=_SWEEP)
 
         self.assertEqual(first.ticket_repo.mapping.fields.title, "title")
         self.assertEqual(second.ticket_repo.mapping.fields.title, "short_desc")
         self.assertIs(await self.connection.client(), client)
 
-    async def test_ai_person_name_is_answered_by_the_connection(self):
-        self.assertTrue(hasattr(self.repositories, "ai_person_name"))
-
     async def test_the_set_is_a_record_not_a_factory(self):
-        repos = await self.repositories.service()
+        repos = await self.repositories.for_principal(Principal.service(), comment=_SWEEP)
 
         self.assertIsInstance(repos, RepositorySet)
         self.assertEqual(

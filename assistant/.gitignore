@@ -249,3 +249,5 @@ cython_debug/
 *.iml
 # Generated at build time by hatch_build.py
 src/itop_ai_assistant/_build_info.py
+
+.import_linter_cache/

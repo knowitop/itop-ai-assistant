@@ -1,0 +1,144 @@
+; Module-boundary invariants expressible as a plain import graph — see
+; test/unit/test_package_layers.py for the invariants an import graph has no
+; vocabulary for (declared names, class shapes, signatures, file layout),
+; which stay hand-written there.
+; grimp only walks into subpackages that have an `__init__.py`; most of ours
+; are plain PEP 420 namespace packages, so each is listed as its own root too
+; or its modules would be invisible to every contract below.
+[importlinter]
+root_packages =
+    itop_ai_assistant
+    itop_ai_assistant.core
+    itop_ai_assistant.itop
+    itop_ai_assistant.repositories
+    itop_ai_assistant.request
+    itop_ai_assistant.schedule
+    itop_ai_assistant.settings
+    itop_ai_assistant.util
+    itop_ai_assistant.webhook
+    itop_ai_assistant.vector.adapters
+    itop_ai_assistant.vector.ports
+    itop_ai_assistant.vector.state
+    itop_ai_assistant.vector.use_cases
+
+; `.claude/rules/itop.md`: nothing outside the repositories touches iTop.
+; `core/principal.py` is not an exception to the rule but to its wording: it
+; names `ItopAuth` as the type of a principal's credentials, and never calls
+; iTop.
+[importlinter:contract:itop-boundary]
+name = Only itop/, repositories/ and core/principal.py import the vendored client
+type = forbidden
+; Direct imports only, matching the AST check this replaced — a module
+; reaching itop_client through another module's re-export is that module's
+; boundary to answer for, not this one's.
+allow_indirect_imports = true
+source_modules =
+    itop_ai_assistant.admin
+    itop_ai_assistant.agents
+    itop_ai_assistant.config
+    itop_ai_assistant.content_sources
+    itop_ai_assistant.core
+    itop_ai_assistant.domain
+    itop_ai_assistant.main
+    itop_ai_assistant.pipelines
+    itop_ai_assistant.request
+    itop_ai_assistant.schedule
+    itop_ai_assistant.settings
+    itop_ai_assistant.state
+    itop_ai_assistant.util
+    itop_ai_assistant.vector
+    itop_ai_assistant.webhook
+forbidden_modules =
+    itop_ai_assistant.itop_client
+ignore_imports =
+    itop_ai_assistant.core.principal -> itop_ai_assistant.itop_client
+
+; `ports/` and `state/` are the bottom of vector/'s own dependency graph.
+; `adapters/`, `use_cases/` and `router.py` are ordered as they already are
+; in practice (use_cases depends on adapters, router depends on use_cases).
+[importlinter:contract:vector-layers]
+name = vector/: ports and state sit below adapters, use_cases and router
+type = layers
+layers =
+    router
+    use_cases
+    adapters
+    ports | state
+containers =
+    itop_ai_assistant.vector
+; reindex.py is the `itop-ai-reindex` CLI script (pyproject.toml
+; [project.scripts]) — it bootstraps the whole app through the composition
+; root and the pipeline registry, both of which loop back through the vector
+; facade into router. That is the composition root's business, not a
+; use_cases-reaches-upward violation.
+ignore_imports =
+    itop_ai_assistant.vector.use_cases.reindex -> itop_ai_assistant.core.deps
+    itop_ai_assistant.vector.use_cases.reindex -> itop_ai_assistant.pipelines.registry
+
+; Rule 3.4, TASK-040: a port must not import a settings section.
+[importlinter:contract:source-port-sheds-config]
+name = vector/ports/source.py does not import the settings section
+type = forbidden
+allow_indirect_imports = true
+source_modules =
+    itop_ai_assistant.vector.ports.source
+forbidden_modules =
+    itop_ai_assistant.vector.config
+
+; architecture/alignment-plan.md §5: content providers live outside vector/
+; entirely, so nothing under vector/ may import the ticket/FAQ domain models
+; or their repositories. router.py's import of repositories.sets is not
+; domain knowledge (ADR-022) and is deliberately not listed here.
+[importlinter:contract:vector-does-not-know-content-domains]
+name = vector/ does not know the ticket/FAQ content domains
+type = forbidden
+allow_indirect_imports = true
+source_modules =
+    itop_ai_assistant.vector
+forbidden_modules =
+    itop_ai_assistant.domain.ticket
+    itop_ai_assistant.domain.faq
+    itop_ai_assistant.repositories.ticket
+    itop_ai_assistant.repositories.faq
+
+; Rule 6.10, TASK-044: agents/ is business logic, webhook/ is one entry
+; point's transport shape.
+[importlinter:contract:agents-do-not-import-webhook]
+name = agents/ does not import the webhook transport
+type = forbidden
+allow_indirect_imports = true
+source_modules =
+    itop_ai_assistant.agents
+forbidden_modules =
+    itop_ai_assistant.webhook
+
+; Rule 1.3/5.1, TASK-045: a module reaches the LLM factory through
+; `RunDeps.create_llm`, not by importing the composition root that assembles
+; `AppDeps` and holds the Redis/Qdrant wiring.
+[importlinter:contract:agents-do-not-import-core-deps]
+name = agents/ does not import the composition root
+type = forbidden
+allow_indirect_imports = true
+source_modules =
+    itop_ai_assistant.agents
+forbidden_modules =
+    itop_ai_assistant.core.deps
+
+; The mirror image of vector-does-not-know-content-domains above — that one
+; keeps the domain out of vector/ entirely, this one keeps search.py,
+; indexer.py and router.py from building the source *list* themselves via the
+; door content_sources.registry leaves open: vector/assembly.py is the one
+; caller of build_vector_sources() in the process (TASK-037). Whole-module,
+; not just the one name — stronger than the invariant this replaces, since
+; none of the three currently has any other reason to import that module
+; either.
+[importlinter:contract:vector-sources-are-injected-not-built]
+name = search.py, indexer.py and router.py do not build the source list themselves
+type = forbidden
+allow_indirect_imports = true
+source_modules =
+    itop_ai_assistant.vector.use_cases.search
+    itop_ai_assistant.vector.use_cases.indexer
+    itop_ai_assistant.vector.router
+forbidden_modules =
+    itop_ai_assistant.content_sources.registry

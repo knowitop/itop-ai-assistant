@@ -47,6 +47,12 @@ class IntakeConfig(BaseModel):
     model: str | None = None
     classify_fallback_note: str = "Could not determine the request category. Manual classification required."
     handoff_fallback_note: str = "AI intake finished without a summary. Manual review required."
+    # The vector family to search for similar solved tickets — intake's own
+    # setting, not borrowed from `content_sources.tickets.FAMILY` (A8, rule
+    # 8.1): the two happen to agree on "tickets" by convention, not by a
+    # shared Python identifier, same relationship as `resolved_statuses` to
+    # `VectorClassConfig.index_values` (ADR-017).
+    similar_family: str = "tickets"
     # Similar solved tickets quoted in the handoff note (only when the vector
     # store and the embeddings endpoint are configured). The window is a range
     # over the modification date, never a substitute for the status filter —

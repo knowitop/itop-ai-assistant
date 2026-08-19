@@ -22,16 +22,21 @@ Two rules hold this together:
 composition root, and no run should be able to close it.
 """
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypeVar, runtime_checkable
 from uuid import UUID
 
-from itop_ai_assistant.core.principal import Principal
-from itop_ai_assistant.repositories.sets import RepositorySet
+from langchain_core.language_models.chat_models import BaseChatModel
+from pydantic import BaseModel
+
+from itop_ai_assistant.config import LlmConfig
+from itop_ai_assistant.itop.connection import AiIdentity
+from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.settings.prompt_store import PromptStore
 from itop_ai_assistant.state.journal import RunStatus, TriggerKind
-from itop_ai_assistant.state.ticket_state import TicketState
-from itop_ai_assistant.vector import ChunkStore
+from itop_ai_assistant.vector import SimilarSearch
+
+TState = TypeVar("TState", bound=BaseModel)
 
 
 @runtime_checkable
@@ -43,31 +48,28 @@ class LockPort(Protocol):
     async def release_lock(self, ticket_ref: str) -> None: ...
 
 
-@runtime_checkable
-class TicketStatePort(LockPort, Protocol):
-    """The lock plus the per-ticket AI state a module reads and advances.
+class ObjectStatePort(LockPort, Protocol):
+    """The lock plus generic per-object state, namespaced by the caller's own module name.
 
     Wider than `LockPort` because a module legitimately needs more than the
-    shell does — `ai_done`, the round counters — but still narrower than the
-    manager, which also owns its Redis pool.
+    shell does — but still narrower than the manager, which also owns its
+    Redis pool. Deliberately as ignorant of field names as `ConfigStore.get`
+    (`settings/config_store.py`) is of a module's config fields: a module
+    passes its own model and reads it back, so this port never has to change
+    when a module's state shape does, and two modules keyed under different
+    names never collide (TASK-047).
 
-    `runtime_checkable` is required, not decorative: `IntakeContext` holds this
-    port and is handed to langgraph as the agent's `context_schema`, so pydantic
-    builds a validator for it and validates the field with `isinstance` — which
-    raises outright on a plain protocol. Note what this buys and what it does
-    not: a runtime protocol check tests for the presence of the members, never
-    their signatures, so it is weaker than the old concrete-class check. The
-    real guarantee here is static (strict mypy), and this decorator only keeps
-    the runtime from refusing to build.
+    Not `runtime_checkable`: nothing holds this port itself as a field pydantic
+    must `isinstance`-validate — a module wraps it in its own concrete adapter
+    (`agents/intake/state.py::IntakeState`) before handing it to langgraph's
+    `context_schema`, and a concrete class needs no such decorator.
     """
 
-    async def get(self, ticket_ref: str) -> TicketState: ...
+    async def get(self, module: str, ticket_ref: str, model: type[TState]) -> TState: ...
 
-    async def mark_done(self, ticket_ref: str) -> None: ...
+    async def increment(self, module: str, ticket_ref: str, field: str) -> None: ...
 
-    async def increment_rounds(self, ticket_ref: str) -> None: ...
-
-    async def increment_classify_rounds(self, ticket_ref: str) -> None: ...
+    async def set_flag(self, module: str, ticket_ref: str, field: str) -> None: ...
 
 
 class StepJournal(Protocol):
@@ -101,24 +103,6 @@ class RunFrameJournal(StepJournal, Protocol):
     async def finish(self, processing_id: UUID | str, status: RunStatus, error: str | None = None) -> None: ...
 
 
-class ItopAccess(Protocol):
-    """Getting at iTop from inside a run.
-
-    `for_principal` is the one a run is supposed to use (see
-    `.claude/rules/core.md`); `service` is here because a run that writes
-    nothing legitimately reads as the service account — `selfcheck` does exactly
-    that, and the name says so at the call site. `ai_person_name` answers off
-    the connection's own client whatever the run acts as, which is what keeps
-    the intake loop guard honest.
-    """
-
-    async def for_principal(self, principal: Principal, *, comment: str) -> RepositorySet: ...
-
-    async def service(self) -> RepositorySet: ...
-
-    async def ai_person_name(self) -> str: ...
-
-
 class RunDeps(Protocol):
     """What a module's handler is handed — the boundary, not the core.
 
@@ -142,10 +126,15 @@ class RunDeps(Protocol):
     def journal(self) -> RunFrameJournal: ...
 
     @property
-    def itop(self) -> ItopAccess: ...
+    def itop(self) -> ItopRepositories: ...
 
     @property
-    def state_manager(self) -> TicketStatePort: ...
+    def ai_identity(self) -> AiIdentity: ...
 
     @property
-    def vector_store(self) -> ChunkStore: ...
+    def state_manager(self) -> ObjectStatePort: ...
+
+    @property
+    def vector_search(self) -> SimilarSearch: ...
+
+    def create_llm(self, llm: LlmConfig, model: str | None = None) -> BaseChatModel: ...

@@ -33,12 +33,12 @@ async def _process_safely(handler: WebhookHandler, payload: WebhookPayload, run:
             deps.journal,
             run,
             kind="webhook",
-            subject=payload.label,
+            subject=str(payload),
             event=str(payload.event),
         ):
             await handler(payload, run, deps)
     except Exception:
-        logger.exception(f"[{run.processing_id}] Processing failed for {payload.label}")
+        logger.exception(f"[{run.processing_id}] Processing failed for {payload}")
 
 
 @router.post("/webhook", status_code=202, dependencies=[Depends(verify_webhook_token), Depends(require_configured)])
@@ -53,7 +53,7 @@ async def receive_webhook(
     module, handler = entry
 
     run = RunContext(processing_id=uuid4(), module=module, principal=await resolve_principal(request))
-    logger.info(f"[{run.processing_id}] Accepted {payload.label} ({payload.event})")
+    logger.info(f"[{run.processing_id}] Accepted {payload} ({payload.event})")
     task = asyncio.create_task(_process_safely(handler, payload, run, deps))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)

@@ -22,6 +22,7 @@ from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.util.text import bind_oql, html_to_markdown
 
 from .context import IntakeContext
+from .domain import NonBlankText, RoundBudget, check_round_budget
 from .prompt import format_options
 from .similar import similar_query
 
@@ -155,7 +156,7 @@ async def set_classification(service_id: int, subcategory_id: int, runtime: Inta
     # Keep the run's ticket snapshot in step with iTop — later tools read it
     ticket.service_id = fields["service_id"]
     ticket.subcategory_id = fields["subcategory_id"]
-    logger.info(f"{ticket.label}: classified service_id={service_id} subcategory_id={subcategory_id}")
+    logger.info(f"{ticket.identity}: classified service_id={service_id} subcategory_id={subcategory_id}")
 
     subcategory = next(item for item in subcategories if item.id == str(subcategory_id))
     description = subcategory.description.strip() or "(no requirements described)"
@@ -190,7 +191,10 @@ async def find_similar_resolved_tickets(runtime: IntakeToolRuntime) -> tuple[str
             text=f"{ticket.title}\n\n{html_to_markdown(ticket.description)}",
             exclude=(ticket.obj_class, int(ticket.id)),
             now=datetime.now(UTC),
-        )
+        ),
+        # Whoever the run acts as — the tool has nothing to say about it, which
+        # is the point: it cannot ask for somebody else's tickets by accident.
+        ctx.principal,
     )
     hits, stats = result.hits, result.stats
     # Not sent to the model — an artifact, picked up by AgentRun._journal_update
@@ -200,7 +204,7 @@ async def find_similar_resolved_tickets(runtime: IntakeToolRuntime) -> tuple[str
         f"requested={stats.requested} found={stats.found} kept={len(hits)} "
         f"dropped_by_resolve={stats.dropped_by_resolve} scores={[round(hit.score, 3) for hit in hits]}"
     )
-    logger.info(f"{ticket.label}: similar resolved tickets found: {len(hits)} ({note})")
+    logger.info(f"{ticket.identity}: similar resolved tickets found: {len(hits)} ({note})")
     if not hits:
         # Not a rejection: "nothing similar" is an answer, and a rejection
         # would send the model looking for another way to ask.
@@ -228,40 +232,45 @@ async def post_public_question(question: str, runtime: IntakeToolRuntime) -> str
     """
     ctx = runtime.context
     ticket = ctx.ticket
-    if not question.strip():
-        raise ToolRejection("The question is empty. Write the actual text you want the requester to read.")
+    try:
+        text = NonBlankText(question)
+    except ValueError:
+        raise ToolRejection("The question is empty. Write the actual text you want the requester to read.") from None
 
     # The counter is chosen by code, not by the model: leaving it to the model
     # would let it pick the budget it has not spent yet
     classifying = not ticket.has_subcategory
-    state = await ctx.state_manager.get(ticket.label)
+    state = await ctx.state_manager.get(str(ticket.identity))
     cfg = ctx.intake
+    budget = check_round_budget(
+        state, classifying=classifying, max_rounds=cfg.max_rounds, max_classify_rounds=cfg.max_classify_rounds
+    )
 
-    if classifying and state.classify_rounds >= cfg.max_classify_rounds:
+    if budget is RoundBudget.CLASSIFY_EXHAUSTED:
         # Rounds spent: hand an unclassifiable ticket to a human instead of
         # asking again.
         # Returned as success, not as a rejection: the ticket *is* finished,
         # and a rejection would leave the loop running — free to call
         # finish_handoff and write a second note over this one.
-        logger.info(f"{ticket.label}: classify rounds exhausted, posting fallback note")
+        logger.info(f"{ticket.identity}: classify rounds exhausted, posting fallback note")
         await ctx.ticket_repo.append_private_log(ticket, cfg.classify_fallback_note)
-        await ctx.state_manager.mark_done(ticket.label)
+        await ctx.state_manager.mark_done(str(ticket.identity))
         return (
             "The requester has already been asked about this twice and the ticket is still unclassified, "
             "so it has been handed to a human instead. Your session is over."
         )
-    if not classifying and state.rounds >= cfg.max_rounds:
+    if budget is RoundBudget.EXHAUSTED:
         raise ToolRejection(
             "The requester has already been asked twice. Do not ask again — "
             "call finish_handoff with whatever information the ticket already has."
         )
 
-    await ctx.ticket_repo.append_public_log(ticket, question)
+    await ctx.ticket_repo.append_public_log(ticket, text.value)
     if classifying:
-        await ctx.state_manager.increment_classify_rounds(ticket.label)
+        await ctx.state_manager.increment_classify_rounds(str(ticket.identity))
     else:
-        await ctx.state_manager.increment_rounds(ticket.label)
-    logger.info(f"{ticket.label}: posted a public question (classify={classifying})")
+        await ctx.state_manager.increment_rounds(str(ticket.identity))
+    logger.info(f"{ticket.identity}: posted a public question (classify={classifying})")
     return "The question has been posted. Your session is over — stop here."
 
 
@@ -280,12 +289,14 @@ async def finish_handoff(note: str, runtime: IntakeToolRuntime) -> str:
     """
     ctx = runtime.context
     ticket = ctx.ticket
-    if not note.strip():
-        raise ToolRejection("The note is empty. Summarize the ticket for the engineer in 2-4 sentences.")
+    try:
+        text = NonBlankText(note)
+    except ValueError:
+        raise ToolRejection("The note is empty. Summarize the ticket for the engineer in 2-4 sentences.") from None
 
-    await ctx.ticket_repo.append_private_log(ticket, note)
-    await ctx.state_manager.mark_done(ticket.label)
-    logger.info(f"{ticket.label}: handoff note posted, marked done")
+    await ctx.ticket_repo.append_private_log(ticket, text.value)
+    await ctx.state_manager.mark_done(str(ticket.identity))
+    logger.info(f"{ticket.identity}: handoff note posted, marked done")
     return "The handoff note has been posted and the ticket is ready for the engineer. Your session is over."
 
 

@@ -3,13 +3,15 @@ from unittest.mock import AsyncMock, patch
 
 from itop_ai_assistant.config import LlmConfig, get_settings
 from itop_ai_assistant.core.deps import build_deps, create_llm
+from itop_ai_assistant.pipelines.registry import build_registry
 
 
 class TestAclose(unittest.IsolatedAsyncioTestCase):
     async def test_aclose_closes_the_connection_not_the_repository_factory(self):
         """Ownership of the pool stays at the composition root: the factory that
         builds repository sets has no lifecycle method to reach for."""
-        deps = build_deps(get_settings())
+        settings = get_settings()
+        deps = build_deps(settings, build_registry(settings))
 
         with patch.object(deps.itop_connection, "aclose", new_callable=AsyncMock) as closed:
             await deps.aclose()
@@ -21,15 +23,15 @@ class TestAclose(unittest.IsolatedAsyncioTestCase):
 class TestVectorStore(unittest.TestCase):
     def test_vector_store_is_unconfigured_without_a_url(self):
         settings = get_settings().model_copy(update={"qdrant_url": None})
-        deps = build_deps(settings)
+        deps = build_deps(settings, build_registry(settings))
 
-        self.assertFalse(deps.vector_store.configured)
+        self.assertFalse(deps.vector.vector_store.configured)
 
     def test_vector_store_is_configured_from_qdrant_url(self):
         settings = get_settings().model_copy(update={"qdrant_url": "http://qdrant:6333"})
-        deps = build_deps(settings)
+        deps = build_deps(settings, build_registry(settings))
 
-        self.assertTrue(deps.vector_store.configured)
+        self.assertTrue(deps.vector.vector_store.configured)
 
 
 class TestCreateLlm(unittest.TestCase):

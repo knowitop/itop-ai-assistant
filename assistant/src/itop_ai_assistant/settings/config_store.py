@@ -34,11 +34,13 @@ class RedisConfigStore(ConfigStore):
 
     A settings attribute of the same name wins first — that's the
     infrastructure sections (`itop`, `llm`, `ticket_mapping`, ...), which
-    `Settings` declares directly. A business module has no such attribute:
-    its defaults come from `Settings.module_defaults(module, model)`, which
-    validates `settings.module_config[module]` against the model the module
-    itself registered (`ModuleInfo.config_model`) — `config.py` never needs
-    to know it exists.
+    `Settings` declares directly. Everything else falls back to
+    `Settings.module_defaults(module, model)`, which validates
+    `settings.module_config[module]` against the model the caller passes in —
+    a business module's own registered `ModuleInfo.config_model`, or a
+    subsystem's section (`vector`, TASK-036) that has no `Settings` attribute
+    either despite not being a module. `config.py` never needs to know either
+    kind of section exists.
     """
 
     def __init__(self, redis: Redis, settings: Settings):

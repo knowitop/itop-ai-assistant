@@ -8,7 +8,7 @@ read from the package, iTop reached only through the repository.
 
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import fakeredis.aioredis
@@ -22,12 +22,13 @@ from itop_ai_assistant.agents.selfcheck.pipeline import (
     register,
     run_selfcheck,
 )
+from itop_ai_assistant.agents.selfcheck.prompts import PROMPTS_DIR as SELFCHECK_PROMPTS_DIR
 from itop_ai_assistant.agents.selfcheck.prompts import build_selfcheck_prompts
 from itop_ai_assistant.config import ItopConfig, LlmConfig
 from itop_ai_assistant.domain.catalog import Service
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.registry import TriggerRegistry
-from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, FilePromptStore
+from itop_ai_assistant.settings.prompt_store import FilePromptStore
 from itop_ai_assistant.state.journal import RunJournal
 
 _ITOP = ItopConfig(url="https://itop.example", token="t")
@@ -43,13 +44,13 @@ def _deps(*, itop=_ITOP, llm=_LLM, selfcheck=None, services=2) -> MagicMock:
     sections = {"itop": itop, "llm": llm, MODULE: selfcheck or SelfCheckConfig(enabled=True)}
     deps = MagicMock()
     deps.config_store.get = AsyncMock(side_effect=lambda name, model: sections[name])
-    deps.prompt_store = FilePromptStore(PACKAGED_PROMPTS_DIR)
+    deps.prompt_store = FilePromptStore({MODULE: SELFCHECK_PROMPTS_DIR})
     deps.journal = RunJournal(fakeredis.aioredis.FakeRedis(decode_responses=True))
     catalog = MagicMock()
     catalog.find_services = AsyncMock(
         return_value=[Service(id=str(i), name=f"svc-{i}", description="") for i in range(services)]
     )
-    deps.itop.service = AsyncMock(return_value=SimpleNamespace(catalog_repo=catalog))
+    deps.itop.for_principal = AsyncMock(return_value=SimpleNamespace(catalog_repo=catalog))
     return deps
 
 
@@ -64,8 +65,8 @@ class SelfCheckTestCase(unittest.IsolatedAsyncioTestCase):
         self.llm = llm or _llm_mock()
         self.pid = uuid4()
         await deps.journal.start(self.pid, subject=MODULE, event="tick", module=MODULE, kind="schedule")
-        with patch("itop_ai_assistant.agents.selfcheck.pipeline.create_llm", return_value=self.llm):
-            return await run_selfcheck(RunContext(processing_id=self.pid, module=MODULE), deps)
+        deps.create_llm = MagicMock(return_value=self.llm)
+        return await run_selfcheck(RunContext(processing_id=self.pid, module=MODULE), deps)
 
     async def _steps(self, deps) -> dict[str, str]:
         run = await deps.journal.get(self.pid)
@@ -112,7 +113,7 @@ class TestPrompts(unittest.IsolatedAsyncioTestCase):
     async def test_packaged_prompt_validates(self):
         """The same call the lifespan makes — a broken template fails the boot,
         not a live run."""
-        raw = await FilePromptStore(PACKAGED_PROMPTS_DIR).get(MODULE)
+        raw = await FilePromptStore({MODULE: SELFCHECK_PROMPTS_DIR}).get(MODULE)
 
         self.assertIn("{services}", build_selfcheck_prompts(raw).greeting)
 
@@ -142,7 +143,7 @@ class TestRun(SelfCheckTestCase):
 
         await self._run(deps)
 
-        deps.itop.service.return_value.catalog_repo.find_services.assert_awaited_once_with(
+        deps.itop.for_principal.return_value.catalog_repo.find_services.assert_awaited_once_with(
             "SELECT Service WHERE id = 1"
         )
 
@@ -168,7 +169,7 @@ class TestRun(SelfCheckTestCase):
 
         self.assertEqual(outcome.status, "skipped")
         self.assertIn("setup incomplete", outcome.detail)
-        deps.itop.service.assert_not_awaited()
+        deps.itop.for_principal.assert_not_awaited()
         self.assertIn("guard", await self._steps(deps))
 
     async def test_request_trigger_runs_the_same_work(self):
@@ -176,8 +177,8 @@ class TestRun(SelfCheckTestCase):
         pid = uuid4()
         await deps.journal.start(pid, subject=MODULE, event="run", module=MODULE, kind="request")
 
-        with patch("itop_ai_assistant.agents.selfcheck.pipeline.create_llm", return_value=_llm_mock()):
-            outcome = await handle_request(SelfCheckInput(), RunContext(processing_id=pid, module=MODULE), deps)
+        deps.create_llm = MagicMock(return_value=_llm_mock())
+        outcome = await handle_request(SelfCheckInput(), RunContext(processing_id=pid, module=MODULE), deps)
 
         self.assertEqual(outcome.status, "done")
         run = await deps.journal.get(pid)

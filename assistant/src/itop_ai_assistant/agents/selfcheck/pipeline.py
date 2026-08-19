@@ -19,7 +19,6 @@ from langchain_core.prompts import PromptTemplate
 from pydantic import BaseModel
 
 from itop_ai_assistant.config import ItopConfig, LlmConfig, Settings, missing_setup
-from itop_ai_assistant.core.deps import create_llm
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import RunOutcome
 from itop_ai_assistant.pipelines.ports import RunDeps
@@ -27,11 +26,9 @@ from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, Sched
 from itop_ai_assistant.util.text import strip_thinking
 
 from .config import SelfCheckConfig
-from .prompts import PROMPT_VARIABLES, build_selfcheck_prompts
+from .prompts import MODULE, PROMPT_VARIABLES, PROMPTS_DIR, build_selfcheck_prompts
 
 logger = logging.getLogger(__name__)
-
-MODULE = "selfcheck"
 
 
 class SelfCheckInput(BaseModel):
@@ -50,6 +47,7 @@ def register(registry: TriggerRegistry, settings: Settings) -> None:
         config_model=SelfCheckConfig,
         prompt_names=tuple(PROMPT_VARIABLES),
         validate_prompts=build_selfcheck_prompts,
+        prompts_dir=PROMPTS_DIR,
     )
     # The same work on two triggers, which is the contract being demonstrated:
     # the clock and an operator start the identical run, and only the delivery
@@ -96,13 +94,13 @@ async def run_selfcheck(run: RunContext, deps: RunDeps) -> RunOutcome:
         await deps.journal.add_step(run.processing_id, "guard", reason)
         return RunOutcome(status="skipped", detail=reason)
 
-    repos = await deps.itop.service()
+    repos = await deps.itop.for_principal(run.principal, comment=run.comment)
     services = await repos.catalog_repo.find_services(cfg.probe_oql)
     await deps.journal.add_step(run.processing_id, "itop", f"{len(services)} services read with {cfg.probe_oql!r}")
 
     prompts = build_selfcheck_prompts(await deps.prompt_store.get(MODULE))
     message = PromptTemplate.from_template(prompts.greeting).format(services=len(services))
-    response = await create_llm(llm_cfg, cfg.model).ainvoke([HumanMessage(content=message)])
+    response = await deps.create_llm(llm_cfg, cfg.model).ainvoke([HumanMessage(content=message)])
     answer = strip_thinking(response.content, tuple(llm_cfg.think_tags)).strip()
     await deps.journal.add_step(run.processing_id, "llm", answer[:500])
 

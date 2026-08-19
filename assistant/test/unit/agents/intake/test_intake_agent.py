@@ -15,17 +15,22 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 from itop_ai_assistant.agents.intake.config import IntakeConfig
+from itop_ai_assistant.agents.intake.prompts import MODULE
+from itop_ai_assistant.agents.intake.prompts import PROMPTS_DIR as INTAKE_PROMPTS_DIR
 from itop_ai_assistant.agents.intake.run import IntakeRun
-from itop_ai_assistant.config import EmbeddingsConfig, LlmConfig, VectorConfig
+from itop_ai_assistant.agents.intake.state import TicketState
+from itop_ai_assistant.config import EmbeddingsConfig, LlmConfig
+from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.context import RunContext
-from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
-from itop_ai_assistant.state.ticket_state import TicketState
+from itop_ai_assistant.settings.prompt_store import read_prompt_dir
+from itop_ai_assistant.vector import VectorConfig
 from itop_ai_assistant.vector.ports.store import SearchHit
+from itop_ai_assistant.vector.use_cases.search import SimilarSearch
 from itop_ai_assistant.webhook.models import WebhookPayload
 
-_PROMPT_FILES = read_prompt_dir(PACKAGED_PROMPTS_DIR / "intake")
+_PROMPT_FILES = read_prompt_dir(INTAKE_PROMPTS_DIR)
 
 
 class FakeToolCallingModel(BaseChatModel):
@@ -76,24 +81,26 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
         self.intake_cfg = IntakeConfig()
 
         # Stateful on purpose: the epilogue re-reads the state to see whether
-        # a tool already finished the ticket, so writes must be visible
+        # a tool already finished the ticket, so writes must be visible.
+        # Generic on the mock too (`get`/`increment`/`set_flag`, not
+        # `mark_done`/`increment_rounds`): this is what sits behind
+        # `IntakeState`, at the `ObjectStatePort` level (TASK-047).
         self.ticket_state = TicketState()
 
-        async def mark_done(_ref):
-            self.ticket_state.ai_done = True
+        async def get(_module, _ref, _model):
+            return self.ticket_state
 
-        async def increment_rounds(_ref):
-            self.ticket_state.rounds += 1
+        async def increment(_module, _ref, field):
+            setattr(self.ticket_state, field, getattr(self.ticket_state, field) + 1)
 
-        async def increment_classify_rounds(_ref):
-            self.ticket_state.classify_rounds += 1
+        async def set_flag(_module, _ref, field):
+            setattr(self.ticket_state, field, True)
 
         self.deps = MagicMock()
         self.deps.journal = AsyncMock()
-        self.deps.state_manager.get = AsyncMock(side_effect=lambda _ref: self.ticket_state)
-        self.deps.state_manager.mark_done = AsyncMock(side_effect=mark_done)
-        self.deps.state_manager.increment_rounds = AsyncMock(side_effect=increment_rounds)
-        self.deps.state_manager.increment_classify_rounds = AsyncMock(side_effect=increment_classify_rounds)
+        self.deps.state_manager.get = AsyncMock(side_effect=get)
+        self.deps.state_manager.increment = AsyncMock(side_effect=increment)
+        self.deps.state_manager.set_flag = AsyncMock(side_effect=set_flag)
         self.deps.prompt_store.get = AsyncMock(return_value=_PROMPT_FILES)
 
         self.llm_cfg = LlmConfig(base_url="http://x", model="m")
@@ -125,6 +132,19 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
         )
         self.repos.catalog_repo.get_service = AsyncMock(return_value=None)
         self.repos.catalog_repo.get_subcategory = AsyncMock(return_value=None)
+        # The same set the run holds, reachable the way a vector source
+        # reaches iTop (`build_vector_sources`): a search built by the module
+        # no longer receives the run's repositories, it receives the
+        # connection and asks under the run's principal (TASK-032).
+        self.deps.itop.for_principal = AsyncMock(return_value=self.repos)
+        self.deps.ai_identity.ai_person_name = AsyncMock(return_value="ai-assistant")
+        # The real door (TASK-033) over mocked ingredients — `compose.assemble`
+        # only ever calls `deps.vector_search`, never assembles one itself.
+        self.deps.vector_search = SimilarSearch(
+            self.deps.vector_store,
+            self.deps.config_store,
+            build_sources=lambda cfg: build_vector_sources(self.deps.itop, cfg),
+        )
 
     def intake_run(self) -> IntakeRun:
         """A run whose body is called directly — `execute()` is the shell's job
@@ -136,6 +156,7 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
             self.deps,
             lock=self.deps.state_manager,
             itop=self.deps.itop,
+            ai_identity=self.deps.ai_identity,
             journal=self.deps.journal,
         )
         run.repos = self.repos
@@ -143,8 +164,8 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def run_agent(self, responses: list[AIMessage]) -> FakeToolCallingModel:
         model = FakeToolCallingModel(responses=responses)
-        with patch("itop_ai_assistant.agents.intake.compose.create_llm", return_value=model):
-            await self.intake_run().body(self.ticket, "ai-assistant")
+        self.deps.create_llm = MagicMock(return_value=model)
+        await self.intake_run().body(self.ticket, "ai-assistant")
         return model
 
     def journal_steps(self) -> list[tuple[str, str]]:
@@ -160,7 +181,7 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
             self.repos.ticket_repo.append_private_log.await_args.args[1],
             self.intake_cfg.handoff_fallback_note,
         )
-        self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
+        self.deps.state_manager.set_flag.assert_awaited_once_with(MODULE, "Incident::123", "ai_done")
 
     async def test_tool_results_and_model_turns_are_journalled(self):
         await self.run_agent(
@@ -211,7 +232,7 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
         model = await self.run_agent([ai([call("get_service_catalog", {})])])
 
         self.assertEqual(model.calls, 3)
-        self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
+        self.deps.state_manager.set_flag.assert_awaited_once_with(MODULE, "Incident::123", "ai_done")
 
     async def test_usage_is_the_last_journal_step(self):
         await self.run_agent(
@@ -247,7 +268,7 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
         with self.assertRaises(RuntimeError):
             await self.run_agent([ai([call("get_subcategories", {"service_id": 10})])])
 
-        self.deps.state_manager.mark_done.assert_not_called()
+        self.deps.state_manager.set_flag.assert_not_called()
 
     async def test_epilogue_skipped_when_a_tool_already_finished_the_ticket(self):
         self.ticket_state = TicketState(ai_done=True)
@@ -255,7 +276,7 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
         await self.run_agent([ai(content="nothing to do")])
 
         self.repos.ticket_repo.append_private_log.assert_not_called()
-        self.deps.state_manager.mark_done.assert_not_called()
+        self.deps.state_manager.set_flag.assert_not_called()
         self.assertEqual(self.journal_steps()[-2], ("epilogue", "ticket already finished — nothing to close"))
 
 
@@ -274,7 +295,7 @@ class TestProseInsteadOfToolCall(IntakeAgentTestCase):
         self.assertEqual(model.calls, 2)
         self.repos.ticket_repo.append_public_log.assert_awaited_once()
         # The round was not wasted and the ticket was not closed behind the requester
-        self.deps.state_manager.mark_done.assert_not_called()
+        self.deps.state_manager.set_flag.assert_not_called()
         self.repos.ticket_repo.append_private_log.assert_not_called()
         self.assertNotIn("epilogue", [node for node, _ in self.journal_steps()])
 
@@ -297,7 +318,7 @@ class TestProseInsteadOfToolCall(IntakeAgentTestCase):
         model = await self.run_agent([ai(content="still just talking")])
 
         self.assertEqual(model.calls, 2)
-        self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
+        self.deps.state_manager.set_flag.assert_awaited_once_with(MODULE, "Incident::123", "ai_done")
 
 
 class TestForcedToolChoice(IntakeAgentTestCase):
@@ -361,8 +382,8 @@ class TestClassifiedTicket(IntakeAgentTestCase):
                 return self
 
         model = Recording(responses=[ai([call("finish_handoff", {"note": "n"}, "h1")])])
-        with patch("itop_ai_assistant.agents.intake.compose.create_llm", return_value=model):
-            await self.intake_run().body(self.ticket, "ai-assistant")
+        self.deps.create_llm = MagicMock(return_value=model)
+        await self.intake_run().body(self.ticket, "ai-assistant")
 
         self.assertEqual(captured[0], ["post_public_question", "finish_handoff"])
 
@@ -380,7 +401,7 @@ class TestTerminalTools(IntakeAgentTestCase):
         self.assertEqual(model.calls, 2, "the run must end without a closing model call")
         self.repos.ticket_repo.set_fields.assert_awaited_once()
         self.repos.ticket_repo.append_private_log.assert_awaited_once_with(self.ticket, "Printer in room 3 is dead.")
-        self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
+        self.deps.state_manager.set_flag.assert_awaited_once_with(MODULE, "Incident::123", "ai_done")
         self.assertNotIn("epilogue", [node for node, _ in self.journal_steps()])
 
     async def test_public_question_ends_the_run_without_marking_done(self):
@@ -393,8 +414,8 @@ class TestTerminalTools(IntakeAgentTestCase):
 
         self.assertEqual(model.calls, 1)
         self.repos.ticket_repo.append_public_log.assert_awaited_once()
-        self.deps.state_manager.increment_classify_rounds.assert_awaited_once_with("Incident::123")
-        self.deps.state_manager.mark_done.assert_not_called()
+        self.deps.state_manager.increment.assert_awaited_once_with(MODULE, "Incident::123", "classify_rounds")
+        self.deps.state_manager.set_flag.assert_not_called()
         self.repos.ticket_repo.append_private_log.assert_not_called()
 
     async def test_invalid_service_id_is_fed_back_and_the_agent_recovers(self):
@@ -412,7 +433,7 @@ class TestTerminalTools(IntakeAgentTestCase):
         self.assertIn("[error]", rejection)
         self.assertIn("Valid service IDs: 10", rejection)
         self.repos.ticket_repo.set_fields.assert_awaited_once()
-        self.deps.state_manager.mark_done.assert_awaited_once()
+        self.deps.state_manager.set_flag.assert_awaited_once()
 
     async def test_exhausted_classify_budget_closes_the_ticket_inside_the_tool(self):
         self.ticket_state = TicketState(classify_rounds=2)
@@ -431,7 +452,7 @@ class TestTerminalTools(IntakeAgentTestCase):
         self.repos.ticket_repo.append_private_log.assert_awaited_once_with(
             self.ticket, self.intake_cfg.classify_fallback_note
         )
-        self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
+        self.deps.state_manager.set_flag.assert_awaited_once_with(MODULE, "Incident::123", "ai_done")
         self.assertNotIn("epilogue", [node for node, _ in self.journal_steps()])
 
 
@@ -448,7 +469,7 @@ class TestSimilarTicketsWiring(IntakeAgentTestCase):
         embedder = MagicMock()
         embedder.embed = AsyncMock(return_value=[[1.0, 0.0]])
         embedder.aclose = AsyncMock()
-        patcher = patch("itop_ai_assistant.agents.intake.compose.EmbeddingsClient", return_value=embedder)
+        patcher = patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder)
         patcher.start()
         self.addCleanup(patcher.stop)
         return embedder
@@ -484,7 +505,7 @@ class TestSimilarTicketsWiring(IntakeAgentTestCase):
         self.assertNotIn("find_similar_resolved_tickets", model.bound_tools[0])
 
     async def test_a_call_reaches_the_index_and_the_source(self):
-        self.enable_vectors()
+        embedder = self.enable_vectors()
 
         await self.run_agent(
             [
@@ -498,6 +519,10 @@ class TestSimilarTicketsWiring(IntakeAgentTestCase):
         self.repos.ticket_repo.append_private_log.assert_awaited_once_with(
             self.ticket, "Printer is dead.\n[[UserRequest:12]]"
         )
+        # The door owns the embeddings client for the length of one `find()`
+        # call (rule 9.4, TASK-033) — there is no run-level lifecycle left to
+        # verify separately.
+        embedder.aclose.assert_awaited_once()
         # TASK-014: the tool's artifact (never sent to the model) reaches the
         # journal via AgentRun._journal_update, appended to the usual detail
         tool_step = next(d for n, d in self.journal_steps() if n == "tool:find_similar_resolved_tickets")
@@ -507,15 +532,6 @@ class TestSimilarTicketsWiring(IntakeAgentTestCase):
         self.assertIn("kept=1", tool_step)
         self.assertIn("dropped_by_resolve=0", tool_step)
         self.assertIn("scores=[0.9]", tool_step)
-
-    async def test_the_embeddings_client_is_closed_even_when_the_run_fails(self):
-        embedder = self.enable_vectors()
-        self.repos.ticket_repo.append_private_log = AsyncMock(side_effect=RuntimeError("iTop is down"))
-
-        with self.assertRaises(RuntimeError):
-            await self.run_agent([ai([call("finish_handoff", {"note": "Printer is dead."})])])
-
-        embedder.aclose.assert_awaited_once()
 
 
 if __name__ == "__main__":

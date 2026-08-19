@@ -1,7 +1,7 @@
 """FAQ vector source: iTop FAQ articles as vectorizable objects.
 
 Wraps `FaqRepository` behind the generic `VectorSource` protocol
-(`vector/ports/source.py`) — see `vector/sources/tickets.py` for the same
+(`vector/ports/source.py`) — see `content_sources/tickets.py` for the same
 pattern applied to tickets. Simpler than tickets: one class, no catalog
 lookups, no log fragments (an FAQ article has no conversation to index).
 """
@@ -10,11 +10,20 @@ import logging
 from collections.abc import Sequence
 from datetime import datetime
 
-from itop_ai_assistant.config import ChunkFragmentConfig, VectorClassConfig
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.faq import FaqArticle
-from itop_ai_assistant.repositories.faq import FaqRepository, FaqRepositoryProvider
-from itop_ai_assistant.vector.chunker import Chunk, FragmentContent, TextContent, chunk_object, clean_text
-from itop_ai_assistant.vector.ports.source import FragmentSpec, VectorRecord, VectorSource
+from itop_ai_assistant.repositories.faq import FaqRepository, FaqRepositoryForPrincipal, FaqRepositoryProvider
+from itop_ai_assistant.vector import (
+    Chunk,
+    ChunkPlan,
+    FragmentContent,
+    FragmentSpec,
+    TextContent,
+    VectorRecord,
+    VectorSource,
+    chunk_object,
+    clean_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +67,15 @@ class FaqVectorSource(VectorSource[FaqArticle]):
     fields = FIELDS
     fragments = FRAGMENTS
 
-    def __init__(self, get_faq_repo: FaqRepositoryProvider, *, classes: list[str]) -> None:
+    def __init__(
+        self,
+        get_faq_repo: FaqRepositoryProvider,
+        get_faq_repo_as: FaqRepositoryForPrincipal,
+        *,
+        classes: list[str],
+    ) -> None:
         self._get_faq_repo = get_faq_repo
+        self._get_faq_repo_as = get_faq_repo_as
         self.classes: Sequence[str] = classes
         self._faq_repo: FaqRepository | None = None
 
@@ -90,22 +106,26 @@ class FaqVectorSource(VectorSource[FaqArticle]):
         assert self._faq_repo is not None, "prepare() must run before find_existing_ids()"
         return await self._faq_repo.find_existing_ids(ids)
 
+    async def confirm_visible(self, principal: Principal, obj_class: str, ids: list[int]) -> set[int]:
+        # `obj_class` is dropped, same as above: this source owns one class,
+        # and `FaqRepository` queries `FAQ` by name. See
+        # `TicketVectorSource.confirm_visible` for why the repository is
+        # fetched per call rather than cached.
+        repo = await self._get_faq_repo_as(principal)
+        return await repo.find_existing_ids(ids)
+
     async def chunk(
         self,
         obj_class: str,
         record: VectorRecord[FaqArticle],
-        cfg: VectorClassConfig,
+        plan: ChunkPlan,
         *,
         max_chunk_tokens: int,
         log_entries_per_chunk: int,
     ) -> list[Chunk]:
         article = record.payload
         fields = self._semantic_fields(article)
-        fragments = [
-            content
-            for spec in FRAGMENTS
-            if (content := self._resolve(spec, cfg.chunks.get(spec.kind), fields)) is not None
-        ]
+        fragments = [content for spec in FRAGMENTS if (content := self._resolve(spec, plan, fields)) is not None]
         return chunk_object(fragments, max_chunk_tokens=max_chunk_tokens, items_per_window=log_entries_per_chunk)
 
     def _semantic_fields(self, article: FaqArticle) -> dict[str, str]:
@@ -119,14 +139,13 @@ class FaqVectorSource(VectorSource[FaqArticle]):
             "description": clean_text(article.description),
         }
 
-    def _resolve(
-        self, spec: FragmentSpec, cfg: ChunkFragmentConfig | None, fields: dict[str, str]
-    ) -> FragmentContent | None:
+    def _resolve(self, spec: FragmentSpec, plan: ChunkPlan, fields: dict[str, str]) -> FragmentContent | None:
         """One fragment's configured content, or None if it produces nothing."""
-        if cfg is None or not cfg.fields:
+        field_names = plan.fields.get(spec.kind)
+        if not field_names:
             return None
         parts = []
-        for name in cfg.fields:
+        for name in field_names:
             if name not in fields:
                 logger.warning(f"faq source: fragment {spec.kind!r} references unknown field {name!r} — ignored")
                 continue

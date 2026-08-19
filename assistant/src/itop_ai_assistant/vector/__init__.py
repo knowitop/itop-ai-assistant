@@ -1,47 +1,74 @@
 """Public surface of the vector layer — the only way in from outside `vector/`.
 
-Internals (`ports/`, `adapters/`, `use_cases/`, `state/`, `sources/`,
-`router.py`, `chunker.py`) are free to reorganize; anything reached from
+Internals (`ports/`, `adapters/`, `use_cases/`, `state/`, `router.py`,
+`assembly.py`, `chunker.py`) are free to reorganize; anything reached from
 outside this package must be re-exported here first (`test_package_layers.py`,
-`TestVectorFacade`). `sources/` is domain-specific (knows about `Ticket`,
-iTop) but still internal — TASK-028 folded it in from the former top-level
-`vector_sources/` precisely because nothing outside `vector/` needs more of
-it than `TICKETS_FAMILY` below.
+`TestVectorFacade`). Content providers (`content_sources/` — `Ticket`,
+`FaqArticle`, iTop) are a consumer of this facade like any other business
+module, not part of it — see `.claude/rules/content-sources.md`.
 
-`router.py` names `core.deps.AppDeps` in annotations only (`TYPE_CHECKING`,
-never imported for real) — `core/deps.py` imports this facade's own adapters,
-so a real import in either direction would deadlock: importing anything here
-runs this file top to bottom, which imports `.router`, which would otherwise
-import `core.deps` while it is still mid-import itself. `use_cases/indexer.py`
-does not name it at all any more (TASK-029): the sweep takes its own
-`IndexerDeps` port, which is what removed the last reason for the workaround
-there rather than routing around it.
+One name assembles the whole subsystem for the composition root —
+`build(settings, redis, config_store, itop) -> VectorSubsystem`
+(`assembly.py`, TASK-037) — replacing what used to be five adapters
+(`QdrantChunkStore`, `IndexJournal`, `VectorSyncState`, a `vector_sources`
+closure, and `SimilarSearch`) that `core/deps.py` assembled by hand into five
+separate `AppDeps` fields. `core/deps.py` keeps the result in one field
+(`AppDeps.vector`); `vector/router.py` reaches the same instance through
+`request.app.state.vector`, not through `AppDeps` at all — which is what
+retired the `TYPE_CHECKING` cycle workaround this docstring used to explain:
+`core/deps.py` no longer imports any of this package's concrete adapters, so
+there is nothing left for `router.py` or `core/api_deps.py` to route around.
+
+Everything else here is the contract-out a business module actually calls:
+`SimilarSearch.available()`/`find()`, its exceptions, `measure_embedding_dimension`,
+plus the vocabulary `content_sources/` needs to implement `VectorSource` at
+all (`Chunk`, `ChunkPlan`, `FragmentContent`, `FragmentSpec`, `SequenceContent`,
+`TextContent`, `VectorRecord`, `VectorSource`, `chunk_object`, `clean_text`,
+TASK-040), and `VectorConfig`/`FamilyConfig` for the same reason:
+`content_sources/registry.py`'s `build_vector_sources` and `admin/setup.py`
+both need the section's shape.
+`EmbeddingsClient` and `build_vector_sources` are deliberately *not*
+re-exported — neither is this package's business to shield; every caller of
+`EmbeddingsClient` goes through the `SimilarSearch`/`measure_embedding_dimension`
+door instead, and `build_vector_sources` has exactly one caller left,
+`assembly.py`, which imports it directly from `content_sources.registry`.
 """
 
-from .adapters.embedder import EmbeddingsClient
-from .adapters.qdrant_store import QdrantChunkStore
+from .assembly import VectorSubsystem, build
+from .chunker import Chunk, FragmentContent, SequenceContent, TextContent, chunk_object, clean_text
+from .config import FamilyConfig, VectorConfig
+from .domain import DateRange
 from .ports.query import FindStats, ObjectHit, SearchQuery, SearchResult
-from .ports.store import ChunkStore, DateRange
+from .ports.source import ChunkPlan, FragmentSpec, VectorRecord, VectorSource
 from .router import router
-from .sources.tickets import FAMILY as TICKETS_FAMILY
-from .state.index_journal import IndexJournal
-from .state.sync_state import VectorSyncState
 from .use_cases.indexer import register_vector_sweep
-from .use_cases.search import SimilarSearch
+from .use_cases.probe import measure_embedding_dimension
+from .use_cases.search import SearchUnavailable, SimilarSearch, UnknownFamily
 
 __all__ = [
-    "ChunkStore",
+    "Chunk",
+    "ChunkPlan",
     "DateRange",
-    "EmbeddingsClient",
+    "FamilyConfig",
     "FindStats",
-    "IndexJournal",
+    "FragmentContent",
+    "FragmentSpec",
     "ObjectHit",
-    "QdrantChunkStore",
     "SearchQuery",
     "SearchResult",
+    "SearchUnavailable",
+    "SequenceContent",
     "SimilarSearch",
-    "TICKETS_FAMILY",
-    "VectorSyncState",
+    "TextContent",
+    "UnknownFamily",
+    "VectorConfig",
+    "VectorRecord",
+    "VectorSource",
+    "VectorSubsystem",
+    "build",
+    "chunk_object",
+    "clean_text",
+    "measure_embedding_dimension",
     "register_vector_sweep",
     "router",
 ]

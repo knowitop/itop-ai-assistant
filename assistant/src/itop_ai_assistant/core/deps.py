@@ -8,19 +8,16 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from itop_ai_assistant.config import LlmConfig, Settings
 from itop_ai_assistant.core.llm_providers import get_provider
-from itop_ai_assistant.itop.connection import ItopConnection
+from itop_ai_assistant.itop.connection import AiIdentity, ItopConnection
+from itop_ai_assistant.pipelines.registry import TriggerRegistry
 from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.settings.config_store import ConfigStore, RedisConfigStore
-from itop_ai_assistant.settings.prompt_store import (
-    PACKAGED_PROMPTS_DIR,
-    FilePromptStore,
-    PromptStore,
-    RedisPromptStore,
-)
+from itop_ai_assistant.settings.prompt_store import FilePromptStore, PromptStore, RedisPromptStore
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.util.redis_keyspace import days_to_seconds
-from itop_ai_assistant.vector import ChunkStore, IndexJournal, QdrantChunkStore, VectorSyncState
+from itop_ai_assistant.vector import SimilarSearch, VectorSubsystem
+from itop_ai_assistant.vector import build as build_vector  # aliased: this module has its own `build_deps`
 
 
 @dataclass
@@ -35,6 +32,22 @@ class AppDeps:
 
     `aclose()` is on purpose absent from every port: ownership of the connection
     pool stays here, so no run can be typed into closing it.
+
+    `vector` is one field, not five (TASK-037): the composition root calls
+    `vector.build()` once, the same way it calls `build_registry(settings)` for
+    modules, and holds whatever came back — it does not know, and does not
+    need to know, that the subsystem happens to be made of a store, two Redis
+    journals and a search door internally. `vector_search` stays a property
+    rather than a second stored field: `RunDeps.vector_search`
+    (`pipelines/ports.py`) is unchanged by this task, and structural typing
+    needs the member to exist on `AppDeps` itself, not one level down.
+    `ai_identity` is the same trick again (TASK-038): `RunDeps.ai_identity`
+    needs the member on `AppDeps` itself, and the value is just
+    `itop_connection` under its narrower name — no second field for the same
+    object. `create_llm` delegates to the free function below rather than
+    wrapping a field: the function stays the one construction site
+    `agents.md` documents, this method is only how a module reaches it
+    through the port instead of importing the composition root directly.
     """
 
     settings: Settings
@@ -47,14 +60,23 @@ class AppDeps:
     config_store: ConfigStore
     prompt_store: PromptStore
     journal: RunJournal
-    vector_store: ChunkStore
-    vector_sync: VectorSyncState
-    vector_journal: IndexJournal
+    vector: VectorSubsystem
+
+    @property
+    def vector_search(self) -> SimilarSearch:
+        return self.vector.vector_search
+
+    @property
+    def ai_identity(self) -> AiIdentity:
+        return self.itop_connection
+
+    def create_llm(self, llm: LlmConfig, model: str | None = None) -> BaseChatModel:
+        return create_llm(llm, model)
 
     async def aclose(self) -> None:
         await self.itop_connection.aclose()
         await self.state_manager.aclose()
-        await self.vector_store.aclose()
+        await self.vector.aclose()
 
 
 def get_deps(request: Request) -> "AppDeps":
@@ -62,9 +84,8 @@ def get_deps(request: Request) -> "AppDeps":
     hand it whole into the run core (`.claude/rules/core.md`: `AppDeps` goes to
     entry points and no deeper, and a module's `handle` is where it is taken
     apart into ports). A function that needs one field, not the container,
-    belongs in `core/api_deps.py` instead — kept free of a real import of this
-    module so `vector/router.py` can reuse it without reopening the facade
-    cycle documented in `vector/__init__.py`.
+    belongs in `core/api_deps.py` instead. `vector/router.py` does not use
+    either — it reaches its own subsystem through `request.app.state.vector`.
     """
     return request.app.state.deps
 
@@ -87,22 +108,22 @@ def create_llm(llm: LlmConfig, model: str | None = None) -> BaseChatModel:
     return init_chat_model(model or llm.model or "", model_provider=provider.langchain_provider, **kwargs)
 
 
-def build_deps(settings: Settings) -> AppDeps:
-    # One shared Redis connection pool for state, journal, config and prompts
+def build_deps(settings: Settings, registry: TriggerRegistry) -> AppDeps:
+    # One shared Redis connection pool for state, journal, config, prompts and vector
     redis = aioredis.from_url(settings.redis_url, decode_responses=True)
     config_store = RedisConfigStore(redis, settings)
     state_manager = TicketStateManager(redis, ttl_seconds=days_to_seconds(settings.state_ttl_days))
     itop_connection = ItopConnection(config_store)
+    itop = ItopRepositories(itop_connection, config_store)
+    prompts_dirs = {m.name: m.prompts_dir for m in registry.modules if m.prompts_dir is not None}
+
     return AppDeps(
         settings=settings,
-        itop=ItopRepositories(itop_connection, config_store),
+        itop=itop,
         itop_connection=itop_connection,
         state_manager=state_manager,
         config_store=config_store,
-        prompt_store=RedisPromptStore(FilePromptStore(PACKAGED_PROMPTS_DIR, settings.prompts_dir), redis),
+        prompt_store=RedisPromptStore(FilePromptStore(prompts_dirs, settings.prompts_dir), redis),
         journal=RunJournal(redis, ttl_seconds=days_to_seconds(settings.run_ttl_days)),
-        # Lazy: no client (and no connection) until the vector store is used
-        vector_store=QdrantChunkStore(settings.qdrant_url),
-        vector_sync=VectorSyncState(redis),
-        vector_journal=IndexJournal(redis),
+        vector=build_vector(settings, redis, config_store, itop),
     )

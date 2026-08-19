@@ -9,29 +9,30 @@ module exposes the same way (`<module>/pipeline.py::register`,
 import logging
 
 from itop_ai_assistant.config import Settings
-from itop_ai_assistant.pipelines.models import ObjectRef
+from itop_ai_assistant.domain.identity import ObjectIdentity
+from itop_ai_assistant.pipelines.models import TicketEvent
 from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, TriggerRegistry
-from itop_ai_assistant.webhook.models import TicketEvent
 
 from .config import IntakeConfig
-from .prompts import PROMPT_VARIABLES, build_intake_prompts
+from .prompts import MODULE, PROMPT_VARIABLES, PROMPTS_DIR, build_intake_prompts
 from .run import IntakeRun, handle_assigned
 
 logger = logging.getLogger(__name__)
 
 
 def register(registry: TriggerRegistry, settings: Settings) -> None:
-    cfg = settings.module_defaults("intake", IntakeConfig)
+    cfg = settings.module_defaults(MODULE, IntakeConfig)
     if not cfg.enabled:
         logger.info("Intake module is disabled, skipping registration")
         return
 
     info = ModuleInfo(
-        name="intake",
+        name=MODULE,
         description="Agentic (tool-calling) ticket intake: classify, ask, hand off",
         config_model=IntakeConfig,
         prompt_names=tuple(PROMPT_VARIABLES),
         validate_prompts=build_intake_prompts,
+        prompts_dir=PROMPTS_DIR,
     )
     webhooks = {}
     for obj_class in cfg.classes:
@@ -44,9 +45,9 @@ def register(registry: TriggerRegistry, settings: Settings) -> None:
         RequestRoute(
             action="process",
             module=info.name,
-            input_model=ObjectRef,
+            input_model=ObjectIdentity,
             handler=IntakeRun.handle,
-            subject_of=lambda ref: ref.label,
+            subject_of=lambda ref: str(ref),
             summary="Run intake on one ticket now and return the outcome",
         )
     ]

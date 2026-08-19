@@ -12,7 +12,7 @@ ticket is checkable without an LLM, without iTop and without a vector store.
 
 from datetime import datetime, timedelta
 
-from itop_ai_assistant.vector import TICKETS_FAMILY, DateRange, SearchQuery
+from itop_ai_assistant.vector import DateRange, SearchQuery
 
 from .config import IntakeConfig
 
@@ -25,7 +25,7 @@ def similar_query(cfg: IntakeConfig, *, text: str, exclude: tuple[str, int], now
     """
     return SearchQuery(
         text=text,
-        family=TICKETS_FAMILY,
+        family=cfg.similar_family,
         filters={"status": list(cfg.resolved_statuses)},
         chunk_kinds=list(cfg.similar_chunk_kinds),
         # Explicit, not the query's default: the index gets private log chunks

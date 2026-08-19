@@ -19,18 +19,21 @@ logger = logging.getLogger(__name__)
 
 from itop_ai_assistant.agents.intake.config import IntakeConfig
 from itop_ai_assistant.agents.intake.context import IntakeContext
+from itop_ai_assistant.agents.intake.prompts import PROMPTS_DIR as INTAKE_PROMPTS_DIR
 from itop_ai_assistant.agents.intake.prompts import build_intake_prompts
+from itop_ai_assistant.agents.intake.state import IntakeState
 from itop_ai_assistant.config import get_settings
+from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.itop_client import Itop
 from itop_ai_assistant.repositories.catalog import CatalogRepository
 from itop_ai_assistant.repositories.ticket import TicketRepository
-from itop_ai_assistant.settings.prompt_store import PACKAGED_PROMPTS_DIR, read_prompt_dir
+from itop_ai_assistant.settings.prompt_store import read_prompt_dir
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 
 ITOP_URL = "http://mock-itop/webservices/rest.php"
 
-_PROMPTS = build_intake_prompts(read_prompt_dir(PACKAGED_PROMPTS_DIR / "intake"))
+_PROMPTS = build_intake_prompts(read_prompt_dir(INTAKE_PROMPTS_DIR))
 
 _SERVICE_FIELDS = {"name": "IT Support", "description": "General IT support services"}
 # service_id is a mandatory external key in iTop — always present in real responses
@@ -103,10 +106,11 @@ def make_ctx(
     settings = get_settings()
     ctx = IntakeContext(
         processing_id=uuid4(),
+        principal=Principal.service(),
         ticket=ticket,
         ticket_repo=TicketRepository(itop, settings.ticket_mapping),
         catalog_repo=CatalogRepository(itop),
-        state_manager=state_manager,
+        state_manager=IntakeState(state_manager),
         intake=settings.module_defaults("intake", IntakeConfig),
         # Matches _AI_PERSON_FIELDS, i.e. what IdentityRepository would return
         ai_name="ai-assistant",

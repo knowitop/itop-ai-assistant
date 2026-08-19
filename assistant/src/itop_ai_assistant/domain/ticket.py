@@ -10,22 +10,24 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from itop_ai_assistant.domain.identity import ObjectIdentifiable, ObjectIdentity
+
 
 class LogEntry(BaseModel):
     user_login: str
     message: str
 
 
-class Ticket(BaseModel):
+class Ticket(BaseModel, ObjectIdentifiable):
     obj_class: str  # iTop final class, e.g. "UserRequest" / "Incident"
     id: str
     ref: str | None = None
     title: str = ""
     description: str = ""  # raw HTML as stored in iTop
     status: str = ""
-    service_id: str = "0"
+    service_id: str | None = None
     service_name: str = ""
-    subcategory_id: str = "0"
+    subcategory_id: str | None = None
     subcategory_name: str = ""
     caller_name: str = ""
     org_id: str | None = None
@@ -38,21 +40,13 @@ class Ticket(BaseModel):
     start_date: datetime | None = None  # named as in iTop — creation time, semantic mapping key stays "created_at"
 
     @property
-    def label(self) -> str:
-        return f"{self.obj_class}::{self.id}"
+    def identity(self) -> ObjectIdentity:
+        return ObjectIdentity(obj_class=self.obj_class, obj_id=self.id)
 
     @property
     def has_service(self) -> bool:
-        return _is_set(self.service_id)
+        return self.service_id is not None
 
     @property
     def has_subcategory(self) -> bool:
-        return _is_set(self.subcategory_id)
-
-
-def _is_set(external_key: str | None) -> bool:
-    """iTop returns "0" for unset external keys."""
-    try:
-        return bool(int(external_key or 0))
-    except ValueError:
-        return False
+        return self.subcategory_id is not None

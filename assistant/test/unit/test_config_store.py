@@ -8,6 +8,7 @@ from redis.exceptions import RedisError
 from itop_ai_assistant.agents.intake.config import IntakeConfig
 from itop_ai_assistant.config import Settings
 from itop_ai_assistant.settings.config_store import RedisConfigStore
+from itop_ai_assistant.vector import VectorConfig
 
 
 def _make_store() -> tuple[RedisConfigStore, fakeredis.aioredis.FakeRedis]:
@@ -91,6 +92,19 @@ class TestRedisConfigStore(unittest.IsolatedAsyncioTestCase):
         cfg = await store.get("intake", IntakeConfig)
 
         self.assertEqual(cfg.max_rounds, 7)
+
+    async def test_vector_resolves_like_a_business_module_section(self):
+        # TASK-036: `vector` is infrastructure, not a module, but `Settings`
+        # carries no attribute for it either — same fallback, same test as
+        # `test_resolves_a_section_settings_has_no_attribute_for` above.
+        settings = Settings()
+        self.assertFalse(hasattr(settings, "vector"))
+        redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        store = RedisConfigStore(redis, settings)
+
+        cfg = await store.get("vector", VectorConfig)
+
+        self.assertEqual(cfg, VectorConfig())
 
 
 if __name__ == "__main__":

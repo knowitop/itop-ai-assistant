@@ -1,5 +1,5 @@
 """Vector index sweep: periodic incremental sync from registered VectorSource
-instances (see `vector/ports/source.py`, `vector/sources/registry.py`) into
+instances (see `vector/ports/source.py`, `content_sources/registry.py`) into
 the active `ChunkStore` (`vector/ports/store.py`).
 
 The sweep reads objects modified since the per-class cursor (with a
@@ -19,7 +19,7 @@ route and writes no `RunJournal` entry — `register_vector_sweep` puts it under
 the process scheduler and that is the whole of its relationship with the core.
 
 This module is source-agnostic: it knows `VectorSource`/`VectorRecord`, never
-`Ticket` or a repository — those live in `vector/sources/tickets.py`.
+`Ticket` or a repository — those live in `content_sources/tickets.py`.
 
 `vector.enabled` and the embeddings section are re-read from the ConfigStore
 snapshot on every tick, so enabling the feature at runtime needs no restart.
@@ -30,14 +30,16 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any
 
-from itop_ai_assistant.config import EmbeddingsConfig, FamilyConfig, VectorClassConfig, VectorConfig
+from itop_ai_assistant.config import EmbeddingsConfig
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.chunker import Chunk
-from itop_ai_assistant.vector.ports.source import VectorRecord, VectorSource
+from itop_ai_assistant.vector.config import FamilyConfig, VectorClassConfig, VectorConfig
+from itop_ai_assistant.vector.domain import ChunkSyncState, classify_chunk, creation_date, left_indexable_scope
+from itop_ai_assistant.vector.ports.source import ChunkPlan, VectorRecord, VectorSource
 from itop_ai_assistant.vector.ports.store import (
     ChunkDigest,
     ChunkMetadata,
@@ -46,47 +48,12 @@ from itop_ai_assistant.vector.ports.store import (
     FingerprintMismatchError,
     IndexMeta,
 )
-from itop_ai_assistant.vector.sources.registry import ItopRepos, build_vector_sources
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
 from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 
 logger = logging.getLogger(__name__)
 
 _RECONCILE_BATCH = 200
-
-
-class IndexerDeps(Protocol):
-    """What the sweep needs from the container — declared here, by the
-    consumer, rather than taken as `AppDeps` whole (ADR-019, `core.md`:
-    "declare a port at the consumer", as `_AssignedDeps` and `ItopRepos` do).
-
-    The five members below are the whole of it. `settings`, `itop_connection`,
-    `state_manager`, `prompt_store` and the run `journal` are not here because
-    the sweep never touches them: it is infrastructure with no run frame, and
-    its own journal is `vector_journal`. `aclose()` is absent for the reason it
-    is absent from every port — the pool belongs to the composition root.
-
-    Members are read-only properties, never plain attributes: an attribute is
-    invariant, so `itop: ItopRepos` would reject an `AppDeps` whose field is
-    typed `ItopRepositories`. `AppDeps` satisfies this structurally and knows
-    nothing about it — which is also what keeps `core/deps.py` out of this
-    module entirely, cycle with the facade included.
-    """
-
-    @property
-    def config_store(self) -> ConfigStore: ...
-
-    @property
-    def itop(self) -> ItopRepos: ...
-
-    @property
-    def vector_store(self) -> ChunkStore: ...
-
-    @property
-    def vector_sync(self) -> VectorSyncState: ...
-
-    @property
-    def vector_journal(self) -> IndexJournal: ...
 
 
 @dataclass
@@ -104,23 +71,30 @@ class SweepReport:
 SWEEP_TASK = "vector-sweep"
 
 
-def register_vector_sweep(tasks: PeriodicTasks, deps: IndexerDeps) -> None:
+def register_vector_sweep(
+    tasks: PeriodicTasks,
+    config_store: ConfigStore,
+    vector_sources: Callable[[VectorConfig], Sequence[VectorSource[Any]]],
+    vector_store: ChunkStore,
+    vector_sync: VectorSyncState,
+    vector_journal: IndexJournal,
+) -> None:
     """Put the sweep under the process-wide scheduler.
 
     Infrastructure, not a business module: no `ModuleInfo`, no trigger route
     and no `RunJournal` entry — the sweep keeps its own `index_journal` in
     Redis. What it needs from the core is pacing, and that is all it takes.
     """
-    if not deps.vector_store.configured:
+    if not vector_store.configured:
         logger.info("Vector store is not configured (qdrant_url), the sweep will not run")
         return
 
     async def interval() -> float:
-        return (await deps.config_store.get("vector", VectorConfig)).sweep_interval_seconds
+        return (await config_store.get("vector", VectorConfig)).sweep_interval_seconds
 
     tasks.add(
         SWEEP_TASK,
-        VectorIndexer(deps).tick,
+        VectorIndexer(config_store, vector_sources, vector_store, vector_sync, vector_journal).tick,
         interval=interval,
         default_interval=VectorConfig().sweep_interval_seconds,
     )
@@ -135,12 +109,24 @@ class VectorIndexer:
     or replica ends up serving the next tick.
 
     `sources` overrides the registered `VectorSource`s (built by
-    `build_vector_sources` when omitted) — tests inject fakes here instead of
+    `vector_sources(cfg)` when omitted) — tests inject fakes here instead of
     mocking iTop/repository internals.
     """
 
-    def __init__(self, deps: IndexerDeps, sources: Sequence[VectorSource[Any]] | None = None) -> None:
-        self._deps = deps
+    def __init__(
+        self,
+        config_store: ConfigStore,
+        vector_sources: Callable[[VectorConfig], Sequence[VectorSource[Any]]],
+        vector_store: ChunkStore,
+        vector_sync: VectorSyncState,
+        vector_journal: IndexJournal,
+        sources: Sequence[VectorSource[Any]] | None = None,
+    ) -> None:
+        self._config_store = config_store
+        self._vector_sources = vector_sources
+        self._vector_store = vector_store
+        self._vector_sync = vector_sync
+        self._vector_journal = vector_journal
         self._sources = list(sources) if sources is not None else None
 
     async def tick(self) -> SweepReport:
@@ -153,30 +139,29 @@ class VectorIndexer:
         """Schedule a full backfill: the next sweep resets all cursors and
         runs as kind="backfill". No truncate — unchanged chunks are cheap
         thanks to the hash-guard, and reconciliation cleans orphans."""
-        await self._deps.vector_sync.request_reindex()
+        await self._vector_sync.request_reindex()
 
     async def sweep_once(self) -> SweepReport:
-        deps = self._deps
-        if not deps.vector_store.configured:
+        if not self._vector_store.configured:
             return SweepReport(kind="sweep", status="skipped", skip_reason="qdrant_url is not set")
-        vector_cfg = await deps.config_store.get("vector", VectorConfig)
+        vector_cfg = await self._config_store.get("vector", VectorConfig)
         if not vector_cfg.enabled:
             return SweepReport(kind="sweep", status="skipped", skip_reason="vector indexing is disabled")
-        emb_cfg = await deps.config_store.get("embeddings", EmbeddingsConfig)
+        emb_cfg = await self._config_store.get("embeddings", EmbeddingsConfig)
         model = emb_cfg.model
         if not emb_cfg.base_url or not model:
             return SweepReport(kind="sweep", status="skipped", skip_reason="embeddings endpoint is not configured")
 
-        async with deps.vector_sync.sweep_lock() as locked:
+        async with self._vector_sync.sweep_lock() as locked:
             if not locked:
                 return SweepReport(kind="sweep", status="skipped", skip_reason="another sweep holds the lock")
-            return await self._sweep_locked(deps.vector_store, vector_cfg, emb_cfg, model)
+            return await self._sweep_locked(self._vector_store, vector_cfg, emb_cfg, model)
 
     async def _sweep_locked(
         self, store: ChunkStore, cfg: VectorConfig, emb_cfg: EmbeddingsConfig, model: str
     ) -> SweepReport:
         started_at = datetime.now(UTC)
-        full = await self._deps.vector_sync.reindex_pending()
+        full = await self._vector_sync.reindex_pending()
         report = SweepReport(kind="backfill" if full else "sweep", status="ok")
         journal_id = await self._journal_start(report.kind)
         embedder = EmbeddingsClient(emb_cfg)
@@ -184,8 +169,8 @@ class VectorIndexer:
             if full:
                 # Drops the pending-reindex flag along with the cursors — an
                 # attempt that fails earlier leaves the request standing
-                await self._deps.vector_sync.reset_cursors()
-            sources = self._sources if self._sources is not None else build_vector_sources(self._deps.itop, cfg)
+                await self._vector_sync.reset_cursors()
+            sources = self._sources if self._sources is not None else self._vector_sources(cfg)
             # A source may be prepared once here and again by reconcile below,
             # in the same pass — `prepared` keeps that to one call per source.
             prepared: set[int] = set()
@@ -211,7 +196,7 @@ class VectorIndexer:
                 # the scheduler firing a hair early) that arrives before a
                 # full system interval has elapsed since the last one.
                 if not full and family_cfg.sweep_interval_seconds is not None:
-                    last_swept = await self._deps.vector_sync.get_family_swept(family)
+                    last_swept = await self._vector_sync.get_family_swept(family)
                     if last_swept is not None and started_at - last_swept < timedelta(
                         seconds=family_cfg.sweep_interval_seconds
                     ):
@@ -256,7 +241,7 @@ class VectorIndexer:
                         # Class isolation: this class's cursor stays put, others proceed
                         logger.exception(f"vector sweep: class {obj_class} failed")
                         report.errors.append(f"{obj_class}: {e}")
-                await self._deps.vector_sync.set_family_swept(family, started_at)
+                await self._vector_sync.set_family_swept(family, started_at)
             if not report.errors and await self._reconcile_due(cfg):
                 await self._reconcile(store, sources, cfg, report, ensure_prepared)
         except Exception as e:
@@ -295,9 +280,10 @@ class VectorIndexer:
         if not class_cfg.chunks:
             logger.warning(f"vector sweep: no chunk fragments configured for {obj_class} — skipping the class")
             return
+        plan = _chunk_plan(class_cfg)
         interval = family_cfg.sweep_interval_seconds or cfg.sweep_interval_seconds
         log_entries_per_chunk = family_cfg.log_entries_per_chunk or cfg.log_entries_per_chunk
-        cursor = await self._deps.vector_sync.get_cursor(obj_class)
+        cursor = await self._vector_sync.get_cursor(obj_class)
         # Overlap covers pages drifting while a previous pass ran; derived
         # from the family's own interval instead of being one more config knob
         since = cursor - timedelta(seconds=2 * interval) if cursor else None
@@ -315,14 +301,14 @@ class VectorIndexer:
                 report.objects_seen += 1
                 if record.updated_at and (max_seen is None or record.updated_at > max_seen):
                     max_seen = record.updated_at
-                if class_cfg.index_values and record.index_value not in class_cfg.index_values:
+                if left_indexable_scope(record.index_value, class_cfg.index_values):
                     # Left the indexable scope (e.g. reopened) — drop its chunks
                     report.chunks_deleted += await store.delete_object(family, obj_class, record.obj_id)
                     continue
                 chunks = await source.chunk(
                     obj_class,
                     record,
-                    class_cfg,
+                    plan,
                     max_chunk_tokens=cfg.max_chunk_tokens,
                     log_entries_per_chunk=log_entries_per_chunk,
                 )
@@ -339,9 +325,15 @@ class VectorIndexer:
                 for chunk in chunks:
                     chunk_meta = object_meta.for_chunk(chunk)
                     digest = stored.get((chunk.kind, chunk.n))
-                    if digest is None or digest.content_hash != chunk.content_hash:
+                    sync = classify_chunk(
+                        chunk.content_hash,
+                        chunk_meta.meta_hash,
+                        stored_content_hash=digest.content_hash if digest else None,
+                        stored_meta_hash=digest.meta_hash if digest else None,
+                    )
+                    if sync is ChunkSyncState.CHANGED:
                         changed.append((chunk, chunk_meta))
-                    elif digest.meta_hash != chunk_meta.meta_hash:
+                    elif sync is ChunkSyncState.STALE_META:
                         stale_meta.append(chunk_meta)
                 current_keys = {(c.kind, c.n) for c in chunks}
                 vanished = [key for key in stored if key not in current_keys]
@@ -364,10 +356,10 @@ class VectorIndexer:
             await asyncio.sleep(cfg.sweep_throttle_seconds)
 
         if max_seen is not None and max_seen != cursor:
-            await self._deps.vector_sync.set_cursor(obj_class, max_seen)
+            await self._vector_sync.set_cursor(obj_class, max_seen)
 
     async def _reconcile_due(self, cfg: VectorConfig) -> bool:
-        last = await self._deps.vector_sync.get_reconcile()
+        last = await self._vector_sync.get_reconcile()
         return last is None or datetime.now(UTC) - last >= timedelta(days=cfg.reconcile_interval_days)
 
     async def _reconcile(
@@ -406,7 +398,7 @@ class VectorIndexer:
                             deleted += await store.delete_object(family, obj_class, orphan)
                         after = ids[-1]
                         await asyncio.sleep(cfg.sweep_throttle_seconds)
-            await self._deps.vector_sync.set_reconcile(datetime.now(UTC))
+            await self._vector_sync.set_reconcile(datetime.now(UTC))
         except Exception as e:
             logger.exception("vector reconciliation failed")
             status = "error"
@@ -421,7 +413,7 @@ class VectorIndexer:
 
     async def _journal_start(self, kind: str) -> str | None:
         try:
-            return await self._deps.vector_journal.start(kind)
+            return await self._vector_journal.start(kind)
         except Exception as e:
             logger.warning(f"index journal start failed (non-fatal): {e}")
             return None
@@ -430,9 +422,19 @@ class VectorIndexer:
         if journal_id is None:
             return
         try:
-            await self._deps.vector_journal.finish(journal_id, **kwargs)
+            await self._vector_journal.finish(journal_id, **kwargs)
         except Exception as e:
             logger.warning(f"index journal finish failed (non-fatal): {e}")
+
+
+def _chunk_plan(class_cfg: VectorClassConfig) -> ChunkPlan:
+    """`class_cfg.chunks` translated into the value `VectorSource.chunk()`
+    actually takes (TASK-040) — computed once per class per pass, since
+    `class_cfg` does not change within `_sweep_class`'s per-page loop."""
+    return ChunkPlan(
+        fields={kind: frag.fields for kind, frag in class_cfg.chunks.items()},
+        enabled=frozenset(kind for kind, frag in class_cfg.chunks.items() if frag.enabled),
+    )
 
 
 @dataclass(frozen=True)
@@ -484,36 +486,8 @@ def _object_metadata(
         obj_class=obj_class,
         obj_id=record.obj_id,
         filters=filters,
-        created_at=_creation_date(record, stored, started_at),
+        created_at=creation_date(
+            record.created_at, record.updated_at, (d.created_at for d in stored.values()), started_at
+        ),
         updated_at=record.updated_at,
     )
-
-
-def _creation_date(
-    record: VectorRecord[Any], stored: dict[tuple[str, int], ChunkDigest], started_at: datetime
-) -> datetime:
-    """When the object came into being, as the index will remember it.
-
-    The source's own date if it has one. Otherwise whatever the object's
-    already-indexed chunks say — that is what freezes the value: the last two
-    fallbacks fire once, at first indexing, and every pass afterwards
-    inherits. Without that step a fresh `started_at` would enter the payload
-    on every rewrite, and since rewrites are per-chunk, the chunks of one
-    object would end up claiming different creation dates — visible as an
-    object matching a `created` window through some of its chunks and not
-    others (TASK-020).
-
-    `min` over the stored values, not "this chunk's own": a chunk added later
-    (a new log window) has nothing stored and would otherwise take the current
-    clock while its siblings keep the old one. Earliest-known also cannot
-    creep forward from pass to pass.
-
-    Stored beats `record.updated_at` deliberately — a modification date moves
-    with every edit, so as a fallback it is no better than the sweep's clock.
-    """
-    if record.created_at is not None:
-        return record.created_at
-    indexed = [digest.created_at for digest in stored.values() if digest.created_at is not None]
-    if indexed:
-        return min(indexed)
-    return record.updated_at or started_at
