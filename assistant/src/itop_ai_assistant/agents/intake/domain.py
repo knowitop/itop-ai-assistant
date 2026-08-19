@@ -1,11 +1,14 @@
 """Intake's own business rules (rule 2.1), pure and framework-free.
 
-`tools.py` calls these and translates the outcome into I/O or a
-`ToolRejection` — it does not compare thresholds or parse `.strip()` itself.
+`tools.py` and `run.py` call these and translate the outcome into I/O, a
+`ToolRejection` or a skip — they do not compare thresholds, parse `.strip()`
+or inspect the ticket/log themselves.
 """
 
 from dataclasses import dataclass
 from enum import Enum, auto
+
+from itop_ai_assistant.domain.ticket import Ticket
 
 from .state import TicketState
 
@@ -35,3 +38,17 @@ class NonBlankText:
     def __post_init__(self) -> None:
         if not self.value.strip():
             raise ValueError("text is blank")
+
+
+def stop_reason(ticket: Ticket, state: TicketState, *, active_statuses: list[str], ai_name: str) -> str | None:
+    """Why this ticket must not be processed, or None to proceed."""
+    if state.ai_done:
+        return "already processed (ai_done)"
+    if ticket.status not in active_statuses:
+        return f"status={ticket.status} not in {active_statuses}"
+    # Loop protection, second line of defense after iTop trigger contexts:
+    # if our own question is the last public entry, wait for the user instead
+    # of reacting to our own comment or a duplicate webhook.
+    if ticket.public_log and ticket.public_log[-1].user_login == ai_name:
+        return "last public entry is ours, waiting for the requester"
+    return None

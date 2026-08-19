@@ -18,7 +18,7 @@ from itop_ai_assistant.pipelines.models import ObjectRef
 from itop_ai_assistant.pipelines.ports import ObjectStatePort
 from itop_ai_assistant.pipelines.shell import TicketRun
 
-from . import compose
+from . import compose, domain
 from .agent import TERMINAL_TOOLS
 from .config import IntakeConfig
 from .context import IntakeContext
@@ -32,22 +32,10 @@ class IntakeRun(TicketRun):
     """Ticket created or user commented: classify, ask, hand off."""
 
     async def stop_reason(self, ticket: Ticket, ai_name: str) -> str | None:
-        """Why this ticket must not be processed, or None to proceed."""
+        """Read the AI state and config, then let `domain.stop_reason` decide."""
         ticket_state = await IntakeState(self.deps.state_manager).get(ticket.label)
-        if ticket_state.ai_done:
-            return "already processed (ai_done)"
-
         cfg = await self.deps.config_store.get(MODULE, IntakeConfig)
-        if ticket.status not in cfg.active_statuses:
-            return f"status={ticket.status} not in {cfg.active_statuses}"
-
-        # Loop protection, second line of defense after iTop trigger contexts:
-        # if our own question is the last public entry, wait for the user instead
-        # of reacting to our own comment or a duplicate webhook.
-        if ticket.public_log and ticket.public_log[-1].user_login == ai_name:
-            return "last public entry is ours, waiting for the requester"
-
-        return None
+        return domain.stop_reason(ticket, ticket_state, active_statuses=cfg.active_statuses, ai_name=ai_name)
 
     async def body(self, ticket: Ticket, ai_name: str) -> None:
         logger.info(f"[{self.processing_id}] Running intake agent for {ticket.label}")
