@@ -23,6 +23,7 @@ from .config import IntakeConfig
 from .context import IntakeContext
 from .prompt import build_initial_messages
 from .prompts import MODULE, build_intake_prompts
+from .state import IntakeState
 from .tools import tools_for
 
 logger = logging.getLogger(__name__)
@@ -49,7 +50,7 @@ async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps,
         ticket=ticket,
         ticket_repo=repos.ticket_repo,
         catalog_repo=repos.catalog_repo,
-        state_manager=deps.state_manager,
+        state_manager=IntakeState(deps.state_manager),
         intake=cfg,
         ai_name=ai_name,
         similar=similar,

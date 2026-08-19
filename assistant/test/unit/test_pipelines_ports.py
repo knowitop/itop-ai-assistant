@@ -26,10 +26,10 @@ from itop_ai_assistant.core.deps import AppDeps, build_deps
 from itop_ai_assistant.itop.connection import AiIdentity
 from itop_ai_assistant.pipelines.ports import (
     LockPort,
+    ObjectStatePort,
     RunDeps,
     RunFrameJournal,
     StepJournal,
-    TicketStatePort,
 )
 from itop_ai_assistant.pipelines.registry import build_registry
 from itop_ai_assistant.repositories.sets import ItopRepositories
@@ -53,7 +53,7 @@ class TestContainerSatisfiesTheContract(unittest.TestCase):
         deps = build_deps(settings, build_registry(settings))
 
         lock: LockPort = deps.state_manager
-        state: TicketStatePort = deps.state_manager
+        state: ObjectStatePort = deps.state_manager
         itop: ItopRepositories = deps.itop
         identity: AiIdentity = deps.ai_identity
         step: StepJournal = deps.journal
@@ -72,7 +72,7 @@ class TestPortsWithholdWhatRunsMustNotReach(unittest.TestCase):
     """Ownership stays at the composition root — see `pipelines/ports.py`."""
 
     def test_no_port_hands_out_the_shutdown_of_shared_resources(self) -> None:
-        for port in (RunDeps, LockPort, TicketStatePort, AiIdentity, StepJournal, RunFrameJournal):
+        for port in (RunDeps, LockPort, ObjectStatePort, AiIdentity, StepJournal, RunFrameJournal):
             with self.subTest(port=port.__name__):
                 self.assertNotIn("aclose", get_protocol_members(port))
 

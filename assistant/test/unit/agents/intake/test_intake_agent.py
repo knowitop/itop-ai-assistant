@@ -15,15 +15,16 @@ from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
 from itop_ai_assistant.agents.intake.config import IntakeConfig
+from itop_ai_assistant.agents.intake.prompts import MODULE
 from itop_ai_assistant.agents.intake.prompts import PROMPTS_DIR as INTAKE_PROMPTS_DIR
 from itop_ai_assistant.agents.intake.run import IntakeRun
+from itop_ai_assistant.agents.intake.state import TicketState
 from itop_ai_assistant.config import EmbeddingsConfig, LlmConfig
 from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.settings.prompt_store import read_prompt_dir
-from itop_ai_assistant.state.ticket_state import TicketState
 from itop_ai_assistant.vector import VectorConfig
 from itop_ai_assistant.vector.ports.store import SearchHit
 from itop_ai_assistant.vector.use_cases.search import SimilarSearch
@@ -80,24 +81,26 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
         self.intake_cfg = IntakeConfig()
 
         # Stateful on purpose: the epilogue re-reads the state to see whether
-        # a tool already finished the ticket, so writes must be visible
+        # a tool already finished the ticket, so writes must be visible.
+        # Generic on the mock too (`get`/`increment`/`set_flag`, not
+        # `mark_done`/`increment_rounds`): this is what sits behind
+        # `IntakeState`, at the `ObjectStatePort` level (TASK-047).
         self.ticket_state = TicketState()
 
-        async def mark_done(_ref):
-            self.ticket_state.ai_done = True
+        async def get(_module, _ref, _model):
+            return self.ticket_state
 
-        async def increment_rounds(_ref):
-            self.ticket_state.rounds += 1
+        async def increment(_module, _ref, field):
+            setattr(self.ticket_state, field, getattr(self.ticket_state, field) + 1)
 
-        async def increment_classify_rounds(_ref):
-            self.ticket_state.classify_rounds += 1
+        async def set_flag(_module, _ref, field):
+            setattr(self.ticket_state, field, True)
 
         self.deps = MagicMock()
         self.deps.journal = AsyncMock()
-        self.deps.state_manager.get = AsyncMock(side_effect=lambda _ref: self.ticket_state)
-        self.deps.state_manager.mark_done = AsyncMock(side_effect=mark_done)
-        self.deps.state_manager.increment_rounds = AsyncMock(side_effect=increment_rounds)
-        self.deps.state_manager.increment_classify_rounds = AsyncMock(side_effect=increment_classify_rounds)
+        self.deps.state_manager.get = AsyncMock(side_effect=get)
+        self.deps.state_manager.increment = AsyncMock(side_effect=increment)
+        self.deps.state_manager.set_flag = AsyncMock(side_effect=set_flag)
         self.deps.prompt_store.get = AsyncMock(return_value=_PROMPT_FILES)
 
         self.llm_cfg = LlmConfig(base_url="http://x", model="m")
@@ -178,7 +181,7 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
             self.repos.ticket_repo.append_private_log.await_args.args[1],
             self.intake_cfg.handoff_fallback_note,
         )
-        self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
+        self.deps.state_manager.set_flag.assert_awaited_once_with(MODULE, "Incident::123", "ai_done")
 
     async def test_tool_results_and_model_turns_are_journalled(self):
         await self.run_agent(
@@ -229,7 +232,7 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
         model = await self.run_agent([ai([call("get_service_catalog", {})])])
 
         self.assertEqual(model.calls, 3)
-        self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
+        self.deps.state_manager.set_flag.assert_awaited_once_with(MODULE, "Incident::123", "ai_done")
 
     async def test_usage_is_the_last_journal_step(self):
         await self.run_agent(
@@ -265,7 +268,7 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
         with self.assertRaises(RuntimeError):
             await self.run_agent([ai([call("get_subcategories", {"service_id": 10})])])
 
-        self.deps.state_manager.mark_done.assert_not_called()
+        self.deps.state_manager.set_flag.assert_not_called()
 
     async def test_epilogue_skipped_when_a_tool_already_finished_the_ticket(self):
         self.ticket_state = TicketState(ai_done=True)
@@ -273,7 +276,7 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
         await self.run_agent([ai(content="nothing to do")])
 
         self.repos.ticket_repo.append_private_log.assert_not_called()
-        self.deps.state_manager.mark_done.assert_not_called()
+        self.deps.state_manager.set_flag.assert_not_called()
         self.assertEqual(self.journal_steps()[-2], ("epilogue", "ticket already finished — nothing to close"))
 
 
@@ -292,7 +295,7 @@ class TestProseInsteadOfToolCall(IntakeAgentTestCase):
         self.assertEqual(model.calls, 2)
         self.repos.ticket_repo.append_public_log.assert_awaited_once()
         # The round was not wasted and the ticket was not closed behind the requester
-        self.deps.state_manager.mark_done.assert_not_called()
+        self.deps.state_manager.set_flag.assert_not_called()
         self.repos.ticket_repo.append_private_log.assert_not_called()
         self.assertNotIn("epilogue", [node for node, _ in self.journal_steps()])
 
@@ -315,7 +318,7 @@ class TestProseInsteadOfToolCall(IntakeAgentTestCase):
         model = await self.run_agent([ai(content="still just talking")])
 
         self.assertEqual(model.calls, 2)
-        self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
+        self.deps.state_manager.set_flag.assert_awaited_once_with(MODULE, "Incident::123", "ai_done")
 
 
 class TestForcedToolChoice(IntakeAgentTestCase):
@@ -398,7 +401,7 @@ class TestTerminalTools(IntakeAgentTestCase):
         self.assertEqual(model.calls, 2, "the run must end without a closing model call")
         self.repos.ticket_repo.set_fields.assert_awaited_once()
         self.repos.ticket_repo.append_private_log.assert_awaited_once_with(self.ticket, "Printer in room 3 is dead.")
-        self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
+        self.deps.state_manager.set_flag.assert_awaited_once_with(MODULE, "Incident::123", "ai_done")
         self.assertNotIn("epilogue", [node for node, _ in self.journal_steps()])
 
     async def test_public_question_ends_the_run_without_marking_done(self):
@@ -411,8 +414,8 @@ class TestTerminalTools(IntakeAgentTestCase):
 
         self.assertEqual(model.calls, 1)
         self.repos.ticket_repo.append_public_log.assert_awaited_once()
-        self.deps.state_manager.increment_classify_rounds.assert_awaited_once_with("Incident::123")
-        self.deps.state_manager.mark_done.assert_not_called()
+        self.deps.state_manager.increment.assert_awaited_once_with(MODULE, "Incident::123", "classify_rounds")
+        self.deps.state_manager.set_flag.assert_not_called()
         self.repos.ticket_repo.append_private_log.assert_not_called()
 
     async def test_invalid_service_id_is_fed_back_and_the_agent_recovers(self):
@@ -430,7 +433,7 @@ class TestTerminalTools(IntakeAgentTestCase):
         self.assertIn("[error]", rejection)
         self.assertIn("Valid service IDs: 10", rejection)
         self.repos.ticket_repo.set_fields.assert_awaited_once()
-        self.deps.state_manager.mark_done.assert_awaited_once()
+        self.deps.state_manager.set_flag.assert_awaited_once()
 
     async def test_exhausted_classify_budget_closes_the_ticket_inside_the_tool(self):
         self.ticket_state = TicketState(classify_rounds=2)
@@ -449,7 +452,7 @@ class TestTerminalTools(IntakeAgentTestCase):
         self.repos.ticket_repo.append_private_log.assert_awaited_once_with(
             self.ticket, self.intake_cfg.classify_fallback_note
         )
-        self.deps.state_manager.mark_done.assert_awaited_once_with("Incident::123")
+        self.deps.state_manager.set_flag.assert_awaited_once_with(MODULE, "Incident::123", "ai_done")
         self.assertNotIn("epilogue", [node for node, _ in self.journal_steps()])
 
 

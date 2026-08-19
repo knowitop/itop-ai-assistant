@@ -3,11 +3,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from itop_ai_assistant.agents.intake.config import IntakeConfig
+from itop_ai_assistant.agents.intake.prompts import MODULE
 from itop_ai_assistant.agents.intake.run import IntakeRun, handle_assigned
+from itop_ai_assistant.agents.intake.state import TicketState
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import ObjectRef
-from itop_ai_assistant.state.ticket_state import TicketState
 from itop_ai_assistant.webhook.models import WebhookPayload
 
 
@@ -29,7 +30,7 @@ class TestHandleTicketEvent(unittest.IsolatedAsyncioTestCase):
         self.state_manager = self.deps.state_manager
         self.state_manager.acquire_lock = AsyncMock(return_value=True)
         self.state_manager.release_lock = AsyncMock()
-        self.state_manager.mark_done = AsyncMock()
+        self.state_manager.set_flag = AsyncMock()
         self.state_manager.get = AsyncMock(return_value=TicketState())
 
         self.repos = MagicMock()
@@ -84,7 +85,7 @@ class TestHandleTicketEvent(unittest.IsolatedAsyncioTestCase):
     async def test_assigned_event_marks_done_without_lock(self):
         await handle_assigned(_payload("assigned"), _run(), self.deps)
 
-        self.state_manager.mark_done.assert_awaited_once_with("Incident::123")
+        self.state_manager.set_flag.assert_awaited_once_with(MODULE, "Incident::123", "ai_done")
         self.state_manager.acquire_lock.assert_not_called()
 
     async def test_a_bare_object_ref_runs_the_same_way(self):

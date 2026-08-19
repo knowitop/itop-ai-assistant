@@ -15,7 +15,7 @@ from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.agent_run import AgentRun
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.models import ObjectRef
-from itop_ai_assistant.pipelines.ports import TicketStatePort
+from itop_ai_assistant.pipelines.ports import ObjectStatePort
 from itop_ai_assistant.pipelines.shell import TicketRun
 
 from . import compose
@@ -23,6 +23,7 @@ from .agent import TERMINAL_TOOLS
 from .config import IntakeConfig
 from .context import IntakeContext
 from .prompts import MODULE
+from .state import IntakeState
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class IntakeRun(TicketRun):
 
     async def stop_reason(self, ticket: Ticket, ai_name: str) -> str | None:
         """Why this ticket must not be processed, or None to proceed."""
-        ticket_state = await self.deps.state_manager.get(ticket.label)
+        ticket_state = await IntakeState(self.deps.state_manager).get(ticket.label)
         if ticket_state.ai_done:
             return "already processed (ai_done)"
 
@@ -99,7 +100,7 @@ class _AssignedDeps(Protocol):
     """
 
     @property
-    def state_manager(self) -> TicketStatePort: ...
+    def state_manager(self) -> ObjectStatePort: ...
 
 
 async def handle_assigned(ref: ObjectRef, run: RunContext, deps: _AssignedDeps) -> None:
@@ -113,5 +114,5 @@ async def handle_assigned(ref: ObjectRef, run: RunContext, deps: _AssignedDeps) 
     this route marks one ticket done and has no business reaching iTop, the
     model or the vector store.
     """
-    await deps.state_manager.mark_done(ref.label)
+    await IntakeState(deps.state_manager).mark_done(ref.label)
     logger.info(f"[{run.processing_id}] {ref.label} assigned, marked done")

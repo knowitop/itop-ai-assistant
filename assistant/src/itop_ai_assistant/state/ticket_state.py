@@ -1,6 +1,7 @@
 import logging
-from dataclasses import dataclass
+from typing import TypeVar
 
+from pydantic import BaseModel
 from redis import RedisError
 from redis.asyncio import Redis
 
@@ -16,16 +17,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
 
+TState = TypeVar("TState", bound=BaseModel)
+
 
 class StateUnavailableError(Exception):
     pass
-
-
-@dataclass
-class TicketState:
-    rounds: int = 0
-    classify_rounds: int = 0
-    ai_done: bool = False
 
 
 class TicketStateManager:
@@ -44,63 +40,50 @@ class TicketStateManager:
         self._ttl = ttl_seconds
         self._lock_ttl = lock_ttl_seconds
 
-    def _key(self, ticket_ref: str) -> str:
-        return f"{TICKET_STATE_PREFIX}{ticket_ref}"
+    def _key(self, ticket_ref: str, module: str) -> str:
+        return f"{TICKET_STATE_PREFIX}{ticket_ref}:{module}"
 
     def _lock_key(self, ticket_ref: str) -> str:
         return f"{TICKET_LOCK_PREFIX}{ticket_ref}"
 
-    async def get(self, ticket_ref: str) -> TicketState:
-        """Return current state for a ticket. Defaults to rounds=0, ai_done=False if not found."""
+    async def get(self, module: str, ticket_ref: str, model: type[TState]) -> TState:
+        """Return current state for (module, ticket), validated against the caller's own model.
+
+        Generic on purpose (`ConfigStore.get(module, model)` is the same shape,
+        `settings/config_store.py`): this adapter does not know what fields a
+        module keeps here — missing keys fall back to the model's own
+        defaults, extra keys are ignored.
+        """
         try:
-            data: dict = await self._redis.hgetall(self._key(ticket_ref))  # type: ignore[misc]
+            data: dict = await self._redis.hgetall(self._key(ticket_ref, module))  # type: ignore[misc]
         except RedisError as e:
-            logger.error(f"Redis error getting state for ticket {ticket_ref}: {e}")
+            logger.error(f"Redis error getting state for {module}/{ticket_ref}: {e}")
             raise StateUnavailableError(f"Redis unavailable: {e}") from e
 
-        if not data:
-            return TicketState()
+        return model(**data)
 
-        return TicketState(
-            rounds=int(data.get("rounds", 0)),
-            classify_rounds=int(data.get("classify_rounds", 0)),
-            ai_done=data.get("ai_done", "0") == "1",
-        )
-
-    async def increment_rounds(self, ticket_ref: str) -> None:
-        """Atomically increment rounds counter and reset TTL to 30 days."""
-        key = self._key(ticket_ref)
+    async def increment(self, module: str, ticket_ref: str, field: str) -> None:
+        """Atomically increment one field and reset TTL to 30 days."""
+        key = self._key(ticket_ref, module)
         try:
             async with self._redis.pipeline(transaction=True) as pipe:
-                pipe.hincrby(key, "rounds", 1)
+                pipe.hincrby(key, field, 1)
                 pipe.expire(key, self._ttl)
                 await pipe.execute()
         except RedisError as e:
-            logger.error(f"Redis error incrementing rounds for ticket {ticket_ref}: {e}")
+            logger.error(f"Redis error incrementing {field!r} for {module}/{ticket_ref}: {e}")
             raise StateUnavailableError(f"Redis unavailable: {e}") from e
 
-    async def increment_classify_rounds(self, ticket_ref: str) -> None:
-        """Atomically increment classify_rounds counter and reset TTL to 30 days."""
-        key = self._key(ticket_ref)
+    async def set_flag(self, module: str, ticket_ref: str, field: str) -> None:
+        """Set one boolean field and reset TTL to 30 days."""
+        key = self._key(ticket_ref, module)
         try:
             async with self._redis.pipeline(transaction=True) as pipe:
-                pipe.hincrby(key, "classify_rounds", 1)
+                pipe.hset(key, field, "1")
                 pipe.expire(key, self._ttl)
                 await pipe.execute()
         except RedisError as e:
-            logger.error(f"Redis error incrementing classify_rounds for ticket {ticket_ref}: {e}")
-            raise StateUnavailableError(f"Redis unavailable: {e}") from e
-
-    async def mark_done(self, ticket_ref: str) -> None:
-        """Mark AI processing as done and reset TTL to 30 days."""
-        key = self._key(ticket_ref)
-        try:
-            async with self._redis.pipeline(transaction=True) as pipe:
-                pipe.hset(key, "ai_done", "1")
-                pipe.expire(key, self._ttl)
-                await pipe.execute()
-        except RedisError as e:
-            logger.error(f"Redis error marking done for ticket {ticket_ref}: {e}")
+            logger.error(f"Redis error setting {field!r} for {module}/{ticket_ref}: {e}")
             raise StateUnavailableError(f"Redis unavailable: {e}") from e
 
     async def acquire_lock(self, ticket_ref: str) -> bool:

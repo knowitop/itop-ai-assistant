@@ -3,12 +3,12 @@ from uuid import UUID
 
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import Ticket
-from itop_ai_assistant.pipelines.ports import TicketStatePort
 from itop_ai_assistant.repositories.catalog import CatalogRepository
 from itop_ai_assistant.repositories.ticket import TicketRepository
 from itop_ai_assistant.vector import SimilarSearch
 
 from .config import IntakeConfig
+from .state import IntakeState
 
 
 @dataclass
@@ -30,7 +30,7 @@ class IntakeContext:
     ticket: Ticket
     ticket_repo: TicketRepository
     catalog_repo: CatalogRepository
-    state_manager: TicketStatePort
+    state_manager: IntakeState
     intake: IntakeConfig
     ai_name: str
     # `similar` holds the subsystem's door (TASK-033), not a search assembled

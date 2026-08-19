@@ -21,6 +21,7 @@ from itop_ai_assistant.agents.intake.config import IntakeConfig
 from itop_ai_assistant.agents.intake.context import IntakeContext
 from itop_ai_assistant.agents.intake.prompts import PROMPTS_DIR as INTAKE_PROMPTS_DIR
 from itop_ai_assistant.agents.intake.prompts import build_intake_prompts
+from itop_ai_assistant.agents.intake.state import IntakeState
 from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import Ticket
@@ -109,7 +110,7 @@ def make_ctx(
         ticket=ticket,
         ticket_repo=TicketRepository(itop, settings.ticket_mapping),
         catalog_repo=CatalogRepository(itop),
-        state_manager=state_manager,
+        state_manager=IntakeState(state_manager),
         intake=settings.module_defaults("intake", IntakeConfig),
         # Matches _AI_PERSON_FIELDS, i.e. what IdentityRepository would return
         ai_name="ai-assistant",

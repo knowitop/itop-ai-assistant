@@ -7,11 +7,11 @@ from langchain_core.messages import AIMessage, ToolMessage
 from itop_ai_assistant.agents.intake import tools
 from itop_ai_assistant.agents.intake.agent import TERMINAL_TOOLS
 from itop_ai_assistant.agents.intake.config import IntakeConfig
+from itop_ai_assistant.agents.intake.state import TicketState
 from itop_ai_assistant.agents.intake.tools import ToolRejection
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
-from itop_ai_assistant.state.ticket_state import TicketState
 from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchResult
 
 
