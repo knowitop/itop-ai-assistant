@@ -38,6 +38,7 @@ from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.chunker import Chunk
 from itop_ai_assistant.vector.config import FamilyConfig, VectorClassConfig, VectorConfig
+from itop_ai_assistant.vector.domain import ChunkSyncState, classify_chunk, creation_date, left_indexable_scope
 from itop_ai_assistant.vector.ports.source import ChunkPlan, VectorRecord, VectorSource
 from itop_ai_assistant.vector.ports.store import (
     ChunkDigest,
@@ -300,7 +301,7 @@ class VectorIndexer:
                 report.objects_seen += 1
                 if record.updated_at and (max_seen is None or record.updated_at > max_seen):
                     max_seen = record.updated_at
-                if class_cfg.index_values and record.index_value not in class_cfg.index_values:
+                if left_indexable_scope(record.index_value, class_cfg.index_values):
                     # Left the indexable scope (e.g. reopened) — drop its chunks
                     report.chunks_deleted += await store.delete_object(family, obj_class, record.obj_id)
                     continue
@@ -324,9 +325,15 @@ class VectorIndexer:
                 for chunk in chunks:
                     chunk_meta = object_meta.for_chunk(chunk)
                     digest = stored.get((chunk.kind, chunk.n))
-                    if digest is None or digest.content_hash != chunk.content_hash:
+                    sync = classify_chunk(
+                        chunk.content_hash,
+                        chunk_meta.meta_hash,
+                        stored_content_hash=digest.content_hash if digest else None,
+                        stored_meta_hash=digest.meta_hash if digest else None,
+                    )
+                    if sync is ChunkSyncState.CHANGED:
                         changed.append((chunk, chunk_meta))
-                    elif digest.meta_hash != chunk_meta.meta_hash:
+                    elif sync is ChunkSyncState.STALE_META:
                         stale_meta.append(chunk_meta)
                 current_keys = {(c.kind, c.n) for c in chunks}
                 vanished = [key for key in stored if key not in current_keys]
@@ -479,36 +486,8 @@ def _object_metadata(
         obj_class=obj_class,
         obj_id=record.obj_id,
         filters=filters,
-        created_at=_creation_date(record, stored, started_at),
+        created_at=creation_date(
+            record.created_at, record.updated_at, (d.created_at for d in stored.values()), started_at
+        ),
         updated_at=record.updated_at,
     )
-
-
-def _creation_date(
-    record: VectorRecord[Any], stored: dict[tuple[str, int], ChunkDigest], started_at: datetime
-) -> datetime:
-    """When the object came into being, as the index will remember it.
-
-    The source's own date if it has one. Otherwise whatever the object's
-    already-indexed chunks say — that is what freezes the value: the last two
-    fallbacks fire once, at first indexing, and every pass afterwards
-    inherits. Without that step a fresh `started_at` would enter the payload
-    on every rewrite, and since rewrites are per-chunk, the chunks of one
-    object would end up claiming different creation dates — visible as an
-    object matching a `created` window through some of its chunks and not
-    others (TASK-020).
-
-    `min` over the stored values, not "this chunk's own": a chunk added later
-    (a new log window) has nothing stored and would otherwise take the current
-    clock while its siblings keep the old one. Earliest-known also cannot
-    creep forward from pass to pass.
-
-    Stored beats `record.updated_at` deliberately — a modification date moves
-    with every edit, so as a fallback it is no better than the sweep's clock.
-    """
-    if record.created_at is not None:
-        return record.created_at
-    indexed = [digest.created_at for digest in stored.values() if digest.created_at is not None]
-    if indexed:
-        return min(indexed)
-    return record.updated_at or started_at

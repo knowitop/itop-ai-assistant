@@ -6,8 +6,10 @@ validate.
 
 import hashlib
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum, auto
 
 
 @dataclass(frozen=True)
@@ -106,3 +108,64 @@ class DateRange:
             raise ValueError(
                 f"DateRange is inverted: after={self.after.isoformat()} > before={self.before.isoformat()}"
             )
+
+
+def left_indexable_scope(index_value: str, index_values: list[str]) -> bool:
+    """True when the object's current relevance value falls outside the
+    configured indexable set. An empty `index_values` means "index
+    everything" — there is no scope to leave."""
+    return bool(index_values) and index_value not in index_values
+
+
+class ChunkSyncState(Enum):
+    """What one chunk needs, compared to what is already stored for it."""
+
+    CHANGED = auto()  # re-embed
+    STALE_META = auto()  # rewrite the payload, no re-embed
+    UNCHANGED = auto()  # nothing to do
+
+
+def classify_chunk(
+    content_hash: str, meta_hash: str, *, stored_content_hash: str | None, stored_meta_hash: str | None
+) -> ChunkSyncState:
+    """Content wins over metadata: a chunk with no stored digest, or whose
+    text changed, is CHANGED even if its metadata also changed — the
+    re-embed rewrites the whole payload anyway, including a fresh meta_hash."""
+    if stored_content_hash is None or stored_content_hash != content_hash:
+        return ChunkSyncState.CHANGED
+    if stored_meta_hash != meta_hash:
+        return ChunkSyncState.STALE_META
+    return ChunkSyncState.UNCHANGED
+
+
+def creation_date(
+    record_created_at: datetime | None,
+    record_updated_at: datetime | None,
+    stored_created_ats: Iterable[datetime | None],
+    started_at: datetime,
+) -> datetime:
+    """When the object came into being, as the index will remember it.
+
+    The source's own date if it has one. Otherwise whatever the object's
+    already-indexed chunks say — that is what freezes the value: the last two
+    fallbacks fire once, at first indexing, and every pass afterwards
+    inherits. Without that step a fresh `started_at` would enter the payload
+    on every rewrite, and since rewrites are per-chunk, the chunks of one
+    object would end up claiming different creation dates — visible as an
+    object matching a `created` window through some of its chunks and not
+    others (TASK-020).
+
+    `min` over the stored values, not "this chunk's own": a chunk added later
+    (a new log window) has nothing stored and would otherwise take the current
+    clock while its siblings keep the old one. Earliest-known also cannot
+    creep forward from pass to pass.
+
+    Stored beats `record_updated_at` deliberately — a modification date moves
+    with every edit, so as a fallback it is no better than the sweep's clock.
+    """
+    if record_created_at is not None:
+        return record_created_at
+    indexed = [d for d in stored_created_ats if d is not None]
+    if indexed:
+        return min(indexed)
+    return record_updated_at or started_at
