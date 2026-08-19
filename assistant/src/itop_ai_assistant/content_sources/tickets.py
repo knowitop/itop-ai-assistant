@@ -114,7 +114,7 @@ class TicketVectorSource(VectorSource[Ticket]):
                 updated_at=ticket.last_update,
                 created_at=ticket.start_date,
                 org_id=ticket.org_id,
-                filters={"service_id": ticket.service_id} if ticket.has_service else None,
+                filters={"service_id": ticket.service_id} if ticket.service_id is not None else None,
                 payload=ticket,
             )
             for ticket in tickets

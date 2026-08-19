@@ -9,9 +9,9 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+from itop_ai_assistant.domain.identity import ObjectIdentity
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.context import RunContext
-from itop_ai_assistant.pipelines.models import ObjectRef
 from itop_ai_assistant.pipelines.shell import TicketRun
 from itop_ai_assistant.webhook.models import WebhookPayload
 
@@ -110,10 +110,10 @@ class TestPhaseOrder(ShellTestCase):
         self.assertIn(str(self.run.processing_id), comment)
         self.deps.itop.get.assert_not_called()
 
-    async def test_label_is_the_lock_key(self):
+    async def test_ref_str_is_the_lock_key(self):
         await self.run.execute()
 
-        self.assertEqual(self.run.label, "Change::123")
+        self.assertEqual(str(self.run.ref), "Change::123")
         self.deps.state_manager.acquire_lock.assert_awaited_once_with("Change::123")
         self.deps.state_manager.release_lock.assert_awaited_once_with("Change::123")
 
@@ -182,6 +182,6 @@ class TestHandleClassmethod(ShellTestCase):
 
     async def test_handle_takes_a_bare_object_ref(self):
         """The shell knows nothing about triggers — a plain reference is enough."""
-        outcome = await _ProbeRun.handle(ObjectRef(obj_class="Change", id="123"), _run(), self.deps)
+        outcome = await _ProbeRun.handle(ObjectIdentity(obj_class="Change", id="123"), _run(), self.deps)
 
         self.assertEqual(outcome.status, "done")

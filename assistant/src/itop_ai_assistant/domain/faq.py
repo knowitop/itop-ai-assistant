@@ -11,8 +11,10 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
+from itop_ai_assistant.domain.identity import ObjectIdentifiable, ObjectIdentity
 
-class FaqArticle(BaseModel):
+
+class FaqArticle(BaseModel, ObjectIdentifiable):
     obj_class: str = "FAQ"
     id: str
     title: str = ""
@@ -26,3 +28,7 @@ class FaqArticle(BaseModel):
     # iTop timestamps carry a nominal UTC tzinfo — see ticket_repository._parse_dt
     last_update: datetime | None = None
     start_date: datetime | None = None
+
+    @property
+    def identity(self) -> ObjectIdentity:
+        return ObjectIdentity(obj_class=self.obj_class, id=self.id)

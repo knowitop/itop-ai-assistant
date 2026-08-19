@@ -15,6 +15,14 @@ def _parse_log_entries(log_raw: dict | None) -> list[LogEntry]:
     return [LogEntry(user_login=e["user_login"], message=e["message"]) for e in ((log_raw or {}).get("entries") or [])]
 
 
+def _external_key(raw: str | None) -> str | None:
+    """iTop returns "0" for an unset external key."""
+    try:
+        return str(raw) if int(raw or 0) else None
+    except ValueError:
+        return None
+
+
 class TicketRepository:
     """Translates between the semantic Ticket model and raw iTop attributes.
 
@@ -54,8 +62,8 @@ class TicketRepository:
             title=attr("title") or "",
             description=attr("description") or "",
             status=attr("status") or "",
-            service_id=str(attr("service_id") or "0"),
-            subcategory_id=str(attr("subcategory_id") or "0"),
+            service_id=_external_key(attr("service_id")),
+            subcategory_id=_external_key(attr("subcategory_id")),
             service_name=attr("service_name") or "",
             subcategory_name=attr("subcategory_name") or "",
             caller_name=attr("caller_name") or "",
@@ -114,7 +122,7 @@ class TicketRepository:
         for semantic, value in fields.items():
             attr_code = mapped.get(semantic)
             if attr_code is None:
-                logger.warning(f"{ticket.label}: field {semantic!r} is not mapped for {ticket.obj_class}, skipping")
+                logger.warning(f"{ticket.identity}: field {semantic!r} is not mapped for {ticket.obj_class}, skipping")
                 continue
             raw_fields[attr_code] = value
         if raw_fields:

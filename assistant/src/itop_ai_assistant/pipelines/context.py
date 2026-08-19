@@ -1,8 +1,9 @@
 """What every run carries with it, from the entry point down to the iTop call.
 
-Kept out of `models.py` on purpose: that file is what a run is started with and
-ends as, and it is pydantic because `ObjectRef` serves as a route's input model.
-A run context is never serialized — it is passed, not posted.
+Kept out of `models.py` on purpose: that file is what a run ends as, and
+`domain.identity.ObjectIdentity` — what a run is *started* with — is pydantic
+because it serves as a route's input model. A run context is never serialized
+— it is passed, not posted.
 """
 
 from dataclasses import dataclass, field

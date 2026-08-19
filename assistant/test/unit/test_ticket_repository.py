@@ -43,7 +43,7 @@ class TestToTicket(unittest.TestCase):
 
         ticket = repo.to_ticket("UserRequest", _RAW_TICKET)
 
-        self.assertEqual(ticket.label, "UserRequest::42")
+        self.assertEqual(str(ticket.identity), "UserRequest::42")
         self.assertEqual(ticket.title, "Printer broken")
         self.assertEqual(ticket.status, "new")
         self.assertEqual(ticket.service_id, "5")
@@ -82,6 +82,8 @@ class TestToTicket(unittest.TestCase):
 
         ticket = repo.to_ticket("UserRequest", raw)
 
+        self.assertIsNone(ticket.service_id)
+        self.assertIsNone(ticket.subcategory_id)
         self.assertFalse(ticket.has_service)
         self.assertFalse(ticket.has_subcategory)
 

@@ -5,8 +5,9 @@ must stop (`stop_reason`) and what it actually does (`body`); the rest is the
 same for all of them, so a new module inherits the platform's invariants instead
 of remembering to re-implement them.
 
-The trigger is not part of that contract: the shell is handed an `ObjectRef`, so
-the same run serves a webhook event and a synchronous request. What differs is
+The trigger is not part of that contract: the shell is handed an
+`ObjectIdentity`, so the same run serves a webhook event and a synchronous
+request. What differs is
 only what happens to the `RunOutcome` afterwards — dropped by the webhook,
 returned to the caller by the request.
 
@@ -21,10 +22,11 @@ import logging
 from abc import ABC, abstractmethod
 from uuid import UUID
 
+from itop_ai_assistant.domain.identity import ObjectIdentity
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.itop.connection import AiIdentity
 from itop_ai_assistant.pipelines.context import RunContext
-from itop_ai_assistant.pipelines.models import ObjectRef, RunOutcome
+from itop_ai_assistant.pipelines.models import RunOutcome
 from itop_ai_assistant.pipelines.ports import LockPort, RunDeps, StepJournal
 from itop_ai_assistant.repositories.sets import ItopRepositories, RepositorySet
 
@@ -50,7 +52,7 @@ class TicketRun(ABC):
 
     def __init__(
         self,
-        ref: ObjectRef,
+        ref: ObjectIdentity,
         run: RunContext,
         deps: RunDeps,
         *,
@@ -68,14 +70,13 @@ class TicketRun(ABC):
         self.itop = itop
         self.ai_identity = ai_identity
         self.journal = journal
-        self.label = ref.label
 
     @property
     def processing_id(self) -> UUID:
         return self.run.processing_id
 
     @classmethod
-    async def handle(cls, ref: ObjectRef, run: RunContext, deps: RunDeps) -> RunOutcome:
+    async def handle(cls, ref: ObjectIdentity, run: RunContext, deps: RunDeps) -> RunOutcome:
         """What a module registers as its route — fits both handler types.
 
         A webhook route drops the outcome; a request route returns it to the
@@ -96,26 +97,27 @@ class TicketRun(ABC):
         ).execute()
 
     async def execute(self) -> RunOutcome:
-        if not await self.lock.acquire_lock(self.label):
-            logger.info(f"[{self.processing_id}] {self.label} is already being processed, skipping")
+        ref_key = str(self.ref)
+        if not await self.lock.acquire_lock(ref_key):
+            logger.info(f"[{self.processing_id}] {self.ref} is already being processed, skipping")
             return await self.skip("lock", "ticket is already being processed")
         try:
             self.repos = await self.itop.for_principal(self.run.principal, comment=self.run.comment)
             ticket = await self.repos.ticket_repo.fetch(self.ref.obj_class, self.ref.id)
             if ticket is None:
-                logger.warning(f"[{self.processing_id}] {self.label} not found in iTop, skipping")
+                logger.warning(f"[{self.processing_id}] {self.ref} not found in iTop, skipping")
                 return await self.skip("fetch", "ticket not found in iTop")
             ai_name = await self.ai_identity.ai_person_name()
             # The guard runs before the body, not as middleware: it needs no LLM
             # and it saves the catalog round-trip to iTop on a no-op webhook
             reason = await self.stop_reason(ticket, ai_name)
             if reason:
-                logger.info(f"[{self.processing_id}] {self.label}: {reason}")
+                logger.info(f"[{self.processing_id}] {self.ref}: {reason}")
                 return await self.skip("guard", reason)
             await self.body(ticket, ai_name)
             return RunOutcome(status="done")
         finally:
-            await self.lock.release_lock(self.label)
+            await self.lock.release_lock(ref_key)
 
     @abstractmethod
     async def stop_reason(self, ticket: Ticket, ai_name: str) -> str | None:

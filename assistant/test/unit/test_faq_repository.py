@@ -33,6 +33,7 @@ class TestToArticle(unittest.TestCase):
 
         self.assertIsInstance(article, FaqArticle)
         self.assertEqual(article.id, "42")
+        self.assertEqual(str(article.identity), "FAQ::42")
         self.assertEqual(article.title, "How to reset your password")
         self.assertEqual(article.summary, "Quick steps to reset a forgotten password")
         self.assertEqual(article.category_name, "Accounts")

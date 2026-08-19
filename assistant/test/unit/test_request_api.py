@@ -17,8 +17,9 @@ from itop_ai_assistant.config import (
     SecurityConfig,
     TicketMappingConfig,
 )
+from itop_ai_assistant.domain.identity import ObjectIdentity
 from itop_ai_assistant.main import app
-from itop_ai_assistant.pipelines.models import ObjectRef, RunOutcome
+from itop_ai_assistant.pipelines.models import RunOutcome
 from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, build_registry
 from itop_ai_assistant.state.journal import RunJournal
 
@@ -98,7 +99,7 @@ class TestProbeModule(unittest.TestCase):
         self.client = self.enterContext(TestClient(app))
         self.client.app.state.deps = _mock_deps()
 
-        self.calls: list[ObjectRef] = []
+        self.calls: list[ObjectIdentity] = []
         self.raises: Exception | None = None
         _configs = {"intake": IntakeConfig(), "selfcheck": SelfCheckConfig()}
         registry = build_registry(SimpleNamespace(module_defaults=lambda name, model: _configs[name]))
@@ -108,9 +109,9 @@ class TestProbeModule(unittest.TestCase):
                 RequestRoute(
                     action="run",
                     module="probe",
-                    input_model=ObjectRef,
+                    input_model=ObjectIdentity,
                     handler=self._handler,
-                    subject_of=lambda ref: ref.label,
+                    subject_of=lambda ref: str(ref),
                     summary="Probe action",
                 )
             ],
@@ -130,7 +131,7 @@ class TestProbeModule(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["detail"], "probe ran")
-        self.assertEqual([ref.label for ref in self.calls], ["Change::9"])
+        self.assertEqual([str(ref) for ref in self.calls], ["Change::9"])
 
     def test_handler_failure_reaches_the_caller_and_the_journal(self):
         """Unlike a webhook, nobody else is watching — the caller must be told."""

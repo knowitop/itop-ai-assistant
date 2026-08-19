@@ -34,6 +34,7 @@ class TestServices(unittest.IsolatedAsyncioTestCase):
 
         schema.find_one.assert_awaited_once_with({"id": "5"}, projection=["id", "name", "description"])
         self.assertEqual(item, Service(id="5", name="IT Support", description="General IT"))
+        self.assertEqual(str(item.identity), "Service::5")
 
     async def test_get_service_returns_none_when_missing(self):
         repo, _, schema = _make_repo()
@@ -70,6 +71,7 @@ class TestSubcategories(unittest.IsolatedAsyncioTestCase):
         item = await repo.get_subcategory("3")
 
         self.assertEqual(item, ServiceSubcategory(id="3", name="Hardware", description="HW issues", service_id="5"))
+        self.assertEqual(str(item.identity), "ServiceSubcategory::3")
 
     async def test_missing_service_id_raises(self):
         # service_id is a mandatory external key in iTop — its absence in the

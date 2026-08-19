@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 
 from itop_ai_assistant.agents.intake.config import IntakeConfig
 from itop_ai_assistant.agents.selfcheck.config import SelfCheckConfig
-from itop_ai_assistant.pipelines.models import ObjectRef
+from itop_ai_assistant.domain.identity import ObjectIdentity
 from itop_ai_assistant.pipelines.registry import (
     ModuleInfo,
     RequestRoute,
@@ -27,9 +27,9 @@ def _request(module: str = "test-module", action: str = "run") -> RequestRoute:
     return RequestRoute(
         action=action,
         module=module,
-        input_model=ObjectRef,
+        input_model=ObjectIdentity,
         handler=AsyncMock(),
-        subject_of=lambda ref: ref.label,
+        subject_of=lambda ref: str(ref),
     )
 
 
@@ -188,8 +188,8 @@ class TestBuildRegistry(unittest.TestCase):
         route = registry.resolve_request("intake", "process")
 
         self.assertIsNotNone(route)
-        self.assertIs(route.input_model, ObjectRef)
-        self.assertEqual(route.subject_of(ObjectRef(obj_class="Incident", id="7")), "Incident::7")
+        self.assertIs(route.input_model, ObjectIdentity)
+        self.assertEqual(route.subject_of(ObjectIdentity(obj_class="Incident", id="7")), "Incident::7")
 
     def test_disabled_intake_registers_nothing(self):
         registry = build_registry(_settings({"enabled": False}))

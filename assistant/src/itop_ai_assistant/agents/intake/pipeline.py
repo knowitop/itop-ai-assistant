@@ -9,7 +9,8 @@ module exposes the same way (`<module>/pipeline.py::register`,
 import logging
 
 from itop_ai_assistant.config import Settings
-from itop_ai_assistant.pipelines.models import ObjectRef, TicketEvent
+from itop_ai_assistant.domain.identity import ObjectIdentity
+from itop_ai_assistant.pipelines.models import TicketEvent
 from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, TriggerRegistry
 
 from .config import IntakeConfig
@@ -44,9 +45,9 @@ def register(registry: TriggerRegistry, settings: Settings) -> None:
         RequestRoute(
             action="process",
             module=info.name,
-            input_model=ObjectRef,
+            input_model=ObjectIdentity,
             handler=IntakeRun.handle,
-            subject_of=lambda ref: ref.label,
+            subject_of=lambda ref: str(ref),
             summary="Run intake on one ticket now and return the outcome",
         )
     ]

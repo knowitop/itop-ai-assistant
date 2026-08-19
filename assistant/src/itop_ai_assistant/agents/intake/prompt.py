@@ -68,13 +68,13 @@ async def build_service_context(ticket: Ticket, catalog: CatalogRepository) -> s
     list on every run just to learn what it picked last time.
     """
     parts = []
-    if ticket.has_service:
+    if ticket.service_id is not None:
         service = await catalog.get_service(ticket.service_id)
         if service:
             parts.append(f"Service: {service.name}")
             if service.description:
                 parts.append(f"Service description:\n{service.description}")
-    if ticket.has_subcategory:
+    if ticket.subcategory_id is not None:
         subcategory = await catalog.get_subcategory(ticket.subcategory_id)
         if subcategory:
             parts.append(f"Subcategory: {subcategory.name}")

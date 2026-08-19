@@ -90,7 +90,7 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
 
     async def test_filters_none_when_no_service(self):
         get_ticket_repo, get_ticket_repo_as, ticket_repo, _ = _ticket_repo_factory()
-        ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket(service_id="0")])
+        ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket(service_id=None)])
         source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, classes=["UserRequest"])
         await source.prepare()
 

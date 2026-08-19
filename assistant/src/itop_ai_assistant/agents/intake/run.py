@@ -11,10 +11,10 @@ itself. Registration and assembly live elsewhere (`pipeline.py`,
 import logging
 from typing import Protocol
 
+from itop_ai_assistant.domain.identity import ObjectIdentity
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.agent_run import AgentRun
 from itop_ai_assistant.pipelines.context import RunContext
-from itop_ai_assistant.pipelines.models import ObjectRef
 from itop_ai_assistant.pipelines.ports import ObjectStatePort
 from itop_ai_assistant.pipelines.shell import TicketRun
 
@@ -33,12 +33,12 @@ class IntakeRun(TicketRun):
 
     async def stop_reason(self, ticket: Ticket, ai_name: str) -> str | None:
         """Read the AI state and config, then let `domain.stop_reason` decide."""
-        ticket_state = await IntakeState(self.deps.state_manager).get(ticket.label)
+        ticket_state = await IntakeState(self.deps.state_manager).get(str(ticket.identity))
         cfg = await self.deps.config_store.get(MODULE, IntakeConfig)
         return domain.stop_reason(ticket, ticket_state, active_statuses=cfg.active_statuses, ai_name=ai_name)
 
     async def body(self, ticket: Ticket, ai_name: str) -> None:
-        logger.info(f"[{self.processing_id}] Running intake agent for {ticket.label}")
+        logger.info(f"[{self.processing_id}] Running intake agent for {ticket.identity}")
 
         composed = await compose.assemble(ticket, ai_name, self.run, self.deps, self.repos)
         await IntakeAgentRun(
@@ -68,14 +68,16 @@ class IntakeAgentRun(AgentRun[IntakeContext]):
         else's ticket.
         """
         ticket = self.context.ticket
-        state = await self.context.state_manager.get(ticket.label)
+        state = await self.context.state_manager.get(str(ticket.identity))
         if state.ai_done:
             await self.step("epilogue", "ticket already finished — nothing to close")
             return
 
-        logger.info(f"[{self.processing_id}] {ticket.label}: agent produced no terminal action, posting fallback note")
+        logger.info(
+            f"[{self.processing_id}] {ticket.identity}: agent produced no terminal action, posting fallback note"
+        )
         await self.context.ticket_repo.append_private_log(ticket, self.context.intake.handoff_fallback_note)
-        await self.context.state_manager.mark_done(ticket.label)
+        await self.context.state_manager.mark_done(str(ticket.identity))
         await self.step("epilogue", "no terminal action — fallback note posted, ai_done set")
 
 
@@ -91,7 +93,7 @@ class _AssignedDeps(Protocol):
     def state_manager(self) -> ObjectStatePort: ...
 
 
-async def handle_assigned(ref: ObjectRef, run: RunContext, deps: _AssignedDeps) -> None:
+async def handle_assigned(ref: ObjectIdentity, run: RunContext, deps: _AssignedDeps) -> None:
     """Engineer took the ticket: stop any further AI processing.
 
     Not a `TicketRun`: no lock and no read. The missing lock is deliberate — it
@@ -102,5 +104,5 @@ async def handle_assigned(ref: ObjectRef, run: RunContext, deps: _AssignedDeps) 
     this route marks one ticket done and has no business reaching iTop, the
     model or the vector store.
     """
-    await IntakeState(deps.state_manager).mark_done(ref.label)
-    logger.info(f"[{run.processing_id}] {ref.label} assigned, marked done")
+    await IntakeState(deps.state_manager).mark_done(str(ref))
+    logger.info(f"[{run.processing_id}] {ref} assigned, marked done")
