@@ -31,6 +31,17 @@ class TestFilePromptStore(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(PromptStoreError):
             await store.get("no_such_module")
 
+    async def test_empty_defaults_dir_raises(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            empty_dir = Path(tmp) / "empty"
+            empty_dir.mkdir()
+
+            store = FilePromptStore({"empty": empty_dir})
+            with self.assertRaises(PromptStoreError) as ctx:
+                await store.get("empty")
+
+        self.assertIn(str(empty_dir), str(ctx.exception))
+
     async def test_override_shadows_default(self):
         with tempfile.TemporaryDirectory() as tmp:
             override_dir = Path(tmp) / "intake"

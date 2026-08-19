@@ -87,6 +87,15 @@ class TestToTicket(unittest.TestCase):
         self.assertFalse(ticket.has_service)
         self.assertFalse(ticket.has_subcategory)
 
+    def test_malformed_service_id_treated_as_unset(self):
+        repo, _ = _make_repo()
+        raw = {**_RAW_TICKET, "service_id": "N/A"}
+
+        ticket = repo.to_ticket("UserRequest", raw)
+
+        self.assertIsNone(ticket.service_id)
+        self.assertFalse(ticket.has_service)
+
     def test_maps_solution_and_timestamps(self):
         repo, _ = _make_repo()
 
