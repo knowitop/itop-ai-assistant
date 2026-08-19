@@ -22,6 +22,7 @@ from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.util.text import bind_oql, html_to_markdown
 
 from .context import IntakeContext
+from .domain import NonBlankText, RoundBudget, check_round_budget
 from .prompt import format_options
 from .similar import similar_query
 
@@ -231,16 +232,21 @@ async def post_public_question(question: str, runtime: IntakeToolRuntime) -> str
     """
     ctx = runtime.context
     ticket = ctx.ticket
-    if not question.strip():
-        raise ToolRejection("The question is empty. Write the actual text you want the requester to read.")
+    try:
+        text = NonBlankText(question)
+    except ValueError:
+        raise ToolRejection("The question is empty. Write the actual text you want the requester to read.") from None
 
     # The counter is chosen by code, not by the model: leaving it to the model
     # would let it pick the budget it has not spent yet
     classifying = not ticket.has_subcategory
     state = await ctx.state_manager.get(ticket.label)
     cfg = ctx.intake
+    budget = check_round_budget(
+        state, classifying=classifying, max_rounds=cfg.max_rounds, max_classify_rounds=cfg.max_classify_rounds
+    )
 
-    if classifying and state.classify_rounds >= cfg.max_classify_rounds:
+    if budget is RoundBudget.CLASSIFY_EXHAUSTED:
         # Rounds spent: hand an unclassifiable ticket to a human instead of
         # asking again.
         # Returned as success, not as a rejection: the ticket *is* finished,
@@ -253,13 +259,13 @@ async def post_public_question(question: str, runtime: IntakeToolRuntime) -> str
             "The requester has already been asked about this twice and the ticket is still unclassified, "
             "so it has been handed to a human instead. Your session is over."
         )
-    if not classifying and state.rounds >= cfg.max_rounds:
+    if budget is RoundBudget.EXHAUSTED:
         raise ToolRejection(
             "The requester has already been asked twice. Do not ask again — "
             "call finish_handoff with whatever information the ticket already has."
         )
 
-    await ctx.ticket_repo.append_public_log(ticket, question)
+    await ctx.ticket_repo.append_public_log(ticket, text.value)
     if classifying:
         await ctx.state_manager.increment_classify_rounds(ticket.label)
     else:
@@ -283,10 +289,12 @@ async def finish_handoff(note: str, runtime: IntakeToolRuntime) -> str:
     """
     ctx = runtime.context
     ticket = ctx.ticket
-    if not note.strip():
-        raise ToolRejection("The note is empty. Summarize the ticket for the engineer in 2-4 sentences.")
+    try:
+        text = NonBlankText(note)
+    except ValueError:
+        raise ToolRejection("The note is empty. Summarize the ticket for the engineer in 2-4 sentences.") from None
 
-    await ctx.ticket_repo.append_private_log(ticket, note)
+    await ctx.ticket_repo.append_private_log(ticket, text.value)
     await ctx.state_manager.mark_done(ticket.label)
     logger.info(f"{ticket.label}: handoff note posted, marked done")
     return "The handoff note has been posted and the ticket is ready for the engineer. Your session is over."
