@@ -31,4 +31,4 @@ class FaqArticle(BaseModel, ObjectIdentifiable):
 
     @property
     def identity(self) -> ObjectIdentity:
-        return ObjectIdentity(obj_class=self.obj_class, id=self.id)
+        return ObjectIdentity(obj_class=self.obj_class, obj_id=self.id)

@@ -12,7 +12,7 @@ class Service(BaseModel, ObjectIdentifiable):
 
     @property
     def identity(self) -> ObjectIdentity:
-        return ObjectIdentity(obj_class="Service", id=self.id)
+        return ObjectIdentity(obj_class="Service", obj_id=self.id)
 
 
 class ServiceSubcategory(BaseModel, ObjectIdentifiable):
@@ -24,4 +24,4 @@ class ServiceSubcategory(BaseModel, ObjectIdentifiable):
 
     @property
     def identity(self) -> ObjectIdentity:
-        return ObjectIdentity(obj_class="ServiceSubcategory", id=self.id)
+        return ObjectIdentity(obj_class="ServiceSubcategory", obj_id=self.id)

@@ -182,6 +182,6 @@ class TestHandleClassmethod(ShellTestCase):
 
     async def test_handle_takes_a_bare_object_ref(self):
         """The shell knows nothing about triggers — a plain reference is enough."""
-        outcome = await _ProbeRun.handle(ObjectIdentity(obj_class="Change", id="123"), _run(), self.deps)
+        outcome = await _ProbeRun.handle(ObjectIdentity(obj_class="Change", obj_id="123"), _run(), self.deps)
 
         self.assertEqual(outcome.status, "done")

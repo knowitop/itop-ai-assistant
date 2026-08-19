@@ -90,7 +90,7 @@ class TestHandleTicketEvent(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_bare_object_ref_runs_the_same_way(self):
         """What the request trigger hands over: no event, same run, an outcome back."""
-        outcome = await IntakeRun.handle(ObjectIdentity(obj_class="Incident", id="123"), _run(), self.deps)
+        outcome = await IntakeRun.handle(ObjectIdentity(obj_class="Incident", obj_id="123"), _run(), self.deps)
 
         self.assertEqual(outcome.status, "done")
         self.mock_run.assert_awaited_once()
@@ -98,7 +98,7 @@ class TestHandleTicketEvent(unittest.IsolatedAsyncioTestCase):
     async def test_a_finished_ticket_reports_why_it_was_skipped(self):
         self.state_manager.get.return_value = TicketState(ai_done=True)
 
-        outcome = await IntakeRun.handle(ObjectIdentity(obj_class="Incident", id="123"), _run(), self.deps)
+        outcome = await IntakeRun.handle(ObjectIdentity(obj_class="Incident", obj_id="123"), _run(), self.deps)
 
         self.assertEqual((outcome.status, outcome.detail), ("skipped", "already processed (ai_done)"))
         self.mock_run.assert_not_called()

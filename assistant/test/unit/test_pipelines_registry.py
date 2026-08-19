@@ -189,7 +189,7 @@ class TestBuildRegistry(unittest.TestCase):
 
         self.assertIsNotNone(route)
         self.assertIs(route.input_model, ObjectIdentity)
-        self.assertEqual(route.subject_of(ObjectIdentity(obj_class="Incident", id="7")), "Incident::7")
+        self.assertEqual(route.subject_of(ObjectIdentity(obj_class="Incident", obj_id="7")), "Incident::7")
 
     def test_disabled_intake_registers_nothing(self):
         registry = build_registry(_settings({"enabled": False}))

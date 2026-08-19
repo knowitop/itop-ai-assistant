@@ -16,12 +16,12 @@ from pydantic import BaseModel, Field
 
 class ObjectIdentity(BaseModel):
     obj_class: str = Field(alias="class")
-    id: str
+    obj_id: str = Field(alias="id")
 
     model_config = {"populate_by_name": True}
 
     def __str__(self) -> str:
-        return f"{self.obj_class}::{self.id}"
+        return f"{self.obj_class}::{self.obj_id}"
 
 
 class ObjectIdentifiable(ABC):

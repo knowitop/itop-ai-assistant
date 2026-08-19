@@ -103,7 +103,7 @@ class TicketRun(ABC):
             return await self.skip("lock", "ticket is already being processed")
         try:
             self.repos = await self.itop.for_principal(self.run.principal, comment=self.run.comment)
-            ticket = await self.repos.ticket_repo.fetch(self.ref.obj_class, self.ref.id)
+            ticket = await self.repos.ticket_repo.fetch(self.ref.obj_class, self.ref.obj_id)
             if ticket is None:
                 logger.warning(f"[{self.processing_id}] {self.ref} not found in iTop, skipping")
                 return await self.skip("fetch", "ticket not found in iTop")
