@@ -456,6 +456,42 @@ class TestTerminalTools(IntakeAgentTestCase):
         self.assertNotIn("epilogue", [node for node, _ in self.journal_steps()])
 
 
+class TestSwitchedOffActions(IntakeAgentTestCase):
+    """A run whose administrator switched the handoff note off writes nothing
+    to the private log, whichever way it ends (REQ-003 R7)."""
+
+    def setUp(self):
+        super().setUp()
+        self.intake_cfg = IntakeConfig(handoff_note_enabled=False, similar_enabled=False)
+
+    async def test_the_journal_opens_with_the_scope_of_the_run(self):
+        # Otherwise "the agent did nothing" is indistinguishable from a breakage
+        await self.run_agent([ai([call("finish_processing", {}, "f1")])])
+
+        self.assertEqual(self.journal_steps()[0], ("scope", "classify=on clarify=on handoff_note=off similar=off"))
+
+    async def test_the_silent_finish_replaces_the_handoff_and_ends_the_run(self):
+        model = await self.run_agent(
+            [
+                ai([call("finish_processing", {}, "f1")]),
+                ai(content="MUST NOT BE REACHED"),
+            ]
+        )
+
+        self.assertEqual(model.calls, 1)
+        self.assertNotIn("finish_handoff", model.bound_tools[0])
+        self.assertIn("finish_processing", model.bound_tools[0])
+        self.repos.ticket_repo.append_private_log.assert_not_called()
+        self.deps.state_manager.set_flag.assert_awaited_once_with(MODULE, "Incident::123", "ai_done")
+
+    async def test_the_epilogue_closes_the_ticket_without_a_fallback_note(self):
+        await self.run_agent([ai(content="just talking")])
+
+        self.repos.ticket_repo.append_private_log.assert_not_called()
+        self.deps.state_manager.set_flag.assert_awaited_once_with(MODULE, "Incident::123", "ai_done")
+        self.assertIn("handoff note is off", self.journal_steps()[-2][1])
+
+
 class TestSimilarTicketsWiring(IntakeAgentTestCase):
     """Whether the run can search at all is decided here, once, by the shell —
     the tool is either given or withheld, never given and then apologetic."""

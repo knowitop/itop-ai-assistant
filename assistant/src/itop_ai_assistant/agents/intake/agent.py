@@ -25,23 +25,41 @@ from langgraph.graph.state import CompiledStateGraph
 
 from .config import IntakeConfig
 from .context import IntakeContext
+from .domain import IntakeScope
 from .tools import ToolRejection
 
 logger = logging.getLogger(__name__)
 
-# A successful call to one of these ends the session: one question or one
-# handoff per run, never both.
-TERMINAL_TOOLS = frozenset({"post_public_question", "finish_handoff"})
+# A successful call to one of these ends the session: one closing action per
+# run, whichever of them this deployment has, never two.
+TERMINAL_TOOLS = frozenset({"post_public_question", "finish_handoff", "finish_processing"})
 
-# Handed to the model when a turn produced prose instead of a tool call.
-# Deliberately concrete: the text it just wrote is usually the right content
-# for one of the two terminal tools, so the retry only has to route it.
-_NUDGE = (
-    "Your last reply was plain text, and plain text goes nowhere: the requester only ever sees messages sent "
-    "with post_public_question, and the engineer only ever sees notes written with finish_handoff. Nobody read "
-    "what you just wrote. Act now with a tool — if that text was meant for the requester, pass it as the "
-    "`question` argument; if it was your summary of the ticket, pass it as the `note` argument."
-)
+
+def _nudge(scope: IntakeScope) -> str:
+    """What a turn of prose is answered with — in terms of this run's own tools.
+
+    Deliberately concrete: the text the model just wrote is usually the right
+    content for one of the terminal tools, so the retry only has to route it.
+    Naming a tool the run was never given would send it looking for one more.
+    """
+    parts = ["Your last reply was plain text, and plain text goes nowhere — nobody read what you just wrote."]
+    if scope.clarify:
+        parts.append(
+            "The requester only ever sees messages sent with post_public_question: if that text was meant "
+            "for them, pass it as the `question` argument."
+        )
+    if scope.handoff_note:
+        parts.append(
+            "The engineer only ever sees notes written with finish_handoff: if it was your summary of the "
+            "ticket, pass it as the `note` argument."
+        )
+    else:
+        parts.append(
+            "Nothing you write is recorded in this session: once the ticket needs nothing more from you, "
+            "call finish_processing."
+        )
+    parts.append("Act now with a tool.")
+    return " ".join(parts)
 
 
 @wrap_tool_call
@@ -99,7 +117,7 @@ async def _require_tool_call(request, handler):
         return response
 
     logger.info("intake: model answered with plain text instead of a tool call, retrying once")
-    nudge = HumanMessage(content=_NUDGE)
+    nudge = HumanMessage(content=_nudge(request.runtime.context.scope))
     retried = await handler(request.override(messages=[*request.messages, message, nudge]))
     return ModelResponse(
         result=[message, nudge, *retried.result],

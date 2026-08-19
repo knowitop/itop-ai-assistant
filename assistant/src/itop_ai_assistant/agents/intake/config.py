@@ -31,6 +31,14 @@ class IntakeConfig(BaseModel):
 
     # TODO: обернуть поля в Field с description, чтобы в UI не просто названия были, но и описание и может валидация.
     enabled: bool = True
+    # The four actions the module may perform, switched independently. A
+    # switched-off action is not asked to be skipped — its tool is never handed
+    # to the model (ADR-012), so it cannot happen at all. Switching the module
+    # off entirely is `enabled: false`, not clearing these.
+    classify_enabled: bool = True
+    clarify_enabled: bool = True
+    handoff_note_enabled: bool = True
+    similar_enabled: bool = True
     classes: list[str] = ["UserRequest", "Incident"]
     # The module acts on a ticket only while its status is in this list — an
     # intake concern (when this module may act), not the datamodel mapping's.
@@ -97,5 +105,25 @@ class IntakeConfig(BaseModel):
                 f"similar_top ({self.similar_top}) exceeds similar_candidates ({self.similar_candidates}): "
                 "candidates are only ever dropped when the requester's iTop no longer confirms them, "
                 "so asking for more results than candidates cannot return them"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_action_toggles(self) -> "IntakeConfig":
+        """Reject the two action combinations that cannot mean anything.
+
+        Separate from `_check_similar_budget`: different rules about different
+        fields, and one validator for both would answer two unrelated mistakes
+        with one message.
+        """
+        if self.similar_enabled and not self.handoff_note_enabled:
+            raise ValueError(
+                "similar_enabled requires handoff_note_enabled: references to similar solved tickets "
+                "exist only inside the handoff note, so searching for them without a note enriches nothing"
+            )
+        if not (self.classify_enabled or self.clarify_enabled or self.handoff_note_enabled):
+            raise ValueError(
+                "at least one of classify_enabled, clarify_enabled, handoff_note_enabled must stay on: "
+                "switching the module off entirely is intake.enabled = false"
             )
         return self

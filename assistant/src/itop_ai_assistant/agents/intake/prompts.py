@@ -23,7 +23,7 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 PROMPT_VARIABLES: dict[str, set[str]] = {
     "system": set(),
     "catalog_human": {"services"},
-    "ticket_human": {"caller_name", "title", "description", "conversation", "service_context"},
+    "ticket_human": {"caller_name", "title", "description", "conversation", "service_context", "session_scope"},
 }
 
 

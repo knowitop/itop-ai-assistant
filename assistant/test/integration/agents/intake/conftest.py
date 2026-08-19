@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 from itop_ai_assistant.agents.intake.config import IntakeConfig
 from itop_ai_assistant.agents.intake.context import IntakeContext
+from itop_ai_assistant.agents.intake.domain import IntakeScope
 from itop_ai_assistant.agents.intake.prompts import PROMPTS_DIR as INTAKE_PROMPTS_DIR
 from itop_ai_assistant.agents.intake.prompts import build_intake_prompts
 from itop_ai_assistant.agents.intake.state import IntakeState
@@ -99,11 +100,13 @@ def make_ctx(
     state_manager: TicketStateManager,
     ticket: Ticket,
     subcategory_fields: dict | None = None,
+    scope: IntakeScope | None = None,
 ) -> tuple[IntakeContext, ItopMockTransport]:
     """Create an IntakeContext with a fresh ItopMockTransport. Returns both for assertions."""
     transport = ItopMockTransport(subcategory_fields=subcategory_fields)
     itop = Itop(url=ITOP_URL, version="1.3", auth_user="dummy", auth_pwd="dummy", transport=transport)
     settings = get_settings()
+    intake = settings.module_defaults("intake", IntakeConfig)
     ctx = IntakeContext(
         processing_id=uuid4(),
         principal=Principal.service(),
@@ -111,7 +114,16 @@ def make_ctx(
         ticket_repo=TicketRepository(itop, settings.ticket_mapping),
         catalog_repo=CatalogRepository(itop),
         state_manager=IntakeState(state_manager),
-        intake=settings.module_defaults("intake", IntakeConfig),
+        intake=intake,
+        # No vector store in these tests, so `similar` is off regardless of
+        # the switch — the same reduction `compose.assemble` makes
+        scope=scope
+        or IntakeScope(
+            classify=intake.classify_enabled,
+            clarify=intake.clarify_enabled,
+            handoff_note=intake.handoff_note_enabled,
+            similar=False,
+        ),
         # Matches _AI_PERSON_FIELDS, i.e. what IdentityRepository would return
         ai_name="ai-assistant",
     )

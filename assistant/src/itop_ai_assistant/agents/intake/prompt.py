@@ -26,6 +26,7 @@ from itop_ai_assistant.repositories.catalog import CatalogRepository
 from itop_ai_assistant.util.text import bind_oql, html_to_markdown
 
 from .context import IntakeContext
+from .domain import IntakeScope, closing_tools, needs_classification
 from .prompts import IntakePrompts
 
 
@@ -86,15 +87,42 @@ async def build_service_context(ticket: Ticket, catalog: CatalogRepository) -> s
     return "\n".join(parts)
 
 
+def format_session_scope(scope: IntakeScope, ticket: Ticket) -> str:
+    """List what this run may do, and what ends it.
+
+    Assembled in code rather than kept as a template fragment — the same call
+    `build_service_context` makes: four sentences behind four conditions would
+    be four files plus the code that joins them.
+
+    Reads the same two rules `tools_for` does, `needs_classification`
+    included, so the list and the tool set cannot disagree: a session told it
+    may classify while the tools are withheld spends a turn looking for them.
+    """
+    actions = []
+    if needs_classification(scope, ticket):
+        actions.append("- Classify the ticket: set its service and its subcategory.")
+    if scope.clarify:
+        actions.append("- Ask the requester one clarifying question, and end the session with it.")
+    if scope.similar:
+        actions.append("- Look up solved tickets similar to this one, to quote in the note.")
+    if scope.handoff_note:
+        actions.append("- Write the handoff note for the engineer.")
+    else:
+        actions.append("- Finish the ticket. Nothing is written down: this deployment keeps no internal notes.")
+    closing = " or ".join(closing_tools(scope))
+    return "\n".join(actions) + f"\n\nThis session ends with exactly one call to {closing}, and nothing else."
+
+
 async def build_initial_messages(ctx: IntakeContext, prompts: IntakePrompts) -> list[BaseMessage]:
     ticket = ctx.ticket
     service_context = await build_service_context(ticket, ctx.catalog_repo)
 
-    # An already classified ticket gets no catalog: it cannot be reclassified
-    # (`tools_for` withholds the tools), and the list would otherwise ride
-    # along in the message history, paid for on every model call of the run.
+    # No catalog where classification cannot happen — an already classified
+    # ticket, or a deployment that does not classify at all (`tools_for`
+    # withholds the tools either way). The list would otherwise ride along in
+    # the message history, paid for on every model call of the run.
     messages: list[BaseMessage] = [SystemMessage(content=prompts.system)]
-    if not (ticket.has_service and ticket.has_subcategory):
+    if needs_classification(ctx.scope, ticket):
         services = await ctx.catalog_repo.find_services(bind_oql(ctx.intake.classify_service_oql, ticket.model_dump()))
         catalog_text = PromptTemplate.from_template(prompts.catalog_human).format(services=format_options(services))
         messages.append(HumanMessage(content=catalog_text))
@@ -105,6 +133,7 @@ async def build_initial_messages(ctx: IntakeContext, prompts: IntakePrompts) -> 
         description=html_to_markdown(ticket.description),
         conversation=build_conversation_xml(ticket.public_log, ctx.ai_name, ticket.caller_name),
         service_context=service_context,
+        session_scope=format_session_scope(ctx.scope, ticket),
     )
     messages.append(HumanMessage(content=ticket_text))
     return messages

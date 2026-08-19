@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from itop_ai_assistant.agents.intake import tools
 from itop_ai_assistant.agents.intake.agent import TERMINAL_TOOLS
 from itop_ai_assistant.agents.intake.config import IntakeConfig
+from itop_ai_assistant.agents.intake.domain import IntakeScope
 from itop_ai_assistant.agents.intake.state import TicketState
 from itop_ai_assistant.agents.intake.tools import ToolRejection
 from itop_ai_assistant.core.principal import Principal
@@ -34,13 +35,27 @@ def _subcategories() -> list[ServiceSubcategory]:
     ]
 
 
-def _make_runtime(ticket: Ticket | None = None, messages: list | None = None, **state_kwargs) -> MagicMock:
+def _scope(**overrides: bool) -> IntakeScope:
+    return IntakeScope(**{"classify": True, "clarify": True, "handoff_note": True, "similar": True, **overrides})
+
+
+def _offered(ticket: Ticket, scope: IntakeScope | None = None) -> list[str]:
+    return [t.name for t in tools.tools_for(ticket, scope or _scope())]
+
+
+def _make_runtime(
+    ticket: Ticket | None = None,
+    messages: list | None = None,
+    scope: IntakeScope | None = None,
+    **state_kwargs,
+) -> MagicMock:
     """Mirror of test_nodes_classify._make_runtime, for ToolRuntime."""
     runtime = MagicMock()
     runtime.tool_call_id = "current"
     runtime.state = {"messages": messages or []}
     runtime.context.ticket = ticket or _ticket()
     runtime.context.intake = IntakeConfig()
+    runtime.context.scope = scope or _scope()
     runtime.context.ai_name = "ai-assistant"
     runtime.context.think_tags = ("think",)
     runtime.context.catalog_repo.find_services = AsyncMock(return_value=_services())
@@ -83,15 +98,49 @@ class TestToolSchemas(unittest.TestCase):
         # Enforced, not requested: on every webhook the agent otherwise
         # re-reads the subcategory list and re-sets the same values — and
         # once proposed a different subcategory over a correct one
-        offered = [t.name for t in tools.tools_for(_ticket(service_id="10", subcategory_id="101"))]
+        offered = _offered(_ticket(service_id="10", subcategory_id="101"), _scope(similar=False))
 
         self.assertEqual(offered, ["post_public_question", "finish_handoff"])
 
     def test_unclassified_ticket_gets_everything(self):
-        self.assertEqual(tools.tools_for(_ticket()), tools.TOOLS)
+        self.assertEqual(
+            _offered(_ticket()),
+            [
+                "get_service_catalog",
+                "get_subcategories",
+                "set_classification",
+                "post_public_question",
+                "finish_handoff",
+                "find_similar_resolved_tickets",
+            ],
+        )
 
-    def test_half_classified_ticket_still_gets_everything(self):
-        self.assertEqual(tools.tools_for(_ticket(service_id="10")), tools.TOOLS)
+    def test_half_classified_ticket_still_gets_the_classification_tools(self):
+        self.assertIn("set_classification", _offered(_ticket(service_id="10")))
+
+    def test_a_deployment_that_does_not_classify_never_gets_those_tools(self):
+        # Not "classify only if unclassified" — the stage does not exist here,
+        # so an empty subcategory is not a reason to hand the tools over
+        self.assertEqual(
+            _offered(_ticket(), _scope(classify=False)),
+            ["post_public_question", "finish_handoff", "find_similar_resolved_tickets"],
+        )
+
+    def test_without_the_handoff_note_the_silent_finish_stands_in(self):
+        # A run with no way to end burns max_iterations on every ticket
+        offered = _offered(_ticket(), _scope(handoff_note=False, similar=False))
+
+        self.assertNotIn("finish_handoff", offered)
+        self.assertEqual(offered[-1], "finish_processing")
+
+    def test_without_clarification_no_question_tool(self):
+        self.assertNotIn("post_public_question", _offered(_ticket(), _scope(clarify=False)))
+
+    def test_classification_only_leaves_one_way_out(self):
+        self.assertEqual(
+            _offered(_ticket(), _scope(clarify=False, handoff_note=False, similar=False)),
+            ["get_service_catalog", "get_subcategories", "set_classification", "finish_processing"],
+        )
 
     def test_every_tool_is_registered(self):
         self.assertEqual(
@@ -102,6 +151,8 @@ class TestToolSchemas(unittest.TestCase):
                 "set_classification",
                 "post_public_question",
                 "finish_handoff",
+                "finish_processing",
+                "find_similar_resolved_tickets",
             ],
         )
 
@@ -109,17 +160,19 @@ class TestToolSchemas(unittest.TestCase):
         # A tool that would answer "not configured" every time is worse than
         # no tool: the model has to spend a call to learn that
         for ticket in (_ticket(), _ticket(service_id="10", subcategory_id="101")):
-            self.assertNotIn("find_similar_resolved_tickets", [t.name for t in tools.tools_for(ticket)])
+            self.assertNotIn("find_similar_resolved_tickets", _offered(ticket, _scope(similar=False)))
 
     def test_the_search_tool_is_offered_in_both_sets(self):
         # A run ends in a note whether or not it had to classify first
         for ticket in (_ticket(), _ticket(service_id="10", subcategory_id="101")):
-            offered = [t.name for t in tools.tools_for(ticket, similar=True)]
-            self.assertEqual(offered[-1], "find_similar_resolved_tickets")
+            self.assertEqual(_offered(ticket)[-1], "find_similar_resolved_tickets")
 
     def test_the_search_tool_is_not_terminal(self):
         # It informs the note; the session still ends with a question or a handoff
         self.assertNotIn("find_similar_resolved_tickets", TERMINAL_TOOLS)
+
+    def test_the_silent_finish_is_terminal(self):
+        self.assertIn("finish_processing", TERMINAL_TOOLS)
 
 
 class TestGetServiceCatalog(unittest.IsolatedAsyncioTestCase):
@@ -298,6 +351,40 @@ class TestPostPublicQuestion(unittest.IsolatedAsyncioTestCase):
         runtime.context.ticket_repo.append_public_log.assert_not_called()
         self.assertIn("Your session is over", result)
 
+    async def test_a_deployment_that_does_not_classify_spends_an_ordinary_round(self):
+        # The ticket has no subcategory, but nobody was going to set one — the
+        # question is about completeness, and `classify_rounds` must not pay
+        runtime = _make_runtime(scope=_scope(classify=False))
+
+        await tools.post_public_question.coroutine(question="Which printer model?", runtime=runtime)
+
+        runtime.context.state_manager.increment_rounds.assert_awaited_once_with("Incident::1")
+        runtime.context.state_manager.increment_classify_rounds.assert_not_called()
+
+    async def test_exhausted_classify_budget_writes_nothing_when_notes_are_off(self):
+        # R7: with the handoff note switched off the private log stays empty
+        # whatever the outcome — the ticket is just finished silently
+        runtime = _make_runtime(scope=_scope(handoff_note=False, similar=False), classify_rounds=2)
+
+        result = await tools.post_public_question.coroutine(question="one more?", runtime=runtime)
+
+        runtime.context.ticket_repo.append_private_log.assert_not_called()
+        runtime.context.state_manager.mark_done.assert_awaited_once_with("Incident::1")
+        self.assertIn("Your session is over", result)
+
+    async def test_exhausted_rounds_budget_points_at_the_finish_the_run_actually_has(self):
+        runtime = _make_runtime(
+            _ticket(service_id="10", subcategory_id="101"),
+            scope=_scope(handoff_note=False, similar=False),
+            rounds=2,
+        )
+
+        with self.assertRaises(ToolRejection) as ctx:
+            await tools.post_public_question.coroutine(question="one more?", runtime=runtime)
+
+        self.assertIn("finish_processing", str(ctx.exception))
+        self.assertNotIn("finish_handoff", str(ctx.exception))
+
     async def test_exhausted_rounds_budget_points_at_the_handoff(self):
         runtime = _make_runtime(_ticket(service_id="10", subcategory_id="101"), rounds=2)
 
@@ -329,6 +416,23 @@ class TestFinishHandoff(unittest.IsolatedAsyncioTestCase):
 
         runtime.context.ticket_repo.append_private_log.assert_not_called()
         runtime.context.state_manager.mark_done.assert_not_called()
+
+
+class TestFinishProcessing(unittest.IsolatedAsyncioTestCase):
+    async def test_the_ticket_is_marked_done_and_nothing_is_written(self):
+        runtime = _make_runtime(scope=_scope(handoff_note=False, similar=False))
+
+        result = await tools.finish_processing.coroutine(runtime=runtime)
+
+        runtime.context.state_manager.mark_done.assert_awaited_once_with("Incident::1")
+        runtime.context.ticket_repo.append_private_log.assert_not_called()
+        runtime.context.ticket_repo.append_public_log.assert_not_called()
+        self.assertIn("Your session is over", result)
+
+    def test_it_takes_no_arguments(self):
+        # "Just finish" against "write 2-4 sentences" are different contracts,
+        # which is why this is its own tool and not a `note=None`
+        self.assertEqual(tools.finish_processing.tool_call_schema.model_json_schema().get("properties", {}), {})
 
 
 class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):

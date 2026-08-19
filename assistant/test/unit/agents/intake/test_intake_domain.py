@@ -1,12 +1,25 @@
 import unittest
 
-from itop_ai_assistant.agents.intake.domain import NonBlankText, RoundBudget, check_round_budget, stop_reason
+from itop_ai_assistant.agents.intake.domain import (
+    IntakeScope,
+    NonBlankText,
+    RoundBudget,
+    check_round_budget,
+    closing_tools,
+    format_scope,
+    needs_classification,
+    stop_reason,
+)
 from itop_ai_assistant.agents.intake.state import TicketState
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 
 
 def _ticket(status: str = "new", public_log: list[LogEntry] | None = None) -> Ticket:
     return Ticket(obj_class="Incident", id="123", status=status, public_log=public_log or [])
+
+
+def _scope(**overrides: bool) -> IntakeScope:
+    return IntakeScope(**{"classify": True, "clarify": True, "handoff_note": True, "similar": True, **overrides})
 
 
 class TestCheckRoundBudget(unittest.TestCase):
@@ -61,6 +74,59 @@ class TestCheckRoundBudget(unittest.TestCase):
         result = check_round_budget(state, classifying=True, max_rounds=2, max_classify_rounds=2)
 
         self.assertEqual(result, RoundBudget.OK)
+
+
+class TestNeedsClassification(unittest.TestCase):
+    """Where "the administrator allowed it" meets "the ticket still needs it"."""
+
+    @staticmethod
+    def _classified() -> Ticket:
+        ticket = _ticket()
+        ticket.service_id, ticket.subcategory_id = "10", "101"
+        return ticket
+
+    def test_enabled_and_unclassified(self):
+        self.assertTrue(needs_classification(_scope(), _ticket()))
+
+    def test_enabled_but_already_classified(self):
+        self.assertFalse(needs_classification(_scope(), self._classified()))
+
+    def test_disabled_and_unclassified(self):
+        # The stage nobody runs: an empty subcategory is not a reason to start
+        self.assertFalse(needs_classification(_scope(classify=False), _ticket()))
+
+    def test_disabled_and_already_classified(self):
+        self.assertFalse(needs_classification(_scope(classify=False), self._classified()))
+
+    def test_half_classified_ticket_still_needs_it(self):
+        ticket = _ticket()
+        ticket.service_id = "10"
+
+        self.assertTrue(needs_classification(_scope(), ticket))
+
+
+class TestClosingTools(unittest.TestCase):
+    def test_both_ways_out(self):
+        self.assertEqual(closing_tools(_scope()), ["post_public_question", "finish_handoff"])
+
+    def test_without_the_note_the_silent_finish_stands_in(self):
+        self.assertEqual(
+            closing_tools(_scope(handoff_note=False, similar=False)),
+            ["post_public_question", "finish_processing"],
+        )
+
+    def test_a_run_that_only_classifies_still_has_a_way_out(self):
+        self.assertEqual(
+            closing_tools(_scope(clarify=False, handoff_note=False, similar=False)),
+            ["finish_processing"],
+        )
+
+
+class TestFormatScope(unittest.TestCase):
+    def test_every_action_is_named_in_a_fixed_order(self):
+        text = format_scope(_scope(clarify=False, similar=False))
+
+        self.assertEqual(text, "classify=on clarify=off handoff_note=on similar=off")
 
 
 class TestNonBlankText(unittest.TestCase):

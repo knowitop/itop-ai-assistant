@@ -8,6 +8,7 @@ from itop_ai_assistant.repositories.ticket import TicketRepository
 from itop_ai_assistant.vector import SimilarSearch
 
 from .config import IntakeConfig
+from .domain import IntakeScope
 from .state import IntakeState
 
 
@@ -32,6 +33,10 @@ class IntakeContext:
     catalog_repo: CatalogRepository
     state_manager: IntakeState
     intake: IntakeConfig
+    # What this run may do at all. The tool set, the prompt and the journal
+    # read the composition of actions from here, never from `intake` — that
+    # one stays the source of thresholds and texts.
+    scope: IntakeScope
     ai_name: str
     # `similar` holds the subsystem's door (TASK-033), not a search assembled
     # for this run — None on a deployment without vectors, and the tool that

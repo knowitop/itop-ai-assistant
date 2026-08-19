@@ -21,6 +21,7 @@ from itop_ai_assistant.repositories.sets import RepositorySet
 from .agent import build_intake_agent
 from .config import IntakeConfig
 from .context import IntakeContext
+from .domain import IntakeScope
 from .prompt import build_initial_messages
 from .prompts import MODULE, build_intake_prompts
 from .state import IntakeState
@@ -43,7 +44,15 @@ async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps,
     cfg = await deps.config_store.get(MODULE, IntakeConfig)
     llm_cfg = await deps.config_store.get("llm", LlmConfig)
     prompts = build_intake_prompts(await deps.prompt_store.get(MODULE))
-    similar = deps.vector_search if await deps.vector_search.available() else None
+    # The administrator's switch and the deployment's ability to search are one
+    # condition, not two: `similar is not None` stays the single source of both
+    similar = deps.vector_search if cfg.similar_enabled and await deps.vector_search.available() else None
+    scope = IntakeScope(
+        classify=cfg.classify_enabled,
+        clarify=cfg.clarify_enabled,
+        handoff_note=cfg.handoff_note_enabled,
+        similar=similar is not None,
+    )
     context = IntakeContext(
         processing_id=run.processing_id,
         principal=run.principal,
@@ -52,13 +61,14 @@ async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps,
         catalog_repo=repos.catalog_repo,
         state_manager=IntakeState(deps.state_manager),
         intake=cfg,
+        scope=scope,
         ai_name=ai_name,
         similar=similar,
     )
     agent = build_intake_agent(
         deps.create_llm(llm_cfg, cfg.model),
         cfg,
-        tools_for(ticket, similar=similar is not None),
+        tools_for(ticket, scope),
         # Nothing here can deliver prose, so force a tool call wherever the
         # endpoint accepts being forced
         force_tool_choice=llm_cfg.endpoint_forces_tool_choice,

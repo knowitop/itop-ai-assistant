@@ -4,11 +4,13 @@ from uuid import uuid4
 
 from itop_ai_assistant.agents.intake.config import IntakeConfig
 from itop_ai_assistant.agents.intake.context import IntakeContext
+from itop_ai_assistant.agents.intake.domain import IntakeScope
 from itop_ai_assistant.agents.intake.prompt import (
     build_conversation_xml,
     build_initial_messages,
     build_service_context,
     format_options,
+    format_session_scope,
 )
 from itop_ai_assistant.agents.intake.prompts import PROMPTS_DIR as INTAKE_PROMPTS_DIR
 from itop_ai_assistant.agents.intake.prompts import build_intake_prompts
@@ -30,6 +32,10 @@ def _ticket(**overrides) -> Ticket:
         caller_name="John Doe",
     )
     return Ticket(**{**defaults, **overrides})
+
+
+def _scope(**overrides: bool) -> IntakeScope:
+    return IntakeScope(**{"classify": True, "clarify": True, "handoff_note": True, "similar": True, **overrides})
 
 
 class TestFormatOptions(unittest.TestCase):
@@ -119,6 +125,35 @@ class TestServiceContext(unittest.IsolatedAsyncioTestCase):
         self.catalog.get_subcategory.assert_not_called()
 
 
+class TestSessionScope(unittest.TestCase):
+    """The list the model reads must be the tool set it was handed."""
+
+    def test_everything_on(self):
+        text = format_session_scope(_scope(), _ticket())
+
+        self.assertIn("Classify the ticket", text)
+        self.assertIn("clarifying question", text)
+        self.assertIn("similar", text)
+        self.assertIn("handoff note", text)
+        self.assertIn("post_public_question or finish_handoff", text)
+
+    def test_a_classified_ticket_is_not_told_to_classify(self):
+        # `tools_for` withholds the classification tools here, so promising
+        # the stage would send the model looking for them
+        text = format_session_scope(_scope(), _ticket(service_id="10", subcategory_id="101"))
+
+        self.assertNotIn("Classify the ticket", text)
+
+    def test_switched_off_actions_are_not_listed(self):
+        text = format_session_scope(_scope(clarify=False, handoff_note=False, similar=False), _ticket())
+
+        self.assertIn("Classify the ticket", text)
+        self.assertNotIn("clarifying question", text)
+        self.assertNotIn("handoff note", text)
+        self.assertIn("no internal notes", text)
+        self.assertIn("exactly one call to finish_processing", text)
+
+
 class TestInitialMessages(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.catalog = MagicMock()
@@ -128,7 +163,7 @@ class TestInitialMessages(unittest.IsolatedAsyncioTestCase):
         self.catalog.get_service = AsyncMock(return_value=None)
         self.catalog.get_subcategory = AsyncMock(return_value=None)
 
-    def _context(self, ticket: Ticket) -> IntakeContext:
+    def _context(self, ticket: Ticket, scope: IntakeScope | None = None) -> IntakeContext:
         return IntakeContext(
             processing_id=uuid4(),
             principal=Principal.service(),
@@ -137,6 +172,7 @@ class TestInitialMessages(unittest.IsolatedAsyncioTestCase):
             catalog_repo=self.catalog,
             state_manager=MagicMock(),
             intake=IntakeConfig(),
+            scope=scope or _scope(),
             ai_name="ai-assistant",
         )
 
@@ -155,6 +191,19 @@ class TestInitialMessages(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("<p>", messages[2].text)
         self.assertIn('role="requester"', messages[2].text)
         self.assertIn("Not classified yet", messages[2].text)
+        # The scope reaches the ticket message — the placeholder is optional as
+        # far as prompt validation is concerned, so nothing else guards it
+        self.assertIn("What you can do in this session", messages[2].text)
+        self.assertIn("post_public_question or finish_handoff", messages[2].text)
+
+    async def test_a_deployment_that_does_not_classify_gets_no_catalog(self):
+        # Minus one iTop round trip and a sizeable block of tokens in every
+        # model call of the run
+        messages = await build_initial_messages(self._context(_ticket(), _scope(classify=False)), _PROMPTS)
+
+        self.assertEqual([m.type for m in messages], ["system", "human"])
+        self.catalog.find_services.assert_not_called()
+        self.assertNotIn("Classify the ticket", messages[1].text)
 
     async def test_classified_ticket_gets_no_catalog(self):
         # The catalog rides in the message history and is paid for on every

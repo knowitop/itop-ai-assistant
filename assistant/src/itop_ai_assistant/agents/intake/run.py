@@ -41,6 +41,9 @@ class IntakeRun(TicketRun):
         logger.info(f"[{self.processing_id}] Running intake agent for {ticket.identity}")
 
         composed = await compose.assemble(ticket, ai_name, self.run, self.deps, self.repos)
+        # First step of the journal: with actions switchable, "the agent did
+        # nothing" has to be readable as a setting rather than as a breakage
+        await self.step("scope", domain.format_scope(composed.context.scope))
         await IntakeAgentRun(
             composed.agent,
             composed.context,
@@ -62,6 +65,10 @@ class IntakeAgentRun(AgentRun[IntakeContext]):
         Setting `ai_done` is mandatory: otherwise the next webhook replays the
         whole expensive cycle to the same end.
 
+        The fallback note is not: where the handoff note is switched off the
+        private log stays empty whatever the outcome (REQ-003 R7), and writing
+        one here would be the switched-off action happening anyway.
+
         The `ai_done` re-read guards a real race: `handle_assigned` takes no
         lock, so an engineer can pick the ticket up while the agent is still
         thinking — and a fallback note posted after that would land on someone
@@ -73,12 +80,14 @@ class IntakeAgentRun(AgentRun[IntakeContext]):
             await self.step("epilogue", "ticket already finished — nothing to close")
             return
 
-        logger.info(
-            f"[{self.processing_id}] {ticket.identity}: agent produced no terminal action, posting fallback note"
-        )
-        await self.context.ticket_repo.append_private_log(ticket, self.context.intake.handoff_fallback_note)
+        logger.info(f"[{self.processing_id}] {ticket.identity}: agent produced no terminal action, closing the run")
+        if self.context.scope.handoff_note:
+            await self.context.ticket_repo.append_private_log(ticket, self.context.intake.handoff_fallback_note)
+            detail = "no terminal action — fallback note posted, ai_done set"
+        else:
+            detail = "no terminal action — ai_done set, handoff note is off so nothing was written"
         await self.context.state_manager.mark_done(str(ticket.identity))
-        await self.step("epilogue", "no terminal action — fallback note posted, ai_done set")
+        await self.step("epilogue", detail)
 
 
 class _AssignedDeps(Protocol):

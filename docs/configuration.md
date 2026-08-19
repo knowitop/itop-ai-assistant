@@ -78,6 +78,10 @@ Set in the [Admin UI → Modules](admin-ui.md#modules) or via `PUT /api/config/i
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enabled` | `true` | Enable or disable the intake module |
+| `classify_enabled` | `true` | Let the module set the service and the subcategory of the ticket |
+| `clarify_enabled` | `true` | Let the module ask the requester clarifying questions in the public log |
+| `handoff_note_enabled` | `true` | Let the module write the internal note for the engineer |
+| `similar_enabled` | `true` | Let the module quote similar solved tickets in that note — requires `handoff_note_enabled` |
 | `classes` | `["UserRequest", "Incident"]` | Ticket classes to process |
 | `active_statuses` | `["new"]` | Statuses in which the module is allowed to act on a ticket |
 | `max_rounds` | `2` | Max completeness clarifying questions per ticket |
@@ -94,12 +98,33 @@ Set in the [Admin UI → Modules](admin-ui.md#modules) or via `PUT /api/config/i
 | `similar_chunk_kinds` | `["profile", "body"]` | Which chunk kinds the query (title + description) is matched against; `solution` is left out by default — a match there means "the solution reads like the problem", usually noise |
 
 > [!NOTE]
-> The five `similar_*` settings only do something when the [vector index](#vector-index) is switched on and an embeddings endpoint is configured. Without that, the agent is not given the search tool at all and the handoff note carries no references.
+> The `similar_*` thresholds only do something when `similar_enabled` is on **and** the [vector index](#vector-index) is switched on with an embeddings endpoint configured. Without any of that, the agent is not given the search tool at all and the handoff note carries no references.
+
+### Which actions the module performs
+
+The four `*_enabled` settings above switch intake's four actions independently. A switched-off action is not "asked to be skipped": the corresponding tool is never handed to the model, so it cannot happen — and neither can the model waste a call trying. Changes apply from the next ticket, no restart needed.
+
+Deployments differ in what they have already automated and what they are willing to let an AI do, so the useful combinations are:
+
+| Mode | Settings | What the ticket gets |
+|------|----------|----------------------|
+| Everything (default) | all four on | Classification, at most one question at a time, an internal note with references |
+| Classification and note | `clarify_enabled: false` | The requester is never written to; fields are set and the engineer gets a summary of what is there |
+| Classification only | `clarify_enabled: false`, `handoff_note_enabled: false`, `similar_enabled: false` | Pure routing: service and subcategory are set, both logs stay empty |
+| Clarification and note | `classify_enabled: false` | iTop's own rules classify the ticket; the module only completes it and summarizes |
+| Note only | `classify_enabled: false`, `clarify_enabled: false` | A summary and similar-case references, nothing else touched |
+
+Two combinations are rejected when you save them (422 from the admin API):
+
+- `similar_enabled` without `handoff_note_enabled` — the references exist only inside the note, so there would be nothing to put them in;
+- all of `classify_enabled`, `clarify_enabled` and `handoff_note_enabled` off — switching the module off entirely is `enabled: false`, which also stops it from being called at all.
+
+With `handoff_note_enabled: false` the private log of the ticket stays empty whatever happens, including the two service notes (`classify_fallback_note`, `handoff_fallback_note`): the run marks the ticket as processed and writes nothing. The run journal still records everything.
 
 > [!IMPORTANT]
 > `enabled` and `classes` are read at **startup**, not per ticket: changing them in the admin UI does not re-route webhooks until the service restarts. Every other setting applies from the next ticket.
 
-Every run leaves a trace in [Admin UI → Runs](admin-ui.md#runs) (`GET /api/runs`): one `agent` step per model turn (the tools it called and with which arguments), one `tool:<name>` step per result (`[success]` / `[error]` plus the text), and a final `usage` step with model calls, tokens in/out and wall time.
+Every run leaves a trace in [Admin UI → Runs](admin-ui.md#runs) (`GET /api/runs`): a `scope` step naming the actions the run was allowed to perform (`classify=on clarify=off …`), one `agent` step per model turn (the tools it called and with which arguments), one `tool:<name>` step per result (`[success]` / `[error]` plus the text), and a final `usage` step with model calls, tokens in/out and wall time.
 
 ---
 

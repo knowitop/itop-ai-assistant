@@ -22,7 +22,14 @@ from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.util.text import bind_oql, html_to_markdown
 
 from .context import IntakeContext
-from .domain import NonBlankText, RoundBudget, check_round_budget
+from .domain import (
+    IntakeScope,
+    NonBlankText,
+    RoundBudget,
+    check_round_budget,
+    closing_tools,
+    needs_classification,
+)
 from .prompt import format_options
 from .similar import similar_query
 
@@ -38,13 +45,17 @@ class ToolRejection(Exception):
     """A tool refused the call. Becomes an error ToolMessage for the model."""
 
 
-# Closing line of a successful `set_classification`. Deliberately a statement
-# about the process, not an instruction to the reader: the earlier wording
-# ("Now check the ticket… ask the requester… or write the note") read as a
-# conversational turn, and in three of the four observed prose-instead-of-a-
-# tool-call slips the model answered it in prose. Keep it impersonal — no
-# second person, no imperative verbs, no question.
-_REMAINS = "Remaining for this session: exactly one call, post_public_question or finish_handoff."
+def _remains(scope: IntakeScope) -> str:
+    """Closing line of a successful `set_classification`.
+
+    Deliberately a statement about the process, not an instruction to the
+    reader: the earlier wording ("Now check the ticket… ask the requester… or
+    write the note") read as a conversational turn, and in three of the four
+    observed prose-instead-of-a-tool-call slips the model answered it in
+    prose. Keep it impersonal — no second person, no imperative verbs, no
+    question.
+    """
+    return f"Remaining for this session: exactly one call, {' or '.join(closing_tools(scope))}."
 
 
 def _reject_if_repeated(runtime: IntakeToolRuntime, name: str, args: dict) -> None:
@@ -148,7 +159,7 @@ async def set_classification(service_id: int, subcategory_id: int, runtime: Inta
     if ticket.service_id == str(service_id) and ticket.subcategory_id == str(subcategory_id):
         return (
             f"No change: the ticket is already classified as service {service_id}, "
-            f"subcategory {subcategory_id}.\n{_REMAINS}"
+            f"subcategory {subcategory_id}.\n{_remains(ctx.scope)}"
         )
 
     fields = {"service_id": str(service_id), "subcategory_id": str(subcategory_id)}
@@ -162,7 +173,7 @@ async def set_classification(service_id: int, subcategory_id: int, runtime: Inta
     description = subcategory.description.strip() or "(no requirements described)"
     return (
         f"Saved: service {service_id}, subcategory {subcategory_id} ({subcategory.name}).\n"
-        f"Requirements recorded for this subcategory:\n{description}\n{_REMAINS}"
+        f"Requirements recorded for this subcategory:\n{description}\n{_remains(ctx.scope)}"
     )
 
 
@@ -238,8 +249,11 @@ async def post_public_question(question: str, runtime: IntakeToolRuntime) -> str
         raise ToolRejection("The question is empty. Write the actual text you want the requester to read.") from None
 
     # The counter is chosen by code, not by the model: leaving it to the model
-    # would let it pick the budget it has not spent yet
-    classifying = not ticket.has_subcategory
+    # would let it pick the budget it has not spent yet. A deployment that does
+    # not classify has no classification budget to spend, however empty the
+    # ticket's fields are — otherwise the question lands on `classify_rounds`
+    # and, once those run out, the ticket gets a note about a stage nobody ran.
+    classifying = needs_classification(ctx.scope, ticket)
     state = await ctx.state_manager.get(str(ticket.identity))
     cfg = ctx.intake
     budget = check_round_budget(
@@ -252,17 +266,24 @@ async def post_public_question(question: str, runtime: IntakeToolRuntime) -> str
         # Returned as success, not as a rejection: the ticket *is* finished,
         # and a rejection would leave the loop running — free to call
         # finish_handoff and write a second note over this one.
-        logger.info(f"{ticket.identity}: classify rounds exhausted, posting fallback note")
-        await ctx.ticket_repo.append_private_log(ticket, cfg.classify_fallback_note)
+        logger.info(f"{ticket.identity}: classify rounds exhausted, handing the ticket over")
+        # A deployment with the handoff note switched off writes nothing to the
+        # private log, this fallback included (REQ-003 R7) — the ticket is
+        # still finished, it is just finished silently.
+        if ctx.scope.handoff_note:
+            await ctx.ticket_repo.append_private_log(ticket, cfg.classify_fallback_note)
         await ctx.state_manager.mark_done(str(ticket.identity))
         return (
             "The requester has already been asked about this twice and the ticket is still unclassified, "
             "so it has been handed to a human instead. Your session is over."
         )
     if budget is RoundBudget.EXHAUSTED:
+        # Names the closing tool this run actually has: a rejection pointing at
+        # a tool that was never handed over costs another wasted model call.
+        closing = "finish_handoff" if ctx.scope.handoff_note else "finish_processing"
         raise ToolRejection(
-            "The requester has already been asked twice. Do not ask again — "
-            "call finish_handoff with whatever information the ticket already has."
+            f"The requester has already been asked twice. Do not ask again — call {closing} "
+            "with whatever information the ticket already has."
         )
 
     await ctx.ticket_repo.append_public_log(ticket, text.value)
@@ -300,31 +321,59 @@ async def finish_handoff(note: str, runtime: IntakeToolRuntime) -> str:
     return "The handoff note has been posted and the ticket is ready for the engineer. Your session is over."
 
 
-_CLASSIFICATION_TOOLS: list[BaseTool] = [get_service_catalog, get_subcategories, set_classification]
-_HANDOFF_TOOLS: list[BaseTool] = [post_public_question, finish_handoff]
+@tool
+async def finish_processing(runtime: IntakeToolRuntime) -> str:
+    """Finish with this ticket and end the session.
 
-TOOLS: list[BaseTool] = [*_CLASSIFICATION_TOOLS, *_HANDOFF_TOOLS]
-
-
-def tools_for(ticket: Ticket, *, similar: bool = False) -> list[BaseTool]:
-    """The tools this run may use — classification ones only while it is needed.
-
-    An already classified ticket must not be classified again. Left to its
-    own judgement the agent re-runs the whole first stage on every webhook:
-    it re-reads the subcategory list and re-sets the same values, paying two
-    model calls and two iTop round trips for nothing — and occasionally
-    proposing a *different* subcategory, which would overwrite a correct
-    classification with a guess made from a longer conversation.
-
-    Taking the tools away enforces the rule rather than requesting it: the
-    model cannot call what it was never given. The subcategory description —
-    the checklist the ticket is judged against — is in the prompt either way.
-
-    `similar` says the deployment can actually search (a vector store, an
-    embeddings endpoint, indexing switched on). The same reasoning applies:
-    a tool that would answer "not configured" every time is better absent,
-    and the prompt already tells the model to use only what it was given.
+    The last thing you do. Call it once the ticket needs nothing further from
+    you. There is nothing to write down: this deployment keeps no internal
+    notes, and the ticket is simply marked as processed.
     """
-    tools = _HANDOFF_TOOLS if ticket.has_service and ticket.has_subcategory else TOOLS
-    # Useful in both sets: whichever way the run goes, it may end in a note
-    return [*tools, find_similar_resolved_tickets] if similar else list(tools)
+    ctx = runtime.context
+    ticket = ctx.ticket
+    await ctx.state_manager.mark_done(str(ticket.identity))
+    logger.info(f"{ticket.identity}: processing finished with no note, marked done")
+    return "The ticket has been marked as processed. Your session is over."
+
+
+_CLASSIFICATION_TOOLS: list[BaseTool] = [get_service_catalog, get_subcategories, set_classification]
+
+#: Every tool intake owns — the union, not a run's set. `tools_for` decides
+#: what a given run actually gets.
+TOOLS: list[BaseTool] = [
+    *_CLASSIFICATION_TOOLS,
+    post_public_question,
+    finish_handoff,
+    finish_processing,
+    find_similar_resolved_tickets,
+]
+
+
+def tools_for(ticket: Ticket, scope: IntakeScope) -> list[BaseTool]:
+    """The tools this run may use — assembled, not picked from ready-made sets.
+
+    Two rules decide, and both take the tool away rather than ask the model
+    not to use it (ADR-012): what the administrator switched off is not here
+    at all, and neither is what this ticket no longer needs.
+
+    "No longer needs" is the classification tools on an already classified
+    ticket. Left to its own judgement the agent re-runs the whole first stage
+    on every webhook: it re-reads the subcategory list and re-sets the same
+    values, paying two model calls and two iTop round trips for nothing — and
+    occasionally proposing a *different* subcategory, which would overwrite a
+    correct classification with a guess made from a longer conversation. The
+    subcategory description — the checklist the ticket is judged against — is
+    in the prompt either way.
+
+    Exactly one closing tool is always present: `finish_handoff` where the
+    handoff note is on, `finish_processing` where it is off. Without it a run
+    with no way to end burns `max_iterations` on every ticket.
+    """
+    tools: list[BaseTool] = list(_CLASSIFICATION_TOOLS) if needs_classification(scope, ticket) else []
+    if scope.clarify:
+        tools.append(post_public_question)
+    tools.append(finish_handoff if scope.handoff_note else finish_processing)
+    # Last on purpose: it informs the note, it does not end the session
+    if scope.similar:
+        tools.append(find_similar_resolved_tickets)
+    return tools
