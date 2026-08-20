@@ -23,19 +23,28 @@ For version-controlled overrides or deployment automation, use the `PROMPTS_DIR`
     └── system.md   # overrides only this one prompt
 ```
 
+> [!IMPORTANT]
+> If you overrode `system.md` in an earlier version, re-read it after upgrading. The system message is now assembled from five files, and `system.md` is only the base — the instructions for classification, clarification, the handoff note and similar tickets moved into the four `system_*.md` files next to it. An older override keeps working, but it still contains those sections, so the model receives them twice: once from your copy and once from the packaged fragment. Delete from your override everything below "How to work", or override the individual fragments instead.
+
 Files you place here shadow the packaged defaults. Files you do not place keep their defaults. Prompt files are re-read on every processing run — no restart needed after editing.
 
 ---
 
 ## Prompt files
 
-The intake module runs as one agent session, so its prompts are not per-LLM-call pairs but the three messages that open the session:
+The intake module runs as one agent session, so its prompts are not per-LLM-call pairs but the three messages that open the session. The first of them is assembled from five files — a base plus one fragment per [action you switched on](configuration.md#intake-module-settings), so that a switched-off action does not leave its instructions in the model's context:
 
 | File | Role in the session | Sent when |
 |------|--------------------|-----------|
-| `system.md` | The system message: who the agent is, the rules it works under, when to ask versus when to hand off | Always |
+| `system.md` | The base of the system message: who the agent is and the rules it works under | Always |
+| `system_classify.md` | How to pick a service and a subcategory | `intake.classify_enabled` |
+| `system_clarify.md` | When to ask the requester, and how to write to them | `intake.clarify_enabled` |
+| `system_handoff_note.md` | How to write the note for the engineer | `intake.handoff_note_enabled` |
+| `system_similar.md` | How to quote similar solved tickets in that note | `intake.similar_enabled`, and only where vector search is configured |
 | `catalog_human.md` | The service catalog available to the requester's organization | Only for an unclassified ticket — a ticket that already has a service and a subcategory cannot be reclassified, so the list is omitted |
 | `ticket_human.md` | This ticket: title, description, current classification, conversation so far | Always |
+
+The fragments are joined in the order of the table, separated by a blank line. Which of them a run received is not guesswork: the run's journal in the admin UI opens with the composition of actions it ran under.
 
 Everything after these three messages is the agent's own doing — which tool it calls, and what it writes. Note that **tool descriptions are code, not prompts**: they live in the docstrings in `assistant/src/agents/intake/tools.py` and are not overridable through the admin UI.
 
@@ -54,7 +63,7 @@ Prompts use `{placeholder}` variables substituted at runtime. Each template has 
 | `{service_context}` | `ticket_human` | Current Service and ServiceSubcategory, including the subcategory description used as completeness criteria |
 | `{conversation}` | `ticket_human` | Public log history rendered as an XML block, with a `role` per entry (`requester` / `self` / `agent`) |
 
-`system.md` takes no placeholders.
+The five `system*.md` files take no placeholders.
 
 Placeholder names are validated on save. If a template references an unknown name, the save is rejected with an error showing which placeholder is unrecognized. The same validation runs at startup, so a broken override file fails the boot rather than a live ticket.
 

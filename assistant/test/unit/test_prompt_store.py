@@ -131,10 +131,13 @@ class TestBuildIntakePrompts(unittest.TestCase):
         self.assertIn("caler_name", str(ctx.exception))
         self.assertIn("ticket_human", str(ctx.exception))
 
-    def test_extra_key_in_raw_is_ignored(self):
+    def test_unregistered_template_raises(self):
+        # A file in prompts/ that nobody added to PROMPT_VARIABLES is offered
+        # for editing by the admin API and never reaches the model
         raw = {**_default_prompts(), "future_prompt": "text"}
-        prompts = build_intake_prompts(raw)
-        self.assertFalse(hasattr(prompts, "future_prompt"))
+        with self.assertRaises(ValueError) as ctx:
+            build_intake_prompts(raw)
+        self.assertIn("future_prompt", str(ctx.exception))
 
     def test_all_registry_prompts_have_files(self):
         self.assertEqual(_default_prompts().keys(), PROMPT_VARIABLES.keys())

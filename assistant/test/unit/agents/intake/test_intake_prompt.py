@@ -9,6 +9,7 @@ from itop_ai_assistant.agents.intake.prompt import (
     build_conversation_xml,
     build_initial_messages,
     build_service_context,
+    build_system_prompt,
     format_options,
     format_session_scope,
 )
@@ -154,6 +155,40 @@ class TestSessionScope(unittest.TestCase):
         self.assertIn("exactly one call to finish_processing", text)
 
 
+class TestSystemPrompt(unittest.TestCase):
+    def test_every_action_brings_its_own_section(self):
+        text = build_system_prompt(_scope(), _PROMPTS)
+
+        for heading in (
+            "## Your role",
+            "## Classification",
+            "## When to ask the requester",
+            "## How to write to the requester",
+            "## The handoff note",
+            "## Similar solved tickets",
+        ):
+            self.assertIn(heading, text)
+
+    def test_a_switched_off_action_takes_its_instructions_with_it(self):
+        text = build_system_prompt(_scope(classify=False, clarify=False, similar=False), _PROMPTS)
+
+        self.assertIn("## Your role", text)
+        self.assertIn("## The handoff note", text)
+        self.assertNotIn("## Classification", text)
+        self.assertNotIn("## When to ask the requester", text)
+        self.assertNotIn("## How to write to the requester", text)
+        self.assertNotIn("## Similar solved tickets", text)
+
+    def test_fragments_are_separated_by_a_blank_line(self):
+        # Overrides come from a textarea and need not end with a newline; two
+        # sections glued together would read as one
+        prompts = _PROMPTS.model_copy(update={"system": "## Base", "system_classify": "## Classification"})
+
+        text = build_system_prompt(_scope(clarify=False, handoff_note=False, similar=False), prompts)
+
+        self.assertEqual(text, "## Base\n\n## Classification")
+
+
 class TestInitialMessages(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.catalog = MagicMock()
@@ -204,6 +239,15 @@ class TestInitialMessages(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([m.type for m in messages], ["system", "human"])
         self.catalog.find_services.assert_not_called()
         self.assertNotIn("Classify the ticket", messages[1].text)
+
+    async def test_a_classified_ticket_still_gets_the_classification_section(self):
+        # The system message is the cached prefix: it follows the deployment's
+        # scope, never the state of one ticket
+        ticket = _ticket(service_id="10", subcategory_id="101")
+
+        messages = await build_initial_messages(self._context(ticket), _PROMPTS)
+
+        self.assertIn("## Classification", messages[0].text)
 
     async def test_classified_ticket_gets_no_catalog(self):
         # The catalog rides in the message history and is paid for on every

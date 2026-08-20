@@ -1,9 +1,9 @@
 """Initial messages for an intake run: stable content first, volatile last.
 
-    [0] SystemMessage  system.md          — identical for every ticket
-    [1] HumanMessage   catalog_human.md   — stable within one organization
-    [2] HumanMessage   ticket_human.md    — this ticket
-    [3..]              the agent's own working loop
+    [0] SystemMessage  system.md + fragments — identical for every ticket
+    [1] HumanMessage   catalog_human.md      — stable within one organization
+    [2] HumanMessage   ticket_human.md       — this ticket
+    [3..]                                      the agent's own working loop
 
 The split between [1] and [2] is deliberate: prefix caching keys on the token
 prefix, so an explicit boundary keeps the catalog part reusable across tickets.
@@ -113,15 +113,42 @@ def format_session_scope(scope: IntakeScope, ticket: Ticket) -> str:
     return "\n".join(actions) + f"\n\nThis session ends with exactly one call to {closing}, and nothing else."
 
 
+def build_system_prompt(scope: IntakeScope, prompts: IntakePrompts) -> str:
+    """The base fragment plus one fragment per action this deployment performs.
+
+    An instruction for an action nobody switched on is the same mistake as a
+    tool for it (ADR-012), one level down: the tool set is already assembled
+    per run, and this leaves the text to match.
+
+    Takes the scope and not the whole context on purpose — `system.md` is the
+    cached prefix, and the scope is fixed for a deployment while the ticket is
+    not. Selecting a fragment by what the ticket still needs would split the
+    prefix into two families of runs for the sake of one caveat.
+    """
+    fragments = [prompts.system]
+    if scope.classify:
+        fragments.append(prompts.system_classify)
+    if scope.clarify:
+        fragments.append(prompts.system_clarify)
+    if scope.handoff_note:
+        fragments.append(prompts.system_handoff_note)
+    if scope.similar:
+        fragments.append(prompts.system_similar)
+    # Trimmed rather than joined as-is: an override arrives from a textarea in
+    # the admin UI and need not end with a newline.
+    return "\n\n".join(fragment.strip() for fragment in fragments)
+
+
 async def build_initial_messages(ctx: IntakeContext, prompts: IntakePrompts) -> list[BaseMessage]:
     ticket = ctx.ticket
     service_context = await build_service_context(ticket, ctx.catalog_repo)
+
+    messages: list[BaseMessage] = [SystemMessage(content=build_system_prompt(ctx.scope, prompts))]
 
     # No catalog where classification cannot happen — an already classified
     # ticket, or a deployment that does not classify at all (`tools_for`
     # withholds the tools either way). The list would otherwise ride along in
     # the message history, paid for on every model call of the run.
-    messages: list[BaseMessage] = [SystemMessage(content=prompts.system)]
     if needs_classification(ctx.scope, ticket):
         services = await ctx.catalog_repo.find_services(bind_oql(ctx.intake.classify_service_oql, ticket.model_dump()))
         catalog_text = PromptTemplate.from_template(prompts.catalog_human).format(services=format_options(services))

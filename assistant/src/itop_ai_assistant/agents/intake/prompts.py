@@ -20,8 +20,16 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 # Allowed placeholders per template — everything `prompt.py` passes when it
 # builds the agent's initial messages. `conversation` is a rendered XML block,
 # not a MessagesPlaceholder.
+#
+# The system message comes from the first five: a base plus one fragment per
+# switchable action, joined by `prompt.build_system_prompt`. `system` names the
+# base, so a deployment that overrode the system prompt keeps overriding it.
 PROMPT_VARIABLES: dict[str, set[str]] = {
     "system": set(),
+    "system_classify": set(),
+    "system_clarify": set(),
+    "system_handoff_note": set(),
+    "system_similar": set(),
     "catalog_human": {"services"},
     "ticket_human": {"caller_name", "title", "description", "conversation", "service_context", "session_scope"},
 }
@@ -29,6 +37,10 @@ PROMPT_VARIABLES: dict[str, set[str]] = {
 
 class IntakePrompts(BaseModel):
     system: str
+    system_classify: str
+    system_clarify: str
+    system_handoff_note: str
+    system_similar: str
     catalog_human: str
     ticket_human: str
 
@@ -36,13 +48,20 @@ class IntakePrompts(BaseModel):
 def build_intake_prompts(raw: dict[str, str]) -> IntakePrompts:
     """Validate raw templates and build the typed prompt set.
 
-    Raises ValueError on missing templates, unparseable templates or unknown
-    placeholders. Called at startup to fail fast instead of crashing on a
-    live ticket; the admin API reuses it to validate edits before saving.
+    Raises ValueError on missing or unregistered templates, unparseable
+    templates or unknown placeholders. Called at startup to fail fast instead
+    of crashing on a live ticket; the admin API reuses it to validate edits
+    before saving.
     """
     missing = PROMPT_VARIABLES.keys() - raw.keys()
     if missing:
         raise ValueError(f"Missing prompt templates: {sorted(missing)}")
+    # A template nobody registered is shown as editable by the admin API and
+    # then never reaches the model — silent, and likelier with the system
+    # message split across five files.
+    unknown = raw.keys() - PROMPT_VARIABLES.keys()
+    if unknown:
+        raise ValueError(f"Unknown prompt templates: {sorted(unknown)}, known: {sorted(PROMPT_VARIABLES)}")
 
     errors = []
     for name, allowed in PROMPT_VARIABLES.items():

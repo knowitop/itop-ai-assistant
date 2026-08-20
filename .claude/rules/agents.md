@@ -48,8 +48,15 @@ run.
 
 A new placeholder requires an entry in the module's `PROMPT_VARIABLES` and a
 value passed where the messages are built — otherwise startup validation fails
-the boot. After touching `agents/intake/prompts/*.md` or a tool signature, run
-`uv run pytest test/integration` (needs a real endpoint).
+the boot. A new template file requires an entry there too: an unregistered one
+is rejected the same way. After touching `agents/intake/prompts/*.md` or a tool
+signature, run `uv run pytest test/integration` (needs a real endpoint).
+
+Intake's system message is assembled per run from a base plus one fragment per
+switchable action (`prompt.build_system_prompt`). An instruction that belongs
+to an action goes into that action's fragment — the base carries only what
+holds whatever is switched on. Fragments are chosen by `IntakeScope` alone,
+never by the state of the ticket: the system message is the cached prefix.
 
 ## LLM client
 

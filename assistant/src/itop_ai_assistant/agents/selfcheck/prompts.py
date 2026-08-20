@@ -36,6 +36,9 @@ def build_selfcheck_prompts(raw: dict[str, str]) -> SelfCheckPrompts:
     missing = PROMPT_VARIABLES.keys() - raw.keys()
     if missing:
         raise ValueError(f"Missing prompt templates: {sorted(missing)}")
+    unknown = raw.keys() - PROMPT_VARIABLES.keys()
+    if unknown:
+        raise ValueError(f"Unknown prompt templates: {sorted(unknown)}, known: {sorted(PROMPT_VARIABLES)}")
 
     errors = []
     for name, allowed in PROMPT_VARIABLES.items():

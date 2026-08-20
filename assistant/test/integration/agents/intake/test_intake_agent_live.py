@@ -14,6 +14,7 @@ Run: uv run pytest test/integration/ -v
 """
 
 from itop_ai_assistant.agents.intake.agent import build_intake_agent
+from itop_ai_assistant.agents.intake.domain import IntakeScope
 from itop_ai_assistant.agents.intake.prompt import build_initial_messages
 from itop_ai_assistant.agents.intake.tools import tools_for
 from itop_ai_assistant.config import get_settings
@@ -70,10 +71,33 @@ class TestFullIntakeFlow:
         assert _log_updates(transport, "public_log")
 
 
+class TestReducedScope:
+    async def test_note_only_deployment_writes_nothing_but_the_note(self, state_manager):
+        """Only the handoff note is switched on → no question, no classification."""
+        ticket = make_ticket(
+            title="HP LaserJet 400 M401dn not printing after Windows 11 update",
+            description="<p>Error 'Driver unavailable' since yesterday. Already restarted printer and PC.</p>",
+            service_id=None,
+            subcategory_id=None,
+        )
+        scope = IntakeScope(classify=False, clarify=False, handoff_note=True, similar=False)
+        ctx, transport = make_ctx(state_manager, ticket, _SUBCATEGORY_WITH_REQUIREMENTS, scope=scope)
+
+        await _run(ctx)
+
+        state = await ctx.state_manager.get("UserRequest::42")
+        assert state.ai_done is True
+        assert _log_updates(transport, "private_log")
+        assert not _log_updates(transport, "public_log")
+        assert not [op for op in transport.update_calls() if "service_id" in op.get("fields", {})]
+
+
 class TestClassification:
     async def test_unclassified_ticket_gets_a_service(self, state_manager):
-        """service_id=0 → the agent reads the catalog and classifies the ticket."""
-        ticket = make_ticket(service_id="0", subcategory_id="0")
+        """No service → the agent reads the catalog and classifies the ticket."""
+        # None, not iTop's "0": unset external keys are normalized away by
+        # `TicketRepository`, and the domain model never sees them
+        ticket = make_ticket(service_id=None, subcategory_id=None)
         ctx, transport = make_ctx(state_manager, ticket, _SUBCATEGORY_WITH_REQUIREMENTS)
 
         await _run(ctx)

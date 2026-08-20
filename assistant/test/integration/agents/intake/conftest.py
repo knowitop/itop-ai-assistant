@@ -1,10 +1,14 @@
 # Load .env.test BEFORE any project imports so get_settings() (cached on first
-# call) picks up the test LLM endpoint.
+# call) picks up the test LLM endpoint. Searched for upwards rather than by a
+# fixed number of parents: this file has moved down the tree before, and a
+# stale relative path fails as "no model configured", far from its cause.
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).parent.parent.parent / ".env.test", override=False)
+_env_test = next((p / ".env.test" for p in Path(__file__).resolve().parents if (p / ".env.test").is_file()), None)
+if _env_test:
+    load_dotenv(_env_test, override=False)
 
 import json
 import logging
