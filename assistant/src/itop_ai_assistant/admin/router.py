@@ -17,6 +17,7 @@ from itop_ai_assistant.pipelines.registry import ModuleInfo
 from itop_ai_assistant.request.router import router as request_router
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.settings.prompt_store import PromptStore, PromptStoreError
+from itop_ai_assistant.settings.prompt_validation import PromptValidationError
 from itop_ai_assistant.state.journal import ProcessingRun, RunJournal
 from itop_ai_assistant.vector import router as vector_router
 
@@ -128,10 +129,23 @@ async def reset_config(
 async def get_prompts(
     module: str, request: Request, prompt_store: Annotated[PromptStore, Depends(get_prompt_store)]
 ) -> dict:
-    _module_or_404(request, module)
+    info = _module_or_404(request, module)
     prompts = await prompt_store.get(module)
-    overridden = await prompt_store.overrides(module)
-    return {"prompts": prompts, "overridden": sorted(overridden)}
+    # Recomputed on every read, never cached from startup: an override applies
+    # without a restart, so a verdict from boot time would go stale both ways —
+    # missing a prompt broken since, and still accusing one already fixed.
+    broken: dict[str, str] = {}
+    if info.validate_prompts is not None:
+        try:
+            info.validate_prompts(prompts.effective)
+        except PromptValidationError as e:
+            broken = e.errors
+    return {
+        "prompts": prompts.effective,
+        "overridden": sorted(prompts.runtime),
+        "broken": broken,
+        "ignored": prompts.ignored,
+    }
 
 
 class PromptUpdate(BaseModel):
@@ -148,13 +162,19 @@ async def update_prompt(
 ) -> dict:
     info = _module_or_404(request, module)
 
-    prompts = await prompt_store.get(module)
+    prompts = (await prompt_store.get(module)).effective
     if name not in prompts:
         raise HTTPException(status_code=404, detail=f"Unknown prompt {name!r}. Known: {sorted(prompts)}")
 
     if info.validate_prompts is not None:
         try:
             info.validate_prompts({**prompts, name: body.text})
+        except PromptValidationError as e:
+            # Only what is wrong with *this* template blocks the save. Another
+            # broken prompt in the same module must not make this one
+            # unfixable — that is the dead end of REQ-005 moved inside the UI.
+            if name in e.errors:
+                raise HTTPException(status_code=422, detail=f"{name}: {e.errors[name]}") from e
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e)) from e
 

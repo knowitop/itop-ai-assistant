@@ -65,7 +65,24 @@ Prompts use `{placeholder}` variables substituted at runtime. Each template has 
 
 The five `system*.md` files take no placeholders.
 
-Placeholder names are validated on save. If a template references an unknown name, the save is rejected with an error showing which placeholder is unrecognized. The same validation runs at startup, so a broken override file fails the boot rather than a live ticket.
+Placeholder names are validated on save. If a template references an unknown name, the save is rejected with an error showing which placeholder is unrecognized. The same validation runs at startup, but what it does then depends on whose template is broken — see [When an upgrade breaks an override](#when-an-upgrade-breaks-an-override).
+
+---
+
+## When an upgrade breaks an override
+
+A placeholder that is valid today can be dropped in a later version. Your override keeps the old name — it is still called `system.md`, so nothing about it looks stale — and after the upgrade it refers to a placeholder that no longer exists. Validation on save cannot prevent this: it checked your text against the placeholders that existed when you saved it.
+
+**This does not stop the service.** At startup the assistant tells its own templates from yours:
+
+- a broken template of **yours** — a warning in the log, and the prompt marked **broken** in **Admin UI → Prompts**, with the exact error;
+- a broken template of **ours** — the service refuses to start. That is a defect in the distribution, not something you can fix from the UI.
+
+Your text is never replaced behind your back. The broken override stays in effect, which means the module using it fails on every run until the text is fixed. The trade is deliberate: a module you can see is broken, in an admin UI that is up, beats a prompt you wrote being quietly swapped for ours.
+
+To fix it, open **Admin UI → Prompts**, pick the prompt marked *broken*, read the error, and either correct the text or press **Reset to default**. The next processed ticket uses the corrected prompt — no restart.
+
+A file whose name matches no built-in prompt is treated the same way: `sytem.md` next to `system.md`, or a leftover from an older version, is not read, and it is listed as *not applied* above the prompt list instead of failing the boot.
 
 > [!TIP]
 > After editing a prompt, run the real-LLM test suite — it is the only thing that checks the prompts against an actual model: `cd assistant && uv run pytest test/integration` (needs `.env.test`, see `.env.test.dist`).

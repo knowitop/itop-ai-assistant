@@ -113,7 +113,7 @@ class TestPrompts(unittest.IsolatedAsyncioTestCase):
     async def test_packaged_prompt_validates(self):
         """The same call the lifespan makes — a broken template fails the boot,
         not a live run."""
-        raw = await FilePromptStore({MODULE: SELFCHECK_PROMPTS_DIR}).get(MODULE)
+        raw = (await FilePromptStore({MODULE: SELFCHECK_PROMPTS_DIR}).get(MODULE)).effective
 
         self.assertIn("{services}", build_selfcheck_prompts(raw).greeting)
 

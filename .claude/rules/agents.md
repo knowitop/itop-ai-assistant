@@ -47,10 +47,18 @@ overrides by same-named file under `<prompts_dir>/<module>/`, re-read every
 run.
 
 A new placeholder requires an entry in the module's `PROMPT_VARIABLES` and a
-value passed where the messages are built — otherwise startup validation fails
-the boot. A new template file requires an entry there too: an unregistered one
-is rejected the same way. After touching `agents/intake/prompts/*.md` or a tool
-signature, run `uv run pytest test/integration` (needs a real endpoint).
+value passed where the messages are built; a new template file requires an entry
+there too. After touching `agents/intake/prompts/*.md` or a tool signature, run
+`uv run pytest test/integration` (needs a real endpoint).
+
+Startup validation splits by **origin of the template**, not by kind of error
+(`ADR-026`): a packaged template of ours that fails it stops the boot, an
+override the deployment wrote only warns and is marked broken in the admin UI.
+A broken override stays in effect, so the module fails on every run until it is
+fixed — never substitute our default for it. An override naming no packaged
+prompt is dropped and reported, not fatal. What counts as broken is decided in
+one place (`settings/prompt_validation.py`), and errors are keyed by template
+name — that granularity is what both the UI mark and the startup split need.
 
 Intake's system message is assembled per run from a base plus one fragment per
 switchable action (`prompt.build_system_prompt`). An instruction that belongs

@@ -231,6 +231,49 @@ class TestPromptEndpoints(AdminApiTestCase):
         response = self.client.put("/api/prompts/intake/no_such", json={"text": "x"})
         self.assertEqual(response.status_code, 404)
 
+    def _break_override(self, name: str) -> None:
+        """Put a template past the save-time check, the way an upgrade does.
+
+        An override written when its placeholder was still allowed survives the
+        version that drops it — the name never changes, so nothing filters it.
+        """
+
+        async def seed():
+            await self.redis.hset("prompts:intake", name, "Hello {caler_name}")
+
+        self.client.portal.call(seed)
+
+    def test_broken_override_is_reported_on_the_prompt(self):
+        self._break_override("system")
+
+        body = self.client.get("/api/prompts/intake").json()
+
+        self.assertIn("caler_name", body["broken"]["system"])
+        self.assertEqual(body["overridden"], ["system"])
+        # Still in effect: replacing it with our own text silently is what
+        # REQ-005 R5 rules out
+        self.assertEqual(body["prompts"]["system"], "Hello {caler_name}")
+
+    def test_ignored_override_is_reported_by_name(self):
+        async def seed():
+            await self.redis.hset("prompts:intake", "sytem", "typo")
+
+        self.client.portal.call(seed)
+
+        body = self.client.get("/api/prompts/intake").json()
+
+        self.assertIn("sytem", body["ignored"])
+        self.assertNotIn("sytem", body["prompts"])
+
+    def test_a_broken_prompt_does_not_block_fixing_another(self):
+        self._break_override("system")
+
+        response = self.client.put("/api/prompts/intake/ticket_human", json={"text": "Requester: {caller_name}"})
+
+        self.assertEqual(response.status_code, 200)
+        body = self.client.get("/api/prompts/intake").json()
+        self.assertEqual(list(body["broken"]), ["system"])
+
 
 class TestRunEndpoints(AdminApiTestCase):
     def _seed_runs(self):

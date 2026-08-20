@@ -10,7 +10,9 @@ from itop_ai_assistant.admin.router import router as admin_router
 from itop_ai_assistant.config import ItopConfig, LlmConfig, SecurityConfig, get_settings, missing_setup
 from itop_ai_assistant.core.background import build_background_tasks
 from itop_ai_assistant.core.deps import build_deps
-from itop_ai_assistant.pipelines.registry import build_registry
+from itop_ai_assistant.pipelines.registry import ModuleInfo, build_registry
+from itop_ai_assistant.settings.prompt_store import PromptOrigin, PromptStore
+from itop_ai_assistant.settings.prompt_validation import PromptValidationError
 from itop_ai_assistant.util.build_info import get_build_info
 from itop_ai_assistant.webhook.router import router
 
@@ -27,16 +29,47 @@ logger = logging.getLogger(__name__)
 build = get_build_info()
 
 
+async def check_module_prompts(module: ModuleInfo, prompt_store: PromptStore) -> None:
+    """Validate one module's prompt set at startup, by origin of the template.
+
+    A broken template of ours is a defect of the distribution and stops the
+    boot, as it always has. A broken *override* only warns: refusing to start
+    would take away the admin UI the override was written in and is fixed in,
+    leaving `redis-cli` inside the container as the only way out (REQ-005).
+    The override stays in effect, so the module fails every run until someone
+    fixes the text — visibly, and with the admin UI up.
+
+    Errors an override cannot cause — a missing template, a name nobody
+    registered — land on the first branch by themselves: an override only ever
+    shadows a packaged prompt, it cannot add or remove one.
+    """
+    if module.validate_prompts is None:
+        return
+    prompts = await prompt_store.get(module.name)
+    for name, reason in sorted(prompts.ignored.items()):
+        logger.warning(f"Prompt override {module.name}/{name} is not applied: {reason}")
+    try:
+        module.validate_prompts(prompts.effective)
+    except PromptValidationError as e:
+        origins = prompts.origins
+        if any(origins.get(name, PromptOrigin.DEFAULT) is PromptOrigin.DEFAULT for name in e.errors):
+            raise
+        for name, message in sorted(e.errors.items()):
+            logger.warning(
+                f"Prompt {module.name}/{name} is overridden ({origins[name]}) and broken: {message}. "
+                f"The override stays in effect — fix it in the admin UI; until then "
+                f"module {module.name!r} fails on every run"
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info(f"iTop AI Assistant {build.version} ({build.commit or 'no commit'})")
     registry = build_registry(settings)
     deps = build_deps(settings, registry)
-    # Fail fast on missing or broken prompt templates instead of on a live ticket
     for module in registry.modules:
-        if module.validate_prompts:
-            module.validate_prompts(await deps.prompt_store.get(module.name))
+        await check_module_prompts(module, deps.prompt_store)
 
     # Setup diagnostics against the *effective* config (Redis overrides > env)
     security = await deps.config_store.get("security", SecurityConfig)

@@ -24,7 +24,7 @@ from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.context import RunContext
-from itop_ai_assistant.settings.prompt_store import read_prompt_dir
+from itop_ai_assistant.settings.prompt_store import PromptSet, read_prompt_dir
 from itop_ai_assistant.vector import VectorConfig
 from itop_ai_assistant.vector.ports.store import SearchHit
 from itop_ai_assistant.vector.use_cases.search import SimilarSearch
@@ -101,7 +101,7 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
         self.deps.state_manager.get = AsyncMock(side_effect=get)
         self.deps.state_manager.increment = AsyncMock(side_effect=increment)
         self.deps.state_manager.set_flag = AsyncMock(side_effect=set_flag)
-        self.deps.prompt_store.get = AsyncMock(return_value=_PROMPT_FILES)
+        self.deps.prompt_store.get = AsyncMock(return_value=PromptSet(defaults=_PROMPT_FILES))
 
         self.llm_cfg = LlmConfig(base_url="http://x", model="m")
         self.vector_cfg = VectorConfig()

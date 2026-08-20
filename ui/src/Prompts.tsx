@@ -27,6 +27,10 @@ interface ModuleInfo {
 interface ModulePrompts {
   prompts: Record<string, string>;
   overridden: string[];
+  // Templates that are in effect but fail validation, and override files or
+  // entries naming no built-in prompt — both keyed by name, with the reason.
+  broken: Record<string, string>;
+  ignored: Record<string, string>;
 }
 
 export default function Prompts() {
@@ -92,6 +96,7 @@ function ModulePromptsEditor({ module }: { module: string }) {
 
   const names = Object.keys(data.prompts).sort();
   const overridden = new Set(data.overridden);
+  const ignored = Object.keys(data.ignored).sort();
   const dirty = selected !== null && text !== data.prompts[selected];
 
   const pick = (name: string) => {
@@ -139,6 +144,11 @@ function ModulePromptsEditor({ module }: { module: string }) {
   return (
     <Grid>
       <Grid.Col span={{ base: 12, sm: 3 }}>
+        {ignored.length > 0 && (
+          <Alert color="yellow" mb="sm">
+            {t('prompts.ignored', { names: ignored.join(', ') })}
+          </Alert>
+        )}
         {names.map((name) => (
           <NavLink
             key={name}
@@ -146,11 +156,18 @@ function ModulePromptsEditor({ module }: { module: string }) {
             active={name === selected}
             onClick={() => pick(name)}
             rightSection={
-              overridden.has(name) ? (
-                <Badge size="xs" color="orange" variant="light">
-                  {t('prompts.badge_overridden')}
-                </Badge>
-              ) : null
+              <Group gap={4} wrap="nowrap">
+                {overridden.has(name) && (
+                  <Badge size="xs" color="orange" variant="light">
+                    {t('prompts.badge_overridden')}
+                  </Badge>
+                )}
+                {data.broken[name] && (
+                  <Badge size="xs" color="red" variant="light">
+                    {t('prompts.badge_broken')}
+                  </Badge>
+                )}
+              </Group>
             }
           />
         ))}
@@ -158,6 +175,13 @@ function ModulePromptsEditor({ module }: { module: string }) {
       <Grid.Col span={{ base: 12, sm: 9 }}>
         {selected && (
           <Stack>
+            {data.broken[selected] && (
+              <Alert color="red" title={t('prompts.badge_broken')} style={{ whiteSpace: 'pre-wrap' }}>
+                {data.broken[selected]}
+                {'\n\n'}
+                {t('prompts.broken_hint')}
+              </Alert>
+            )}
             {error && (
               <Alert color="red" style={{ whiteSpace: 'pre-wrap' }}>
                 {error}

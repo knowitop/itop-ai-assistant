@@ -43,7 +43,7 @@ class ComposedRun:
 async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps, repos: RepositorySet) -> ComposedRun:
     cfg = await deps.config_store.get(MODULE, IntakeConfig)
     llm_cfg = await deps.config_store.get("llm", LlmConfig)
-    prompts = build_intake_prompts(await deps.prompt_store.get(MODULE))
+    prompts = build_intake_prompts((await deps.prompt_store.get(MODULE)).effective)
     # The administrator's switch and the deployment's ability to search are one
     # condition, not two: `similar is not None` stays the single source of both
     similar = deps.vector_search if cfg.similar_enabled and await deps.vector_search.available() else None

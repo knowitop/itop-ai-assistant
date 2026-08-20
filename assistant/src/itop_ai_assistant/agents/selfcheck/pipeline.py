@@ -98,7 +98,7 @@ async def run_selfcheck(run: RunContext, deps: RunDeps) -> RunOutcome:
     services = await repos.catalog_repo.find_services(cfg.probe_oql)
     await deps.journal.add_step(run.processing_id, "itop", f"{len(services)} services read with {cfg.probe_oql!r}")
 
-    prompts = build_selfcheck_prompts(await deps.prompt_store.get(MODULE))
+    prompts = build_selfcheck_prompts((await deps.prompt_store.get(MODULE)).effective)
     message = PromptTemplate.from_template(prompts.greeting).format(services=len(services))
     response = await deps.create_llm(llm_cfg, cfg.model).ainvoke([HumanMessage(content=message)])
     answer = strip_thinking(response.content, tuple(llm_cfg.think_tags)).strip()
