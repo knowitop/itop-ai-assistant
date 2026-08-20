@@ -17,10 +17,15 @@ export function clearToken(): void {
 
 export class ApiError extends Error {
   status: number;
+  // Per-field messages of a 422, keyed by field name. The empty string keys
+  // what the server said about the request as a whole — a rule about the
+  // relation between fields belongs to no single input.
+  fields: Record<string, string>;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, fields: Record<string, string> = {}) {
     super(message);
     this.status = status;
+    this.fields = fields;
   }
 }
 
@@ -48,7 +53,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(401, 'Admin token required');
   }
   if (!response.ok) {
-    throw new ApiError(response.status, await errorMessage(response));
+    throw await apiFailure(response);
   }
   if (response.status === 204) {
     return undefined as T;
@@ -56,16 +61,43 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function errorMessage(response: Response): Promise<string> {
-  // FastAPI errors are {"detail": "..."}; 422 validation errors put a list there.
+interface FieldError {
+  field: string;
+  message: string;
+}
+
+function isFieldErrors(detail: unknown): detail is FieldError[] {
+  return (
+    Array.isArray(detail) &&
+    detail.length > 0 &&
+    detail.every((item) => typeof item?.field === 'string' && typeof item?.message === 'string')
+  );
+}
+
+async function apiFailure(response: Response): Promise<ApiError> {
+  // FastAPI errors are {"detail": "..."}; config validation puts a list of
+  // {field, message} there instead, so a form can place each one.
   try {
     const body = await response.json();
-    if (typeof body.detail === 'string') return body.detail;
-    if (body.detail !== undefined) return JSON.stringify(body.detail);
+    if (typeof body.detail === 'string') return new ApiError(response.status, body.detail);
+    if (isFieldErrors(body.detail)) {
+      const fields: Record<string, string> = {};
+      for (const item of body.detail) {
+        // Several failures on one field would only fit one input anyway;
+        // the first is the one the server checked first.
+        if (!(item.field in fields)) fields[item.field] = item.message;
+      }
+      // The message stays readable for callers that show errors as one line.
+      const summary = body.detail
+        .map((item: FieldError) => (item.field ? `${item.field}: ${item.message}` : item.message))
+        .join('\n');
+      return new ApiError(response.status, summary, fields);
+    }
+    if (body.detail !== undefined) return new ApiError(response.status, JSON.stringify(body.detail));
   } catch {
     // non-JSON body — fall through to the generic message
   }
-  return `HTTP ${response.status}`;
+  return new ApiError(response.status, `HTTP ${response.status}`);
 }
 
 export function apiGet<T>(path: string): Promise<T> {

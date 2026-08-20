@@ -172,9 +172,9 @@ class TestBuildRegistry(unittest.TestCase):
     def test_default_settings_register_intake(self):
         registry = build_registry(_settings())
 
-        for obj_class in ("UserRequest", "Incident"):
-            for event in ("created", "user_commented", "assigned"):
-                self.assertIsNotNone(registry.resolve_webhook(obj_class, event), f"{obj_class}/{event}")
+        obj_class = "UserRequest"
+        for event in ("created", "user_commented", "assigned"):
+            self.assertIsNotNone(registry.resolve_webhook(obj_class, event), f"{obj_class}/{event}")
 
         self.assertEqual([m.name for m in registry.modules], ["intake"])
         module = registry.get_module("intake")

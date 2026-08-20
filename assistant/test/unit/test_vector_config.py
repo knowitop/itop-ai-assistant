@@ -9,7 +9,7 @@ class TestVectorConfig(unittest.TestCase):
         self.assertFalse(cfg.enabled)
         self.assertEqual(list(cfg.families), ["tickets", "faq"])
         tickets = cfg.families["tickets"].classes
-        self.assertEqual(list(tickets), ["UserRequest", "Incident"])
+        self.assertEqual(list(tickets), ["UserRequest"])
         self.assertEqual(tickets["UserRequest"].index_values, ["resolved", "closed"])
         self.assertEqual(tickets["UserRequest"].chunks["body"].fields, ["description"])
         faq = cfg.families["faq"].classes

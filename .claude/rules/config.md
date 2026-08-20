@@ -3,6 +3,8 @@ paths:
   - "assistant/src/itop_ai_assistant/config.py"
   - "assistant/src/itop_ai_assistant/settings/config_store.py"
   - "assistant/src/itop_ai_assistant/admin/**"
+  - "assistant/src/itop_ai_assistant/settings/ui_hints.py"
+  - "assistant/src/itop_ai_assistant/agents/*/config.py"
 ---
 
 # Configuration
@@ -17,3 +19,8 @@ for the setup wizard. Connection edits apply from the next run without a
 restart; the exceptions are `intake.enabled` / `intake.classes` and
 `selfcheck.enabled`, which are read at startup because the trigger registry is
 built from them.
+
+A module's config model is also what the admin form is built from: `title` and
+`description` on a field are what an administrator reads, and the section a
+field belongs to is declared with `ui()` from `settings/ui_hints.py`, never as
+a literal `json_schema_extra` (ADR-025).

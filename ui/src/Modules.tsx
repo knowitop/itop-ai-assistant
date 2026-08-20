@@ -2,6 +2,8 @@ import {
   Alert,
   Badge,
   Button,
+  Collapse,
+  Fieldset,
   Group,
   JsonInput,
   Loader,
@@ -18,7 +20,7 @@ import {
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { apiGet, apiSend } from './api';
+import { ApiError, apiGet, apiSend } from './api';
 
 interface RequestAction {
   action: string;
@@ -41,16 +43,38 @@ interface ModuleInfo {
   schedules: ScheduleInfo[];
 }
 
-// The subset of JSON Schema that pydantic emits for our config models.
+// The subset of JSON Schema that pydantic emits for our config models. The
+// `x-` keys are hints the backend attaches through `settings/ui_hints.py`
+// (ADR-025) — everything this form knows about a module arrives here, never
+// from a list of field names kept on this side.
 interface SchemaProp {
   type?: string;
   anyOf?: { type?: string; items?: { type?: string } }[];
   items?: { type?: string };
+  title?: string;
   description?: string;
+  minimum?: number;
+  maximum?: number;
+  exclusiveMinimum?: number;
+  exclusiveMaximum?: number;
+  'x-group'?: string;
+  'x-toggle'?: boolean;
+  'x-widget'?: 'oql' | 'textarea';
+  'x-advanced'?: boolean;
 }
 
 interface Schema {
   properties?: Record<string, SchemaProp>;
+}
+
+type Field = [name: string, prop: SchemaProp];
+
+// One section of a form: the fields that named the same `x-group`, plus the
+// boolean that switches them, if the schema marked one.
+interface FieldGroup {
+  label: string;
+  toggle: string | null;
+  fields: Field[];
 }
 
 type FieldKind = 'boolean' | 'number' | 'string' | 'tags' | 'json';
@@ -67,6 +91,38 @@ function fieldKind(prop: SchemaProp): { kind: FieldKind; nullable: boolean } {
   if (type === 'string') return { kind: 'string', nullable };
   if (type === 'array' && variants[0].items?.type === 'string') return { kind: 'tags', nullable };
   return { kind: 'json', nullable };
+}
+
+// Ungrouped fields come first whatever their position in the schema: a field
+// left without a group between two sections would otherwise split one in half.
+function groupFields(schema: Schema | null): FieldGroup[] {
+  const ungrouped: FieldGroup = { label: '', toggle: null, fields: [] };
+  const groups = new Map<string, FieldGroup>();
+  for (const [name, prop] of Object.entries(schema?.properties ?? {})) {
+    const label = prop['x-group'];
+    if (!label) {
+      ungrouped.fields.push([name, prop]);
+      continue;
+    }
+    let group = groups.get(label);
+    if (!group) {
+      group = { label, toggle: null, fields: [] };
+      groups.set(label, group);
+    }
+    if (prop['x-toggle']) group.toggle = name;
+    group.fields.push([name, prop]);
+  }
+  return [ungrouped, ...groups.values()].filter((group) => group.fields.length > 0);
+}
+
+// `gt=0` reaches the schema as an exclusive bound, which the inputs cannot
+// express: for an integer the same rule is an inclusive bound one step away,
+// for a float it is that bound minus one value the server still rejects — with
+// its own message on the field, so the approximation costs nothing.
+function bound(exclusive: number | undefined, inclusive: number | undefined, step: number): number | undefined {
+  if (inclusive !== undefined) return inclusive;
+  if (exclusive === undefined) return undefined;
+  return exclusive + step;
 }
 
 export default function Modules() {
@@ -146,6 +202,8 @@ function ModuleConfigForm({ module }: { module: string }) {
   // string/number/tags values live here as-is; json fields hold raw JSON text.
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [error, setError] = useState<string | null>(null);
+  // What the server rejected, by field name; the empty key is the form itself.
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [success, setSuccess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -169,6 +227,8 @@ function ModuleConfigForm({ module }: { module: string }) {
 
   const setField = (name: string, value: unknown) => {
     setSuccess(null);
+    // The server's verdict was about the value that has just been replaced.
+    setFieldErrors((current) => (name in current ? { ...current, [name]: '' } : current));
     setValues((current) => ({ ...current, [name]: value }));
   };
 
@@ -182,6 +242,7 @@ function ModuleConfigForm({ module }: { module: string }) {
         try {
           body[name] = JSON.parse(String(value));
         } catch {
+          setFieldErrors({ [name]: t('common.invalid_json') });
           setError(t('modules.field_invalid_json', { name }));
           setSuccess(null);
           return;
@@ -194,13 +255,22 @@ function ModuleConfigForm({ module }: { module: string }) {
     }
     setBusy(true);
     setError(null);
+    setFieldErrors({});
     setSuccess(null);
     try {
       await apiSend('PUT', `/config/${module}`, body);
       await load();
       setSuccess(t('modules.saved'));
     } catch (e) {
-      setError((e as Error).message);
+      if (e instanceof ApiError && Object.keys(e.fields).length > 0) {
+        setFieldErrors(e.fields);
+        // Anything the server tied to a field is shown at that field; what is
+        // left over is either about the form as a whole (the empty key) or
+        // about a field this schema does not have.
+        setError(e.fields[''] || t('modules.check_fields'));
+      } else {
+        setError((e as Error).message);
+      }
     } finally {
       setBusy(false);
     }
@@ -209,6 +279,7 @@ function ModuleConfigForm({ module }: { module: string }) {
   const reset = async () => {
     if (!window.confirm(t('modules.reset_confirm', { name: module }))) return;
     setError(null);
+    setFieldErrors({});
     setSuccess(null);
     try {
       await apiSend('DELETE', `/config/${module}`);
@@ -230,13 +301,14 @@ function ModuleConfigForm({ module }: { module: string }) {
         </Alert>
       )}
       {success && <Alert color="green">{success}</Alert>}
-      {Object.entries(schema.properties ?? {}).map(([name, prop]) => (
-        <ConfigField
-          key={name}
-          name={name}
-          prop={prop}
-          value={values[name]}
-          onChange={(value) => setField(name, value)}
+      {groupFields(schema).map((group) => (
+        <ConfigGroup
+          key={group.label}
+          group={group}
+          i18nPrefix={`config.${module}`}
+          values={values}
+          errors={fieldErrors}
+          onChange={setField}
         />
       ))}
       <Group>
@@ -289,6 +361,7 @@ function RequestActionForm({ module, action }: { module: string; action: Request
           key={name}
           name={name}
           prop={prop}
+          i18nPrefix={`modules.actions.${module}.${action.action}`}
           value={values[name] ?? ''}
           onChange={(value) => setValues((current) => ({ ...current, [name]: value }))}
         />
@@ -313,55 +386,110 @@ function RequestActionForm({ module, action }: { module: string; action: Request
   );
 }
 
+// A section of the form. The fields marked advanced stay folded away: they are
+// the ones an administrator sets once, if ever, and they crowd out the two or
+// three that get looked at.
+function ConfigGroup(props: {
+  group: FieldGroup;
+  i18nPrefix: string;
+  values: Record<string, unknown>;
+  errors: Record<string, string>;
+  onChange: (name: string, value: unknown) => void;
+}) {
+  const { t } = useTranslation();
+  const { group, i18nPrefix, values, errors, onChange } = props;
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  // A switched-off section keeps its fields visible but inert: hidden ones
+  // would still be sent on save, and nobody could see what was saved.
+  const off = group.toggle !== null && !values[group.toggle];
+  const field = ([name, prop]: Field) => (
+    <ConfigField
+      key={name}
+      name={name}
+      prop={prop}
+      i18nPrefix={i18nPrefix}
+      value={values[name]}
+      error={errors[name]}
+      disabled={off && name !== group.toggle}
+      onChange={(value) => onChange(name, value)}
+    />
+  );
+  const advanced = group.fields.filter(([, prop]) => prop['x-advanced']);
+  const body = (
+    <Stack>
+      {group.fields.filter(([, prop]) => !prop['x-advanced']).map(field)}
+      {advanced.length > 0 && (
+        <>
+          <Group>
+            <Button variant="subtle" size="compact-sm" onClick={() => setAdvancedOpen((open) => !open)}>
+              {t(advancedOpen ? 'modules.advanced_hide' : 'modules.advanced_show')}
+            </Button>
+          </Group>
+          <Collapse expanded={advancedOpen}>
+            <Stack>{advanced.map(field)}</Stack>
+          </Collapse>
+        </>
+      )}
+    </Stack>
+  );
+  if (!group.label) return body;
+  // The group name arrives in the schema already written for a human, so an
+  // untranslated locale still gets a readable heading.
+  const legend = t(`modules.groups.${slugify(group.label)}`, { defaultValue: group.label });
+  return <Fieldset legend={legend}>{body}</Fieldset>;
+}
+
+function slugify(label: string): string {
+  return label.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+}
+
 function ConfigField(props: {
   name: string;
   prop: SchemaProp;
+  i18nPrefix: string;
   value: unknown;
+  error?: string;
+  disabled?: boolean;
   onChange: (value: unknown) => void;
 }) {
   const { t } = useTranslation();
-  const { name, prop, value, onChange } = props;
+  const { name, prop, i18nPrefix, value, error, disabled, onChange } = props;
   const { kind, nullable } = fieldKind(prop);
-  const description = prop.description;
+  // The schema's own wording is the default; a locale key overrides it where
+  // one exists, so a new field is readable before anyone translates it.
+  const label = t(`${i18nPrefix}.${name}.label`, { defaultValue: prop.title ?? name });
+  const description = prop.description
+    ? t(`${i18nPrefix}.${name}.description`, { defaultValue: prop.description })
+    : undefined;
+  const common = { label, description, error: error || undefined, disabled };
 
   switch (kind) {
     case 'boolean':
-      return (
-        <Switch
-          label={name}
-          description={description}
-          checked={Boolean(value)}
-          onChange={(e) => onChange(e.currentTarget.checked)}
-        />
-      );
-    case 'number':
+      return <Switch {...common} checked={Boolean(value)} onChange={(e) => onChange(e.currentTarget.checked)} />;
+    case 'number': {
+      const step = prop.type === 'integer' ? 1 : 0;
       return (
         <NumberInput
-          label={name}
-          description={description}
+          {...common}
+          min={bound(prop.exclusiveMinimum, prop.minimum, step)}
+          max={bound(prop.exclusiveMaximum, prop.maximum, -step)}
           value={value as number | string}
           onChange={onChange}
         />
       );
+    }
     case 'tags':
-      return (
-        <TagsInput
-          label={name}
-          description={description}
-          value={(value as string[]) ?? []}
-          onChange={onChange}
-        />
-      );
+      return <TagsInput {...common} value={(value as string[]) ?? []} onChange={onChange} />;
     case 'string': {
-      const text = String(value ?? '');
-      // OQL templates and note texts do not fit on one line.
-      if (text.length > 60) {
+      const widget = prop['x-widget'];
+      if (widget) {
         return (
           <Textarea
-            label={name}
-            description={description}
-            value={text}
+            {...common}
+            value={String(value ?? '')}
             onChange={(e) => onChange(e.currentTarget.value)}
+            styles={widget === 'oql' ? { input: { fontFamily: 'monospace' } } : undefined}
             autosize
             minRows={2}
           />
@@ -369,10 +497,9 @@ function ConfigField(props: {
       }
       return (
         <TextInput
-          label={name}
-          description={description}
+          {...common}
           placeholder={nullable ? 'default' : undefined}
-          value={text}
+          value={String(value ?? '')}
           onChange={(e) => onChange(e.currentTarget.value)}
         />
       );
@@ -380,8 +507,7 @@ function ConfigField(props: {
     case 'json':
       return (
         <JsonInput
-          label={name}
-          description={description}
+          {...common}
           value={String(value ?? '')}
           onChange={onChange}
           autosize

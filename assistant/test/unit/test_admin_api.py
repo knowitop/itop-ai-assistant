@@ -154,6 +154,22 @@ class TestConfigEndpoints(AdminApiTestCase):
         # Nothing stored
         self.assertEqual(self.client.get("/api/config/intake").json()["max_questions"], 3)
 
+    def test_rejection_names_the_field(self):
+        """The admin form places each message next to its input."""
+        response = self.client.put("/api/config/intake", json={"max_questions": 0})
+
+        (error,) = response.json()["detail"]
+        self.assertEqual(error["field"], "max_questions")
+        self.assertIn("greater than 0", error["message"])
+
+    def test_rule_between_fields_names_no_field(self):
+        """A model validator blames a relation, so the form shows it as its own."""
+        response = self.client.put("/api/config/intake", json={"similar_top": 9, "similar_candidates": 2})
+
+        (error,) = response.json()["detail"]
+        self.assertEqual(error["field"], "")
+        self.assertIn("similar_candidates", error["message"])
+
     def test_delete_resets_to_defaults(self):
         self.client.put("/api/config/intake", json={"max_questions": 5})
 
@@ -167,6 +183,15 @@ class TestConfigEndpoints(AdminApiTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("max_questions", response.json()["properties"])
+
+    def test_schema_carries_ui_hints(self):
+        """The admin form learns a module's sections from the schema (ADR-025)."""
+        props = self.client.get("/api/config/intake/schema").json()["properties"]
+
+        self.assertEqual(props["classify_enabled"]["x-group"], props["max_classify_questions"]["x-group"])
+        self.assertTrue(props["classify_enabled"]["x-toggle"])
+        self.assertNotIn("x-toggle", props["max_classify_questions"])
+        self.assertEqual(props["classify_service_oql"]["x-widget"], "oql")
 
     def test_unknown_module_404(self):
         self.assertEqual(self.client.get("/api/config/nope").status_code, 404)

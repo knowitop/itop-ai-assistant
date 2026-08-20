@@ -88,6 +88,18 @@ async def get_config_schema(module: str, request: Request) -> dict:
     return info.config_model.model_json_schema()
 
 
+def _field_errors(error: ValidationError) -> list[dict[str, str]]:
+    """Flatten a ValidationError into `{field, message}` per failure.
+
+    The admin form puts each message next to the input it belongs to, which
+    `str(ValidationError)` — one blob with pydantic's own URLs in it — cannot
+    be split into. A model validator has an empty `loc` and stays a
+    form-level message: the failure is a relation between fields, and picking
+    one of them to blame would be a guess.
+    """
+    return [{"field": ".".join(str(part) for part in err["loc"]), "message": err["msg"]} for err in error.errors()]
+
+
 @router.put("/config/{module}")
 async def update_config(
     module: str, body: dict[str, Any], request: Request, config_store: Annotated[ConfigStore, Depends(get_config_store)]
@@ -98,7 +110,7 @@ async def update_config(
     try:
         cfg = await config_store.set(module, body, info.config_model)
     except ValidationError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from e
+        raise HTTPException(status_code=422, detail=_field_errors(e)) from e
     logger.info(f"Config for module {module!r} updated via admin API")
     return cfg.model_dump()
 

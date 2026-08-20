@@ -86,15 +86,6 @@ class TestWebhook(WebhookTestCase):
         )
         self.assertEqual(response.status_code, 422)
 
-    def test_incident_class_accepted(self):
-        response = self.client.post(
-            "/webhook",
-            json={"id": "456", "class": "Incident", "event": "created"},
-        )
-
-        self.assertEqual(response.status_code, 202)
-        UUID(response.json()["processing_id"])
-
     def test_each_request_gets_unique_processing_id(self):
         r1 = self.client.post("/webhook", json={"id": "1", "class": "UserRequest", "event": "created"})
         r2 = self.client.post("/webhook", json={"id": "2", "class": "UserRequest", "event": "created"})

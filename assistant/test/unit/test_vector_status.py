@@ -151,7 +151,7 @@ class TestVectorSources(VectorStatusTestCase):
 
         by_name = {s["name"]: s for s in body["sources"]}
         source = by_name["tickets"]
-        self.assertEqual(source["classes"], ["UserRequest", "Incident"])
+        self.assertEqual(source["classes"], ["UserRequest"])
         self.assertIn("title", source["fields"])
         by_kind = {f["kind"]: f for f in source["fragments"]}
         self.assertEqual(by_kind["body"], {"kind": "body", "visibility": "public", "optional": False})

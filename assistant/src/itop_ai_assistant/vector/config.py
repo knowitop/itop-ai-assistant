@@ -105,7 +105,6 @@ class VectorConfig(BaseModel):
         "tickets": FamilyConfig(
             classes={
                 "UserRequest": VectorClassConfig(index_values=["resolved", "closed"], chunks=_TICKET_CHUNKS),
-                "Incident": VectorClassConfig(index_values=["resolved", "closed"], chunks=_TICKET_CHUNKS),
             }
         ),
         "faq": FamilyConfig(

@@ -59,18 +59,13 @@ How semantic ticket fields map onto your iTop datamodel — edit this instead of
 
 ## Modules
 
-Per-module business settings. Currently the **Intake** module exposes:
+Per-module business settings. The form is built from the module's own settings schema, so a module's fields appear here as soon as the module exists — nothing about them is hard-coded in the UI.
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Enabled | `true` | Enable or disable the module entirely |
-| Classes | `UserRequest`, `Incident` | Ticket classes the module handles |
-| Active statuses | `new` | Statuses in which the module is allowed to act on a ticket |
-| Max questions | `3` | How many clarifying questions the requester gets for one ticket, in total |
-| Max classify questions | `2` | How many of those may be spent while the ticket is still unclassified |
-| Max iterations | `8` | Budget of model calls per ticket; on exhaustion the run is closed with the fallback note |
-| Model | _(global)_ | Override LLM model for the module — it must call tools reliably |
-| Handoff fallback note | _(see [Configuration](configuration.md#intake-module-settings))_ | Internal note when the agent ends without a question or a handoff |
+Fields are grouped the way the module groups them. The settings that apply to the module as a whole come first; below them, one section per action the module can perform, each headed by the switch that turns that action on. Switching a section off greys out its settings rather than hiding them, so it stays visible what is being saved. Settings an administrator rarely touches — OQL templates, similarity thresholds — are folded away behind **Advanced settings** inside their section.
+
+Every field carries its own label and explanation from the module, and rejected values are reported on the field they belong to; a rule that spans two fields (for instance, "references in one note" not exceeding "candidates read from the index") is reported above the form, where it belongs.
+
+The full list of intake's settings, with defaults, is in [Configuration](configuration.md#intake-module-settings).
 
 Changes apply from the next processed ticket — no restart needed, **except Enabled and Classes**, which are read at startup. Each module can be reset to its defaults.
 

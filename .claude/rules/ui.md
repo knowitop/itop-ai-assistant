@@ -23,6 +23,12 @@ instinct to reach for a library is exactly what they forbid:
   highlighting becomes a real need.
 - The connection form is generated from `GET /api/setup/llm-providers` — do not
   duplicate the provider list in TypeScript.
+- The module config form is generated from `GET /api/config/{module}/schema` —
+  **never** add a list of a module's fields, labels or sections to TypeScript.
+  Anything the form needs about a field travels in the schema itself
+  (`settings/ui_hints.py`, ADR-025): a new field or a new module must render
+  without touching `ui/`. Labels come from `t(key, { defaultValue: title })`,
+  so a locale key is an override, never a prerequisite.
 - Builds into `ui/dist`, served by FastAPI at `/ui` (API stays under `/api`). In
   dev use the vite proxy to `:8001` — no CORS. The admin token lives in
   `localStorage`; 401 shows the token entry screen.

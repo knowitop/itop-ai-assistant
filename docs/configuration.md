@@ -77,18 +77,23 @@ Set in the [Admin UI → Modules](admin-ui.md#modules) or via `PUT /api/config/i
 
 | Setting | Default | Description |
 |---------|---------|-------------|
+| **Module** | | |
 | `enabled` | `true` | Enable or disable the intake module |
-| `classify_enabled` | `true` | Let the module set the service and the subcategory of the ticket |
-| `clarify_enabled` | `true` | Let the module ask the requester clarifying questions in the public log |
-| `handoff_note_enabled` | `true` | Let the module write the internal note for the engineer |
-| `similar_enabled` | `true` | Let the module quote similar solved tickets in that note — requires `handoff_note_enabled` |
-| `classes` | `["UserRequest", "Incident"]` | Ticket classes to process |
+| `classes` | `["UserRequest"]` | Ticket classes to process |
 | `active_statuses` | `["new"]` | Statuses in which the module is allowed to act on a ticket |
 | `max_questions` | `3` | How many clarifying questions the requester gets for one ticket, in total |
-| `max_classify_questions` | `2` | How many of those may be spent while the ticket is still unclassified — must not exceed `max_questions` |
 | `max_iterations` | `9` | Budget of model calls per ticket; on exhaustion the run is closed with the fallback note |
 | `model` | _(global LLM model)_ | Override model for the whole module — the agent needs reliable tool calling |
+| **Classification** | | |
+| `classify_enabled` | `true` | Let the module set the service and the subcategory of the ticket |
+| `max_classify_questions` | `2` | How many of `max_questions` may be spent while the ticket is still unclassified — must not exceed it |
+| **Clarification** | | |
+| `clarify_enabled` | `true` | Let the module ask the requester clarifying questions in the public log |
+| **Handoff note** | | |
+| `handoff_note_enabled` | `true` | Let the module write the internal note for the engineer |
 | `handoff_fallback_note` | `AI intake finished without a summary. Manual review required.` | Internal note when the agent ends without a question or a handoff |
+| **Similar solved tickets** | | |
+| `similar_enabled` | `true` | Let the module quote similar solved tickets in that note — requires `handoff_note_enabled` |
 | `resolved_statuses` | `["resolved", "closed"]` | Ticket statuses eligible to be quoted as "similar solved tickets" |
 | `similar_max_age_days` | `365` | How far back solved tickets may be quoted in the handoff note |
 | `similar_candidates` | `15` | Candidates read from the index before iTop is asked which of them the run may see |
