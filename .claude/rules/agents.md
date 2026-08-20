@@ -21,7 +21,7 @@ convention; `graph/` is reserved for a genuinely deterministic multi-step flow.
 
 - One invariant per writing tool, enforced **inside** the tool. Reject a bad call
   with a `ToolRejection` that says what to do instead.
-- Counters (rounds, budgets) are set by code, never by the model.
+- Counters (questions asked, budgets) are set by code, never by the model.
 - The tool set is **per run**: withhold a tool instead of asking the prompt to
   avoid it (`tools_for(ticket)`). Taking the tool away is what actually works.
 - **Tool docstrings are code, not prompts.** They must stay in sync with the

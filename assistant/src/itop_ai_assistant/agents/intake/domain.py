@@ -36,12 +36,21 @@ def needs_classification(scope: IntakeScope, ticket: Ticket) -> bool:
     """Is classifying this ticket both allowed and still to be done?
 
     The only place where "the administrator switched it on" meets "the ticket
-    is not classified yet". Both the tool set and the prompt ask this — the
-    round budget asks `scope.classify` instead, because a question asked in a
-    deployment that never classifies is an ordinary question whatever the
-    ticket's fields say.
+    is not classified yet". Both the tool set and the prompt ask this — and so
+    does `post_public_question`, once, when it records which phase the question
+    was asked in.
     """
     return scope.classify and not (ticket.has_service and ticket.has_subcategory)
+
+
+def finish_tool(scope: IntakeScope) -> str:
+    """The name of the one tool that ends a session under this scope.
+
+    Said out loud by everything that has to point a run at its way out — the
+    line closing a classification, a refusal — so the name is decided here
+    rather than re-derived from `handoff_note` at each site.
+    """
+    return "finish_handoff" if scope.handoff_note else "finish_processing"
 
 
 def closing_tools(scope: IntakeScope) -> list[str]:
@@ -54,7 +63,7 @@ def closing_tools(scope: IntakeScope) -> list[str]:
     the model, which knows tools.
     """
     names = ["post_public_question"] if scope.clarify else []
-    names.append("finish_handoff" if scope.handoff_note else "finish_processing")
+    names.append(finish_tool(scope))
     return names
 
 
@@ -72,20 +81,29 @@ def format_scope(scope: IntakeScope) -> str:
     return " ".join(f"{name}={'on' if enabled else 'off'}" for name, enabled in flags.items())
 
 
-class RoundBudget(Enum):
-    """What `post_public_question` may do, given the rounds spent so far."""
+class QuestionBudget(Enum):
+    """What `post_public_question` may do, given the questions already asked."""
 
     OK = auto()  # under budget — post the question
-    CLASSIFY_EXHAUSTED = auto()  # asked twice while classifying — hand off with the fallback note
-    EXHAUSTED = auto()  # asked twice after classification — refuse, point at finish_handoff
+    CLASSIFY_EXHAUSTED = auto()  # the classification sub-limit is spent, the category is still unknown
+    EXHAUSTED = auto()  # no questions left for this ticket at all
 
 
-def check_round_budget(
-    state: TicketState, *, classifying: bool, max_rounds: int, max_classify_rounds: int
-) -> RoundBudget:
-    if classifying:
-        return RoundBudget.CLASSIFY_EXHAUSTED if state.classify_rounds >= max_classify_rounds else RoundBudget.OK
-    return RoundBudget.EXHAUSTED if state.rounds >= max_rounds else RoundBudget.OK
+def check_question_budget(
+    state: TicketState, *, classifying: bool, max_questions: int, max_classify_questions: int
+) -> QuestionBudget:
+    """One ceiling on questions to the requester, with a sub-limit inside it.
+
+    The order matters: a ticket that hits the overall ceiling while still
+    unclassified is told the category could not be determined, not that it has
+    enough detail. Both outcomes end the questioning, they just say different
+    things to the model.
+    """
+    if classifying and state.classify_questions_asked >= max_classify_questions:
+        return QuestionBudget.CLASSIFY_EXHAUSTED
+    if state.questions_asked >= max_questions:
+        return QuestionBudget.EXHAUSTED
+    return QuestionBudget.OK
 
 
 @dataclass(frozen=True)

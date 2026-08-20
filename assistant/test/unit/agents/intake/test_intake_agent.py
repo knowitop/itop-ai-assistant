@@ -83,7 +83,7 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
         # Stateful on purpose: the epilogue re-reads the state to see whether
         # a tool already finished the ticket, so writes must be visible.
         # Generic on the mock too (`get`/`increment`/`set_flag`, not
-        # `mark_done`/`increment_rounds`): this is what sits behind
+        # `mark_done`/`record_question`): this is what sits behind
         # `IntakeState`, at the `ObjectStatePort` level (TASK-047).
         self.ticket_state = TicketState()
 
@@ -414,7 +414,10 @@ class TestTerminalTools(IntakeAgentTestCase):
 
         self.assertEqual(model.calls, 1)
         self.repos.ticket_repo.append_public_log.assert_awaited_once()
-        self.deps.state_manager.increment.assert_awaited_once_with(MODULE, "Incident::123", "classify_rounds")
+        self.assertEqual(
+            [c.args for c in self.deps.state_manager.increment.await_args_list],
+            [(MODULE, "Incident::123", "questions_asked"), (MODULE, "Incident::123", "classify_questions_asked")],
+        )
         self.deps.state_manager.set_flag.assert_not_called()
         self.repos.ticket_repo.append_private_log.assert_not_called()
 
@@ -435,22 +438,24 @@ class TestTerminalTools(IntakeAgentTestCase):
         self.repos.ticket_repo.set_fields.assert_awaited_once()
         self.deps.state_manager.set_flag.assert_awaited_once()
 
-    async def test_exhausted_classify_budget_closes_the_ticket_inside_the_tool(self):
-        self.ticket_state = TicketState(classify_rounds=2)
+    async def test_exhausted_classify_budget_sends_the_model_to_write_the_note(self):
+        # The unclassifiable ticket is exactly where a summary is worth most,
+        # so the note is the model's, written from what the ticket has
+        self.ticket_state = TicketState(questions_asked=2, classify_questions_asked=2)
 
         model = await self.run_agent(
             [
                 ai([call("post_public_question", {"question": "again?"}, "q1")]),
-                # The model must never get this turn: writing a handoff note
-                # here would overwrite the fallback the tool just posted
-                ai([call("finish_handoff", {"note": "sneaking a second note in"}, "h1")]),
+                ai([call("finish_handoff", {"note": "Category unclear, the requester never answered."}, "h1")]),
             ]
         )
 
-        self.assertEqual(model.calls, 1)
+        self.assertEqual(model.calls, 2)
         self.repos.ticket_repo.append_public_log.assert_not_called()
+        rejection = next(detail for node, detail in self.journal_steps() if node == "tool:post_public_question")
+        self.assertIn("[error]", rejection)
         self.repos.ticket_repo.append_private_log.assert_awaited_once_with(
-            self.ticket, self.intake_cfg.classify_fallback_note
+            self.ticket, "Category unclear, the requester never answered."
         )
         self.deps.state_manager.set_flag.assert_awaited_once_with(MODULE, "Incident::123", "ai_done")
         self.assertNotIn("epilogue", [node for node, _ in self.journal_steps()])

@@ -138,35 +138,35 @@ class TestConfigEndpoints(AdminApiTestCase):
         response = self.client.get("/api/config/intake")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["max_rounds"], 2)
+        self.assertEqual(response.json()["max_questions"], 3)
 
     def test_put_config_applies_from_next_read(self):
-        response = self.client.put("/api/config/intake", json={"max_rounds": 5})
+        response = self.client.put("/api/config/intake", json={"max_questions": 5})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["max_rounds"], 5)
-        self.assertEqual(self.client.get("/api/config/intake").json()["max_rounds"], 5)
+        self.assertEqual(response.json()["max_questions"], 5)
+        self.assertEqual(self.client.get("/api/config/intake").json()["max_questions"], 5)
 
     def test_put_invalid_config_rejected(self):
-        response = self.client.put("/api/config/intake", json={"max_rounds": "many"})
+        response = self.client.put("/api/config/intake", json={"max_questions": "many"})
 
         self.assertEqual(response.status_code, 422)
         # Nothing stored
-        self.assertEqual(self.client.get("/api/config/intake").json()["max_rounds"], 2)
+        self.assertEqual(self.client.get("/api/config/intake").json()["max_questions"], 3)
 
     def test_delete_resets_to_defaults(self):
-        self.client.put("/api/config/intake", json={"max_rounds": 5})
+        self.client.put("/api/config/intake", json={"max_questions": 5})
 
         response = self.client.delete("/api/config/intake")
 
         self.assertEqual(response.status_code, 204)
-        self.assertEqual(self.client.get("/api/config/intake").json()["max_rounds"], 2)
+        self.assertEqual(self.client.get("/api/config/intake").json()["max_questions"], 3)
 
     def test_schema_returned(self):
         response = self.client.get("/api/config/intake/schema")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("max_rounds", response.json()["properties"])
+        self.assertIn("max_questions", response.json()["properties"])
 
     def test_unknown_module_404(self):
         self.assertEqual(self.client.get("/api/config/nope").status_code, 404)

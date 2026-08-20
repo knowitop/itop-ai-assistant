@@ -64,8 +64,7 @@ def _make_runtime(
     runtime.context.ticket_repo.append_public_log = AsyncMock()
     runtime.context.ticket_repo.append_private_log = AsyncMock()
     runtime.context.state_manager.get = AsyncMock(return_value=TicketState(**state_kwargs))
-    runtime.context.state_manager.increment_rounds = AsyncMock()
-    runtime.context.state_manager.increment_classify_rounds = AsyncMock()
+    runtime.context.state_manager.record_question = AsyncMock()
     runtime.context.state_manager.mark_done = AsyncMock()
     return runtime
 
@@ -326,57 +325,55 @@ class TestPostPublicQuestion(unittest.IsolatedAsyncioTestCase):
         runtime.context.ticket_repo.append_public_log.assert_awaited_once_with(
             runtime.context.ticket, "What exactly broke?"
         )
-        runtime.context.state_manager.increment_classify_rounds.assert_awaited_once_with("Incident::1")
-        runtime.context.state_manager.increment_rounds.assert_not_called()
+        runtime.context.state_manager.record_question.assert_awaited_once_with("Incident::1", classifying=True)
 
     async def test_classified_ticket_spends_the_completeness_budget(self):
         runtime = _make_runtime(_ticket(service_id="10", subcategory_id="101"))
 
         await tools.post_public_question.coroutine(question="Which printer model?", runtime=runtime)
 
-        runtime.context.state_manager.increment_rounds.assert_awaited_once_with("Incident::1")
-        runtime.context.state_manager.increment_classify_rounds.assert_not_called()
+        runtime.context.state_manager.record_question.assert_awaited_once_with("Incident::1", classifying=False)
 
-    async def test_exhausted_classify_budget_hands_the_ticket_over(self):
-        runtime = _make_runtime(classify_rounds=2)
+    async def test_exhausted_classify_budget_is_refused_and_writes_nothing(self):
+        # The note that ends this ticket is the model's, written from what the
+        # ticket has — the tool neither writes one itself nor closes the run
+        runtime = _make_runtime(questions_asked=2, classify_questions_asked=2)
 
-        # Success, not a rejection: the run must end here, so the model never
-        # gets a turn in which it could call finish_handoff over this note
-        result = await tools.post_public_question.coroutine(question="one more?", runtime=runtime)
+        with self.assertRaises(ToolRejection) as ctx:
+            await tools.post_public_question.coroutine(question="one more?", runtime=runtime)
 
-        runtime.context.ticket_repo.append_private_log.assert_awaited_once_with(
-            runtime.context.ticket, IntakeConfig().classify_fallback_note
-        )
-        runtime.context.state_manager.mark_done.assert_awaited_once_with("Incident::1")
+        self.assertIn("finish_handoff", str(ctx.exception))
+        self.assertIn("classification could not be determined", str(ctx.exception))
         runtime.context.ticket_repo.append_public_log.assert_not_called()
-        self.assertIn("Your session is over", result)
+        runtime.context.ticket_repo.append_private_log.assert_not_called()
+        runtime.context.state_manager.mark_done.assert_not_called()
 
-    async def test_a_deployment_that_does_not_classify_spends_an_ordinary_round(self):
+    async def test_a_deployment_that_does_not_classify_spends_an_ordinary_question(self):
         # The ticket has no subcategory, but nobody was going to set one — the
-        # question is about completeness, and `classify_rounds` must not pay
+        # question is about completeness, and the classify sub-limit must not pay
         runtime = _make_runtime(scope=_scope(classify=False))
 
         await tools.post_public_question.coroutine(question="Which printer model?", runtime=runtime)
 
-        runtime.context.state_manager.increment_rounds.assert_awaited_once_with("Incident::1")
-        runtime.context.state_manager.increment_classify_rounds.assert_not_called()
+        runtime.context.state_manager.record_question.assert_awaited_once_with("Incident::1", classifying=False)
 
-    async def test_exhausted_classify_budget_writes_nothing_when_notes_are_off(self):
-        # R7: with the handoff note switched off the private log stays empty
-        # whatever the outcome — the ticket is just finished silently
-        runtime = _make_runtime(scope=_scope(handoff_note=False, similar=False), classify_rounds=2)
+    async def test_exhausted_classify_budget_points_at_the_finish_the_run_actually_has(self):
+        # Nothing to say about a note where there is no note to write
+        runtime = _make_runtime(
+            scope=_scope(handoff_note=False, similar=False), questions_asked=2, classify_questions_asked=2
+        )
 
-        result = await tools.post_public_question.coroutine(question="one more?", runtime=runtime)
+        with self.assertRaises(ToolRejection) as ctx:
+            await tools.post_public_question.coroutine(question="one more?", runtime=runtime)
 
-        runtime.context.ticket_repo.append_private_log.assert_not_called()
-        runtime.context.state_manager.mark_done.assert_awaited_once_with("Incident::1")
-        self.assertIn("Your session is over", result)
+        self.assertIn("finish_processing", str(ctx.exception))
+        self.assertNotIn("note", str(ctx.exception))
 
-    async def test_exhausted_rounds_budget_points_at_the_finish_the_run_actually_has(self):
+    async def test_exhausted_question_budget_points_at_the_finish_the_run_actually_has(self):
         runtime = _make_runtime(
             _ticket(service_id="10", subcategory_id="101"),
             scope=_scope(handoff_note=False, similar=False),
-            rounds=2,
+            questions_asked=3,
         )
 
         with self.assertRaises(ToolRejection) as ctx:
@@ -385,8 +382,8 @@ class TestPostPublicQuestion(unittest.IsolatedAsyncioTestCase):
         self.assertIn("finish_processing", str(ctx.exception))
         self.assertNotIn("finish_handoff", str(ctx.exception))
 
-    async def test_exhausted_rounds_budget_points_at_the_handoff(self):
-        runtime = _make_runtime(_ticket(service_id="10", subcategory_id="101"), rounds=2)
+    async def test_exhausted_question_budget_points_at_the_handoff(self):
+        runtime = _make_runtime(_ticket(service_id="10", subcategory_id="101"), questions_asked=3)
 
         with self.assertRaises(ToolRejection) as ctx:
             await tools.post_public_question.coroutine(question="one more?", runtime=runtime)
@@ -395,6 +392,18 @@ class TestPostPublicQuestion(unittest.IsolatedAsyncioTestCase):
         runtime.context.ticket_repo.append_public_log.assert_not_called()
         runtime.context.ticket_repo.append_private_log.assert_not_called()
         runtime.context.state_manager.mark_done.assert_not_called()
+
+    async def test_classification_questions_leave_the_ceiling_lower(self):
+        # Two about the category, one about completeness — the third question
+        # is the whole budget, and a classified ticket gets no fresh two
+        runtime = _make_runtime(
+            _ticket(service_id="10", subcategory_id="101"), questions_asked=3, classify_questions_asked=2
+        )
+
+        with self.assertRaises(ToolRejection) as ctx:
+            await tools.post_public_question.coroutine(question="one more?", runtime=runtime)
+
+        self.assertIn("whole budget", str(ctx.exception))
 
 
 class TestFinishHandoff(unittest.IsolatedAsyncioTestCase):

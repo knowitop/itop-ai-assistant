@@ -28,6 +28,29 @@ class TestIntakeConfig(unittest.TestCase):
         self.assertEqual(IntakeConfig(similar_candidates=5, similar_top=5).similar_top, 5)
 
 
+class TestQuestionBudget(unittest.TestCase):
+    def test_defaults_leave_the_completeness_phase_one_question(self):
+        cfg = IntakeConfig()
+
+        self.assertEqual((cfg.max_questions, cfg.max_classify_questions), (3, 2))
+
+    def test_a_sub_limit_above_the_ceiling_is_rejected(self):
+        with self.assertRaises(ValidationError) as ctx:
+            IntakeConfig(max_questions=2, max_classify_questions=3)
+
+        self.assertIn("max_classify_questions", str(ctx.exception))
+
+    def test_a_sub_limit_equal_to_the_ceiling_is_allowed(self):
+        # "No reserve for the completeness phase" is a choice, not a mistake
+        cfg = IntakeConfig(max_questions=2, max_classify_questions=2)
+
+        self.assertEqual(cfg.max_classify_questions, 2)
+
+    def test_zero_questions_is_not_how_the_action_is_switched_off(self):
+        with self.assertRaises(ValidationError):
+            IntakeConfig(max_questions=0)
+
+
 class TestActionToggles(unittest.TestCase):
     def test_every_action_is_on_by_default(self):
         # A deployment that never touched the settings must not notice them

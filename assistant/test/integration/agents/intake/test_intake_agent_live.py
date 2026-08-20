@@ -66,7 +66,7 @@ class TestFullIntakeFlow:
         await _run(ctx)
 
         state = await ctx.state_manager.get("UserRequest::42")
-        assert state.rounds == 1
+        assert state.questions_asked == 1
         assert _log_updates(transport, "public_log")
 
 

@@ -3,8 +3,8 @@ import unittest
 from itop_ai_assistant.agents.intake.domain import (
     IntakeScope,
     NonBlankText,
-    RoundBudget,
-    check_round_budget,
+    QuestionBudget,
+    check_question_budget,
     closing_tools,
     format_scope,
     needs_classification,
@@ -22,58 +22,58 @@ def _scope(**overrides: bool) -> IntakeScope:
     return IntakeScope(**{"classify": True, "clarify": True, "handoff_note": True, "similar": True, **overrides})
 
 
-class TestCheckRoundBudget(unittest.TestCase):
+class TestCheckQuestionBudget(unittest.TestCase):
     """Pure over `TicketState` and two ints — no config, no I/O, no framework."""
 
+    @staticmethod
+    def _check(state: TicketState, *, classifying: bool) -> QuestionBudget:
+        return check_question_budget(state, classifying=classifying, max_questions=3, max_classify_questions=2)
+
     def test_under_budget_while_classifying(self):
-        state = TicketState(classify_rounds=1)
+        state = TicketState(questions_asked=1, classify_questions_asked=1)
 
-        result = check_round_budget(state, classifying=True, max_rounds=2, max_classify_rounds=2)
+        self.assertEqual(self._check(state, classifying=True), QuestionBudget.OK)
 
-        self.assertEqual(result, RoundBudget.OK)
+    def test_classify_sub_limit_exhausted_at_the_threshold(self):
+        state = TicketState(questions_asked=2, classify_questions_asked=2)
 
-    def test_classify_budget_exhausted_at_the_threshold(self):
-        state = TicketState(classify_rounds=2)
+        self.assertEqual(self._check(state, classifying=True), QuestionBudget.CLASSIFY_EXHAUSTED)
 
-        result = check_round_budget(state, classifying=True, max_rounds=2, max_classify_rounds=2)
+    def test_classify_sub_limit_exhausted_past_the_threshold(self):
+        state = TicketState(questions_asked=3, classify_questions_asked=3)
 
-        self.assertEqual(result, RoundBudget.CLASSIFY_EXHAUSTED)
-
-    def test_classify_budget_exhausted_past_the_threshold(self):
-        state = TicketState(classify_rounds=3)
-
-        result = check_round_budget(state, classifying=True, max_rounds=2, max_classify_rounds=2)
-
-        self.assertEqual(result, RoundBudget.CLASSIFY_EXHAUSTED)
+        self.assertEqual(self._check(state, classifying=True), QuestionBudget.CLASSIFY_EXHAUSTED)
 
     def test_under_budget_once_classified(self):
-        state = TicketState(rounds=1)
+        state = TicketState(questions_asked=2, classify_questions_asked=2)
 
-        result = check_round_budget(state, classifying=False, max_rounds=2, max_classify_rounds=2)
+        self.assertEqual(self._check(state, classifying=False), QuestionBudget.OK)
 
-        self.assertEqual(result, RoundBudget.OK)
+    def test_overall_ceiling_exhausted_at_the_threshold(self):
+        state = TicketState(questions_asked=3)
 
-    def test_rounds_budget_exhausted_at_the_threshold(self):
-        state = TicketState(rounds=2)
+        self.assertEqual(self._check(state, classifying=False), QuestionBudget.EXHAUSTED)
 
-        result = check_round_budget(state, classifying=False, max_rounds=2, max_classify_rounds=2)
+    def test_classification_questions_spend_the_overall_budget_too(self):
+        # Two questions about the category and one about completeness is the
+        # whole ceiling — the phases share it, they do not each get their own
+        state = TicketState(questions_asked=3, classify_questions_asked=2)
 
-        self.assertEqual(result, RoundBudget.EXHAUSTED)
+        self.assertEqual(self._check(state, classifying=False), QuestionBudget.EXHAUSTED)
 
-    def test_classify_rounds_do_not_count_once_classified(self):
-        # Two separate counters — spending one must not exhaust the other
-        state = TicketState(classify_rounds=5, rounds=0)
+    def test_the_sub_limit_is_checked_before_the_ceiling(self):
+        # Both are spent: the model must be told the category is unknown, not
+        # that the ticket has enough detail
+        state = TicketState(questions_asked=3, classify_questions_asked=2)
 
-        result = check_round_budget(state, classifying=False, max_rounds=2, max_classify_rounds=2)
+        self.assertEqual(self._check(state, classifying=True), QuestionBudget.CLASSIFY_EXHAUSTED)
 
-        self.assertEqual(result, RoundBudget.OK)
+    def test_a_sub_limit_equal_to_the_ceiling_leaves_no_reserve(self):
+        state = TicketState(questions_asked=2, classify_questions_asked=2)
 
-    def test_rounds_do_not_count_while_classifying(self):
-        state = TicketState(rounds=5, classify_rounds=0)
+        result = check_question_budget(state, classifying=False, max_questions=2, max_classify_questions=2)
 
-        result = check_round_budget(state, classifying=True, max_rounds=2, max_classify_rounds=2)
-
-        self.assertEqual(result, RoundBudget.OK)
+        self.assertEqual(result, QuestionBudget.EXHAUSTED)
 
 
 class TestNeedsClassification(unittest.TestCase):

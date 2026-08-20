@@ -66,12 +66,11 @@ Per-module business settings. Currently the **Intake** module exposes:
 | Enabled | `true` | Enable or disable the module entirely |
 | Classes | `UserRequest`, `Incident` | Ticket classes the module handles |
 | Active statuses | `new` | Statuses in which the module is allowed to act on a ticket |
-| Max rounds | `2` | Maximum completeness clarifying questions per ticket |
-| Max classify rounds | `2` | Maximum classification clarifying questions per ticket |
+| Max questions | `3` | How many clarifying questions the requester gets for one ticket, in total |
+| Max classify questions | `2` | How many of those may be spent while the ticket is still unclassified |
 | Max iterations | `8` | Budget of model calls per ticket; on exhaustion the run is closed with the fallback note |
 | Model | _(global)_ | Override LLM model for the module — it must call tools reliably |
-| Classify fallback note | _(see [Configuration](configuration.md#intake-module-settings))_ | Internal note when the ticket stays unclassified |
-| Handoff fallback note | _(see Configuration)_ | Internal note when the agent ends without a question or a handoff |
+| Handoff fallback note | _(see [Configuration](configuration.md#intake-module-settings))_ | Internal note when the agent ends without a question or a handoff |
 
 Changes apply from the next processed ticket — no restart needed, **except Enabled and Classes**, which are read at startup. Each module can be reset to its defaults.
 

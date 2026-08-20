@@ -20,7 +20,7 @@ Engineers waste time on tickets that arrive without enough information: vague de
 When a new ticket arrives, the assistant intercepts it via webhook — no changes to iTop itself are needed. Processing runs as a **single AI agent** that decides what the ticket needs and acts through a fixed set of tools:
 
 - **Classify** — if the ticket has no service or subcategory, the agent reads the service catalog from iTop and writes the best match back to the ticket. The classification tools validate every id against the catalog, so the agent cannot invent a category.
-- **Ask** — if the ticket is too vague to classify or to work on, the agent posts exactly **one** focused clarifying question in the public log and stops. The user replies through the portal as usual, which triggers a new webhook and a fresh round. Two rounds at most per stage, then the ticket moves on with whatever is available.
+- **Ask** — if the ticket is too vague to classify or to work on, the agent posts exactly **one** focused clarifying question in the public log and stops. The user replies through the portal as usual, which triggers a new webhook and a fresh round. Three questions per ticket at most, of which at most two may be spent on working out its category, then the ticket moves on with whatever is available.
 - **Hand off** — once the picture is clear, the agent writes a structured internal note for the engineer and marks the ticket done.
 
 The subcategory's own **description** in iTop is what the agent treats as the completeness criteria — so the questions it asks are specific to the service context, not generic prompts.

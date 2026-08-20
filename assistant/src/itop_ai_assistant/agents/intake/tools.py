@@ -25,9 +25,10 @@ from .context import IntakeContext
 from .domain import (
     IntakeScope,
     NonBlankText,
-    RoundBudget,
-    check_round_budget,
+    QuestionBudget,
+    check_question_budget,
     closing_tools,
+    finish_tool,
     needs_classification,
 )
 from .prompt import format_options
@@ -248,49 +249,43 @@ async def post_public_question(question: str, runtime: IntakeToolRuntime) -> str
     except ValueError:
         raise ToolRejection("The question is empty. Write the actual text you want the requester to read.") from None
 
-    # The counter is chosen by code, not by the model: leaving it to the model
-    # would let it pick the budget it has not spent yet. A deployment that does
-    # not classify has no classification budget to spend, however empty the
-    # ticket's fields are — otherwise the question lands on `classify_rounds`
-    # and, once those run out, the ticket gets a note about a stage nobody ran.
+    # Which budget a question is charged to is decided by code, not by the
+    # model, and decided now rather than re-derived later: people change a
+    # ticket's classification between runs, and what was already spent must not
+    # come back. A deployment that does not classify has no classification
+    # sub-limit to spend, however empty the ticket's fields are — otherwise the
+    # question is refused over a stage nobody ran.
     classifying = needs_classification(ctx.scope, ticket)
     state = await ctx.state_manager.get(str(ticket.identity))
     cfg = ctx.intake
-    budget = check_round_budget(
-        state, classifying=classifying, max_rounds=cfg.max_rounds, max_classify_rounds=cfg.max_classify_rounds
+    budget = check_question_budget(
+        state,
+        classifying=classifying,
+        max_questions=cfg.max_questions,
+        max_classify_questions=cfg.max_classify_questions,
     )
 
-    if budget is RoundBudget.CLASSIFY_EXHAUSTED:
-        # Rounds spent: hand an unclassifiable ticket to a human instead of
-        # asking again.
-        # Returned as success, not as a rejection: the ticket *is* finished,
-        # and a rejection would leave the loop running — free to call
-        # finish_handoff and write a second note over this one.
-        logger.info(f"{ticket.identity}: classify rounds exhausted, handing the ticket over")
-        # A deployment with the handoff note switched off writes nothing to the
-        # private log, this fallback included (REQ-003 R7) — the ticket is
-        # still finished, it is just finished silently.
-        if ctx.scope.handoff_note:
-            await ctx.ticket_repo.append_private_log(ticket, cfg.classify_fallback_note)
-        await ctx.state_manager.mark_done(str(ticket.identity))
-        return (
-            "The requester has already been asked about this twice and the ticket is still unclassified, "
-            "so it has been handed to a human instead. Your session is over."
-        )
-    if budget is RoundBudget.EXHAUSTED:
-        # Names the closing tool this run actually has: a rejection pointing at
-        # a tool that was never handed over costs another wasted model call.
-        closing = "finish_handoff" if ctx.scope.handoff_note else "finish_processing"
+    # Both exhaustions are refusals, not writes: the note that ends the ticket
+    # is written by the model out of what the ticket has, which beats a fixed
+    # string exactly where a summary is worth most — on a ticket reaching an
+    # engineer unrouted.
+    if budget is QuestionBudget.CLASSIFY_EXHAUSTED:
+        logger.info(f"{ticket.identity}: classification questions exhausted, the category stays unknown")
+        # Nothing to say about a note where this deployment writes none
+        say_so = " Say in the note that the classification could not be determined." if ctx.scope.handoff_note else ""
         raise ToolRejection(
-            f"The requester has already been asked twice. Do not ask again — call {closing} "
-            "with whatever information the ticket already has."
+            f"The requester has already been asked about the category {state.classify_questions_asked} times and "
+            f"it is still unknown. Do not ask again — call {finish_tool(ctx.scope)}.{say_so}"
+        )
+    if budget is QuestionBudget.EXHAUSTED:
+        raise ToolRejection(
+            f"The requester has already been asked {state.questions_asked} times, which is the whole budget of "
+            f"questions for this ticket. Do not ask again — call {finish_tool(ctx.scope)} with whatever "
+            "information the ticket already has."
         )
 
     await ctx.ticket_repo.append_public_log(ticket, text.value)
-    if classifying:
-        await ctx.state_manager.increment_classify_rounds(str(ticket.identity))
-    else:
-        await ctx.state_manager.increment_rounds(str(ticket.identity))
+    await ctx.state_manager.record_question(str(ticket.identity), classifying=classifying)
     logger.info(f"{ticket.identity}: posted a public question (classify={classifying})")
     return "The question has been posted. Your session is over — stop here."
 

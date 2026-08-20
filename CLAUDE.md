@@ -22,7 +22,7 @@ data always come from iTop. Never cache or duplicate this data locally — read
 fresh on every run.
 
 **Redis stores operational state, and only that.** Per-ticket AI state
-(`rounds`, `classify_rounds`, `ai_done`), the per-ticket processing lock, the
+(`questions_asked`, `classify_questions_asked`, `ai_done`), the per-ticket processing lock, the
 runtime config/prompt overrides and the run journal. This is the only state the
 service owns.
 
@@ -38,7 +38,9 @@ and the action is reversible. Asking a question and updating ticket fields are
 autonomous; resolving or reassigning a ticket requires engineer confirmation.
 When in doubt — do nothing and log the reason.
 
-**One clarifying question at a time**, max two rounds. After that, enrich with
+**One clarifying question at a time**, and one ceiling on how many questions a
+ticket's requester gets in total (`max_questions`), with a sub-limit inside it
+for the classification phase (`max_classify_questions`). After that, enrich with
 whatever is available and hand off.
 
 **Act only while the ticket is unassigned.** If an engineer has picked it up

@@ -28,29 +28,29 @@ class TestRedisConfigStore(unittest.IsolatedAsyncioTestCase):
     async def test_set_then_get_applies_overrides(self):
         store, _ = _make_store()
 
-        await store.set("intake", {"max_rounds": 5}, IntakeConfig)
+        await store.set("intake", {"max_questions": 5}, IntakeConfig)
         cfg = await store.get("intake", IntakeConfig)
 
-        self.assertEqual(cfg.max_rounds, 5)
+        self.assertEqual(cfg.max_questions, 5)
         # Untouched fields keep their defaults
-        self.assertEqual(cfg.max_classify_rounds, 2)
+        self.assertEqual(cfg.max_classify_questions, 2)
 
     async def test_set_invalid_values_raises_and_stores_nothing(self):
         store, redis = _make_store()
 
         with self.assertRaises(ValidationError):
-            await store.set("intake", {"max_rounds": "not-a-number"}, IntakeConfig)
+            await store.set("intake", {"max_questions": "not-a-number"}, IntakeConfig)
 
         self.assertIsNone(await redis.get("config:intake"))
 
     async def test_reset_restores_defaults(self):
         store, _ = _make_store()
-        await store.set("intake", {"max_rounds": 5}, IntakeConfig)
+        await store.set("intake", {"max_questions": 5}, IntakeConfig)
 
         await store.reset("intake")
         cfg = await store.get("intake", IntakeConfig)
 
-        self.assertEqual(cfg.max_rounds, 2)
+        self.assertEqual(cfg.max_questions, 3)
 
     async def test_corrupt_stored_value_falls_back_to_defaults(self):
         store, redis = _make_store()
@@ -84,14 +84,14 @@ class TestRedisConfigStore(unittest.IsolatedAsyncioTestCase):
         # Constructor kwargs are not a settings source here
         # (settings_customise_sources excludes init_settings) — env is the
         # real path, same as every other complex field (e.g. LLM_PARAMS).
-        with patch.dict("os.environ", {"MODULE_CONFIG": '{"intake": {"max_rounds": 7}}'}, clear=True):
+        with patch.dict("os.environ", {"MODULE_CONFIG": '{"intake": {"max_questions": 7}}'}, clear=True):
             settings = Settings(_env_file=None)
         redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
         store = RedisConfigStore(redis, settings)
 
         cfg = await store.get("intake", IntakeConfig)
 
-        self.assertEqual(cfg.max_rounds, 7)
+        self.assertEqual(cfg.max_questions, 7)
 
     async def test_vector_resolves_like_a_business_module_section(self):
         # TASK-036: `vector` is infrastructure, not a module, but `Settings`

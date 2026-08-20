@@ -43,8 +43,13 @@ class IntakeConfig(BaseModel):
     # The module acts on a ticket only while its status is in this list — an
     # intake concern (when this module may act), not the datamodel mapping's.
     active_statuses: list[str] = ["new"]
-    max_rounds: int = 2
-    max_classify_rounds: int = 2
+    # How many times the module may write to the requester about one ticket,
+    # and how many of those may be spent while it is still unclassified. What
+    # the completeness phase is guaranteed is the difference between the two —
+    # a third "reserve" field would state the same number twice and allow
+    # triples that contradict each other.
+    max_questions: int = Field(default=3, gt=0)
+    max_classify_questions: int = Field(default=2, gt=0)
     # Budget of model calls per run; without it a looping agent burns tokens
     # until the ticket is abandoned. Catalog + subcategories + classify +
     # similar tickets + question/handoff + slack.
@@ -53,7 +58,6 @@ class IntakeConfig(BaseModel):
     # falls back to the global llm_model. It must be a reliable tool-caller —
     # a model that answers in prose instead of calling a tool burns the run.
     model: str | None = None
-    classify_fallback_note: str = "Could not determine the request category. Manual classification required."
     handoff_fallback_note: str = "AI intake finished without a summary. Manual review required."
     # The vector family to search for similar solved tickets — intake's own
     # setting, not borrowed from `content_sources.tickets.FAMILY` (A8, rule
@@ -105,6 +109,22 @@ class IntakeConfig(BaseModel):
                 f"similar_top ({self.similar_top}) exceeds similar_candidates ({self.similar_candidates}): "
                 "candidates are only ever dropped when the requester's iTop no longer confirms them, "
                 "so asking for more results than candidates cannot return them"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _check_question_budget(self) -> "IntakeConfig":
+        """The classification sub-limit lives inside the overall ceiling.
+
+        Equality is allowed — "no reserve for the completeness phase" is a
+        choice an administrator may make; a sub-limit above the ceiling is not,
+        because the extra questions could never be asked.
+        """
+        if self.max_classify_questions > self.max_questions:
+            raise ValueError(
+                f"max_classify_questions ({self.max_classify_questions}) exceeds max_questions "
+                f"({self.max_questions}): the requester is never asked more than max_questions times in total, "
+                "so a larger classification sub-limit cannot be spent"
             )
         return self
 

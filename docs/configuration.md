@@ -84,11 +84,10 @@ Set in the [Admin UI → Modules](admin-ui.md#modules) or via `PUT /api/config/i
 | `similar_enabled` | `true` | Let the module quote similar solved tickets in that note — requires `handoff_note_enabled` |
 | `classes` | `["UserRequest", "Incident"]` | Ticket classes to process |
 | `active_statuses` | `["new"]` | Statuses in which the module is allowed to act on a ticket |
-| `max_rounds` | `2` | Max completeness clarifying questions per ticket |
-| `max_classify_rounds` | `2` | Max classification clarifying questions per ticket |
+| `max_questions` | `3` | How many clarifying questions the requester gets for one ticket, in total |
+| `max_classify_questions` | `2` | How many of those may be spent while the ticket is still unclassified — must not exceed `max_questions` |
 | `max_iterations` | `9` | Budget of model calls per ticket; on exhaustion the run is closed with the fallback note |
 | `model` | _(global LLM model)_ | Override model for the whole module — the agent needs reliable tool calling |
-| `classify_fallback_note` | `Could not determine the request category. Manual classification required.` | Internal note when the ticket stays unclassified |
 | `handoff_fallback_note` | `AI intake finished without a summary. Manual review required.` | Internal note when the agent ends without a question or a handoff |
 | `resolved_statuses` | `["resolved", "closed"]` | Ticket statuses eligible to be quoted as "similar solved tickets" |
 | `similar_max_age_days` | `365` | How far back solved tickets may be quoted in the handoff note |
@@ -119,7 +118,7 @@ Two combinations are rejected when you save them (422 from the admin API):
 - `similar_enabled` without `handoff_note_enabled` — the references exist only inside the note, so there would be nothing to put them in;
 - all of `classify_enabled`, `clarify_enabled` and `handoff_note_enabled` off — switching the module off entirely is `enabled: false`, which also stops it from being called at all.
 
-With `handoff_note_enabled: false` the private log of the ticket stays empty whatever happens, including the two service notes (`classify_fallback_note`, `handoff_fallback_note`): the run marks the ticket as processed and writes nothing. The run journal still records everything.
+With `handoff_note_enabled: false` the private log of the ticket stays empty whatever happens, `handoff_fallback_note` included: the run marks the ticket as processed and writes nothing. The run journal still records everything.
 
 > [!IMPORTANT]
 > `enabled` and `classes` are read at **startup**, not per ticket: changing them in the admin UI does not re-route webhooks until the service restarts. Every other setting applies from the next ticket.

@@ -2,8 +2,8 @@
 
 Each protocol here is cut to one consumer's actual usage, not to what the
 implementation happens to offer: `TicketRun` locks and releases, so `LockPort`
-has two methods, even though the real `TicketStateManager` also counts rounds
-and closes its pool. That is the whole point — a run cannot reach what its type
+has two methods, even though the real `TicketStateManager` also reads and
+increments state and closes its pool. That is the whole point — a run cannot reach what its type
 does not mention.
 
 Two rules hold this together:
