@@ -121,8 +121,8 @@ async def get_subcategories(service_id: int, runtime: IntakeToolRuntime) -> str:
     return f"Subcategories of service {service_id}:\n{format_options(subcategories)}"
 
 
-@tool
-async def set_classification(service_id: int, subcategory_id: int, runtime: IntakeToolRuntime) -> str:
+@tool(response_format="content_and_artifact")
+async def set_classification(service_id: int, subcategory_id: int, runtime: IntakeToolRuntime) -> tuple[str, str]:
     """Set the service and the subcategory of the ticket.
 
     Call this as soon as you are confident about both, and before you decide
@@ -157,11 +157,18 @@ async def set_classification(service_id: int, subcategory_id: int, runtime: Inta
             "Pick one of them, or use post_public_question if the ticket does not tell you which."
         )
 
+    service = next(item for item in services if item.id == str(service_id))
+    subcategory = next(item for item in subcategories if item.id == str(subcategory_id))
+    # Not sent to the model — an artifact for the run journal (TASK-014). The
+    # model states the change in ids, and ids are unreadable to whoever is
+    # judging on a dry run whether the classification is right (REQ-006 R7).
+    change = f"{service.name} ({service_id}) → {subcategory.name} ({subcategory_id})"
+
     if ticket.service_id == str(service_id) and ticket.subcategory_id == str(subcategory_id):
         return (
             f"No change: the ticket is already classified as service {service_id}, "
             f"subcategory {subcategory_id}.\n{_remains(ctx.scope)}"
-        )
+        ), f"unchanged: {change}"
 
     fields = {"service_id": str(service_id), "subcategory_id": str(subcategory_id)}
     await ctx.ticket_repo.set_fields(ticket, fields)
@@ -170,12 +177,11 @@ async def set_classification(service_id: int, subcategory_id: int, runtime: Inta
     ticket.subcategory_id = fields["subcategory_id"]
     logger.info(f"{ticket.identity}: classified service_id={service_id} subcategory_id={subcategory_id}")
 
-    subcategory = next(item for item in subcategories if item.id == str(subcategory_id))
     description = subcategory.description.strip() or "(no requirements described)"
     return (
         f"Saved: service {service_id}, subcategory {subcategory_id} ({subcategory.name}).\n"
         f"Requirements recorded for this subcategory:\n{description}\n{_remains(ctx.scope)}"
-    )
+    ), change
 
 
 @tool(response_format="content_and_artifact")

@@ -67,3 +67,12 @@ with raw dicts. Distinct iTop classes get distinct models
   an engineer has taken it, stop silently.
 - Every write carries the run's `comment` (module, run id, delegated engineer) —
   it lands in the object's History. Never post without it from a run.
+- **Dry run**: when section `platform` has `dry_run` on, `for_principal` hands
+  out a client view that drops everything but a read (`Itop.read_only`), so a
+  module that has never heard of the mode cannot write either. Never check the
+  mode in a tool or a module — asking every future tool to remember is the
+  arrangement the ban exists to replace (REQ-006 R2), and telling the model
+  would show the customer behaviour production does not have (R3).
+  `provision_itop` builds its client from `create_itop_client` and is
+  deliberately outside this seam: the mode is switched on before the
+  installation is finished.

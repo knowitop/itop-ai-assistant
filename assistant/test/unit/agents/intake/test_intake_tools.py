@@ -256,7 +256,7 @@ class TestSetClassification(unittest.IsolatedAsyncioTestCase):
     async def test_valid_ids_are_written_and_the_snapshot_follows(self):
         runtime = _make_runtime()
 
-        result = await tools.set_classification.coroutine(service_id=10, subcategory_id=101, runtime=runtime)
+        result, change = await tools.set_classification.coroutine(service_id=10, subcategory_id=101, runtime=runtime)
 
         runtime.context.ticket_repo.set_fields.assert_awaited_once()
         self.assertEqual(
@@ -267,6 +267,8 @@ class TestSetClassification(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runtime.context.ticket.subcategory_id, "101")
         # The subcategory requirements come back with the confirmation
         self.assertIn("Provide the printer model", result)
+        # …and the journal gets the change in names, not in ids (REQ-006 R7)
+        self.assertEqual("Printing (10) → Hardware fault (101)", change)
         # …and the closing line names the two ways out without addressing the
         # model: an instruction here gets answered in prose (see `_REMAINS`)
         self.assertIn("post_public_question or finish_handoff", result)
@@ -301,7 +303,7 @@ class TestSetClassification(unittest.IsolatedAsyncioTestCase):
     async def test_repeating_the_same_classification_does_not_write_twice(self):
         runtime = _make_runtime(_ticket(service_id="10", subcategory_id="101"))
 
-        result = await tools.set_classification.coroutine(service_id=10, subcategory_id=101, runtime=runtime)
+        result, _ = await tools.set_classification.coroutine(service_id=10, subcategory_id=101, runtime=runtime)
 
         runtime.context.ticket_repo.set_fields.assert_not_called()
         self.assertIn("No change", result)

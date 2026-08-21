@@ -6,7 +6,7 @@ the entry point must know a registry entry, not a module by name.
 
 import asyncio
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import fakeredis.aioredis
 
@@ -21,6 +21,7 @@ class ScheduleRunnerTestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.deps = MagicMock()
         self.deps.journal = RunJournal(fakeredis.aioredis.FakeRedis(decode_responses=True))
+        self.deps.write_policy.dry_run = AsyncMock(return_value=False)
         self.calls: list = []
 
     def _route(self, handler=None, **overrides) -> ScheduleRoute:

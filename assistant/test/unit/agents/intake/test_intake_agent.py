@@ -192,7 +192,7 @@ class TestReadOnlyLoop(IntakeAgentTestCase):
         )
 
         steps = self.journal_steps()
-        self.assertIn(("agent", "calls: get_subcategories({'service_id': 10})"), steps)
+        self.assertIn(("agent", "calls: get_subcategories\n  service_id: 10"), steps)
         tool_steps = [s for s in steps if s[0] == "tool:get_subcategories"]
         self.assertEqual(len(tool_steps), 1)
         self.assertIn("[success]", tool_steps[0][1])

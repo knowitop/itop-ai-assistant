@@ -1,7 +1,10 @@
+import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import parse_qs
 
 import fakeredis.aioredis
+import httpx
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
@@ -10,6 +13,8 @@ from itop_ai_assistant.agents.selfcheck.prompts import PROMPTS_DIR as SELFCHECK_
 from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.core.deps import AppDeps
+from itop_ai_assistant.itop.write_policy import WritePolicy
+from itop_ai_assistant.itop_client import Itop
 from itop_ai_assistant.main import app
 from itop_ai_assistant.settings.config_store import RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import FilePromptStore, RedisPromptStore
@@ -84,6 +89,7 @@ def _make_deps(redis, **settings_overrides) -> AppDeps:
         settings=settings,
         itop=itop,
         itop_connection=MagicMock(),
+        write_policy=WritePolicy(config_store),
         state_manager=TicketStateManager(redis),
         config_store=config_store,
         prompt_store=RedisPromptStore(
@@ -503,6 +509,20 @@ class TestEmbeddingsProbe(SetupApiTestCase):
         self.assertEqual(response.status_code, 422)
 
 
+class _ProvisioningTransport(httpx.AsyncBaseTransport):
+    """Nothing exists yet, every create succeeds; records what was sent."""
+
+    def __init__(self) -> None:
+        self.operations: list[str] = []
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        payload = json.loads(parse_qs(request.content.decode())["json_data"][0])
+        self.operations.append(payload.get("operation", ""))
+        if payload.get("operation") == "core/create":
+            return httpx.Response(200, json={"code": 0, "objects": {"x::1": {"key": "1", "fields": {}}}})
+        return httpx.Response(200, json={"code": 0, "objects": None})
+
+
 class TestProvisionItop(SetupApiTestCase):
     def test_requires_webhook_token(self):
         body = self.client.post(
@@ -555,6 +575,30 @@ class TestProvisionItop(SetupApiTestCase):
         self.assertIsNone(itop_section["values"]["user"])
         self.assertFalse(itop_section["secrets"]["pwd"])
         client.aclose.assert_awaited_once()
+
+    def test_provisioning_works_while_the_dry_run_is_on(self):
+        """Setting iTop up is not a module acting on a ticket (REQ-006 R4).
+
+        The customer switches the dry run on *before* the installation is
+        finished, so a ban hung wide enough to cover the wizard would make the
+        mode impossible to try. What keeps them apart is the topology: this
+        client comes from `create_itop_client`, and the ban is a view handed
+        out by `ItopRepositories.for_principal`, which the wizard never calls.
+        """
+        self.client.patch("/api/setup/security", json={"webhook_token": "wh"})
+        self.client.patch("/api/setup/platform", json={"dry_run": True})
+        transport = _ProvisioningTransport()
+        client = Itop(url="http://itop/rest.php", version="1.3", auth_user="admin", transport=transport)
+
+        with patch("itop_ai_assistant.admin.setup.create_itop_client", return_value=client):
+            body = self.client.post(
+                "/api/setup/provision-itop",
+                json={"backend_url": "http://assistant:8000", "user": "admin", "pwd": "admin-pw"},
+            ).json()
+
+        self.assertTrue(body["ok"])
+        self.assertTrue(any(item["status"] == "created" for item in body["report"]))
+        self.assertIn("core/create", transport.operations)
 
     def test_provision_error_reported(self):
         self.client.patch("/api/setup/security", json={"webhook_token": "wh"})

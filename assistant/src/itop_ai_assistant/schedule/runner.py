@@ -44,7 +44,12 @@ async def run_schedule(route: ScheduleRoute, deps: AppDeps) -> RunOutcome:
     """One tick of one schedule route, journalled start to finish."""
     # A clock carries no token, so a scheduled run is the service account and
     # always will be — delegated schedules are exactly the case §8.5 defers.
-    run = RunContext(processing_id=uuid4(), module=route.module, principal=Principal.service())
+    run = RunContext(
+        processing_id=uuid4(),
+        module=route.module,
+        principal=Principal.service(),
+        dry_run=await deps.write_policy.dry_run(),
+    )
     async with journalled_run(
         deps.journal,
         run,

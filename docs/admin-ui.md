@@ -4,6 +4,8 @@ The assistant ships with a built-in admin UI at `http://localhost:8001/ui`. The 
 
 The interface is available in 12 languages — use the language selector in the top-right corner.
 
+While [Dry run](configuration.md#dry-run) is on, a yellow **dry run** badge sits in the header of every screen: nothing the assistant does is reaching iTop.
+
 ---
 
 ## Setup
@@ -59,7 +61,9 @@ How semantic ticket fields map onto your iTop datamodel — edit this instead of
 
 ## Modules
 
-Per-module business settings. The form is built from the module's own settings schema, so a module's fields appear here as soon as the module exists — nothing about them is hard-coded in the UI.
+At the top of the screen — **Dry run**, the one switch that applies to the whole installation rather than to a module: with it on, every module keeps running exactly as it would in production, but nothing is written to iTop. It belongs here because it is about what modules may do with iTop, not about which iTop they talk to. What it does and does not prove is in [Dry run](configuration.md#dry-run).
+
+Below it, per-module business settings. The form is built from the module's own settings schema, so a module's fields appear here as soon as the module exists — nothing about them is hard-coded in the UI.
 
 Fields are grouped the way the module groups them. The settings that apply to the module as a whole come first; below them, one section per action the module can perform, each headed by the switch that turns that action on. Switching a section off greys out its settings rather than hiding them, so it stays visible what is being saved. Settings an administrator rarely touches — OQL templates, similarity thresholds — are folded away behind **Advanced settings** inside their section.
 
@@ -113,6 +117,10 @@ Click a row to see the step-by-step timeline of the agent session:
 | `agent` | One model turn: which tools it called and with which arguments, or the text it wrote when it called nothing |
 | `tool:<name>` | The result of that call — `[success]` or `[error]` plus the text the tool sent back to the model |
 | `usage` | Model calls, tokens in/out and wall time for the whole run |
+
+An `agent` step carries the arguments in full and unshortened — the whole text of the question or of the handoff note, exactly as it would have been posted; a `tool:set_classification` step names the service and the subcategory the assistant picked, not only their ids. On a dry run this is the product rather than diagnostics, which is what it is written for.
+
+A run made while [Dry run](configuration.md#dry-run) was on carries a **dry run** badge in the list and in its own panel, and keeps it after the mode is switched off.
 
 Failed runs show the full error text.
 

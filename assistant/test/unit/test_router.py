@@ -23,6 +23,7 @@ def _mock_deps(security: SecurityConfig | None = None, configured: bool = True) 
     deps.state_manager.acquire_lock = AsyncMock(return_value=True)
     deps.state_manager.release_lock = AsyncMock()
     deps.state_manager.set_flag = AsyncMock()
+    deps.write_policy.dry_run = AsyncMock(return_value=False)
     repos = MagicMock()
     repos.ticket_repo.fetch = AsyncMock(return_value=None)  # "not found" → the agent is skipped
     deps.itop.for_principal = AsyncMock(return_value=repos)

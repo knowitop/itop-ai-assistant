@@ -52,7 +52,12 @@ async def receive_webhook(
         raise HTTPException(status_code=400, detail=f"Unsupported class/event: {payload.obj_class}/{payload.event}")
     module, handler = entry
 
-    run = RunContext(processing_id=uuid4(), module=module, principal=await resolve_principal(request))
+    run = RunContext(
+        processing_id=uuid4(),
+        module=module,
+        principal=await resolve_principal(request),
+        dry_run=await deps.write_policy.dry_run(),
+    )
     logger.info(f"[{run.processing_id}] Accepted {payload} ({payload.event})")
     task = asyncio.create_task(_process_safely(handler, payload, run, deps))
     _background_tasks.add(task)

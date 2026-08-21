@@ -52,6 +52,17 @@ class TestJournalLifecycle(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual((await journal.get(pid)).principal, "engineer:jdoe")
 
+    async def test_dry_run_is_recorded(self):
+        journal, _ = _make_journal()
+        pid = uuid4()
+
+        # redis-py refuses a bool outright, so the flag is stored as "1"/"0" —
+        # this is the round trip back into a bool.
+        await journal.start(pid, subject="UserRequest::42", event="created", module="intake", dry_run=True)
+
+        self.assertTrue((await journal.get(pid)).dry_run)
+        self.assertTrue((await journal.list())[0].dry_run)
+
     async def test_run_recorded_before_principals_existed_reads_as_the_service_account(self):
         journal, redis = _make_journal()
         pid = uuid4()

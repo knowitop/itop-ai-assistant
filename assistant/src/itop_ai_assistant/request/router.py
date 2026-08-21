@@ -48,7 +48,12 @@ async def run_request(
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
-    run = RunContext(processing_id=uuid4(), module=module, principal=await resolve_principal(request))
+    run = RunContext(
+        processing_id=uuid4(),
+        module=module,
+        principal=await resolve_principal(request),
+        dry_run=await deps.write_policy.dry_run(),
+    )
     subject = route.subject_of(payload)
     logger.info(f"[{run.processing_id}] Running {module}/{action} for {subject}")
     async with journalled_run(deps.journal, run, kind="request", subject=subject, event=action):

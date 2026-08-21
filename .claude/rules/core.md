@@ -62,6 +62,12 @@ sweep, `selfcheck` — passes `Principal.service()` with a comment naming the
 subsystem instead of a run id. The wizard probes bypass repositories entirely
 and talk to `create_itop_client` directly, so they are not part of this seam.
 
+`for_principal` is also where the dry run is enforced: it asks `WritePolicy`
+(`itop/write_policy.py`, section `platform`) itself instead of taking a
+parameter, so no caller can ask for an exception. `RunContext.dry_run` is the
+same answer taken at the entry point for the run journal only — a record, never
+a branch (`.claude/rules/itop.md`, REQ-006).
+
 `ai_person_name()` answers off the **connection's own** client whatever the run
 acts as. Resolving it under an engineer's token would make the loop guard —
 which compares it against the author of the last public comment — lie. That is

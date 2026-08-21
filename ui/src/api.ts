@@ -139,6 +139,9 @@ export function fetchVersion(): Promise<BuildInfo> {
 export interface SetupStatus {
   configured: boolean;
   missing: string[];
+  // Installation-wide dry run: runs happen, nothing is written to iTop.
+  // Top-level rather than dug out of `sections` — every screen shows it.
+  dry_run: boolean;
   sections: Record<string, unknown>;
 }
 

@@ -225,6 +225,27 @@ class SecurityConfig(RuntimeSectionConfig):
     admin_token: str | None = None
 
 
+class PlatformConfig(BaseModel):
+    """Switches that describe the installation, not a module — section "platform".
+
+    Not a `RuntimeSectionConfig`: nothing here is a secret. Kept out of the
+    `itop` section on purpose — `ItopConnection` rebuilds its client whenever
+    that section's fingerprint changes, and toggling a mode would close a
+    connection pool shared with every principal view over nothing the
+    connection cares about.
+    """
+
+    dry_run: bool = Field(
+        default=False,
+        title="Dry run",
+        description=(
+            "Runs proceed exactly as they would in production — the catalogue is read, the model is called, "
+            "the run journal records every step — but nothing is written to iTop: no field change, no public "
+            "or private log entry. Applies from the next run, no restart."
+        ),
+    )
+
+
 def missing_setup(itop: ItopConfig, llm: LlmConfig) -> list[str]:
     """Setup steps still required before the assistant may process tickets.
 
@@ -268,6 +289,8 @@ class Settings(BaseSettings):
     admin_token: SecretStr | None = None
     # Directory with per-deployment prompt overrides (see prompt_store.FilePromptStore)
     prompts_dir: Path | None = None
+    # Default for section "platform" — the installation-wide dry run (REQ-006)
+    dry_run: bool = False
     # Where the built admin SPA lives. The image sets it explicitly; unset =
     # probe the source checkout (see main._find_ui_dist)
     ui_dist_dir: Path | None = None
@@ -391,6 +414,10 @@ class Settings(BaseSettings):
             webhook_token=self.webhook_token.get_secret_value() if self.webhook_token else None,
             admin_token=self.admin_token.get_secret_value() if self.admin_token else None,
         )
+
+    @property
+    def platform(self) -> PlatformConfig:
+        return PlatformConfig(dry_run=self.dry_run)
 
     @classmethod
     def settings_customise_sources(

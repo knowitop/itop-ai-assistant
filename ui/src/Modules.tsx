@@ -125,6 +125,65 @@ function bound(exclusive: number | undefined, inclusive: number | undefined, ste
   return exclusive + step;
 }
 
+// The installation-wide dry run (section `platform`). It lives on this page
+// rather than under Connections because it is about what modules are allowed
+// to do with iTop, not about which iTop they talk to.
+function DryRunSwitch() {
+  const { t } = useTranslation();
+  const [dryRun, setDryRun] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    apiGet<{ values: { dry_run: boolean } }>('/setup/platform')
+      .then((data) => setDryRun(data.values.dry_run))
+      .catch((e: Error) => setError(e.message));
+  }, []);
+
+  async function toggle(next: boolean) {
+    setBusy(true);
+    try {
+      const saved = await apiSend<{ values: { dry_run: boolean } }>('PATCH', '/setup/platform', {
+        dry_run: next,
+      });
+      setDryRun(saved.values.dry_run);
+      setError(null);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (dryRun === null) return error ? <Alert color="red">{error}</Alert> : null;
+
+  return (
+    <Alert color={dryRun ? 'yellow' : 'gray'} variant={dryRun ? 'light' : 'transparent'} p="sm">
+      <Group justify="space-between" wrap="nowrap" align="flex-start">
+        <Stack gap={2}>
+          <Text fw={600} size="sm">
+            {t('modules.dry_run_title')}
+          </Text>
+          <Text size="sm" c="dimmed">
+            {t('modules.dry_run_desc')}
+          </Text>
+        </Stack>
+        <Switch
+          checked={dryRun}
+          disabled={busy}
+          onChange={(e) => void toggle(e.currentTarget.checked)}
+          aria-label={t('modules.dry_run_title')}
+        />
+      </Group>
+      {error && (
+        <Text size="sm" c="red" mt="xs">
+          {error}
+        </Text>
+      )}
+    </Alert>
+  );
+}
+
 export default function Modules() {
   const { t } = useTranslation();
   const [modules, setModules] = useState<ModuleInfo[] | null>(null);
@@ -143,6 +202,7 @@ export default function Modules() {
   return (
     <Stack>
       <Title order={2}>{t('modules.title')}</Title>
+      <DryRunSwitch />
       <Tabs defaultValue={modules[0].name} keepMounted={false}>
         <Tabs.List>
           {modules.map((m) => (

@@ -49,6 +49,10 @@ class ProcessingRun(BaseModel):
     # Who the run acted as — a label, never a credential. Runs recorded before
     # principals existed all ran as the service account.
     principal: str = "service"
+    # Whether the run was forbidden to write to iTop (REQ-006). Runs recorded
+    # before the mode existed wrote for real — and a run stays marked as it ran
+    # even after the mode is switched off.
+    dry_run: bool = False
     status: RunStatus = "running"
     started_at: datetime
     finished_at: datetime | None = None
@@ -78,6 +82,7 @@ class RunJournal:
         module: str,
         kind: TriggerKind = "webhook",
         principal: str = "service",
+        dry_run: bool = False,
     ) -> None:
         now = datetime.now(UTC)
         key = self._key(processing_id)
@@ -92,6 +97,9 @@ class RunJournal:
                         "module": module,
                         "kind": kind,
                         "principal": principal,
+                        # "1"/"0", not the bool: redis-py refuses a bool
+                        # outright (DataError), and pydantic reads either back.
+                        "dry_run": int(dry_run),
                         "status": "running",
                         "started_at": now.isoformat(),
                     },

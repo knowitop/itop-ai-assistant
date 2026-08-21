@@ -61,6 +61,21 @@ Once all four steps are complete, `/webhook` becomes active and iTop will start 
 
 ---
 
+## Try it on your own data first
+
+Before the assistant writes anything a requester will read, you can watch it work on your real queue without a single change reaching iTop. Switch on **Dry run** (Modules screen, or `DRY_RUN=true` — see [Dry run](configuration.md#dry-run)) and leave it on for as long as it takes to see enough tickets: every new ticket is processed exactly as it would be in production, and every run is recorded in [Runs](admin-ui.md#runs) with the full text of the question the requester would have received, the note the engineer would have got, and the classification in service and subcategory names.
+
+Read a few of those runs, tune the prompts and the catalogue OQL if you disagree with them, and switch the mode off when you are satisfied. Nothing else has to be changed: the same runs, the same decisions, only the writes come back.
+
+Two things this check cannot show you, worth knowing before you rely on it:
+
+- **No conversation with the requester.** The clarifying question is never published, so nobody answers it. You are checking the classification, the decision to ask or hand over, the wording of the question and the quality of the note — not whether the assistant asks a good *second* question after hearing an answer.
+- **No replay of your ticket archive.** Solved tickets already carry the whole conversation and a classification, so running the assistant over them would show it solving a different problem from the one it faces on a new ticket. The check runs on the live queue: as many tickets as arrive while the mode is on.
+
+Also keep in mind that a ticket processed during the dry run is marked as processed. When the mode goes off, the assistant does not come back to it — by then it has usually been picked up by an engineer anyway; the few that matter are quicker to handle by hand.
+
+---
+
 ## iTop configuration
 
 If you skipped Step 3 of the wizard, or need to understand what was created, here is the full manual setup.

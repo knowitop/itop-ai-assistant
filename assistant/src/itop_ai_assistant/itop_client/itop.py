@@ -1,4 +1,5 @@
 import json
+import logging
 from copy import copy
 from typing import Any, Dict, Optional
 
@@ -8,6 +9,23 @@ from .auth import ItopAuth
 from .datamodel import DataModel
 from .exceptions import ItopError
 from .schema import Schema
+
+logger = logging.getLogger(__name__)
+
+#: Operations a read-only view lets through. An allow-list, not a list of the
+#: writing operations: a client promising "this makes no change" must keep the
+#: promise for operations added to this library later, and only an allow-list
+#: does. The cost is the opposite mistake — a new *reading* operation silently
+#: answering empty until it is named here — which the warning below makes
+#: visible.
+READ_OPERATIONS = frozenset(
+    {
+        "core/get",
+        "core/get_related",
+        "core/check_credentials",
+        "list_operations",
+    }
+)
 
 
 class Itop:
@@ -48,6 +66,8 @@ class Itop:
         self._http = httpx.AsyncClient(transport=transport, timeout=timeout)
         # A view built by as_() borrows this pool instead of owning it.
         self._owns_http = True
+        # A view built by read_only() sets this; the client itself writes.
+        self._read_only = False
 
         if data_model:
             self.data_model = DataModel(data_model)
@@ -71,6 +91,21 @@ class Itop:
         for schema_name in self.data_model.schemas:
             setattr(self, schema_name, Schema(self, schema_name))
 
+    def _view(self) -> "Itop":
+        """A copy of this client that borrows the pool instead of owning it.
+
+        Shared by every kind of view, so what makes a view a view is written
+        once: the pool is not duplicated, closing it is a no-op, and the
+        datamodel attributes are rebound.
+        """
+        view = copy(self)
+        view._owns_http = False
+        if view.data_model:
+            # copy() carried over Schemas bound to *self*; rebind them, or a
+            # datamodel attribute would quietly act as the original client.
+            view._bind_schemas()
+        return view
+
     def as_(self, auth: Optional[ItopAuth] = None, comment: Optional[str] = None) -> "Itop":
         """This client seen through different credentials and/or a different comment.
 
@@ -87,16 +122,27 @@ class Itop:
         """
         if auth is None and comment is None:
             return self
-        view = copy(self)
-        view._owns_http = False
+        view = self._view()
         if auth is not None:
             view.auth = auth
         if comment is not None:
             view.comment = comment
-        if view.data_model:
-            # copy() carried over Schemas bound to *self*; rebind them, or a
-            # datamodel attribute would quietly act as the original client.
-            view._bind_schemas()
+        return view
+
+    def read_only(self) -> "Itop":
+        """This client with every operation but a read dropped before it is sent.
+
+        A separate view rather than an argument to `as_()`: whom a request acts
+        as and whether it may change anything are different questions, and the
+        second must not require naming the first.
+
+        A dropped call is not an error — it answers as an operation that
+        matched nothing (`[]`), the same answer `request()` gives for an empty
+        result set. A caller told "denied" would go looking for another way
+        through, which is the behaviour this view exists to prevent.
+        """
+        view = self._view()
+        view._read_only = True
         return view
 
     async def aclose(self) -> None:
@@ -117,6 +163,13 @@ class Itop:
         :return: List of objects (dicts with fields + id) or raw dict.
         :raises ItopError: On any iTop or HTTP error.
         """
+        operation = data.get("operation", "")
+        if self._read_only and operation not in READ_OPERATIONS:
+            # Logged, because the same silence that protects a write would hide
+            # a *read* this library gained after the allow-list was written.
+            logger.warning(f"Read-only client: {operation} on {data.get('class')} not sent to iTop")
+            return {} if raw_response else []
+
         form: Dict[str, Any] = {"version": self.version, "json_data": json.dumps(data)}
         if self.auth.user:
             form["auth_user"] = self.auth.user

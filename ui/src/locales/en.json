@@ -19,6 +19,8 @@
     "offline": "offline",
     "configured": "configured",
     "setup_required": "setup required",
+    "dry_run": "dry run",
+    "dry_run_tooltip": "Runs are processed as usual, but nothing is written to iTop",
     "github_tooltip": "GitHub repository",
     "alert_title": "Setup required",
     "alert_body": "The assistant is not configured yet — /webhook returns 503 until the LLM and iTop connections are set.",
@@ -161,7 +163,9 @@
     "run_action": "Run",
     "schedules_title": "Schedule",
     "schedule_interval": "every {{seconds}}s",
-    "run_id": "Run {{id}}"
+    "run_id": "Run {{id}}",
+    "dry_run_title": "Dry run — nothing is written to iTop",
+    "dry_run_desc": "Modules keep running as they would in production — tickets are classified, questions and handoff notes are composed, the run journal records every step — but no field change and no log entry reaches iTop. Applies from the next run; the state of a ticket is kept as in production, so a ticket processed dry is not picked up again once the mode is off."
   },
   "prompts": {
     "title": "Prompts",
@@ -197,7 +201,8 @@
     "detail_running": "{{module}} / {{event}} · started {{started}}",
     "detail_finished": "{{module}} / {{event}} · started {{started}} · finished {{finished}} ({{duration}})",
     "field_run_id": "Run ID",
-    "run_id_placeholder": "Paste processing_id from webhook response"
+    "run_id_placeholder": "Paste processing_id from webhook response",
+    "dry_run": "dry run"
   },
   "vector": {
     "title": "Vector index",

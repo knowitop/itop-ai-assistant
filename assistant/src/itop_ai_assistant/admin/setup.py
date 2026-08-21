@@ -23,6 +23,7 @@ from itop_ai_assistant.config import (
     FaqMappingConfig,
     ItopConfig,
     LlmConfig,
+    PlatformConfig,
     SecurityConfig,
     TicketMappingConfig,
     missing_setup,
@@ -44,6 +45,8 @@ SETUP_SECTIONS: dict[str, type[BaseModel]] = {
     "itop": ItopConfig,
     "llm": LlmConfig,
     "security": SecurityConfig,
+    # Installation-wide switches; the dry run lives here (REQ-006)
+    "platform": PlatformConfig,
     "ticket_mapping": TicketMappingConfig,
     "faq_mapping": FaqMappingConfig,
     # Vector store (optional infrastructure — not part of missing_setup)
@@ -91,15 +94,21 @@ async def setup_status(config_store: Annotated[ConfigStore, Depends(get_config_s
     llm_cfg = await config_store.get("llm", LlmConfig)
     security_cfg = await config_store.get("security", SecurityConfig)
     embeddings_cfg = await config_store.get("embeddings", EmbeddingsConfig)
+    platform_cfg = await config_store.get("platform", PlatformConfig)
     missing = missing_setup(itop_cfg, llm_cfg)
     return {
         "configured": not missing,
         "missing": missing,
+        # Top-level, not just inside `sections`: the UI shows the dry run on
+        # every screen (REQ-006 R6) and this endpoint is the one it already
+        # refetches on every navigation.
+        "dry_run": platform_cfg.dry_run,
         "sections": {
             "itop": _masked(itop_cfg),
             "llm": _masked(llm_cfg),
             "security": _masked(security_cfg),
             "embeddings": _masked(embeddings_cfg),
+            "platform": _masked(platform_cfg),
         },
     }
 

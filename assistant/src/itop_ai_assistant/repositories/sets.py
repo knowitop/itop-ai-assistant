@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from itop_ai_assistant.config import FaqMappingConfig, TicketMappingConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.itop.connection import ItopConnection
+from itop_ai_assistant.itop.write_policy import WritePolicy
 from itop_ai_assistant.itop_client import Itop
 from itop_ai_assistant.repositories.access import AccessRepository
 from itop_ai_assistant.repositories.catalog import CatalogRepository
@@ -52,9 +53,10 @@ class ItopRepositories:
     else.
     """
 
-    def __init__(self, connection: ItopConnection, config_store: ConfigStore):
+    def __init__(self, connection: ItopConnection, config_store: ConfigStore, write_policy: WritePolicy):
         self._connection = connection
         self._config_store = config_store
+        self._write_policy = write_policy
 
     async def for_principal(self, principal: Principal, *, comment: str) -> RepositorySet:
         """The only way to get a set: one connection view, one identity, one comment.
@@ -62,8 +64,17 @@ class ItopRepositories:
         A caller with nothing to attribute (the vector sweep, `selfcheck`)
         passes `Principal.service()` with a comment naming the subsystem
         instead of a run.
+
+        Also where the dry run is enforced (REQ-006): the policy is asked here,
+        never passed in, so a set built for a module that has never heard of the
+        mode is as unable to write as one built for a module that has. A check
+        inside a tool would be the opposite — a promise made to the customer
+        about the whole installation, kept by every module remembering to.
         """
-        return await self._build(await self._connection.as_principal(principal, comment=comment))
+        client = await self._connection.as_principal(principal, comment=comment)
+        if await self._write_policy.dry_run():
+            client = client.read_only()
+        return await self._build(client)
 
     async def _build(self, client: Itop) -> RepositorySet:
         ticket_mapping = await self._config_store.get("ticket_mapping", TicketMappingConfig)

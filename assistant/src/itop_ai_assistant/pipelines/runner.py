@@ -44,6 +44,7 @@ async def journalled_run(
         # leaves almost no trace in iTop, so this is where "who asked" lives —
         # and it must not become where their token lives.
         principal=run.principal.label,
+        dry_run=run.dry_run,
     )
     try:
         yield

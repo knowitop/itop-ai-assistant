@@ -9,6 +9,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from itop_ai_assistant.config import LlmConfig, Settings
 from itop_ai_assistant.core.llm_providers import get_provider
 from itop_ai_assistant.itop.connection import AiIdentity, ItopConnection
+from itop_ai_assistant.itop.write_policy import WritePolicy
 from itop_ai_assistant.pipelines.registry import TriggerRegistry
 from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.settings.config_store import ConfigStore, RedisConfigStore
@@ -56,6 +57,10 @@ class AppDeps:
     # closing the pool is the composition root's business, and the factory is
     # kept free of a lifecycle method for the same reason no port has one.
     itop_connection: ItopConnection
+    # Held here as well as inside `itop`, because the entry points need the
+    # answer for a different reason: they stamp the run journal with it
+    # (`RunContext.dry_run`), while the repository factory enforces it.
+    write_policy: WritePolicy
     state_manager: TicketStateManager
     config_store: ConfigStore
     prompt_store: PromptStore
@@ -114,13 +119,15 @@ def build_deps(settings: Settings, registry: TriggerRegistry) -> AppDeps:
     config_store = RedisConfigStore(redis, settings)
     state_manager = TicketStateManager(redis, ttl_seconds=days_to_seconds(settings.state_ttl_days))
     itop_connection = ItopConnection(config_store)
-    itop = ItopRepositories(itop_connection, config_store)
+    write_policy = WritePolicy(config_store)
+    itop = ItopRepositories(itop_connection, config_store, write_policy)
     prompts_dirs = {m.name: m.prompts_dir for m in registry.modules if m.prompts_dir is not None}
 
     return AppDeps(
         settings=settings,
         itop=itop,
         itop_connection=itop_connection,
+        write_policy=write_policy,
         state_manager=state_manager,
         config_store=config_store,
         prompt_store=RedisPromptStore(FilePromptStore(prompts_dirs, settings.prompts_dir), redis),

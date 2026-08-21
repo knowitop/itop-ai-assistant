@@ -109,6 +109,17 @@ export default function Layout() {
                 {setup.configured ? t('layout.configured') : t('layout.setup_required')}
               </Badge>
             )}
+            {/* Two opposite mistakes cost the same: believing the assistant
+                works while it is dry, and forgetting to switch the mode off
+                after the trial. Hence a badge on every screen, not only on the
+                page that owns the switch. */}
+            {setup?.dry_run && (
+              <Tooltip label={t('layout.dry_run_tooltip')}>
+                <Badge color="yellow" variant="filled">
+                  {t('layout.dry_run')}
+                </Badge>
+              </Tooltip>
+            )}
             <Tooltip label={t('layout.github_tooltip')}>
               <ActionIcon
                 component="a"

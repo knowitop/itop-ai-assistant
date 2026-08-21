@@ -14,7 +14,7 @@ from time import perf_counter
 from typing import Any, ClassVar, Generic, TypeVar
 from uuid import UUID
 
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolCall, ToolMessage
 from langgraph.graph.state import CompiledStateGraph
 
 from itop_ai_assistant.pipelines.context import RunContext
@@ -49,12 +49,25 @@ class RunUsage:
 
 
 def describe_ai_message(message: AIMessage, think_tags: tuple[str, ...]) -> str:
-    """One journal line for a model turn: which tools, with which arguments."""
+    """One journal entry for a model turn: which tools, with which arguments.
+
+    Arguments are laid out one per line and never shortened. On a dry run this
+    entry *is* the product — the text of the question the requester would have
+    read, the note the engineer would have got — and a truncated note cannot
+    answer "is this good enough?" (REQ-006 R7). The Runs screen renders a step
+    as pre-wrap, so the line breaks survive the trip.
+    """
     if message.tool_calls:
-        calls = "; ".join(f"{call['name']}({call['args']})" for call in message.tool_calls)
-        return f"calls: {calls}"
+        return "calls: " + "; ".join(_describe_tool_call(call) for call in message.tool_calls)
     # strip_thinking touches displayed text only — never tool-call arguments
     return f"no tool call: {strip_thinking(message.content, think_tags)[:300]}"
+
+
+def _describe_tool_call(call: ToolCall) -> str:
+    if not call["args"]:
+        return call["name"]
+    args = "\n".join(f"  {name}: {value}" for name, value in call["args"].items())
+    return f"{call['name']}\n{args}"
 
 
 class AgentRun(Generic[ContextT]):

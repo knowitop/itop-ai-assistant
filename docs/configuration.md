@@ -24,6 +24,7 @@ A full `.env` template with examples is in [`docker/.env.dist`](../docker/.env.d
 | `LLM_PARAMS` | optional | JSON passed to the client as-is: `{"temperature": 0.2, "max_tokens": 2048}` |
 | `LLM_SUPPORTS_FORCED_TOOL_CHOICE` | optional | Only for `openai_compatible` — see [Forced tool calls](#forced-tool-calls) |
 | `LLM_THINK_TAGS` | default `["think","thinking","reasoning"]` | JSON list of tag names stripped from responses as reasoning blocks |
+| `DRY_RUN` | default `false` | Dry run: runs happen, nothing is written to iTop — see [Dry run](#dry-run) |
 | `WEBHOOK_TOKEN` | recommended | Shared secret for `/webhook`; iTop must send it in `X-Auth-Token`. Unset = unauthenticated |
 | `ADMIN_TOKEN` | recommended | Bearer token for `/api` admin endpoints. Unset = open (first-run mode) |
 | `REDIS_URL` | default `redis://localhost:6379` | Redis connection URL (env-only, requires restart); the compose stack sets `redis://redis:6379` |
@@ -41,6 +42,19 @@ A full `.env` template with examples is in [`docker/.env.dist`](../docker/.env.d
 > Runtime overrides (including secrets set through the setup API) live in Redis. The bundled `docker-compose.yml` enables Redis persistence (`appendonly yes` + volume) so they survive restarts. To recover a lost admin token, set `ADMIN_TOKEN` in `.env` and restart, or delete the `config:security` key in Redis.
 
 ---
+
+## Dry run
+
+`DRY_RUN` (section `platform`, editable at runtime through the admin UI or `PATCH /api/setup/platform`) puts the whole installation into a mode where the assistant does everything it would normally do — reads the service catalogue, classifies the ticket, decides whether to ask or to hand over, searches for similar solved tickets, records every step in the run journal — but **nothing reaches iTop**: no field change, no public log entry, no private note.
+
+This is what to switch on before letting the assistant act on a live queue: see what it would have done on your own tickets, then decide. The setup wizard keeps working with the mode on, so it can be switched on before the installation is finished.
+
+- Applies **from the next run** — no restart, and a run already in flight finishes as it started.
+- Every run processed this way is marked in the [Runs](admin-ui.md#runs) screen and stays marked after the mode is switched off; the admin UI also shows a `dry run` badge on every page while it is on.
+- Per-ticket state is kept exactly as in production — the question budget is spent, the ticket is marked as processed. A ticket the assistant has looked at during a dry run is **not** picked up again once the mode is off.
+- Everything except the writes stays on deliberately, including the vector index: a mode that also disabled indexing would test a system you are not going to run.
+
+What the mode cannot show you is described in [Setup](setup.md#try-it-on-your-own-data-first).
 
 ## Build version
 

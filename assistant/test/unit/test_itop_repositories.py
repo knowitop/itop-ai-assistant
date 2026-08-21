@@ -12,11 +12,13 @@ from itop_ai_assistant.config import (
     FaqFieldMap,
     FaqMappingConfig,
     ItopConfig,
+    PlatformConfig,
     TicketFieldMap,
     TicketMappingConfig,
 )
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.itop.connection import ItopConnection
+from itop_ai_assistant.itop.write_policy import WritePolicy
 from itop_ai_assistant.repositories.sets import ItopRepositories, RepositorySet
 
 _ENGINEER = Principal.delegated("engineer-token", login="jdoe", name="John Doe")
@@ -29,6 +31,7 @@ class FakeConfigStore:
             "itop": ItopConfig(url="http://one/rest.php", token="tok"),
             "ticket_mapping": TicketMappingConfig(),
             "faq_mapping": FaqMappingConfig(),
+            "platform": PlatformConfig(),
         }
 
     async def get(self, module, model):
@@ -39,7 +42,7 @@ class TestRepositorySet(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.store = FakeConfigStore()
         self.connection = ItopConnection(self.store)
-        self.repositories = ItopRepositories(self.connection, self.store)
+        self.repositories = ItopRepositories(self.connection, self.store, WritePolicy(self.store))
 
     async def asyncTearDown(self):
         await self.connection.aclose()

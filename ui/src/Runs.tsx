@@ -31,6 +31,8 @@ interface Run {
   module: string;
   principal: string;
   kind: 'webhook' | 'request' | 'schedule';
+  // A run stays marked as it ran, even after the mode is switched off.
+  dry_run: boolean;
   status: 'running' | 'done' | 'failed';
   started_at: string;
   finished_at: string | null;
@@ -50,6 +52,16 @@ function StatusBadge({ status }: { status: Run['status'] }) {
   return (
     <Badge color={STATUS_COLORS[status]} variant="light">
       {status}
+    </Badge>
+  );
+}
+
+function DryRunBadge({ run }: { run: Run }) {
+  const { t } = useTranslation();
+  if (!run.dry_run) return null;
+  return (
+    <Badge color="yellow" variant="light">
+      {t('runs.dry_run')}
     </Badge>
   );
 }
@@ -188,7 +200,10 @@ export default function Runs() {
                     <Table.Td>{run.kind}</Table.Td>
                     <Table.Td>{run.event}</Table.Td>
                     <Table.Td>
-                      <StatusBadge status={run.status} />
+                      <Group gap="xs" wrap="nowrap">
+                        <StatusBadge status={run.status} />
+                        <DryRunBadge run={run} />
+                      </Group>
                     </Table.Td>
                     <Table.Td>{formatDuration(run)}</Table.Td>
                   </Table.Tr>
@@ -258,6 +273,7 @@ function RunDetail({ id, tick }: { id: string; tick: number }) {
       <Group>
         <Title order={4}>{run.subject}</Title>
         <StatusBadge status={run.status} />
+        <DryRunBadge run={run} />
       </Group>
       <Text size="sm" c="dimmed">
         {detailText}

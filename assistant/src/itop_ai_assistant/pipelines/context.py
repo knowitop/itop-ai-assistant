@@ -25,6 +25,15 @@ class RunContext:
     processing_id: UUID
     module: str
     principal: Principal = field(default_factory=Principal.service)
+    # Whether this installation was in dry run when the trigger was accepted
+    # (REQ-006). A record about the run, for the journal and nothing else:
+    # never branch on it. What the mode forbids is enforced where the writes
+    # physically pass — `ItopRepositories.for_principal`, which asks the policy
+    # itself — so a module reading this flag to decide anything would be
+    # reimplementing a ban it cannot be trusted with (REQ R2), and a module
+    # reading it to tell the model would be showing the customer behaviour that
+    # production does not have (REQ R3).
+    dry_run: bool = False
 
     @property
     def comment(self) -> str:

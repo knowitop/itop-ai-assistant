@@ -98,6 +98,7 @@ class RunFrameJournal(StepJournal, Protocol):
         module: str,
         kind: TriggerKind = "webhook",
         principal: str = "service",
+        dry_run: bool = False,
     ) -> None: ...
 
     async def finish(self, processing_id: UUID | str, status: RunStatus, error: str | None = None) -> None: ...

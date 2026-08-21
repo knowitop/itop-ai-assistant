@@ -13,6 +13,7 @@ from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.core.principal import Principal
+from itop_ai_assistant.itop.write_policy import WritePolicy
 from itop_ai_assistant.main import app
 from itop_ai_assistant.settings.config_store import RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import FilePromptStore, RedisPromptStore
@@ -110,6 +111,7 @@ def _make_deps(redis, store_url: str | None = None, **settings_overrides) -> App
         settings=settings,
         itop=itop,
         itop_connection=MagicMock(),
+        write_policy=WritePolicy(config_store),
         state_manager=TicketStateManager(redis),
         config_store=config_store,
         prompt_store=RedisPromptStore(
