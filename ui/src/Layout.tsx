@@ -83,9 +83,9 @@ export default function Layout() {
   const currentLabel = LANGUAGES.find((l) => l.value === currentLang)?.label ?? currentLang;
 
   const changeLanguage = (lang: string) => {
-    void loadLanguage(lang).then(() => {
-      void i18n.changeLanguage(lang);
-      localStorage.setItem('locale', lang);
+    void loadLanguage(lang).then((code) => {
+      void i18n.changeLanguage(code);
+      localStorage.setItem('locale', code);
     });
   };
 
