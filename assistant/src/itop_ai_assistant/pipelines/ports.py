@@ -22,6 +22,7 @@ Two rules hold this together:
 composition root, and no run should be able to close it.
 """
 
+from contextlib import AbstractContextManager
 from typing import Protocol, TypeVar, runtime_checkable
 from uuid import UUID
 
@@ -102,6 +103,39 @@ class RunFrameJournal(StepJournal, Protocol):
     ) -> None: ...
 
     async def finish(self, processing_id: UUID | str, status: RunStatus, error: str | None = None) -> None: ...
+
+
+class RunTracer(Protocol):
+    """The same frame, recorded a second time — as a trace instead of a journal.
+
+    The signature repeats `RunFrameJournal.start` field for field on purpose:
+    "the trace and the journal describe the run identically" then follows from
+    the shape rather than from anyone remembering to keep them level. Both are
+    filled from the same expressions in one place (`runner.journalled_run`).
+    No defaults, unlike the journal's: that one caller passes every field, and
+    a defaulted `kind` or `principal` would not leave a field empty — it would
+    put a plausible wrong value in the trace.
+
+    Synchronous, and returns a context manager rather than being one: opening a
+    span goes nowhere near the network — an exporter ships the finished spans in
+    the background — so there is nothing here to await.
+
+    Two implementations, both in `core/tracing*.py`: the no-op that a run gets
+    when tracing is off (the default), and the real one. Neither the name of
+    the tracing library nor the name of the receiver appears in this port, and
+    that is the point — swapping either changes one file.
+    """
+
+    def run_span(
+        self,
+        processing_id: UUID | str,
+        subject: str,
+        event: str,
+        module: str,
+        kind: TriggerKind,
+        principal: str,
+        dry_run: bool,
+    ) -> AbstractContextManager[None]: ...
 
 
 class RunDeps(Protocol):

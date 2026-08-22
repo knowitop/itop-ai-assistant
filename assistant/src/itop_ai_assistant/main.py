@@ -10,6 +10,7 @@ from itop_ai_assistant.admin.router import router as admin_router
 from itop_ai_assistant.config import ItopConfig, LlmConfig, SecurityConfig, get_settings, missing_setup
 from itop_ai_assistant.core.background import build_background_tasks
 from itop_ai_assistant.core.deps import build_deps
+from itop_ai_assistant.core.tracing import setup_tracing
 from itop_ai_assistant.pipelines.registry import ModuleInfo, build_registry
 from itop_ai_assistant.settings.prompt_store import PromptOrigin, PromptStore
 from itop_ai_assistant.settings.prompt_validation import PromptValidationError
@@ -67,7 +68,9 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info(f"iTop AI Assistant {build.version} ({build.commit or 'no commit'})")
     registry = build_registry(settings)
-    deps = build_deps(settings, registry)
+    # Before the dependencies, because the instrumentation is global and has to
+    # be in place before anything it instruments is constructed (ADR-029).
+    deps = build_deps(settings, registry, tracer=setup_tracing(settings))
     for module in registry.modules:
         await check_module_prompts(module, deps.prompt_store)
 

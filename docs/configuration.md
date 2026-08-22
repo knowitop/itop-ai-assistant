@@ -34,6 +34,9 @@ A full `.env` template with examples is in [`docker/.env.dist`](../docker/.env.d
 | `EMBEDDINGS_BASE_URL` / `EMBEDDINGS_MODEL` / `EMBEDDINGS_API_KEY` | optional | OpenAI-compatible embeddings endpoint for the vector index. `EMBEDDINGS_BASE_URL` must be the full prefix your provider documents, not a bare host:port — for Ollama that's `http://localhost:11434/v1` (not the bare `host:port` used for the LLM chat connection), for Google's Gemini API it's `https://generativelanguage.googleapis.com/v1beta/openai` |
 | `EMBEDDINGS_DIMENSION` | default `1024` | Vector dimension — must match what the model returns |
 | `EMBEDDINGS_BATCH_SIZE` | default `32` | Texts per embeddings request |
+| `TRACING_ENABLED` | default `false` | Send LLM traces to a self-hosted receiver (env-only, requires restart) — see [LLM tracing](#llm-tracing) |
+| `TRACING_ENDPOINT` | default `http://localhost:6006/v1/traces` | OTLP/HTTP endpoint of the trace receiver, full path to `/v1/traces` (env-only) |
+| `TRACING_PROJECT_NAME` | default `itop-ai-assistant` | Project the traces are filed under in the receiver (env-only) |
 | `PROMPTS_DIR` | optional | Directory with prompt file overrides (env-only) — see [Customizing prompts](prompts.md) |
 | `UI_DIST_DIR` | optional | Directory with the built admin SPA (env-only). The Docker image sets it; running from a source checkout finds `ui/dist` on its own |
 | `LOG_LEVEL` | default `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR` (env-only) |
@@ -55,6 +58,32 @@ This is what to switch on before letting the assistant act on a live queue: see 
 - Everything except the writes stays on deliberately, including the vector index: a mode that also disabled indexing would test a system you are not going to run.
 
 What the mode cannot show you is described in [Setup](setup.md#try-it-on-your-own-data-first).
+
+## LLM tracing
+
+The run journal in the admin UI records what the assistant did — which tools it called, with which arguments, what came back. It does not record **what was sent to the model and what the model answered**, which is what the question "why did it decide that?" actually needs. Tracing adds exactly that, and keeps it inside your perimeter.
+
+Off by default. Turning it on takes two things: a receiver, and `TRACING_ENABLED=true` on the assistant.
+
+```bash
+# in docker/, with TRACING_ENABLED=true in .env
+docker-compose --profile tracing up -d
+```
+
+The bundled stack runs [Phoenix](https://arize.com/docs/phoenix/self-hosting) — one container, its own volume, UI on `http://localhost:6006`. It is behind a compose profile, so a stand that is not tracing never starts it.
+
+> [!IMPORTANT]
+> **Traces contain the full text of tickets** — the description, the requester's comments, everything the model was shown. That is the point of them, and it makes the receiver a second long-lived store of personal data next to iTop itself. Three questions have to have answers before this is switched on anywhere near real users: where the receiver runs, who can open it, and after how many days traces are deleted. Nothing here is a substitute for asking them.
+
+- **Where it goes is yours to choose.** `TRACING_ENDPOINT` is a plain OTLP/HTTP address, so any receiver that speaks OTLP fits in the same slot with no change to the assistant. Write the full path to `/v1/traces` — a bare `host:port`, or a gRPC port such as `:4317`, exports nothing at all.
+- **Retention is set on the receiver, not here.** The bundled Phoenix is started with `PHOENIX_DEFAULT_RETENTION_POLICY_DAYS=30`; its own default is to keep traces forever.
+- **This is not the run journal, and does not replace it.** The journal lives in Redis for `RUN_TTL_DAYS` (7 by default) and is what the [Runs](admin-ui.md#runs) screen reads. Traces outlive it deliberately: a ticket usually closes long after the run that touched it, and comparing the two is only possible if the run's reasoning is still around. Both are keyed by the same `processing_id`, so a run in the admin UI and its trace find each other.
+- **Nothing is installed or connected while it is off.** With `TRACING_ENABLED=false` the tracing packages are not even imported, no exporter exists and no connection is made.
+- **If the receiver is unreachable while tracing is on**, ticket processing is unaffected — spans are exported in the background — but the log fills with export retry warnings. Fix the endpoint or switch tracing off.
+
+### The cloud path
+
+LangChain also honours `LANGSMITH_TRACING` / `LANGSMITH_ENDPOINT` / `LANGSMITH_API_KEY` with no code involved on our side, and `docker/.env.dist` still ships them, off. That path sends ticket text to a third party and stores it there. It is a reasonable choice for development against synthetic data, and not one to make by accident on someone's live queue — a customer's agreement to a cloud *model* is not agreement to a cloud *trace store*.
 
 ## Build version
 

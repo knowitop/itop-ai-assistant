@@ -8,8 +8,10 @@ from langchain_core.language_models.chat_models import BaseChatModel
 
 from itop_ai_assistant.config import LlmConfig, Settings
 from itop_ai_assistant.core.llm_providers import get_provider
+from itop_ai_assistant.core.tracing import NullRunTracer
 from itop_ai_assistant.itop.connection import AiIdentity, ItopConnection
 from itop_ai_assistant.itop.write_policy import WritePolicy
+from itop_ai_assistant.pipelines.ports import RunTracer
 from itop_ai_assistant.pipelines.registry import TriggerRegistry
 from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.settings.config_store import ConfigStore, RedisConfigStore
@@ -65,6 +67,11 @@ class AppDeps:
     config_store: ConfigStore
     prompt_store: PromptStore
     journal: RunJournal
+    # The frame's second recorder, next to the journal it mirrors
+    # (`pipelines/runner.py`). Deliberately absent from `RunDeps`: a module
+    # neither reaches tracing nor knows it exists — the instrumentation is
+    # global and the frame is opened above the module (ADR-029).
+    tracer: RunTracer
     vector: VectorSubsystem
 
     @property
@@ -113,7 +120,15 @@ def create_llm(llm: LlmConfig, model: str | None = None) -> BaseChatModel:
     return init_chat_model(model or llm.model or "", model_provider=provider.langchain_provider, **kwargs)
 
 
-def build_deps(settings: Settings, registry: TriggerRegistry) -> AppDeps:
+def build_deps(settings: Settings, registry: TriggerRegistry, *, tracer: RunTracer | None = None) -> AppDeps:
+    """Assemble the application-wide dependencies.
+
+    `tracer` comes from `setup_tracing` in the lifespan, which is the only
+    place instrumentation may be installed. Omitting it means "this process
+    opens no runs" — the reindex CLI, and tests — not "tracing is optional
+    here": a process that does open runs and passes nothing would journal them
+    and trace nothing, silently.
+    """
     # One shared Redis connection pool for state, journal, config, prompts and vector
     redis = aioredis.from_url(settings.redis_url, decode_responses=True)
     config_store = RedisConfigStore(redis, settings)
@@ -132,5 +147,6 @@ def build_deps(settings: Settings, registry: TriggerRegistry) -> AppDeps:
         config_store=config_store,
         prompt_store=RedisPromptStore(FilePromptStore(prompts_dirs, settings.prompts_dir), redis),
         journal=RunJournal(redis, ttl_seconds=days_to_seconds(settings.run_ttl_days)),
+        tracer=tracer or NullRunTracer(),
         vector=build_vector(settings, redis, config_store, itop),
     )

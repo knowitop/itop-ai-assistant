@@ -13,6 +13,7 @@ from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.core.principal import Principal
+from itop_ai_assistant.core.tracing import NullRunTracer
 from itop_ai_assistant.itop.write_policy import WritePolicy
 from itop_ai_assistant.main import app
 from itop_ai_assistant.settings.config_store import RedisConfigStore
@@ -118,6 +119,7 @@ def _make_deps(redis, store_url: str | None = None, **settings_overrides) -> App
             FilePromptStore({"intake": INTAKE_PROMPTS_DIR, "selfcheck": SELFCHECK_PROMPTS_DIR}), redis
         ),
         journal=RunJournal(redis),
+        tracer=NullRunTracer(),
         vector=vector,
     )
 

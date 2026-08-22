@@ -28,6 +28,23 @@ services:
     ports:
       - "6333:6333"
 
+  # Trace receiver (optional): started only by `--profile tracing`, since a
+  # stand that is not tracing has no use for the container. `assistant` has no
+  # depends_on for the same reason `qdrant` has none — no receiver, no problem.
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    profiles: [tracing]
+    restart: unless-stopped
+    ports:
+      - "6006:6006"
+    environment:
+      PHOENIX_WORKING_DIR: /mnt/data
+      # Traces hold ticket text — the retention is set on purpose, not left
+      # at the default of "keep forever" (ADR-029).
+      PHOENIX_DEFAULT_RETENTION_POLICY_DAYS: 30
+    volumes:
+      - phoenix-data:/mnt/data
+
   assistant:
     image: ghcr.io/knowitop/itop-ai-assistant:latest
 #    build:
@@ -44,3 +61,4 @@ volumes:
   itop-db:
   redis-data:
   qdrant_data:
+  phoenix-data:

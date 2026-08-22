@@ -9,6 +9,7 @@ from uuid import uuid4
 import fakeredis.aioredis
 
 from itop_ai_assistant.core.principal import Principal
+from itop_ai_assistant.core.tracing import NullRunTracer
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.runner import journalled_run
 from itop_ai_assistant.state.journal import RunJournal
@@ -19,13 +20,16 @@ _ENGINEER = Principal.delegated(_TOKEN, login="jdoe", name="John Doe")
 
 class RunnerTestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        # The frame needs a journal and nothing else — no container to assemble.
+        # The frame needs a journal and a tracer and nothing else — no container
+        # to assemble. Tracing off is the default state, so that is what the
+        # frame is exercised with here; `test_tracing.py` owns the tracer.
         self.journal = RunJournal(fakeredis.aioredis.FakeRedis(decode_responses=True))
+        self.tracer = NullRunTracer()
         self.pid = uuid4()
 
     def _run(self, kind="webhook", principal=None):
         run = RunContext(processing_id=self.pid, module="intake", principal=principal or Principal.service())
-        return journalled_run(self.journal, run, kind=kind, subject="UserRequest::42", event="created")
+        return journalled_run(self.journal, self.tracer, run, kind=kind, subject="UserRequest::42", event="created")
 
 
 class TestJournalledRun(RunnerTestCase):

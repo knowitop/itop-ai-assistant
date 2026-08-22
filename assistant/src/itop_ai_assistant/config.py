@@ -331,6 +331,17 @@ class Settings(BaseSettings):
     # None = vector features unavailable; the app runs Redis-only.
     qdrant_url: str | None = None
 
+    # LLM tracing (ADR-029) — bootstrap, env-only like qdrant_url, and for a
+    # sharper reason: the instrumentation is installed once per process, so
+    # there is nothing a runtime section could switch. Off by default; when
+    # off, no tracing package is imported and no span leaves the process.
+    tracing_enabled: bool = False
+    # OTLP/HTTP: the full path to /v1/traces, not a bare host:port. The
+    # exporter speaks one protocol (`core/tracing_otel.py`), so a gRPC port
+    # (:4317) here would silently export nothing.
+    tracing_endpoint: str = "http://localhost:6006/v1/traces"
+    tracing_project_name: str = "itop-ai-assistant"
+
     # iTop datamodel mapping
     ticket_mapping: TicketMappingConfig = TicketMappingConfig()
     faq_mapping: FaqMappingConfig = FaqMappingConfig()

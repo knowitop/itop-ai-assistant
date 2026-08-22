@@ -32,6 +32,19 @@ dependencies = [
     "uvicorn>=0.43.0",
 ]
 
+# Tracing (TASK-058, ADR-029) — optional by design: a base install pulls none
+# of it, and CI runs the suite in exactly that environment. The image installs
+# it explicitly (assistant/Dockerfile), which is what makes the pilot able to
+# switch tracing on at all. `…-proto-http`, not the umbrella
+# `opentelemetry-exporter-otlp`: the umbrella drags in gRPC (`grpcio`), the one
+# heavy dependency here, for a transport this service does not speak.
+[project.optional-dependencies]
+tracing = [
+    "opentelemetry-sdk>=1.30",
+    "opentelemetry-exporter-otlp-proto-http>=1.30",
+    "openinference-instrumentation-langchain>=0.1",
+]
+
 [tool.hatch.version]
 source = "vcs"
 # No repository (a source archive, say) — better a flag value than a crash.

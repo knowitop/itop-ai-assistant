@@ -17,9 +17,13 @@ FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
 WORKDIR /app
 
-# Install dependencies into a separate venv — this layer is cached unless lockfile changes
+# Install dependencies into a separate venv — this layer is cached unless lockfile changes.
+# `--extra tracing` even though tracing is off by default (TRACING_ENABLED): an
+# image without the packages could not be told to trace at all, and a
+# deployment cannot pip-install into a published image. Cheap here — the extra
+# is the OTel SDK, the HTTP exporter and the OpenInference conventions, no gRPC.
 COPY assistant/pyproject.toml assistant/uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project --no-editable
+RUN uv sync --frozen --no-dev --extra tracing --no-install-project --no-editable
 
 # The build stamp, baked into the package by hatch_build.py and readable at
 # run time through importlib.metadata and _build_info.py. No git here: the
@@ -32,7 +36,7 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION=${APP_VERSION} BUILD_COMMIT=${BUILD_COMMIT}
 # Install the application itself. --no-editable puts the package inside the
 # venv, so the runtime image needs nothing but /app/.venv.
 COPY assistant/ ./
-RUN uv sync --frozen --no-dev --no-editable
+RUN uv sync --frozen --no-dev --extra tracing --no-editable
 
 # ---- runtime image ----
 FROM python:3.13-slim-bookworm

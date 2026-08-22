@@ -52,6 +52,7 @@ async def run_schedule(route: ScheduleRoute, deps: AppDeps) -> RunOutcome:
     )
     async with journalled_run(
         deps.journal,
+        deps.tracer,
         run,
         kind="schedule",
         subject=route.subject or route.label,

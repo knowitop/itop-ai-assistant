@@ -31,6 +31,7 @@ async def _process_safely(handler: WebhookHandler, payload: WebhookPayload, run:
     try:
         async with journalled_run(
             deps.journal,
+            deps.tracer,
             run,
             kind="webhook",
             subject=str(payload),

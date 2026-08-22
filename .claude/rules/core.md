@@ -99,6 +99,11 @@ repository is one line in `ItopRepositories._build`, not a second list.
   module needs the second half without the first.
 - Every stop reports itself twice: a journal step and a `RunOutcome` with the
   same text, so a synchronous caller learns why nothing happened.
+- **The frame has two recorders, not one.** `journalled_run` fills the run
+  journal and the trace span from the same expressions, and `RunTracer`
+  repeats `RunFrameJournal.start` field for field so they cannot drift. Only
+  `core/tracing_otel.py` names a tracing library; nothing else in the process
+  imports one, and with tracing off (the default) it is not imported at all.
 - Body exceptions **deliberately** propagate out of `execute()`. The entry point
   decides what a failure means: the webhook logs it (iTop already got its 202),
   the request lets it become a 500. Do not swallow them in the shell.
