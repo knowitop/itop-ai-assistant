@@ -9,7 +9,7 @@ The wizard opens automatically at `http://localhost:8001/ui` when the assistant 
 > [!IMPORTANT]
 > **Before starting the wizard**, create the AI service account in iTop manually — the wizard does not do this. See [Create a service account](#1-create-a-service-account) below.
 
-![setup_wizard.png](setup_wizard.png)
+![The setup wizard](images/setup_wizard.png)
 
 ### Step 1 — Security
 
@@ -90,7 +90,7 @@ The account needs the following profiles:
 
 All comments posted by the assistant will appear under this account name, making AI actions visible and auditable in the ticket log. Use this account's token for `ITOP_TOKEN` (or `ITOP_USER` / `ITOP_PWD`) in your `.env`.
 
-![Auth: application token](application_token.png)
+![Auth: application token](images/application_token.png)
 
 ### 2. Configure service subcategories
 
@@ -127,12 +127,14 @@ Create two triggers in iTop (**Configuration → Notifications → Triggers**):
 > [!IMPORTANT]
 > Set **Context** to `cron`, `Console`, and `Portal` only — **do not include `REST/JSON`**. This prevents the trigger from firing when the assistant itself posts a comment via the API, which would cause an infinite loop.
 
-![Trigger: ticket created](trigger_request_created.png)
-![Trigger: user commented](trigger_request_commented.png)
+![Trigger: ticket created](images/trigger_request_created.png)
+![Trigger: user commented](images/trigger_request_commented.png)
 
 ### 4. Create webhooks
 
-In iTop, go to **Configuration → Notifications → Remote Application Connections** and create a connection for the assistant. If you set a `WEBHOOK_TOKEN`, configure the connection to send it in the `X-Auth-Token` header.
+In iTop, go to **Configuration → Notifications → Remote Application Connections** and create a connection for the assistant. The URL is the assistant as reachable **from the iTop server** — in the bundled compose stack, `http://assistant:8000`. If you set a `WEBHOOK_TOKEN`, configure the connection to send it in the `X-Auth-Token` header.
+
+![Connection: the assistant's endpoint](images/remote_app_connection.png)
 
 For each trigger, create a **Webhook action** that sends a `POST` to the assistant:
 
@@ -146,8 +148,8 @@ For each trigger, create a **Webhook action** that sends a `POST` to the assista
 {"id": "$this->id$", "class": "$this->finalclass$", "event": "user_commented"}
 ```
 
-![Webhook: ticket created](webhook_request_created.png)
-![Webhook: user commented](webhook_request_commented.png)
+![Webhook: ticket created](images/webhook_request_created.png)
+![Webhook: user commented](images/webhook_request_commented.png)
 
 Repeat both for every class the assistant handles (`Incident` by default, alongside `UserRequest`) — or use a single creation trigger on `Ticket` with the filter `SELECT Ticket WHERE finalclass IN ('UserRequest', 'Incident')`, which is what the wizard does.
 
