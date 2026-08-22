@@ -19,6 +19,8 @@
     "offline": "offline",
     "configured": "skonfigurowany",
     "setup_required": "wymaga konfiguracji",
+    "dry_run": "tryb próbny",
+    "dry_run_tooltip": "Uruchomienia są przetwarzane jak zwykle, ale nic nie jest zapisywane w iTop",
     "github_tooltip": "Repozytorium GitHub",
     "alert_title": "Wymagana konfiguracja",
     "alert_body": "Asystent nie jest skonfigurowany — /webhook zwraca 503, dopóki nie zostaną ustawione połączenia LLM i iTop.",
@@ -154,16 +156,24 @@
     "config_reset": "Konfiguracja przywrócona do ustawień domyślnych",
     "reset_confirm": "Przywrócić konfigurację \"{{name}}\" do domyślnych wartości env/yaml?",
     "field_invalid_json": "{{name}}: nieprawidłowy JSON",
+    "check_fields": "Część wartości została odrzucona — sprawdź pola poniżej",
+    "advanced_show": "Ustawienia zaawansowane",
+    "advanced_hide": "Ukryj ustawienia zaawansowane",
     "requests_title": "Uruchomienie ręczne",
     "run_action": "Uruchom",
     "schedules_title": "Harmonogram",
     "schedule_interval": "co {{seconds}} s",
-    "run_id": "Przebieg {{id}}"
+    "run_id": "Przebieg {{id}}",
+    "dry_run_title": "Tryb próbny — nic nie jest zapisywane w iTop",
+    "dry_run_desc": "Moduły działają tak samo jak na produkcji: zgłoszenia są klasyfikowane, pytania i notatki przekazania są układane, dziennik uruchomień zapisuje każdy krok — ale żadna zmiana pola ani żaden wpis w logu nie trafia do iTop. Obowiązuje od następnego uruchomienia; stan zgłoszenia jest zapisywany jak na produkcji, więc zgłoszenie przetworzone w trybie próbnym nie zostanie podjęte ponownie po wyłączeniu trybu."
   },
   "prompts": {
     "title": "Prompty",
     "no_prompts": "Brak modułów z promptami.",
     "badge_overridden": "nadpisany",
+    "badge_broken": "niepoprawny",
+    "broken_hint": "Ten prompt jest niepoprawny i nadal obowiązuje w takiej postaci, więc moduł kończy się błędem przy każdym uruchomieniu. Popraw tekst poniżej i zapisz albo przywróć prompt do wbudowanej wartości domyślnej.",
+    "ignored": "Nie zastosowano — żaden wbudowany prompt nie ma takiej nazwy: {{names}}",
     "unsaved": "Niezapisane zmiany",
     "saved": "Zapisano — zostanie zastosowane przy następnym przetworzonym zgłoszeniu",
     "reset_done": "Prompt przywrócony do wartości domyślnej",
@@ -191,7 +201,8 @@
     "detail_running": "{{module}} / {{event}} · rozpoczęto {{started}}",
     "detail_finished": "{{module}} / {{event}} · rozpoczęto {{started}} · zakończono {{finished}} ({{duration}})",
     "field_run_id": "Run ID",
-    "run_id_placeholder": "Wklej processing_id z odpowiedzi webhooka"
+    "run_id_placeholder": "Wklej processing_id z odpowiedzi webhooka",
+    "dry_run": "tryb próbny"
   },
   "vector": {
     "title": "Indeks wektorowy",

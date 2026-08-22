@@ -19,6 +19,8 @@
     "offline": "离线",
     "configured": "已配置",
     "setup_required": "需要配置",
+    "dry_run": "试运行",
+    "dry_run_tooltip": "运行照常处理，但不会向 iTop 写入任何内容",
     "github_tooltip": "GitHub 仓库",
     "alert_title": "需要配置",
     "alert_body": "助手尚未配置 — 在设置 LLM 和 iTop 连接之前，/webhook 将返回 503。",
@@ -154,16 +156,24 @@
     "config_reset": "配置已重置为默认值",
     "reset_confirm": "将「{{name}}」的配置重置为环境变量/yaml 默认值？",
     "field_invalid_json": "{{name}}：无效的 JSON",
+    "check_fields": "部分值被拒绝 — 请查看下方字段",
+    "advanced_show": "高级设置",
+    "advanced_hide": "隐藏高级设置",
     "requests_title": "手动运行",
     "run_action": "运行",
     "schedules_title": "计划任务",
     "schedule_interval": "每 {{seconds}} 秒",
-    "run_id": "运行 {{id}}"
+    "run_id": "运行 {{id}}",
+    "dry_run_title": "试运行 — 不会向 iTop 写入任何内容",
+    "dry_run_desc": "模块仍按生产环境的方式运行：工单会被分类，追问和交接备注会被生成，运行日志会记录每一步 — 但任何字段变更和日志条目都不会写入 iTop。从下一次运行开始生效；工单状态会像在生产环境中一样保存，因此以试运行方式处理过的工单在关闭该模式后不会被再次处理。"
   },
   "prompts": {
     "title": "提示词",
     "no_prompts": "没有包含提示词的模块。",
     "badge_overridden": "已覆盖",
+    "badge_broken": "损坏",
+    "broken_hint": "该提示词已损坏，且仍按当前内容生效，因此模块每次运行都会失败。请修正下方文本并保存，或将其重置为内置默认值。",
+    "ignored": "未应用 — 没有同名的内置提示词：{{names}}",
     "unsaved": "未保存的更改",
     "saved": "已保存 — 将在下一个处理的工单中生效",
     "reset_done": "提示词已重置为默认值",
@@ -191,7 +201,8 @@
     "detail_running": "{{module}} / {{event}} · 开始于 {{started}}",
     "detail_finished": "{{module}} / {{event}} · 开始于 {{started}} · 完成于 {{finished}}（{{duration}}）",
     "field_run_id": "Run ID",
-    "run_id_placeholder": "粘贴 webhook 响应中的 processing_id"
+    "run_id_placeholder": "粘贴 webhook 响应中的 processing_id",
+    "dry_run": "试运行"
   },
   "vector": {
     "title": "向量索引",

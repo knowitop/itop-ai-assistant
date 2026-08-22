@@ -19,6 +19,8 @@
     "offline": "offline",
     "configured": "nakonfigurováno",
     "setup_required": "vyžaduje nastavení",
+    "dry_run": "zkušební běh",
+    "dry_run_tooltip": "Spuštění probíhají jako obvykle, ale do iTopu se nic nezapisuje",
     "github_tooltip": "GitHub repozitář",
     "alert_title": "Vyžaduje nastavení",
     "alert_body": "Asistent není nakonfigurován — /webhook vrací 503, dokud nejsou nastavena připojení LLM a iTop.",
@@ -154,16 +156,24 @@
     "config_reset": "Konfigurace obnovena na výchozí hodnoty",
     "reset_confirm": "Obnovit konfiguraci \"{{name}}\" na výchozí hodnoty env/yaml?",
     "field_invalid_json": "{{name}}: neplatný JSON",
+    "check_fields": "Některé hodnoty byly odmítnuty — zkontrolujte pole níže",
+    "advanced_show": "Pokročilá nastavení",
+    "advanced_hide": "Skrýt pokročilá nastavení",
     "requests_title": "Ruční spuštění",
     "run_action": "Spustit",
     "schedules_title": "Plán",
     "schedule_interval": "každých {{seconds}} s",
-    "run_id": "Běh {{id}}"
+    "run_id": "Běh {{id}}",
+    "dry_run_title": "Zkušební běh — do iTopu se nic nezapisuje",
+    "dry_run_desc": "Moduly běží stejně jako v produkci: tickety se klasifikují, otázky i předávací poznámky se sestavují, deník spuštění zaznamenává každý krok — ale žádná změna pole ani žádný záznam v logu se do iTopu nedostane. Platí od dalšího spuštění; stav ticketu se ukládá jako v produkci, takže ticket zpracovaný ve zkušebním běhu se po vypnutí režimu znovu nezpracuje."
   },
   "prompts": {
     "title": "Prompty",
     "no_prompts": "Žádné moduly s prompty.",
     "badge_overridden": "upraveno",
+    "badge_broken": "vadný",
+    "broken_hint": "Tento prompt je vadný a zůstává v platnosti tak, jak je napsán, takže modul selže při každém spuštění. Opravte text níže a uložte jej, nebo jej obnovte na vestavěnou výchozí hodnotu.",
+    "ignored": "Nepoužito — žádný vestavěný prompt nemá tento název: {{names}}",
     "unsaved": "Neuložené změny",
     "saved": "Uloženo — použije se při dalším zpracovaném ticketu",
     "reset_done": "Prompt obnoven na výchozí hodnotu",
@@ -191,7 +201,8 @@
     "detail_running": "{{module}} / {{event}} · spuštěno {{started}}",
     "detail_finished": "{{module}} / {{event}} · spuštěno {{started}} · dokončeno {{finished}} ({{duration}})",
     "field_run_id": "Run ID",
-    "run_id_placeholder": "Vložte processing_id z odpovědi webhooku"
+    "run_id_placeholder": "Vložte processing_id z odpovědi webhooku",
+    "dry_run": "zkušební běh"
   },
   "vector": {
     "title": "Vektorový index",

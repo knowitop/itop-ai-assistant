@@ -19,6 +19,8 @@
     "offline": "hors ligne",
     "configured": "configuré",
     "setup_required": "configuration requise",
+    "dry_run": "simulation",
+    "dry_run_tooltip": "Les exécutions sont traitées normalement, mais rien n'est écrit dans iTop",
     "github_tooltip": "Dépôt GitHub",
     "alert_title": "Configuration requise",
     "alert_body": "L'assistant n'est pas configuré — /webhook retourne 503 tant que les connexions LLM et iTop ne sont pas définies.",
@@ -154,16 +156,24 @@
     "config_reset": "Configuration réinitialisée aux valeurs par défaut",
     "reset_confirm": "Réinitialiser la configuration de « {{name}} » aux valeurs par défaut env/yaml ?",
     "field_invalid_json": "{{name}} : JSON invalide",
+    "check_fields": "Certaines valeurs ont été rejetées — voir les champs ci-dessous",
+    "advanced_show": "Paramètres avancés",
+    "advanced_hide": "Masquer les paramètres avancés",
     "requests_title": "Exécution manuelle",
     "run_action": "Exécuter",
     "schedules_title": "Planification",
     "schedule_interval": "toutes les {{seconds}} s",
-    "run_id": "Exécution {{id}}"
+    "run_id": "Exécution {{id}}",
+    "dry_run_title": "Simulation — rien n'est écrit dans iTop",
+    "dry_run_desc": "Les modules continuent de fonctionner comme en production : les tickets sont classés, les questions et les notes de transfert sont rédigées, le journal des exécutions enregistre chaque étape — mais aucune modification de champ ni aucune entrée de journal n'atteint iTop. S'applique à partir de la prochaine exécution ; l'état d'un ticket est conservé comme en production, de sorte qu'un ticket traité en simulation n'est pas repris une fois le mode désactivé."
   },
   "prompts": {
     "title": "Prompts",
     "no_prompts": "Aucun module avec des prompts.",
     "badge_overridden": "personnalisé",
+    "badge_broken": "invalide",
+    "broken_hint": "Ce prompt est invalide et reste appliqué tel quel, le module échoue donc à chaque exécution. Corrigez le texte ci-dessous et enregistrez, ou réinitialisez-le à la valeur par défaut intégrée.",
+    "ignored": "Non appliqué — aucun prompt intégré ne porte ce nom : {{names}}",
     "unsaved": "Modifications non enregistrées",
     "saved": "Enregistré — s'appliquera au prochain ticket traité",
     "reset_done": "Prompt réinitialisé à la valeur par défaut",
@@ -191,7 +201,8 @@
     "detail_running": "{{module}} / {{event}} · démarré {{started}}",
     "detail_finished": "{{module}} / {{event}} · démarré {{started}} · terminé {{finished}} ({{duration}})",
     "field_run_id": "Run ID",
-    "run_id_placeholder": "Collez le processing_id de la réponse du webhook"
+    "run_id_placeholder": "Collez le processing_id de la réponse du webhook",
+    "dry_run": "simulation"
   },
   "vector": {
     "title": "Index vectoriel",

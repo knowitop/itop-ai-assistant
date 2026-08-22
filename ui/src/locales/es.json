@@ -19,6 +19,8 @@
     "offline": "sin conexión",
     "configured": "configurado",
     "setup_required": "requiere configuración",
+    "dry_run": "simulación",
+    "dry_run_tooltip": "Las ejecuciones se procesan con normalidad, pero no se escribe nada en iTop",
     "github_tooltip": "Repositorio GitHub",
     "alert_title": "Configuración requerida",
     "alert_body": "El asistente no está configurado — /webhook devuelve 503 hasta que se configuren las conexiones LLM e iTop.",
@@ -154,16 +156,24 @@
     "config_reset": "Configuración restablecida a valores predeterminados",
     "reset_confirm": "¿Restablecer la configuración de \"{{name}}\" a los valores predeterminados de env/yaml?",
     "field_invalid_json": "{{name}}: JSON inválido",
+    "check_fields": "Algunos valores fueron rechazados — consulte los campos de abajo",
+    "advanced_show": "Configuración avanzada",
+    "advanced_hide": "Ocultar la configuración avanzada",
     "requests_title": "Ejecución manual",
     "run_action": "Ejecutar",
     "schedules_title": "Programación",
     "schedule_interval": "cada {{seconds}} s",
-    "run_id": "Ejecución {{id}}"
+    "run_id": "Ejecución {{id}}",
+    "dry_run_title": "Simulación — no se escribe nada en iTop",
+    "dry_run_desc": "Los módulos siguen funcionando igual que en producción: los tickets se clasifican, se redactan las preguntas y las notas de traspaso, el registro de ejecuciones anota cada paso — pero ningún cambio de campo ni ninguna entrada de log llega a iTop. Se aplica a partir de la próxima ejecución; el estado del ticket se guarda como en producción, así que un ticket procesado en simulación no se vuelve a tomar cuando se desactiva el modo."
   },
   "prompts": {
     "title": "Prompts",
     "no_prompts": "No hay módulos con prompts.",
     "badge_overridden": "personalizado",
+    "badge_broken": "inválido",
+    "broken_hint": "Este prompt es inválido y sigue vigente tal como está escrito, por lo que el módulo falla en cada ejecución. Corrija el texto de abajo y guarde, o restablézcalo al valor predeterminado incorporado.",
+    "ignored": "No aplicado — no hay ningún prompt incorporado con este nombre: {{names}}",
     "unsaved": "Cambios sin guardar",
     "saved": "Guardado — se aplicará en el próximo ticket procesado",
     "reset_done": "Prompt restablecido al valor predeterminado",
@@ -191,7 +201,8 @@
     "detail_running": "{{module}} / {{event}} · iniciado {{started}}",
     "detail_finished": "{{module}} / {{event}} · iniciado {{started}} · finalizado {{finished}} ({{duration}})",
     "field_run_id": "Run ID",
-    "run_id_placeholder": "Pegue el processing_id de la respuesta del webhook"
+    "run_id_placeholder": "Pegue el processing_id de la respuesta del webhook",
+    "dry_run": "simulación"
   },
   "vector": {
     "title": "Índice vectorial",

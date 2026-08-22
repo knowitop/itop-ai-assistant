@@ -19,6 +19,8 @@
     "offline": "offline",
     "configured": "konfiguriert",
     "setup_required": "Einrichtung erforderlich",
+    "dry_run": "Testlauf",
+    "dry_run_tooltip": "Ausführungen werden wie gewohnt verarbeitet, es wird jedoch nichts nach iTop geschrieben",
     "github_tooltip": "GitHub-Repository",
     "alert_title": "Einrichtung erforderlich",
     "alert_body": "Der Assistent ist nicht konfiguriert — /webhook gibt 503 zurück, bis die LLM- und iTop-Verbindungen eingerichtet sind.",
@@ -154,16 +156,24 @@
     "config_reset": "Konfiguration auf Standardwerte zurückgesetzt",
     "reset_confirm": "Konfiguration von \"{{name}}\" auf env/yaml-Standardwerte zurücksetzen?",
     "field_invalid_json": "{{name}}: ungültiges JSON",
+    "check_fields": "Einige Werte wurden abgelehnt — siehe die Felder unten",
+    "advanced_show": "Erweiterte Einstellungen",
+    "advanced_hide": "Erweiterte Einstellungen ausblenden",
     "requests_title": "Manuell ausführen",
     "run_action": "Ausführen",
     "schedules_title": "Zeitplan",
     "schedule_interval": "alle {{seconds}} s",
-    "run_id": "Lauf {{id}}"
+    "run_id": "Lauf {{id}}",
+    "dry_run_title": "Testlauf — es wird nichts nach iTop geschrieben",
+    "dry_run_desc": "Die Module laufen weiter wie im Produktivbetrieb: Tickets werden klassifiziert, Rückfragen und Übergabenotizen werden formuliert, das Ausführungsprotokoll zeichnet jeden Schritt auf — aber weder eine Feldänderung noch ein Log-Eintrag erreicht iTop. Gilt ab der nächsten Ausführung; der Zustand eines Tickets wird wie im Produktivbetrieb gespeichert, daher wird ein im Testlauf verarbeitetes Ticket nach dem Abschalten des Modus nicht erneut aufgegriffen."
   },
   "prompts": {
     "title": "Prompts",
     "no_prompts": "Keine Module mit Prompts.",
     "badge_overridden": "angepasst",
+    "badge_broken": "fehlerhaft",
+    "broken_hint": "Dieser Prompt ist fehlerhaft und bleibt so, wie er geschrieben ist, in Kraft, daher schlägt das Modul bei jeder Ausführung fehl. Korrigieren Sie den Text unten und speichern Sie, oder setzen Sie ihn auf den eingebauten Standardwert zurück.",
+    "ignored": "Nicht angewendet — es gibt keinen eingebauten Prompt mit diesem Namen: {{names}}",
     "unsaved": "Nicht gespeicherte Änderungen",
     "saved": "Gespeichert — wird beim nächsten verarbeiteten Ticket angewendet",
     "reset_done": "Prompt auf Standardwert zurückgesetzt",
@@ -191,7 +201,8 @@
     "detail_running": "{{module}} / {{event}} · gestartet {{started}}",
     "detail_finished": "{{module}} / {{event}} · gestartet {{started}} · beendet {{finished}} ({{duration}})",
     "field_run_id": "Run ID",
-    "run_id_placeholder": "processing_id aus der Webhook-Antwort einfügen"
+    "run_id_placeholder": "processing_id aus der Webhook-Antwort einfügen",
+    "dry_run": "Testlauf"
   },
   "vector": {
     "title": "Vektorindex",
