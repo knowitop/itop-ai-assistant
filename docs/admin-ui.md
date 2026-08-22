@@ -38,7 +38,7 @@ Model parameters and the `tool_choice` switch live here only, not in the setup w
 
 ### Embeddings tab
 
-Only needed for the optional [vector index](#vector-index) — leave it empty for a plain intake deployment.
+Only needed for the optional [vector index](#vector-index). Leave it empty and intake works as it always has, with one thing missing: the handoff note carries no references to similar solved tickets.
 
 - **Base URL**, model, API key — an OpenAI-compatible `/v1/embeddings` endpoint. The model must be **multilingual** (tickets are usually mixed-language), e.g. `bge-m3`
 - **Dimension** — must match what the model actually returns
@@ -156,7 +156,7 @@ The `processing_id` returned by `POST /webhook` can be used to find the exact ru
 
 ## Vector index
 
-Optional — the screen only does something when `QDRANT_URL` points at a Qdrant instance. This is infrastructure for upcoming semantic-search features; nothing in the current intake flow reads the index.
+Optional — the screen only does something when `QDRANT_URL` points at a Qdrant instance. One thing reads the index today: intake, for the similar solved tickets it quotes in the handoff note (see [intake settings](configuration.md#intake-module-settings)). The rest of what is indexed here waits for features still to come.
 
 **Status tab** — badges for the vector store, embeddings and indexer state; the active index version with row count; the per-class sweep cursors and the last reconciliation; and a table of recent indexing runs (objects seen, chunks embedded, chunks with metadata refreshed, chunks deleted, duration). "Chunks with metadata refreshed" counts chunks whose text was unchanged but whose status/org/filters were rewritten without a re-embed. **Index now** runs the next ordinary pass immediately instead of waiting out the sweep interval: only objects changed since the last pass are re-embedded, which is what makes it cheap enough to press after editing the settings. **Reindex** schedules a full rebuild — every object is re-embedded, so it can take a while and load the embeddings endpoint. A warning appears if the index was built with a different embeddings model or dimension than the current config: incomparable vectors are never mixed, so a rebuild is the only way forward.
 

@@ -17,17 +17,20 @@ Engineers waste time on tickets that arrive without enough information: vague de
 
 > **The engineer sees the ticket only when it's ready to work on.**
 
-When a new ticket arrives, the assistant intercepts it via webhook — no changes to iTop itself are needed. Processing runs as a **single AI agent** that decides what the ticket needs and acts through a fixed set of tools:
+When a new ticket arrives, the assistant intercepts it via webhook — there is no extension to install into iTop. Processing runs as a **single AI agent** that decides what the ticket needs and acts through a fixed set of tools:
 
 - **Classify** — if the ticket has no service or subcategory, the agent reads the service catalog from iTop and writes the best match back to the ticket. The classification tools validate every id against the catalog, so the agent cannot invent a category.
-- **Ask** — if the ticket is too vague to classify or to work on, the agent posts exactly **one** focused clarifying question in the public log and stops. The user replies through the portal as usual, which triggers a new webhook and a fresh round. Three questions per ticket at most, of which at most two may be spent on working out its category, then the ticket moves on with whatever is available.
+- **Ask** — if the ticket is too vague to classify or to work on, the agent posts exactly **one** focused clarifying question in the public log and stops. The user replies through the portal as usual, which triggers a new webhook and a fresh round. By default three questions per ticket at most, of which at most two may be spent on working out its category, then the ticket moves on with whatever is available.
 - **Hand off** — once the picture is clear, the agent writes a structured internal note for the engineer and marks the ticket done.
+- **Quote what already worked** — where a vector index is configured, the note carries references to similar solved tickets. Only what iTop still shows the run gets quoted, and internal correspondence never does.
 
 The subcategory's own **description** in iTop is what the agent treats as the completeness criteria — so the questions it asks are specific to the service context, not generic prompts.
 
+Each of the four actions has its own switch: a deployment that only wants routing, or only wants the engineer's summary, turns off the rest. A switched-off action is not asked to be skipped — its tool is never handed to the model, so it cannot happen at all ([which actions the module performs](docs/configuration.md#which-actions-the-module-performs)).
+
 The agent decides the order; the tools enforce the rules. The round limits, the "one question per run" rule and the "stop once an engineer takes the ticket" guard are plain code, not instructions in a prompt — a model that misbehaves gets its call rejected rather than the ticket damaged.
 
-All AI actions are performed under a dedicated iTop service account, so every comment is clearly attributed and auditable. Every run leaves a full trace — each model turn, each tool call and its result, tokens and wall time — in the **Runs** screen of the admin UI.
+All AI actions are performed under a dedicated iTop service account, so every comment is clearly attributed and auditable.
 
 ### Examples
 
@@ -82,12 +85,13 @@ Ticket created           User commented
 │                                                   │
 │  The agent picks a tool, the tool enforces:       │
 │                                                   │
-│   set_classification    service + subcategory     │
-│                         set, session continues    │
-│   post_public_question  one question in the       │
-│                         public log, session ends  │
-│   finish_handoff        internal note for the     │
-│                         engineer, session ends    │
+│   classify    service + subcategory checked       │
+│               against the catalog, then the       │
+│               session continues                   │
+│   ask         one question in the public log,     │
+│               session ends                        │
+│   hand off    internal note for the engineer,     │
+│               session ends                        │
 └─────────────────────────┬─────────────────────────┘
                           ▼
 Ticket marked processed, or left waiting for a reply
@@ -96,12 +100,24 @@ that arrives as the next webhook
 
 ---
 
+## What you get around it
+
+- **A setup wizard**, not a configuration file — security, iTop connection, webhook provisioning and the model, in four steps. Everything it sets can be re-edited later from the admin UI, and applies from the next ticket without a restart. ([Setup](docs/setup.md))
+- **Dry run** — the assistant processes your live queue exactly as it would in production, records every decision, and writes nothing to iTop. Watch it work on your own tickets, then decide. ([Dry run](docs/configuration.md#dry-run))
+- **A run journal** — every run, step by step: each model turn, each tool call and its result, tokens and wall time, with the full text of the question or note it would have posted. ([Runs](docs/admin-ui.md#runs))
+- **Optional self-hosted LLM tracing** — the prompt and the raw model answer, exported over OTLP to a receiver you run yourself. Off by default; the bundled stack ships one behind a compose profile. ([LLM tracing](docs/configuration.md#llm-tracing))
+- **Your model, your infrastructure** — OpenAI, Google Gemini, Ollama, or any OpenAI-compatible endpoint, including a model running on your own hardware. Nothing about the design assumes a cloud provider.
+- **Prompts you can edit** — every prompt the agent uses is editable in the UI or shadowed from a directory on disk, with the packaged default one click away. ([Customizing prompts](docs/prompts.md))
+- **An admin UI in 12 languages**, module settings included — a module ships its own labels, so the settings screen speaks the same language as the rest.
+
+---
+
 ## Requirements
 
-- **iTop 3.x** with REST API enabled
+- **iTop 3.x** with REST API enabled — no extension to install, only a service account, a trigger and a webhook, which the wizard can create for you
 - **Redis** (included in the Docker Compose stack)
-- **Postgres with `pgvector`** — optional, only for the semantic index that upcoming features build on. Included in the compose stack but unused until `DATABASE_URL` is set; without it the assistant runs Redis-only
 - **An LLM that calls tools reliably** — OpenAI, Google Gemini, Ollama, or any OpenAI-compatible endpoint (LM Studio, vLLM, LiteLLM Proxy, DeepSeek, Azure); see [supported providers](docs/configuration.md#supported-llm-providers)
+- **Qdrant and an embeddings endpoint** — optional; they power the similar-solved-tickets references in the handoff note and the semantic index upcoming features build on. Qdrant is in the compose stack; leave `QDRANT_URL` unset and the assistant runs Redis-only, with those references simply absent. See [vector index](docs/configuration.md#vector-index)
 - **Docker and Docker Compose** for the quick start; [uv](https://docs.astral.sh/uv/) for local development
 
 ---
@@ -115,7 +131,7 @@ cp .env.dist .env
 docker compose up -d
 ```
 
-The compose stack starts iTop, Redis and the assistant together. If you already have an iTop or Redis instance, comment out those services in `docker-compose.yml`.
+The compose stack starts iTop, Redis, Qdrant and the assistant together. If you already have an iTop, Redis or Qdrant instance, comment out those services in `docker-compose.yml`.
 
 Once running:
 
@@ -127,15 +143,15 @@ Once running:
 
 Open `http://localhost:8001/ui` — the **Setup Wizard** starts automatically and walks you through all the required steps.
 
-![setup_wizard.png](docs/setup_wizard.png)
+![The setup wizard](docs/images/setup_wizard.png)
 
 ---
 
 ## Documentation
 
-- [**Setup**](docs/setup.md) — setup wizard walkthrough and manual iTop configuration
-- [**Admin UI**](docs/admin-ui.md) — Connections, Modules, Prompts and Runs screens
-- [**Configuration**](docs/configuration.md) — environment variables, module settings and supported LLM providers
+- [**Setup**](docs/setup.md) — setup wizard walkthrough, manual iTop configuration, and how to try the assistant on your own data first
+- [**Admin UI**](docs/admin-ui.md) — Connections, Modules, Prompts, Runs and Vector index screens
+- [**Configuration**](docs/configuration.md) — environment variables, module settings, dry run, LLM tracing, supported LLM providers and the vector index
 - [**Customizing prompts**](docs/prompts.md) — editing LLM prompts via UI or files
 
 ---
@@ -161,20 +177,18 @@ Requires [uv](https://docs.astral.sh/uv/).
 ```bash
 cd assistant
 uv sync
-cp docker/.env.dist .env   # fill in LLM and iTop settings
+cp ../docker/.env.dist .env   # fill in LLM and iTop settings
 uv run uvicorn itop_ai_assistant.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
 **Tests:**
 
 ```bash
-cd assistant
-uv run pytest                   # unit tests (mocked LLM, iTop and Redis), with coverage
-uv run pytest test/pg           # pgvector tests (Testcontainers, needs Docker)
-uv run pytest test/integration   # agent against a real LLM (needs .env.test)
+uv run pytest                    # unit tests (mocked LLM, iTop and Redis), with coverage
+uv run pytest test/integration   # the agent against a real LLM (needs .env.test)
 ```
 
-Only the unit tests run by default; the other two suites are opt-in because they need a Docker daemon and a reachable model endpoint respectively.
+Only the unit tests run by default; the integration suite is opt-in because it needs a reachable model endpoint.
 
 **Admin UI** (requires Node.js; the dev server proxies `/api` to the backend on `:8001`):
 

@@ -14,9 +14,8 @@ paths:
 - LLM calls and HTTP are mocked (`ItopMockTransport`), Redis is `fakeredis`.
 - `get_settings()` is `lru_cache`d — call `get_settings.cache_clear()` in
   `setUp`/`tearDown` when a test controls env vars.
-- `test/pg/` (Testcontainers, `pgvector/pgvector:pg17`) and `test/integration/`
-  (a **real** LLM, needs `.env.test`) are not collected by default. Run them
-  explicitly: `uv run pytest test/pg`, `uv run pytest test/integration`.
+- `test/integration/` (a **real** LLM, needs `.env.test`) is the only suite not
+  collected by default. Run it explicitly: `uv run pytest test/integration`.
 - The intake agent loop is driven by a scripted `FakeToolCallingModel`
   (`test_intake_agent.py`) — `create_agent` calls `bind_tools`, which
   `BaseChatModel` leaves unimplemented, so the ready-made langchain-core fakes do

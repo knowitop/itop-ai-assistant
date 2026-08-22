@@ -1,7 +1,8 @@
 ---
 paths:
   - "assistant/src/itop_ai_assistant/vector/**"
-  - "assistant/test/pg/**"
+  - "assistant/test/unit/test_vector_*.py"
+  - "assistant/test/unit/test_qdrant_*.py"
 ---
 
 # Vector layer
