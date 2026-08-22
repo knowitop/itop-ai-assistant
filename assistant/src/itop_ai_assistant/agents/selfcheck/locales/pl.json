@@ -1,0 +1,27 @@
+{
+  "description": "Test dymny platformy: sięgnąć do iTop i do modelu, nic nie zapisując",
+  "fields": {
+    "enabled": {
+      "title": "Włączony",
+      "description": "Uruchamiaj test dymny na timerze. Odczytywane przy starcie: zmiana wymaga restartu."
+    },
+    "interval_seconds": {
+      "title": "Uruchamiaj co, sekund",
+      "description": "Odczytywane ponownie przed każdym taktem, więc zmiana działa bez restartu."
+    },
+    "probe_oql": {
+      "title": "Zapytanie sondujące",
+      "description": "OQL, które test wykonuje w iTop. Wynik jest odrzucany; udać się musi samo wywołanie."
+    },
+    "model": {
+      "title": "Nadpisanie modelu",
+      "description": "Pozostaw puste, aby użyć modelu globalnego."
+    }
+  },
+  "actions": {
+    "run": { "summary": "Uruchom test dymny platformy teraz i zwróć wynik" }
+  },
+  "schedules": {
+    "tick": { "summary": "Sięgnąć do iTop i do modelu na timerze, nic nie zapisując" }
+  }
+}

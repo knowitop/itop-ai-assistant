@@ -1,0 +1,104 @@
+{
+  "description": "智能体式工单受理：分类、追问、移交工程师",
+  "groups": {
+    "Classification": "分类",
+    "Clarifying questions": "澄清提问",
+    "Handoff note": "移交备注",
+    "Similar solved tickets": "相似的已解决工单"
+  },
+  "fields": {
+    "enabled": {
+      "title": "启用",
+      "description": "处理新建的工单。启动时读取：更改需要重启。"
+    },
+    "classes": {
+      "title": "工单类别",
+      "description": "本模块处理的 iTop 类别。启动时读取：更改需要重启。"
+    },
+    "active_statuses": {
+      "title": "工单处于以下状态时才行动",
+      "description": "一旦工程师将工单移出这些状态，模块便悄然停止。"
+    },
+    "max_questions": {
+      "title": "向申报人提问次数",
+      "description": "就同一张工单，模块总共可以给申报人写几次。"
+    },
+    "max_iterations": {
+      "title": "每张工单的模型调用次数",
+      "description": "单次运行的预算。用尽后，工单将收到备用备注并被移交。"
+    },
+    "model": {
+      "title": "覆盖模型",
+      "description": "留空则使用全局模型。此处指定的模型必须能可靠地调用工具。"
+    },
+    "classify_enabled": {
+      "title": "启用",
+      "description": "允许模块设置工单的服务和子类别。"
+    },
+    "max_classify_questions": {
+      "title": "其中在工单分类之前",
+      "description": "在工单尚未分类时，可从上述提问额度中支出的份额。"
+    },
+    "classify_service_oql": {
+      "title": "服务目录查询",
+      "description": "查询向申报人所属组织提供的服务的 OQL。`:this` 表示该工单。"
+    },
+    "classify_subcategory_oql": {
+      "title": "子类别查询",
+      "description": "查询模块所选服务的子类别的 OQL。"
+    },
+    "clarify_enabled": {
+      "title": "启用",
+      "description": "允许模块在公开日志中向申报人提问，每次只问一个问题。"
+    },
+    "handoff_note_enabled": {
+      "title": "启用",
+      "description": "允许模块撰写将工单移交给工程师的内部备注。"
+    },
+    "handoff_fallback_note": {
+      "title": "备用备注",
+      "description": "当运行结束却没有自己的小结时发布——预算用尽，或无话可加。"
+    },
+    "similar_enabled": {
+      "title": "启用",
+      "description": "允许模块在该备注中引用相似的已解决工单。需要移交备注、向量索引和嵌入服务端点；缺少它们时模块干脆不检索。"
+    },
+    "similar_family": {
+      "title": "索引族",
+      "description": "检索哪一族已索引的内容。"
+    },
+    "resolved_statuses": {
+      "title": "视为已解决的状态",
+      "description": "只有处于这些状态的工单才可被引用。"
+    },
+    "similar_max_age_days": {
+      "title": "回溯天数",
+      "description": "已解决工单最后一次被改动可以有多久，仍可被引用。"
+    },
+    "similar_candidates": {
+      "title": "从索引读取的候选数",
+      "description": "刻意多于被引用的数量：申报人的 iTop 已不再展示的候选会在之后被剔除。"
+    },
+    "similar_top": {
+      "title": "单条备注中的引用数",
+      "description": "最多引用这么多相似工单。不能超过候选数。"
+    },
+    "similar_min_score": {
+      "title": "最低相似度",
+      "description": "得分低于此值的候选无论排名如何都会被剔除。默认值只是初始估计，并未针对本部署的嵌入模型校准。"
+    },
+    "similar_chunk_kinds": {
+      "title": "比对对象",
+      "description": "新工单的标题和描述与已解决工单的哪些部分比对。加入 `solution` 会拿问题去比对答案——通常是噪声。"
+    }
+  },
+  "actions": {
+    "process": {
+      "summary": "立即处理一张工单并返回结果",
+      "fields": {
+        "class": { "title": "iTop 对象类别" },
+        "id": { "title": "标识符" }
+      }
+    }
+  }
+}

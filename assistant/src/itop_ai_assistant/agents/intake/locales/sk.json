@@ -1,0 +1,104 @@
+{
+  "description": "Agentné prijímanie požiadaviek: klasifikácia, doplňujúca otázka, odovzdanie technikovi",
+  "groups": {
+    "Classification": "Klasifikácia",
+    "Clarifying questions": "Doplňujúce otázky",
+    "Handoff note": "Odovzdávacia poznámka",
+    "Similar solved tickets": "Podobné vyriešené požiadavky"
+  },
+  "fields": {
+    "enabled": {
+      "title": "Zapnuté",
+      "description": "Spracúvať novo vytvorené požiadavky. Číta sa pri štarte: zmena vyžaduje reštart."
+    },
+    "classes": {
+      "title": "Triedy požiadaviek",
+      "description": "Triedy iTop, ktoré modul spracúva. Číta sa pri štarte: zmena vyžaduje reštart."
+    },
+    "active_statuses": {
+      "title": "Konať, kým je požiadavka v stave",
+      "description": "Len čo technik prevedie požiadavku mimo týchto stavov, modul sa ticho zastaví."
+    },
+    "max_questions": {
+      "title": "Otázok na žiadateľa",
+      "description": "Koľkokrát celkovo smie modul napísať žiadateľovi k jednej požiadavke."
+    },
+    "max_iterations": {
+      "title": "Volaní modelu na požiadavku",
+      "description": "Rozpočet jedného behu. Po jeho vyčerpaní dostane požiadavka náhradnú poznámku a je odovzdaná."
+    },
+    "model": {
+      "title": "Vlastný model",
+      "description": "Nechajte prázdne pre globálny model. Ten uvedený tu musí spoľahlivo volať nástroje."
+    },
+    "classify_enabled": {
+      "title": "Zapnutá",
+      "description": "Povoliť modulu nastavovať službu a podkategóriu požiadavky."
+    },
+    "max_classify_questions": {
+      "title": "Z toho pred klasifikáciou požiadavky",
+      "description": "Podiel vyššie uvedených otázok, ktorý sa smie minúť, kým požiadavka nie je klasifikovaná."
+    },
+    "classify_service_oql": {
+      "title": "Dopyt na katalóg služieb",
+      "description": "OQL služieb ponúkaných organizácii žiadateľa. `:this` je požiadavka."
+    },
+    "classify_subcategory_oql": {
+      "title": "Dopyt na podkategórie",
+      "description": "OQL podkategórií služby, ktorú modul vybral."
+    },
+    "clarify_enabled": {
+      "title": "Zapnuté",
+      "description": "Povoliť modulu pýtať sa žiadateľa vo verejnom denníku — vždy jednu otázku."
+    },
+    "handoff_note_enabled": {
+      "title": "Zapnutá",
+      "description": "Povoliť modulu písať internú poznámku, ktorá požiadavku odovzdáva technikovi."
+    },
+    "handoff_fallback_note": {
+      "title": "Náhradná poznámka",
+      "description": "Zverejní sa, keď beh skončí bez vlastného zhrnutia — minul sa rozpočet, alebo niet čo dodať."
+    },
+    "similar_enabled": {
+      "title": "Zapnuté",
+      "description": "Povoliť modulu citovať v tejto poznámke podobné vyriešené požiadavky. Vyžaduje odovzdávaciu poznámku, vektorový index a endpoint embeddingov; bez nich modul jednoducho nehľadá."
+    },
+    "similar_family": {
+      "title": "Rodina indexu",
+      "description": "Ktorá rodina indexovaného obsahu sa prehľadáva."
+    },
+    "resolved_statuses": {
+      "title": "Stavy považované za vyriešenie",
+      "description": "Citovať možno len požiadavky v týchto stavoch."
+    },
+    "similar_max_age_days": {
+      "title": "Hĺbka hľadania, dní",
+      "description": "Ako dávno mohla byť vyriešená požiadavka naposledy zmenená, aby sa dala ešte citovať."
+    },
+    "similar_candidates": {
+      "title": "Kandidátov načítať z indexu",
+      "description": "Zámerne viac než citovaných: kandidáti, ktorých iTop žiadateľa už nezobrazuje, sa potom vyradia."
+    },
+    "similar_top": {
+      "title": "Odkazov v jednej poznámke",
+      "description": "Najviac toľko podobných požiadaviek sa cituje. Nesmie prekročiť počet kandidátov."
+    },
+    "similar_min_score": {
+      "title": "Minimálna podobnosť",
+      "description": "Kandidát s nižším skóre sa vyradí bez ohľadu na poradie. Predvolená hodnota je počiatočný odhad, nie veličina kalibrovaná na model embeddingov tejto inštalácie."
+    },
+    "similar_chunk_kinds": {
+      "title": "Porovnávať s",
+      "description": "S ktorými časťami vyriešenej požiadavky sa porovnáva predmet a popis novej. Pridanie `solution` porovnáva problémy s odpoveďami — zvyčajne šum."
+    }
+  },
+  "actions": {
+    "process": {
+      "summary": "Spracovať jednu požiadavku teraz a vrátiť výsledok",
+      "fields": {
+        "class": { "title": "Trieda objektu iTop" },
+        "id": { "title": "Identifikátor" }
+      }
+    }
+  }
+}

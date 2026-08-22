@@ -1,0 +1,27 @@
+{
+  "description": "平台冒烟检查：连通 iTop 与模型，不写入任何内容",
+  "fields": {
+    "enabled": {
+      "title": "启用",
+      "description": "按定时器运行冒烟检查。启动时读取：更改需要重启。"
+    },
+    "interval_seconds": {
+      "title": "运行间隔，秒",
+      "description": "每次触发前重新读取，因此更改无需重启即可生效。"
+    },
+    "probe_oql": {
+      "title": "探测查询",
+      "description": "检查在 iTop 上执行的 OQL。其结果会被丢弃；只要调用成功即可。"
+    },
+    "model": {
+      "title": "覆盖模型",
+      "description": "留空则使用全局模型。"
+    }
+  },
+  "actions": {
+    "run": { "summary": "立即运行平台冒烟检查并返回结果" }
+  },
+  "schedules": {
+    "tick": { "summary": "按定时器连通 iTop 与模型，不写入任何内容" }
+  }
+}

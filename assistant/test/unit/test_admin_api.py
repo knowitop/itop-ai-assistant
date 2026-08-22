@@ -137,6 +137,33 @@ class TestModules(AdminApiTestCase):
         self.assertEqual(schedule["default_interval"], 120.0)
 
 
+class TestModuleTranslations(AdminApiTestCase):
+    """The module ships its own texts; the schema comes out already translated (ADR-030)."""
+
+    def test_schema_texts_come_in_the_asked_language(self):
+        props = self.client.get("/api/config/intake/schema?lang=ru-RU").json()["properties"]
+
+        self.assertEqual(props["max_questions"]["title"], "Вопросов заявителю")
+        self.assertEqual(props["classify_enabled"]["x-group"], "Классификация")
+
+    def test_without_a_language_the_schema_stays_english(self):
+        props = self.client.get("/api/config/intake/schema").json()["properties"]
+
+        self.assertEqual(props["max_questions"]["title"], "Questions to the requester")
+
+    def test_a_language_we_do_not_ship_falls_back_to_english(self):
+        props = self.client.get("/api/config/intake/schema?lang=fi").json()["properties"]
+
+        self.assertEqual(props["max_questions"]["title"], "Questions to the requester")
+
+    def test_the_module_list_is_translated_too(self):
+        (intake, *_) = self.client.get("/api/modules?lang=ru").json()
+
+        self.assertIn("Агентный приём заявок", intake["description"])
+        (action,) = intake["requests"]
+        self.assertEqual(action["summary"], "Обработать одну заявку сейчас и вернуть результат")
+
+
 class TestConfigEndpoints(AdminApiTestCase):
     def test_get_config_returns_defaults(self):
         response = self.client.get("/api/config/intake")

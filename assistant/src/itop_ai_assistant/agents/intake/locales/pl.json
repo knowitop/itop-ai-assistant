@@ -1,0 +1,104 @@
+{
+  "description": "Agentowe przyjmowanie zgłoszeń: klasyfikacja, pytanie doprecyzowujące, przekazanie inżynierowi",
+  "groups": {
+    "Classification": "Klasyfikacja",
+    "Clarifying questions": "Pytania doprecyzowujące",
+    "Handoff note": "Notatka przekazania",
+    "Similar solved tickets": "Podobne rozwiązane zgłoszenia"
+  },
+  "fields": {
+    "enabled": {
+      "title": "Włączony",
+      "description": "Przetwarzaj nowo utworzone zgłoszenia. Odczytywane przy starcie: zmiana wymaga restartu."
+    },
+    "classes": {
+      "title": "Klasy zgłoszeń",
+      "description": "Klasy iTop przetwarzane przez moduł. Odczytywane przy starcie: zmiana wymaga restartu."
+    },
+    "active_statuses": {
+      "title": "Działaj, dopóki zgłoszenie ma status",
+      "description": "Gdy inżynier wyprowadzi zgłoszenie z tych statusów, moduł po cichu przestaje działać."
+    },
+    "max_questions": {
+      "title": "Pytania do zgłaszającego",
+      "description": "Ile razy łącznie moduł może napisać do zgłaszającego w sprawie jednego zgłoszenia."
+    },
+    "max_iterations": {
+      "title": "Wywołania modelu na zgłoszenie",
+      "description": "Budżet jednego przebiegu. Po jego wyczerpaniu zgłoszenie dostaje notatkę zapasową i jest przekazywane."
+    },
+    "model": {
+      "title": "Nadpisanie modelu",
+      "description": "Pozostaw puste, aby użyć modelu globalnego. Wskazany tutaj musi niezawodnie wywoływać narzędzia."
+    },
+    "classify_enabled": {
+      "title": "Włączona",
+      "description": "Pozwól modułowi ustawiać usługę i podkategorię zgłoszenia."
+    },
+    "max_classify_questions": {
+      "title": "W tym przed sklasyfikowaniem zgłoszenia",
+      "description": "Część powyższych pytań, którą można wykorzystać, dopóki zgłoszenie nie jest sklasyfikowane."
+    },
+    "classify_service_oql": {
+      "title": "Zapytanie katalogu usług",
+      "description": "OQL usług oferowanych organizacji zgłaszającego. `:this` to zgłoszenie."
+    },
+    "classify_subcategory_oql": {
+      "title": "Zapytanie podkategorii",
+      "description": "OQL podkategorii usługi wybranej przez moduł."
+    },
+    "clarify_enabled": {
+      "title": "Włączone",
+      "description": "Pozwól modułowi pytać zgłaszającego w dzienniku publicznym — po jednym pytaniu naraz."
+    },
+    "handoff_note_enabled": {
+      "title": "Włączona",
+      "description": "Pozwól modułowi pisać notatkę wewnętrzną przekazującą zgłoszenie inżynierowi."
+    },
+    "handoff_fallback_note": {
+      "title": "Notatka zapasowa",
+      "description": "Publikowana, gdy przebieg kończy się bez własnego podsumowania — brak budżetu albo nic do dodania."
+    },
+    "similar_enabled": {
+      "title": "Włączone",
+      "description": "Pozwól modułowi cytować w tej notatce podobne rozwiązane zgłoszenia. Wymaga notatki przekazania, indeksu wektorowego i endpointu osadzeń; bez nich moduł po prostu nie szuka."
+    },
+    "similar_family": {
+      "title": "Rodzina indeksu",
+      "description": "Która rodzina zaindeksowanej treści jest przeszukiwana."
+    },
+    "resolved_statuses": {
+      "title": "Statusy liczone jako rozwiązanie",
+      "description": "Cytować można wyłącznie zgłoszenia w tych statusach."
+    },
+    "similar_max_age_days": {
+      "title": "Głębokość wyszukiwania, dni",
+      "description": "Jak dawno rozwiązane zgłoszenie mogło być ruszane, by wciąż nadawało się do zacytowania."
+    },
+    "similar_candidates": {
+      "title": "Kandydaci czytani z indeksu",
+      "description": "Celowo więcej niż liczba cytowanych: kandydaci, których iTop zgłaszającego już nie pokazuje, odpadają później."
+    },
+    "similar_top": {
+      "title": "Odwołania w jednej notatce",
+      "description": "Najwyżej tyle podobnych zgłoszeń zostanie zacytowanych. Nie może przekroczyć liczby kandydatów."
+    },
+    "similar_min_score": {
+      "title": "Minimalne podobieństwo",
+      "description": "Kandydat z niższą oceną odpada niezależnie od pozycji. Wartość domyślna to wstępne oszacowanie, a nie wielkość skalibrowana pod model osadzeń tej instalacji."
+    },
+    "similar_chunk_kinds": {
+      "title": "Porównuj z",
+      "description": "Z którymi częściami rozwiązanego zgłoszenia porównywane są tytuł i opis nowego. Dodanie `solution` porównuje problemy z odpowiedziami — zwykle to szum."
+    }
+  },
+  "actions": {
+    "process": {
+      "summary": "Przetwórz jedno zgłoszenie teraz i zwróć wynik",
+      "fields": {
+        "class": { "title": "Klasa obiektu iTop" },
+        "id": { "title": "Identyfikator" }
+      }
+    }
+  }
+}

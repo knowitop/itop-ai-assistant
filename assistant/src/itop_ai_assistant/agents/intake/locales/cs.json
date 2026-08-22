@@ -1,0 +1,104 @@
+{
+  "description": "Agentní příjem požadavků: klasifikace, doplňující dotaz, předání technikovi",
+  "groups": {
+    "Classification": "Klasifikace",
+    "Clarifying questions": "Doplňující dotazy",
+    "Handoff note": "Předávací poznámka",
+    "Similar solved tickets": "Podobné vyřešené požadavky"
+  },
+  "fields": {
+    "enabled": {
+      "title": "Zapnuto",
+      "description": "Zpracovávat nově založené požadavky. Čte se při startu: změna vyžaduje restart."
+    },
+    "classes": {
+      "title": "Třídy požadavků",
+      "description": "Třídy iTop, které modul zpracovává. Čte se při startu: změna vyžaduje restart."
+    },
+    "active_statuses": {
+      "title": "Jednat, dokud je požadavek ve stavu",
+      "description": "Jakmile technik převede požadavek mimo tyto stavy, modul se tiše zastaví."
+    },
+    "max_questions": {
+      "title": "Dotazů na žadatele",
+      "description": "Kolikrát celkem smí modul napsat žadateli k jednomu požadavku."
+    },
+    "max_iterations": {
+      "title": "Volání modelu na požadavek",
+      "description": "Rozpočet jednoho běhu. Po jeho vyčerpání dostane požadavek náhradní poznámku a je předán."
+    },
+    "model": {
+      "title": "Vlastní model",
+      "description": "Ponechte prázdné pro globální model. Ten uvedený zde musí spolehlivě volat nástroje."
+    },
+    "classify_enabled": {
+      "title": "Zapnuta",
+      "description": "Povolit modulu nastavovat službu a podkategorii požadavku."
+    },
+    "max_classify_questions": {
+      "title": "Z toho před klasifikací požadavku",
+      "description": "Podíl výše uvedených dotazů, který lze utratit, dokud požadavek není klasifikován."
+    },
+    "classify_service_oql": {
+      "title": "Dotaz na katalog služeb",
+      "description": "OQL služeb nabízených organizaci žadatele. `:this` je požadavek."
+    },
+    "classify_subcategory_oql": {
+      "title": "Dotaz na podkategorie",
+      "description": "OQL podkategorií služby, kterou modul vybral."
+    },
+    "clarify_enabled": {
+      "title": "Zapnuty",
+      "description": "Povolit modulu ptát se žadatele ve veřejném deníku — vždy jednu otázku."
+    },
+    "handoff_note_enabled": {
+      "title": "Zapnuta",
+      "description": "Povolit modulu psát interní poznámku, která požadavek předává technikovi."
+    },
+    "handoff_fallback_note": {
+      "title": "Náhradní poznámka",
+      "description": "Zveřejní se, když běh skončí bez vlastního shrnutí — došel rozpočet, nebo není co dodat."
+    },
+    "similar_enabled": {
+      "title": "Zapnuty",
+      "description": "Povolit modulu citovat v této poznámce podobné vyřešené požadavky. Vyžaduje předávací poznámku, vektorový index a endpoint embeddingů; bez nich modul prostě nehledá."
+    },
+    "similar_family": {
+      "title": "Rodina indexu",
+      "description": "Která rodina indexovaného obsahu se prohledává."
+    },
+    "resolved_statuses": {
+      "title": "Stavy považované za vyřešení",
+      "description": "Citovat lze pouze požadavky v těchto stavech."
+    },
+    "similar_max_age_days": {
+      "title": "Hloubka hledání, dní",
+      "description": "Jak dávno mohl být vyřešený požadavek naposledy změněn, aby šel ještě citovat."
+    },
+    "similar_candidates": {
+      "title": "Kandidátů načíst z indexu",
+      "description": "Záměrně více než citovaných: kandidáti, které iTop žadatele už nezobrazuje, se poté vyřadí."
+    },
+    "similar_top": {
+      "title": "Odkazů v jedné poznámce",
+      "description": "Nejvýše tolik podobných požadavků se cituje. Nesmí překročit počet kandidátů."
+    },
+    "similar_min_score": {
+      "title": "Minimální podobnost",
+      "description": "Kandidát s nižším skóre se vyřadí bez ohledu na pořadí. Výchozí hodnota je počáteční odhad, ne veličina kalibrovaná na model embeddingů této instalace."
+    },
+    "similar_chunk_kinds": {
+      "title": "Porovnávat s",
+      "description": "S kterými částmi vyřešeného požadavku se porovnává předmět a popis nového. Přidání `solution` porovnává problémy s odpověďmi — obvykle šum."
+    }
+  },
+  "actions": {
+    "process": {
+      "summary": "Zpracovat jeden požadavek nyní a vrátit výsledek",
+      "fields": {
+        "class": { "title": "Třída objektu iTop" },
+        "id": { "title": "Identifikátor" }
+      }
+    }
+  }
+}

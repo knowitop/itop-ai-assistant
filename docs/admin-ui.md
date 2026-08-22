@@ -2,7 +2,7 @@
 
 The assistant ships with a built-in admin UI at `http://localhost:8001/ui`. The UI requires the admin token (entered once, stored in the browser's localStorage).
 
-The interface is available in 12 languages — use the language selector in the top-right corner.
+The interface is available in 12 languages — use the language selector in the top-right corner. The **Modules** screen is translated by the modules themselves, so a module that ships no file for the chosen language shows its own English there while the rest of the interface follows your choice — see [Translating a module's settings](#translating-a-modules-settings).
 
 While [Dry run](configuration.md#dry-run) is on, a yellow **dry run** badge sits in the header of every screen: nothing the assistant does is reaching iTop.
 
@@ -70,6 +70,32 @@ Fields are grouped the way the module groups them. The settings that apply to th
 Every field carries its own label and explanation from the module, and rejected values are reported on the field they belong to; a rule that spans two fields (for instance, "references in one note" not exceeding "candidates read from the index") is reported above the form, where it belongs.
 
 The full list of intake's settings, with defaults, is in [Configuration](configuration.md#intake-module-settings).
+
+### Translating a module's settings
+
+Labels, explanations and section headings on this screen come from the module, not from the interface's own translation files: the module ships them as `locales/<lang>.json` next to its settings model, and the assistant applies them when the screen asks for that language.
+
+Two consequences worth knowing:
+
+- **A missing translation is never an error.** A language the module ships no file for, or a field the file does not mention, falls back to the module's English. Nothing else on the screen changes.
+- **A module you add yourself is translatable without touching the UI.** Put `locales/ru.json` in the module's package with the field names as keys:
+
+  ```json
+  {
+    "description": "What the module does, one line",
+    "groups": { "Classification": "Классификация" },
+    "fields": {
+      "max_questions": {
+        "title": "Вопросов заявителю",
+        "description": "Сколько раз модуль может написать заявителю."
+      }
+    },
+    "actions": { "process": { "summary": "Обработать одну заявку сейчас" } },
+    "schedules": { "tick": { "summary": "Запуск по таймеру" } }
+  }
+  ```
+
+  English needs no file — it is the `title`/`description` of the settings model itself.
 
 Changes apply from the next processed ticket — no restart needed, **except Enabled and Classes**, which are read at startup. Each module can be reset to its defaults.
 

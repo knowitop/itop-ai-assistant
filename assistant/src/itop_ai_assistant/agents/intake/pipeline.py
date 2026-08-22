@@ -7,6 +7,7 @@ module exposes the same way (`<module>/pipeline.py::register`,
 """
 
 import logging
+from pathlib import Path
 
 from itop_ai_assistant.config import Settings
 from itop_ai_assistant.domain.identity import ObjectIdentity
@@ -18,6 +19,11 @@ from .prompts import MODULE, PROMPT_VARIABLES, PROMPTS_DIR, build_intake_prompts
 from .run import IntakeRun, handle_assigned
 
 logger = logging.getLogger(__name__)
+
+# What the admin UI shows about this module, in the languages we ship
+# (ADR-030). English is not a file here — it is the config model's own
+# `title`/`description`.
+LOCALES_DIR = Path(__file__).parent / "locales"
 
 
 def register(registry: TriggerRegistry, settings: Settings) -> None:
@@ -33,6 +39,7 @@ def register(registry: TriggerRegistry, settings: Settings) -> None:
         prompt_names=tuple(PROMPT_VARIABLES),
         validate_prompts=build_intake_prompts,
         prompts_dir=PROMPTS_DIR,
+        locales_dir=LOCALES_DIR,
     )
     webhooks = {}
     for obj_class in cfg.classes:

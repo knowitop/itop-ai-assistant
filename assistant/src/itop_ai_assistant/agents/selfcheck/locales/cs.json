@@ -1,0 +1,27 @@
+{
+  "description": "Kouřová zkouška platformy: dosáhnout na iTop a na model, nic nezapisovat",
+  "fields": {
+    "enabled": {
+      "title": "Zapnuta",
+      "description": "Spouštět kouřovou zkoušku podle časovače. Čte se při startu: změna vyžaduje restart."
+    },
+    "interval_seconds": {
+      "title": "Spouštět každých, sekund",
+      "description": "Načítá se znovu před každým tikem, změna se tedy projeví bez restartu."
+    },
+    "probe_oql": {
+      "title": "Sondovací dotaz",
+      "description": "OQL, které kontrola provede v iTop. Výsledek se zahazuje; uspět musí jen samotné volání."
+    },
+    "model": {
+      "title": "Vlastní model",
+      "description": "Ponechte prázdné pro globální model."
+    }
+  },
+  "actions": {
+    "run": { "summary": "Spustit kouřovou zkoušku platformy nyní a vrátit výsledek" }
+  },
+  "schedules": {
+    "tick": { "summary": "Dosáhnout na iTop a na model podle časovače, nic nezapisovat" }
+  }
+}

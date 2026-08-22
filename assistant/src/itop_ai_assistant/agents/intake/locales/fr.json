@@ -1,0 +1,104 @@
+{
+  "description": "Prise en charge agentique des demandes : classer, poser une question, transmettre au technicien",
+  "groups": {
+    "Classification": "Classification",
+    "Clarifying questions": "Questions de clarification",
+    "Handoff note": "Note de transmission",
+    "Similar solved tickets": "Demandes résolues similaires"
+  },
+  "fields": {
+    "enabled": {
+      "title": "Activé",
+      "description": "Traiter les demandes nouvellement créées. Lu au démarrage : un changement exige un redémarrage."
+    },
+    "classes": {
+      "title": "Classes de demandes",
+      "description": "Classes iTop traitées par le module. Lu au démarrage : un changement exige un redémarrage."
+    },
+    "active_statuses": {
+      "title": "Agir tant que la demande est au statut",
+      "description": "Dès qu'un technicien sort la demande de ces statuts, le module s'arrête sans rien dire."
+    },
+    "max_questions": {
+      "title": "Questions au demandeur",
+      "description": "Combien de fois le module peut écrire au demandeur au sujet d'une même demande, au total."
+    },
+    "max_iterations": {
+      "title": "Appels au modèle par demande",
+      "description": "Budget d'une exécution. Épuisé, la demande reçoit la note de repli et est transmise."
+    },
+    "model": {
+      "title": "Modèle spécifique",
+      "description": "Laisser vide pour utiliser le modèle global. Celui indiqué ici doit appeler les outils de façon fiable."
+    },
+    "classify_enabled": {
+      "title": "Activée",
+      "description": "Autoriser le module à renseigner le service et la sous-catégorie de la demande."
+    },
+    "max_classify_questions": {
+      "title": "Dont, avant classification",
+      "description": "La part des questions ci-dessus utilisable tant que la demande n'est pas classée."
+    },
+    "classify_service_oql": {
+      "title": "Requête du catalogue de services",
+      "description": "OQL des services proposés à l'organisation du demandeur. `:this` désigne la demande."
+    },
+    "classify_subcategory_oql": {
+      "title": "Requête des sous-catégories",
+      "description": "OQL des sous-catégories du service retenu par le module."
+    },
+    "clarify_enabled": {
+      "title": "Activées",
+      "description": "Autoriser le module à interroger le demandeur dans le journal public, une question à la fois."
+    },
+    "handoff_note_enabled": {
+      "title": "Activée",
+      "description": "Autoriser le module à rédiger la note interne qui transmet la demande à un technicien."
+    },
+    "handoff_fallback_note": {
+      "title": "Note de repli",
+      "description": "Publiée lorsque l'exécution se termine sans synthèse propre — budget épuisé, ou rien à ajouter."
+    },
+    "similar_enabled": {
+      "title": "Activées",
+      "description": "Autoriser le module à citer des demandes résolues similaires dans cette note. Nécessite la note de transmission, l'index vectoriel et un point de terminaison d'embeddings ; sans eux, le module ne cherche tout simplement pas."
+    },
+    "similar_family": {
+      "title": "Famille d'index",
+      "description": "Quelle famille de contenu indexé est interrogée."
+    },
+    "resolved_statuses": {
+      "title": "Statuts valant résolution",
+      "description": "Seules les demandes dans ces statuts peuvent être citées."
+    },
+    "similar_max_age_days": {
+      "title": "Profondeur de recherche, jours",
+      "description": "Depuis combien de temps une demande résolue peut avoir été modifiée tout en restant citable."
+    },
+    "similar_candidates": {
+      "title": "Candidats lus dans l'index",
+      "description": "Volontairement plus nombreux que les citations : les candidats que l'iTop du demandeur ne montre plus sont écartés ensuite."
+    },
+    "similar_top": {
+      "title": "Références dans une note",
+      "description": "Nombre maximal de demandes similaires citées. Ne peut dépasser le nombre de candidats."
+    },
+    "similar_min_score": {
+      "title": "Similarité minimale",
+      "description": "Un candidat en dessous de ce score est écarté quel que soit son rang. La valeur par défaut est une première estimation, non calibrée sur le modèle d'embeddings de cette installation."
+    },
+    "similar_chunk_kinds": {
+      "title": "Comparer avec",
+      "description": "À quelles parties d'une demande résolue sont comparés le titre et la description de la nouvelle. Ajouter `solution` compare les problèmes aux réponses — généralement du bruit."
+    }
+  },
+  "actions": {
+    "process": {
+      "summary": "Traiter une demande maintenant et renvoyer le résultat",
+      "fields": {
+        "class": { "title": "Classe d'objet iTop" },
+        "id": { "title": "Identifiant" }
+      }
+    }
+  }
+}

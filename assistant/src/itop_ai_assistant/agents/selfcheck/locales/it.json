@@ -1,0 +1,27 @@
+{
+  "description": "Smoke test della piattaforma: raggiungere iTop e il modello senza scrivere nulla",
+  "fields": {
+    "enabled": {
+      "title": "Attiva",
+      "description": "Esegui lo smoke test a timer. Letto all'avvio: cambiarlo richiede un riavvio."
+    },
+    "interval_seconds": {
+      "title": "Esegui ogni, secondi",
+      "description": "Riletto prima di ogni tick, quindi la modifica si applica senza riavvio."
+    },
+    "probe_oql": {
+      "title": "Query di prova",
+      "description": "L'OQL che il controllo esegue su iTop. Il risultato viene scartato; deve riuscire solo la chiamata."
+    },
+    "model": {
+      "title": "Modello dedicato",
+      "description": "Lascia vuoto per usare il modello globale."
+    }
+  },
+  "actions": {
+    "run": { "summary": "Esegui ora lo smoke test della piattaforma e restituisci il risultato" }
+  },
+  "schedules": {
+    "tick": { "summary": "Raggiungere iTop e il modello a timer, senza scrivere nulla" }
+  }
+}

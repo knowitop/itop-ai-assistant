@@ -145,4 +145,12 @@ fields the same way, before the registry exists — `settings.module_defaults`
 needs nothing but `Settings` itself, so there is no ordering problem between
 building the registry and reading the config that decides what goes into it.
 
+The texts the model shows an administrator belong to the module as well:
+English in each field's own `title`/`description`, translations in
+`agents/<module>/locales/<lang>.json`, declared as `ModuleInfo.locales_dir`
+and applied to the schema on the way out (`settings/module_locales.py`,
+ADR-030). There is no English file — a second copy of it would drift from the
+model. A missing language, a missing key or a broken file is a warning and
+English, never a failed request.
+
 `agents/selfcheck/` is the reference implementation of this contract.

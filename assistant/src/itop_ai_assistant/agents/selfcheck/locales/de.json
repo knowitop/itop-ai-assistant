@@ -1,0 +1,27 @@
+{
+  "description": "Rauchtest der Plattform: iTop und das Modell erreichen, nichts schreiben",
+  "fields": {
+    "enabled": {
+      "title": "Aktiv",
+      "description": "Den Rauchtest per Zeitgeber ausführen. Wird beim Start gelesen: eine Änderung erfordert einen Neustart."
+    },
+    "interval_seconds": {
+      "title": "Ausführen alle, Sekunden",
+      "description": "Wird vor jedem Tick neu gelesen, eine Änderung wirkt also ohne Neustart."
+    },
+    "probe_oql": {
+      "title": "Prüfabfrage",
+      "description": "Das OQL, das die Prüfung gegen iTop ausführt. Das Ergebnis wird verworfen; nur der Aufruf muss gelingen."
+    },
+    "model": {
+      "title": "Modell überschreiben",
+      "description": "Leer lassen, um das globale Modell zu verwenden."
+    }
+  },
+  "actions": {
+    "run": { "summary": "Den Rauchtest der Plattform jetzt ausführen und das Ergebnis zurückgeben" }
+  },
+  "schedules": {
+    "tick": { "summary": "iTop und das Modell per Zeitgeber erreichen, nichts schreiben" }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "description": "Test de fumée de la plateforme : joindre iTop et le modèle, sans rien écrire",
+  "fields": {
+    "enabled": {
+      "title": "Activé",
+      "description": "Exécuter le test de fumée sur minuterie. Lu au démarrage : un changement exige un redémarrage."
+    },
+    "interval_seconds": {
+      "title": "Exécuter toutes les, secondes",
+      "description": "Relu avant chaque tick, un changement s'applique donc sans redémarrage."
+    },
+    "probe_oql": {
+      "title": "Requête de sonde",
+      "description": "L'OQL que le test exécute sur iTop. Son résultat est ignoré ; seul l'appel doit aboutir."
+    },
+    "model": {
+      "title": "Modèle spécifique",
+      "description": "Laisser vide pour utiliser le modèle global."
+    }
+  },
+  "actions": {
+    "run": { "summary": "Lancer le test de fumée de la plateforme maintenant et renvoyer le résultat" }
+  },
+  "schedules": {
+    "tick": { "summary": "Joindre iTop et le modèle sur minuterie, sans rien écrire" }
+  }
+}

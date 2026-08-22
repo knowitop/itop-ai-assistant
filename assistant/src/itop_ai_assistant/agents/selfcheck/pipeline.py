@@ -13,6 +13,7 @@ state, no lock — nothing here is worth guarding.
 """
 
 import logging
+from pathlib import Path
 
 from langchain_core.messages import HumanMessage
 from langchain_core.prompts import PromptTemplate
@@ -29,6 +30,8 @@ from .config import SelfCheckConfig
 from .prompts import MODULE, PROMPT_VARIABLES, PROMPTS_DIR, build_selfcheck_prompts
 
 logger = logging.getLogger(__name__)
+
+LOCALES_DIR = Path(__file__).parent / "locales"
 
 
 class SelfCheckInput(BaseModel):
@@ -48,6 +51,7 @@ def register(registry: TriggerRegistry, settings: Settings) -> None:
         prompt_names=tuple(PROMPT_VARIABLES),
         validate_prompts=build_selfcheck_prompts,
         prompts_dir=PROMPTS_DIR,
+        locales_dir=LOCALES_DIR,
     )
     # The same work on two triggers, which is the contract being demonstrated:
     # the clock and an operator start the identical run, and only the delivery

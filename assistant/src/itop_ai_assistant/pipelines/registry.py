@@ -78,6 +78,10 @@ class ModuleInfo:
     # `FilePromptStore` skips a module for which this is unset when it builds
     # its map of default directories.
     prompts_dir: Path | None = None
+    # `<lang>.json` files translating what the admin UI shows about this module
+    # (ADR-030). Unset means English only — the `title`/`description` the
+    # config model already carries.
+    locales_dir: Path | None = None
 
 
 @dataclass(frozen=True)

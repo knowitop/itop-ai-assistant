@@ -1,0 +1,27 @@
+{
+  "description": "Prueba de humo de la plataforma: alcanzar iTop y el modelo sin escribir nada",
+  "fields": {
+    "enabled": {
+      "title": "Activada",
+      "description": "Ejecutar la prueba de humo con temporizador. Se lee al arrancar: cambiarlo exige reiniciar."
+    },
+    "interval_seconds": {
+      "title": "Ejecutar cada, segundos",
+      "description": "Se relee antes de cada tick, así que el cambio se aplica sin reiniciar."
+    },
+    "probe_oql": {
+      "title": "Consulta de sondeo",
+      "description": "El OQL que la prueba lanza contra iTop. Su resultado se descarta; solo la llamada debe tener éxito."
+    },
+    "model": {
+      "title": "Modelo específico",
+      "description": "Déjalo vacío para usar el modelo global."
+    }
+  },
+  "actions": {
+    "run": { "summary": "Ejecutar ahora la prueba de humo de la plataforma y devolver el resultado" }
+  },
+  "schedules": {
+    "tick": { "summary": "Alcanzar iTop y el modelo con temporizador, sin escribir nada" }
+  }
+}

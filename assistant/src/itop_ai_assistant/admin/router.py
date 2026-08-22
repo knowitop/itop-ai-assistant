@@ -16,6 +16,7 @@ from itop_ai_assistant.core.api_deps import get_config_store, get_journal, get_p
 from itop_ai_assistant.pipelines.registry import ModuleInfo
 from itop_ai_assistant.request.router import router as request_router
 from itop_ai_assistant.settings.config_store import ConfigStore
+from itop_ai_assistant.settings.module_locales import load_translation
 from itop_ai_assistant.settings.prompt_store import PromptStore, PromptStoreError
 from itop_ai_assistant.settings.prompt_validation import PromptValidationError
 from itop_ai_assistant.state.journal import ProcessingRun, RunJournal
@@ -37,37 +38,46 @@ def _module_or_404(request: Request, module: str) -> ModuleInfo:
 
 
 @router.get("/modules")
-async def list_modules(request: Request) -> list[dict]:
+async def list_modules(request: Request, lang: str | None = None) -> list[dict]:
+    """Every module and its triggers, in `lang` where the module has it.
+
+    `lang` is the language the admin UI is showing, not the browser's: the two
+    differ as soon as an administrator picks one. Anything the module has no
+    translation for stays in the English of its own declaration (ADR-030).
+    """
     registry = request.app.state.registry
-    return [
-        {
-            "name": m.name,
-            "description": m.description,
-            "has_config": m.config_model is not None,
-            "prompts": list(m.prompt_names),
-            # What the module can be asked to do synchronously; the UI builds
-            # its form from the schema instead of knowing the module
-            "requests": [
-                {
-                    "action": route.action,
-                    "summary": route.summary,
-                    "input_schema": route.input_model.model_json_schema(),
-                }
-                for route in registry.requests_for(m.name)
-            ],
-            # What the clock starts on its own. Read-only: the period is a
-            # config field of the module, edited on the same screen.
-            "schedules": [
-                {
-                    "name": route.name,
-                    "summary": route.summary,
-                    "default_interval": route.default_interval,
-                }
-                for route in registry.schedules_for(m.name)
-            ],
-        }
-        for m in registry.modules
-    ]
+    modules = []
+    for m in registry.modules:
+        texts = load_translation(m.locales_dir, lang)
+        modules.append(
+            {
+                "name": m.name,
+                "description": texts.module_description(m.description),
+                "has_config": m.config_model is not None,
+                "prompts": list(m.prompt_names),
+                # What the module can be asked to do synchronously; the UI builds
+                # its form from the schema instead of knowing the module
+                "requests": [
+                    {
+                        "action": route.action,
+                        "summary": texts.action_summary(route.action, route.summary),
+                        "input_schema": texts.action_schema(route.action, route.input_model.model_json_schema()),
+                    }
+                    for route in registry.requests_for(m.name)
+                ],
+                # What the clock starts on its own. Read-only: the period is a
+                # config field of the module, edited on the same screen.
+                "schedules": [
+                    {
+                        "name": route.name,
+                        "summary": texts.schedule_summary(route.name, route.summary),
+                        "default_interval": route.default_interval,
+                    }
+                    for route in registry.schedules_for(m.name)
+                ],
+            }
+        )
+    return modules
 
 
 @router.get("/config/{module}")
@@ -82,11 +92,18 @@ async def get_config(
 
 
 @router.get("/config/{module}/schema")
-async def get_config_schema(module: str, request: Request) -> dict:
+async def get_config_schema(module: str, request: Request, lang: str | None = None) -> dict:
+    """The form's whole knowledge of this module: fields, hints and their texts.
+
+    Labels, descriptions and section headings come out translated into `lang`
+    where the module ships that language — the UI renders what it is given and
+    keeps no field names of its own (ADR-025, ADR-030).
+    """
     info = _module_or_404(request, module)
     if info.config_model is None:
         raise HTTPException(status_code=404, detail=f"Module {module!r} has no config")
-    return info.config_model.model_json_schema()
+    texts = load_translation(info.locales_dir, lang)
+    return texts.config_schema(info.config_model.model_json_schema())
 
 
 def _field_errors(error: ValidationError) -> list[dict[str, str]]:

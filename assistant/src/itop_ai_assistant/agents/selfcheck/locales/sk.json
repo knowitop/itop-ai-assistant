@@ -1,0 +1,27 @@
+{
+  "description": "Dymová skúška platformy: dosiahnuť na iTop a na model, nič nezapisovať",
+  "fields": {
+    "enabled": {
+      "title": "Zapnutá",
+      "description": "Spúšťať dymovú skúšku podľa časovača. Číta sa pri štarte: zmena vyžaduje reštart."
+    },
+    "interval_seconds": {
+      "title": "Spúšťať každých, sekúnd",
+      "description": "Načítava sa znova pred každým tikom, zmena sa teda prejaví bez reštartu."
+    },
+    "probe_oql": {
+      "title": "Sondovací dopyt",
+      "description": "OQL, ktoré kontrola vykoná v iTop. Výsledok sa zahadzuje; uspieť musí len samotné volanie."
+    },
+    "model": {
+      "title": "Vlastný model",
+      "description": "Nechajte prázdne pre globálny model."
+    }
+  },
+  "actions": {
+    "run": { "summary": "Spustiť dymovú skúšku platformy teraz a vrátiť výsledok" }
+  },
+  "schedules": {
+    "tick": { "summary": "Dosiahnuť na iTop a na model podľa časovača, nič nezapisovať" }
+  }
+}

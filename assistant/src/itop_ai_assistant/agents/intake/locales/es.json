@@ -1,0 +1,104 @@
+{
+  "description": "Recepción agéntica de tickets: clasificar, preguntar, entregar al técnico",
+  "groups": {
+    "Classification": "Clasificación",
+    "Clarifying questions": "Preguntas de aclaración",
+    "Handoff note": "Nota de entrega",
+    "Similar solved tickets": "Tickets resueltos similares"
+  },
+  "fields": {
+    "enabled": {
+      "title": "Activado",
+      "description": "Procesar los tickets recién creados. Se lee al arrancar: cambiarlo exige reiniciar."
+    },
+    "classes": {
+      "title": "Clases de ticket",
+      "description": "Clases de iTop que procesa el módulo. Se lee al arrancar: cambiarlo exige reiniciar."
+    },
+    "active_statuses": {
+      "title": "Actuar mientras el ticket esté en estado",
+      "description": "En cuanto un técnico saca el ticket de estos estados, el módulo se detiene en silencio."
+    },
+    "max_questions": {
+      "title": "Preguntas al solicitante",
+      "description": "Cuántas veces puede el módulo escribir al solicitante sobre un mismo ticket, en total."
+    },
+    "max_iterations": {
+      "title": "Llamadas al modelo por ticket",
+      "description": "Presupuesto de una ejecución. Al agotarse, el ticket recibe la nota de reserva y se entrega."
+    },
+    "model": {
+      "title": "Modelo específico",
+      "description": "Déjalo vacío para usar el modelo global. El que se indique aquí debe invocar herramientas de forma fiable."
+    },
+    "classify_enabled": {
+      "title": "Activada",
+      "description": "Permitir que el módulo fije el servicio y la subcategoría del ticket."
+    },
+    "max_classify_questions": {
+      "title": "De ellas, antes de clasificar el ticket",
+      "description": "La parte de las preguntas anteriores que puede gastarse mientras el ticket sigue sin clasificar."
+    },
+    "classify_service_oql": {
+      "title": "Consulta del catálogo de servicios",
+      "description": "OQL de los servicios ofrecidos a la organización del solicitante. `:this` es el ticket."
+    },
+    "classify_subcategory_oql": {
+      "title": "Consulta de subcategorías",
+      "description": "OQL de las subcategorías del servicio elegido por el módulo."
+    },
+    "clarify_enabled": {
+      "title": "Activadas",
+      "description": "Permitir que el módulo pregunte al solicitante en el registro público, una pregunta cada vez."
+    },
+    "handoff_note_enabled": {
+      "title": "Activada",
+      "description": "Permitir que el módulo escriba la nota interna que entrega el ticket a un técnico."
+    },
+    "handoff_fallback_note": {
+      "title": "Nota de reserva",
+      "description": "Se publica cuando la ejecución termina sin resumen propio: sin presupuesto, o sin nada que añadir."
+    },
+    "similar_enabled": {
+      "title": "Activados",
+      "description": "Permitir que el módulo cite tickets resueltos similares en esa nota. Requiere la nota de entrega, el índice vectorial y un endpoint de embeddings; sin ellos el módulo simplemente no busca."
+    },
+    "similar_family": {
+      "title": "Familia del índice",
+      "description": "Qué familia de contenido indexado se consulta."
+    },
+    "resolved_statuses": {
+      "title": "Estados que cuentan como resuelto",
+      "description": "Solo pueden citarse los tickets en estos estados."
+    },
+    "similar_max_age_days": {
+      "title": "Mirar atrás, días",
+      "description": "Cuánto tiempo puede hacer que se tocó un ticket resuelto y aun así citarse."
+    },
+    "similar_candidates": {
+      "title": "Candidatos leídos del índice",
+      "description": "Más que los citados a propósito: los candidatos que el iTop del solicitante ya no muestra se descartan después."
+    },
+    "similar_top": {
+      "title": "Referencias en una nota",
+      "description": "Como mucho se citan estos tickets similares. No puede superar el número de candidatos."
+    },
+    "similar_min_score": {
+      "title": "Similitud mínima",
+      "description": "Un candidato por debajo de esta puntuación se descarta sea cual sea su posición. El valor por defecto es una estimación inicial, no un valor calibrado para el modelo de embeddings de esta instalación."
+    },
+    "similar_chunk_kinds": {
+      "title": "Comparar con",
+      "description": "Con qué partes de un ticket resuelto se comparan el título y la descripción del nuevo. Añadir `solution` compara problemas con respuestas: normalmente ruido."
+    }
+  },
+  "actions": {
+    "process": {
+      "summary": "Procesar un ticket ahora y devolver el resultado",
+      "fields": {
+        "class": { "title": "Clase de objeto de iTop" },
+        "id": { "title": "Identificador" }
+      }
+    }
+  }
+}

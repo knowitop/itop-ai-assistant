@@ -1,0 +1,104 @@
+{
+  "description": "Presa in carico agentica dei ticket: classificare, chiedere, passare al tecnico",
+  "groups": {
+    "Classification": "Classificazione",
+    "Clarifying questions": "Domande di chiarimento",
+    "Handoff note": "Nota di passaggio",
+    "Similar solved tickets": "Ticket risolti simili"
+  },
+  "fields": {
+    "enabled": {
+      "title": "Attivo",
+      "description": "Elabora i ticket appena creati. Letto all'avvio: cambiarlo richiede un riavvio."
+    },
+    "classes": {
+      "title": "Classi di ticket",
+      "description": "Classi iTop elaborate dal modulo. Letto all'avvio: cambiarlo richiede un riavvio."
+    },
+    "active_statuses": {
+      "title": "Agire finché il ticket è nello stato",
+      "description": "Appena un tecnico porta il ticket fuori da questi stati, il modulo si ferma in silenzio."
+    },
+    "max_questions": {
+      "title": "Domande al richiedente",
+      "description": "Quante volte il modulo può scrivere al richiedente su uno stesso ticket, in totale."
+    },
+    "max_iterations": {
+      "title": "Chiamate al modello per ticket",
+      "description": "Budget di un'esecuzione. Esaurito, il ticket riceve la nota di riserva e viene passato."
+    },
+    "model": {
+      "title": "Modello dedicato",
+      "description": "Lascia vuoto per usare il modello globale. Quello indicato qui deve chiamare gli strumenti in modo affidabile."
+    },
+    "classify_enabled": {
+      "title": "Attiva",
+      "description": "Consenti al modulo di impostare servizio e sottocategoria del ticket."
+    },
+    "max_classify_questions": {
+      "title": "Di cui, prima della classificazione",
+      "description": "La quota delle domande sopra spendibile finché il ticket non è ancora classificato."
+    },
+    "classify_service_oql": {
+      "title": "Query del catalogo servizi",
+      "description": "OQL dei servizi offerti all'organizzazione del richiedente. `:this` è il ticket."
+    },
+    "classify_subcategory_oql": {
+      "title": "Query delle sottocategorie",
+      "description": "OQL delle sottocategorie del servizio scelto dal modulo."
+    },
+    "clarify_enabled": {
+      "title": "Attive",
+      "description": "Consenti al modulo di interrogare il richiedente nel registro pubblico, una domanda alla volta."
+    },
+    "handoff_note_enabled": {
+      "title": "Attiva",
+      "description": "Consenti al modulo di scrivere la nota interna che passa il ticket a un tecnico."
+    },
+    "handoff_fallback_note": {
+      "title": "Nota di riserva",
+      "description": "Pubblicata quando l'esecuzione termina senza una sintesi propria — budget esaurito o nulla da aggiungere."
+    },
+    "similar_enabled": {
+      "title": "Attivi",
+      "description": "Consenti al modulo di citare in quella nota ticket risolti simili. Servono la nota di passaggio, l'indice vettoriale e un endpoint di embedding; senza di essi il modulo semplicemente non cerca."
+    },
+    "similar_family": {
+      "title": "Famiglia dell'indice",
+      "description": "Quale famiglia di contenuti indicizzati viene interrogata."
+    },
+    "resolved_statuses": {
+      "title": "Stati che valgono come risolto",
+      "description": "Si possono citare solo i ticket in questi stati."
+    },
+    "similar_max_age_days": {
+      "title": "Profondità di ricerca, giorni",
+      "description": "Da quanto tempo può essere stato toccato un ticket risolto per essere ancora citabile."
+    },
+    "similar_candidates": {
+      "title": "Candidati letti dall'indice",
+      "description": "Volutamente più dei citati: i candidati che l'iTop del richiedente non mostra più vengono scartati dopo."
+    },
+    "similar_top": {
+      "title": "Riferimenti in una nota",
+      "description": "Al massimo vengono citati questi ticket simili. Non può superare il numero di candidati."
+    },
+    "similar_min_score": {
+      "title": "Somiglianza minima",
+      "description": "Un candidato con punteggio inferiore viene scartato a prescindere dalla posizione. Il valore predefinito è una stima iniziale, non un valore calibrato sul modello di embedding di questa installazione."
+    },
+    "similar_chunk_kinds": {
+      "title": "Confronta con",
+      "description": "Con quali parti di un ticket risolto si confrontano titolo e descrizione di quello nuovo. Aggiungere `solution` confronta i problemi con le risposte — di solito rumore."
+    }
+  },
+  "actions": {
+    "process": {
+      "summary": "Elabora ora un ticket e restituisci il risultato",
+      "fields": {
+        "class": { "title": "Classe dell'oggetto iTop" },
+        "id": { "title": "Identificativo" }
+      }
+    }
+  }
+}

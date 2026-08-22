@@ -1,0 +1,104 @@
+{
+  "description": "Agentische Ticketannahme: klassifizieren, nachfragen, an die Technik übergeben",
+  "groups": {
+    "Classification": "Klassifizierung",
+    "Clarifying questions": "Rückfragen",
+    "Handoff note": "Übergabenotiz",
+    "Similar solved tickets": "Ähnliche gelöste Tickets"
+  },
+  "fields": {
+    "enabled": {
+      "title": "Aktiv",
+      "description": "Neu angelegte Tickets verarbeiten. Wird beim Start gelesen: eine Änderung erfordert einen Neustart."
+    },
+    "classes": {
+      "title": "Ticketklassen",
+      "description": "iTop-Klassen, die das Modul verarbeitet. Wird beim Start gelesen: eine Änderung erfordert einen Neustart."
+    },
+    "active_statuses": {
+      "title": "Handeln, solange das Ticket im Status ist",
+      "description": "Sobald ein Techniker das Ticket aus diesen Status nimmt, hört das Modul stillschweigend auf."
+    },
+    "max_questions": {
+      "title": "Fragen an den Melder",
+      "description": "Wie oft das Modul dem Melder zu einem Ticket insgesamt schreiben darf."
+    },
+    "max_iterations": {
+      "title": "Modellaufrufe pro Ticket",
+      "description": "Budget eines Laufs. Ist es aufgebraucht, erhält das Ticket die Ersatznotiz und wird übergeben."
+    },
+    "model": {
+      "title": "Modell überschreiben",
+      "description": "Leer lassen, um das globale Modell zu verwenden. Was hier steht, muss Werkzeuge zuverlässig aufrufen."
+    },
+    "classify_enabled": {
+      "title": "Aktiv",
+      "description": "Dem Modul erlauben, Service und Unterkategorie des Tickets zu setzen."
+    },
+    "max_classify_questions": {
+      "title": "Davon vor der Klassifizierung",
+      "description": "Der Anteil der obigen Fragen, der verbraucht werden darf, solange das Ticket noch nicht klassifiziert ist."
+    },
+    "classify_service_oql": {
+      "title": "Abfrage des Servicekatalogs",
+      "description": "OQL für die Services, die der Organisation des Melders angeboten werden. `:this` ist das Ticket."
+    },
+    "classify_subcategory_oql": {
+      "title": "Abfrage der Unterkategorien",
+      "description": "OQL für die Unterkategorien des vom Modul gewählten Service."
+    },
+    "clarify_enabled": {
+      "title": "Aktiv",
+      "description": "Dem Modul erlauben, den Melder im öffentlichen Protokoll zu fragen — eine Frage nach der anderen."
+    },
+    "handoff_note_enabled": {
+      "title": "Aktiv",
+      "description": "Dem Modul erlauben, die interne Notiz zu schreiben, die das Ticket an einen Techniker übergibt."
+    },
+    "handoff_fallback_note": {
+      "title": "Ersatznotiz",
+      "description": "Wird veröffentlicht, wenn der Lauf ohne eigene Zusammenfassung endet — Budget erschöpft oder nichts hinzuzufügen."
+    },
+    "similar_enabled": {
+      "title": "Aktiv",
+      "description": "Dem Modul erlauben, in dieser Notiz ähnliche gelöste Tickets zu zitieren. Erfordert die Übergabenotiz, den Vektorindex und einen Embeddings-Endpunkt; ohne sie sucht das Modul einfach nicht."
+    },
+    "similar_family": {
+      "title": "Indexfamilie",
+      "description": "Welche Familie indizierter Inhalte durchsucht wird."
+    },
+    "resolved_statuses": {
+      "title": "Status, die als gelöst gelten",
+      "description": "Nur Tickets in diesen Status dürfen zitiert werden."
+    },
+    "similar_max_age_days": {
+      "title": "Rückblick, Tage",
+      "description": "Wie lange die letzte Änderung eines gelösten Tickets zurückliegen darf, damit es noch zitiert wird."
+    },
+    "similar_candidates": {
+      "title": "Aus dem Index gelesene Kandidaten",
+      "description": "Bewusst mehr als die Zahl der zitierten: Kandidaten, die das iTop des Melders nicht mehr zeigt, fallen danach weg."
+    },
+    "similar_top": {
+      "title": "Verweise in einer Notiz",
+      "description": "Höchstens so viele ähnliche Tickets werden zitiert. Darf die Zahl der Kandidaten nicht übersteigen."
+    },
+    "similar_min_score": {
+      "title": "Mindestähnlichkeit",
+      "description": "Ein Kandidat mit niedrigerem Wert fällt weg, unabhängig von seinem Rang. Der Standardwert ist eine erste Schätzung, kein auf das Embeddings-Modell dieser Installation kalibrierter Wert."
+    },
+    "similar_chunk_kinds": {
+      "title": "Vergleichen mit",
+      "description": "Mit welchen Teilen eines gelösten Tickets Titel und Beschreibung des neuen verglichen werden. `solution` hinzuzunehmen vergleicht Probleme mit Antworten — meist Rauschen."
+    }
+  },
+  "actions": {
+    "process": {
+      "summary": "Ein Ticket jetzt verarbeiten und das Ergebnis zurückgeben",
+      "fields": {
+        "class": { "title": "iTop-Objektklasse" },
+        "id": { "title": "Kennung" }
+      }
+    }
+  }
+}

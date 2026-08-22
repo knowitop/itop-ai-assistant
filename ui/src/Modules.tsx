@@ -46,7 +46,9 @@ interface ModuleInfo {
 // The subset of JSON Schema that pydantic emits for our config models. The
 // `x-` keys are hints the backend attaches through `settings/ui_hints.py`
 // (ADR-025) — everything this form knows about a module arrives here, never
-// from a list of field names kept on this side.
+// from a list of field names kept on this side. Labels, descriptions and
+// group headings arrive already in the UI's language: the module ships its
+// own translations and the backend applies them to the schema (ADR-030).
 interface SchemaProp {
   type?: string;
   anyOf?: { type?: string; items?: { type?: string } }[];
@@ -185,15 +187,17 @@ function DryRunSwitch() {
 }
 
 export default function Modules() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [modules, setModules] = useState<ModuleInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Refetched when the language changes: the module texts are translated by
+  // the backend, so a new language means a new response, not a new lookup.
   useEffect(() => {
-    apiGet<ModuleInfo[]>('/modules')
+    apiGet<ModuleInfo[]>(`/modules?lang=${i18n.language}`)
       .then(setModules)
       .catch((e: Error) => setError(e.message));
-  }, []);
+  }, [i18n.language]);
 
   if (error) return <Alert color="red">{error}</Alert>;
   if (!modules) return <Loader />;
@@ -257,7 +261,7 @@ export default function Modules() {
 }
 
 function ModuleConfigForm({ module }: { module: string }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [schema, setSchema] = useState<Schema | null>(null);
   // string/number/tags values live here as-is; json fields hold raw JSON text.
   const [values, setValues] = useState<Record<string, unknown>>({});
@@ -269,7 +273,7 @@ function ModuleConfigForm({ module }: { module: string }) {
 
   const load = async () => {
     const [schemaData, config] = await Promise.all([
-      apiGet<Schema>(`/config/${module}/schema`),
+      apiGet<Schema>(`/config/${module}/schema?lang=${i18n.language}`),
       apiGet<Record<string, unknown>>(`/config/${module}`),
     ]);
     const initial: Record<string, unknown> = {};
@@ -283,7 +287,7 @@ function ModuleConfigForm({ module }: { module: string }) {
 
   useEffect(() => {
     load().catch((e: Error) => setError(e.message));
-  }, [module]);
+  }, [module, i18n.language]);
 
   const setField = (name: string, value: unknown) => {
     setSuccess(null);
@@ -365,7 +369,6 @@ function ModuleConfigForm({ module }: { module: string }) {
         <ConfigGroup
           key={group.label}
           group={group}
-          i18nPrefix={`config.${module}`}
           values={values}
           errors={fieldErrors}
           onChange={setField}
@@ -421,7 +424,6 @@ function RequestActionForm({ module, action }: { module: string; action: Request
           key={name}
           name={name}
           prop={prop}
-          i18nPrefix={`modules.actions.${module}.${action.action}`}
           value={values[name] ?? ''}
           onChange={(value) => setValues((current) => ({ ...current, [name]: value }))}
         />
@@ -451,13 +453,12 @@ function RequestActionForm({ module, action }: { module: string; action: Request
 // three that get looked at.
 function ConfigGroup(props: {
   group: FieldGroup;
-  i18nPrefix: string;
   values: Record<string, unknown>;
   errors: Record<string, string>;
   onChange: (name: string, value: unknown) => void;
 }) {
   const { t } = useTranslation();
-  const { group, i18nPrefix, values, errors, onChange } = props;
+  const { group, values, errors, onChange } = props;
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // A switched-off section keeps its fields visible but inert: hidden ones
@@ -468,7 +469,6 @@ function ConfigGroup(props: {
       key={name}
       name={name}
       prop={prop}
-      i18nPrefix={i18nPrefix}
       value={values[name]}
       error={errors[name]}
       disabled={off && name !== group.toggle}
@@ -494,35 +494,25 @@ function ConfigGroup(props: {
     </Stack>
   );
   if (!group.label) return body;
-  // The group name arrives in the schema already written for a human, so an
-  // untranslated locale still gets a readable heading.
-  const legend = t(`modules.groups.${slugify(group.label)}`, { defaultValue: group.label });
-  return <Fieldset legend={legend}>{body}</Fieldset>;
-}
-
-function slugify(label: string): string {
-  return label.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+  return <Fieldset legend={group.label}>{body}</Fieldset>;
 }
 
 function ConfigField(props: {
   name: string;
   prop: SchemaProp;
-  i18nPrefix: string;
   value: unknown;
   error?: string;
   disabled?: boolean;
   onChange: (value: unknown) => void;
 }) {
   const { t } = useTranslation();
-  const { name, prop, i18nPrefix, value, error, disabled, onChange } = props;
+  const { name, prop, value, error, disabled, onChange } = props;
   const { kind, nullable } = fieldKind(prop);
-  // The schema's own wording is the default; a locale key overrides it where
-  // one exists, so a new field is readable before anyone translates it.
-  const label = t(`${i18nPrefix}.${name}.label`, { defaultValue: prop.title ?? name });
-  const description = prop.description
-    ? t(`${i18nPrefix}.${name}.description`, { defaultValue: prop.description })
-    : undefined;
-  const common = { label, description, error: error || undefined, disabled };
+  // Both texts are the module's own, translated on the way out of the backend
+  // (ADR-030); an untranslated field falls back to the English in the schema,
+  // and a field with no title at all to its name.
+  const label = prop.title ?? name;
+  const common = { label, description: prop.description, error: error || undefined, disabled };
 
   switch (kind) {
     case 'boolean':
