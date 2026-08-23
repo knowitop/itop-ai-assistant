@@ -4,9 +4,11 @@ from typing import Any
 import redis.asyncio as aioredis
 from fastapi import Request
 from langchain.chat_models import init_chat_model
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models.chat_models import BaseChatModel
 
 from itop_ai_assistant.config import LlmConfig, Settings
+from itop_ai_assistant.core.llm_counters import LlmCallCounter
 from itop_ai_assistant.core.llm_providers import get_provider
 from itop_ai_assistant.core.tracing import NullRunTracer
 from itop_ai_assistant.itop.connection import AiIdentity, ItopConnection
@@ -16,6 +18,7 @@ from itop_ai_assistant.pipelines.registry import TriggerRegistry
 from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.settings.config_store import ConfigStore, RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import FilePromptStore, PromptStore, RedisPromptStore
+from itop_ai_assistant.state.counters import DailyCounters
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.util.redis_keyspace import days_to_seconds
@@ -67,6 +70,11 @@ class AppDeps:
     config_store: ConfigStore
     prompt_store: PromptStore
     journal: RunJournal
+    # The day's activity, and the only aggregate that outlives the journal's
+    # TTL and its capped index (`state/counters.py`). Filled from three levels
+    # at once — the run frame, the iTop write layer, the model factory — and
+    # read by nothing in this process yet: sending is TASK-064.
+    counters: DailyCounters
     # The frame's second recorder, next to the journal it mirrors
     # (`pipelines/runner.py`). Deliberately absent from `RunDeps`: a module
     # neither reaches tracing nor knows it exists — the instrumentation is
@@ -83,7 +91,11 @@ class AppDeps:
         return self.itop_connection
 
     def create_llm(self, llm: LlmConfig, model: str | None = None) -> BaseChatModel:
-        return create_llm(llm, model)
+        """A model that counts what it does. The handler is attached here and
+        not inside the factory, so the one caller who must *not* be counted —
+        the wizard's endpoint probe — keeps calling the plain function
+        (`core/llm_counters.py`)."""
+        return create_llm(llm, model, callbacks=[LlmCallCounter(self.counters)])
 
     async def aclose(self) -> None:
         await self.itop_connection.aclose()
@@ -102,11 +114,15 @@ def get_deps(request: Request) -> "AppDeps":
     return request.app.state.deps
 
 
-def create_llm(llm: LlmConfig, model: str | None = None) -> BaseChatModel:
+def create_llm(
+    llm: LlmConfig, model: str | None = None, *, callbacks: list[BaseCallbackHandler] | None = None
+) -> BaseChatModel:
     """Create an LLM client for the configured provider.
 
     `model` overrides the default `llm.model`; `llm.params` is forwarded
     verbatim to the provider's client (temperature, max_tokens, …).
+    `callbacks` ride on the model and fire for every call it makes, the agent
+    loop's included — `llm.params` may not contain them (`LlmConfig`).
     """
     provider = get_provider(llm.provider)
     kwargs: dict[str, Any] = dict(llm.params)
@@ -117,6 +133,8 @@ def create_llm(llm: LlmConfig, model: str | None = None) -> BaseChatModel:
     elif provider.api_key_mode == "optional":
         # Local endpoints (LM Studio) accept any key; the client requires one
         kwargs["api_key"] = llm.api_key or "unused"
+    if callbacks:
+        kwargs["callbacks"] = callbacks
     return init_chat_model(model or llm.model or "", model_provider=provider.langchain_provider, **kwargs)
 
 
@@ -135,7 +153,8 @@ def build_deps(settings: Settings, registry: TriggerRegistry, *, tracer: RunTrac
     state_manager = TicketStateManager(redis, ttl_seconds=days_to_seconds(settings.state_ttl_days))
     itop_connection = ItopConnection(config_store)
     write_policy = WritePolicy(config_store)
-    itop = ItopRepositories(itop_connection, config_store, write_policy)
+    counters = DailyCounters(redis)
+    itop = ItopRepositories(itop_connection, config_store, write_policy, counters)
     prompts_dirs = {m.name: m.prompts_dir for m in registry.modules if m.prompts_dir is not None}
 
     return AppDeps(
@@ -147,6 +166,7 @@ def build_deps(settings: Settings, registry: TriggerRegistry, *, tracer: RunTrac
         config_store=config_store,
         prompt_store=RedisPromptStore(FilePromptStore(prompts_dirs, settings.prompts_dir), redis),
         journal=RunJournal(redis, ttl_seconds=days_to_seconds(settings.run_ttl_days)),
+        counters=counters,
         tracer=tracer or NullRunTracer(),
-        vector=build_vector(settings, redis, config_store, itop),
+        vector=build_vector(settings, redis, config_store, itop, counters),
     )

@@ -163,8 +163,13 @@ class LlmConfig(RuntimeSectionConfig):
     supports_forced_tool_choice: bool | None = None
 
     # Reserved by create_llm — allowing them in `params` would silently
-    # override the section's own fields.
-    _RESERVED_PARAMS: ClassVar[frozenset[str]] = frozenset({"model", "model_provider", "base_url", "api_key"})
+    # override the section's own fields. `callbacks` is on the list for a
+    # sharper reason than the others: it carries the telemetry counter
+    # (`core/llm_counters.py`), and a value here would replace it rather than
+    # add to it — the counting would stop, and nothing would say so.
+    _RESERVED_PARAMS: ClassVar[frozenset[str]] = frozenset(
+        {"model", "model_provider", "base_url", "api_key", "callbacks"}
+    )
 
     @model_validator(mode="after")
     def check_provider_and_params(self) -> "LlmConfig":

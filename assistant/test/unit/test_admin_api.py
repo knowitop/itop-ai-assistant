@@ -17,6 +17,7 @@ from itop_ai_assistant.main import app
 from itop_ai_assistant.pipelines.registry import ModuleInfo, ScheduleRoute, TriggerRegistry
 from itop_ai_assistant.settings.config_store import RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import FilePromptStore, RedisPromptStore
+from itop_ai_assistant.state.counters import DailyCounters
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.util.build_info import get_build_info
@@ -36,11 +37,12 @@ def _make_deps(redis, settings=None) -> AppDeps:
     def vector_sources(cfg):
         return build_vector_sources(itop, cfg)
 
+    counters = DailyCounters(redis)
     vector = VectorSubsystem(
         config_store=config_store,
         itop=itop,
         vector_store=vector_store,
-        vector_search=SimilarSearch(vector_store, config_store, build_sources=vector_sources),
+        vector_search=SimilarSearch(vector_store, config_store, vector_sources, counters),
         vector_sync=VectorSyncState(redis),
         vector_journal=IndexJournal(redis),
         vector_sources=vector_sources,
@@ -57,6 +59,7 @@ def _make_deps(redis, settings=None) -> AppDeps:
             FilePromptStore({"intake": INTAKE_PROMPTS_DIR, "selfcheck": SELFCHECK_PROMPTS_DIR}), redis
         ),
         journal=RunJournal(redis),
+        counters=counters,
         tracer=NullRunTracer(),
         vector=vector,
     )

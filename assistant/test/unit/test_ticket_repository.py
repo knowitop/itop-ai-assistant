@@ -2,9 +2,12 @@ import unittest
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
+import fakeredis
+
 from itop_ai_assistant.config import TicketMappingConfig
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.repositories.ticket import TicketRepository
+from itop_ai_assistant.state.counters import Counter, DailyCounters
 
 _RAW_TICKET = {
     "id": "42",
@@ -27,14 +30,17 @@ _RAW_TICKET = {
 }
 
 
-def _make_repo(mapping: TicketMappingConfig | None = None) -> tuple[TicketRepository, MagicMock]:
+def _make_repo(
+    mapping: TicketMappingConfig | None = None, counters: DailyCounters | None = None
+) -> tuple[TicketRepository, MagicMock]:
     schema = MagicMock()
     schema.find = AsyncMock()
     schema.find_one = AsyncMock()
     schema.update = AsyncMock()
     itop = MagicMock()
     itop.schema = MagicMock(return_value=schema)
-    return TicketRepository(itop, mapping or TicketMappingConfig()), schema
+    counters = counters or DailyCounters(fakeredis.aioredis.FakeRedis(decode_responses=True))
+    return TicketRepository(itop, mapping or TicketMappingConfig(), counters), schema
 
 
 class TestToTicket(unittest.TestCase):
@@ -281,6 +287,38 @@ class TestAppendLogs(unittest.IsolatedAsyncioTestCase):
 
         raw_fields = schema.update.await_args.args[1]
         self.assertIn("user_log", raw_fields)
+
+
+class TestWritesAreCounted(unittest.IsolatedAsyncioTestCase):
+    """Counted where the writes physically pass, not where they were meant:
+    a rule every new module has to remember is one the first forgetful module
+    breaks, and it breaks as "that customer somehow asks no questions"
+    (REQ-009 R3).
+    """
+
+    async def asyncSetUp(self):
+        self.counters = DailyCounters(fakeredis.aioredis.FakeRedis(decode_responses=True))
+        self.repo, _ = _make_repo(counters=self.counters)
+        self.ticket = Ticket(obj_class="UserRequest", id="42")
+
+    async def _counted(self) -> dict:
+        return await self.counters.read(datetime.now(UTC).date())
+
+    async def test_each_kind_of_write_has_its_own_counter(self):
+        await self.repo.append_public_log(self.ticket, "A question")
+        await self.repo.append_private_log(self.ticket, "A note")
+        await self.repo.set_fields(self.ticket, {"service_id": "10"})
+
+        counted = await self._counted()
+
+        self.assertEqual(1, counted[Counter.ITOP_PUBLIC_COMMENT])
+        self.assertEqual(1, counted[Counter.ITOP_PRIVATE_NOTE])
+        self.assertEqual(1, counted[Counter.ITOP_FIELD_UPDATE])
+
+    async def test_an_update_that_never_reached_itop_is_not_counted(self):
+        await self.repo.set_fields(Ticket(obj_class="Incident", id="42"), {"request_type": "incident"})
+
+        self.assertEqual(0, (await self._counted())[Counter.ITOP_FIELD_UPDATE])
 
 
 if __name__ == "__main__":

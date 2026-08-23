@@ -7,6 +7,7 @@ import fakeredis.aioredis
 
 from itop_ai_assistant.config import EmbeddingsConfig
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
+from itop_ai_assistant.state.counters import Counter, DailyCounters
 from itop_ai_assistant.vector.chunker import FragmentContent, TextContent, chunk_object
 from itop_ai_assistant.vector.config import ChunkFragmentConfig, FamilyConfig, VectorClassConfig, VectorConfig
 from itop_ai_assistant.vector.ports.source import VectorRecord
@@ -236,6 +237,7 @@ def _deps_mock(
     deps.config_store.get = AsyncMock(
         side_effect=lambda name, model: {"vector": vector_cfg, "embeddings": emb_cfg}[name]
     )
+    deps.counters = DailyCounters(redis)
     return deps
 
 
@@ -246,13 +248,20 @@ def _indexer(deps, sources=None) -> VectorIndexer:
         deps.vector_store,
         deps.vector_sync,
         deps.vector_journal,
+        deps.counters,
         sources=sources,
     )
 
 
 def _register_sweep(tasks, deps) -> None:
     register_vector_sweep(
-        tasks, deps.config_store, deps.vector_sources, deps.vector_store, deps.vector_sync, deps.vector_journal
+        tasks,
+        deps.config_store,
+        deps.vector_sources,
+        deps.vector_store,
+        deps.vector_sync,
+        deps.vector_journal,
+        deps.counters,
     )
 
 
@@ -843,6 +852,36 @@ class TestFamilyPacing(IndexerTestCase):
         self.assertIsNone(await deps.vector_sync.get_family_swept("tickets"))
 
 
+class TestSweepIsCounted(IndexerTestCase):
+    """REQ-009 R3 asks for sync passes; passes are a timer ticking and answer
+    nothing. What the daily document carries is the work — how much of the
+    customer's iTop the layer keeps embedded.
+
+    Driven through `sweep_once`, not `tick`: the timer is not the only caller.
+    The backfill CLI (`vector/use_cases/reindex.py`) calls this method
+    directly, and it is the largest embedding workload an installation runs.
+    """
+
+    async def test_a_pass_counts_what_it_embedded(self):
+        deps = _deps_mock(store=FakeChunkStore())
+        indexer = _indexer(deps, [FakeTicketSource([_record(1)])])
+
+        with patch("itop_ai_assistant.vector.use_cases.indexer.EmbeddingsClient", return_value=_embedder_mock()):
+            await indexer.sweep_once()
+
+        counted = await deps.counters.read(datetime.now(UTC).date())
+        self.assertEqual(1, counted[Counter.VECTOR_CHUNKS_EMBEDDED])
+
+    async def test_a_pass_that_embedded_nothing_leaves_no_trace(self):
+        deps = _deps_mock(configured=False)
+        indexer = _indexer(deps, [FakeTicketSource([_record(1)])])
+
+        await indexer.tick()
+
+        counted = await deps.counters.read(datetime.now(UTC).date())
+        self.assertEqual(0, counted[Counter.VECTOR_CHUNKS_EMBEDDED])
+
+
 class TestSweepRegistration(unittest.IsolatedAsyncioTestCase):
     """Infrastructure, not a module: the sweep takes pacing from the scheduler
     and claims no trigger route."""
@@ -959,18 +998,26 @@ class TestReconciliation(IndexerTestCase):
 
 
 class TestIndexerSignature(unittest.TestCase):
-    """VectorIndexer/register_vector_sweep take the sweep's five
-    dependencies as explicit parameters (TASK-039) — pinned the same way
-    test_pipelines_ports.py pins the run core's ports.
+    """VectorIndexer/register_vector_sweep take the sweep's dependencies as
+    explicit parameters (TASK-039) — pinned the same way
+    test_pipelines_ports.py pins the run core's ports. A disjoint handful like
+    this earns no protocol, which is exactly why the names are pinned here.
     """
 
-    _EXPECTED = {"config_store", "vector_sources", "vector_store", "vector_sync", "vector_journal"}
+    _EXPECTED = {
+        "config_store",
+        "vector_sources",
+        "vector_store",
+        "vector_sync",
+        "vector_journal",
+        "counters",
+    }
 
-    def test_vector_indexer_init_takes_the_five_by_name(self) -> None:
+    def test_vector_indexer_init_takes_them_by_name(self) -> None:
         params = set(inspect.signature(VectorIndexer.__init__).parameters) - {"self", "sources"}
         self.assertEqual(self._EXPECTED, params)
 
-    def test_register_vector_sweep_takes_the_five_by_name(self) -> None:
+    def test_register_vector_sweep_takes_them_by_name(self) -> None:
         params = set(inspect.signature(register_vector_sweep).parameters) - {"tasks"}
         self.assertEqual(self._EXPECTED, params)
 

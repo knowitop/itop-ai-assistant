@@ -1,6 +1,6 @@
 """The whole Redis keyspace this service owns, in one place.
 
-Purely declarative — no behavior, no Redis calls. Four owners keep their
+Purely declarative — no behavior, no Redis calls. Five owners keep their
 adapters where they always lived (`settings/`, `state/`, `vector/`); this
 module exists so a reader does not have to open all of them to know which
 prefixes and TTLs are in play, and so a new key family has one obvious place
@@ -47,6 +47,12 @@ VECTOR_SWEEP_LOCK_RENEW_INTERVAL_SECONDS = 40
 VECTOR_RUN_PREFIX = f"{VECTOR_PREFIX}run:"
 VECTOR_RUN_INDEX_KEY = f"{VECTOR_PREFIX}runs"
 VECTOR_RUN_INDEX_MAX_ENTRIES = 50
+
+# state/counters.py — one hash per UTC day, a field per counter (REQ-009 R3)
+TELEMETRY_COUNTERS_PREFIX = "telemetry:counters:"
+# Weeks, not a day: a day's counters must survive several missed sends in a row.
+# Losing them to our own TTL is not the same thing as the missed day R8 allows.
+TELEMETRY_COUNTERS_TTL_DAYS = 14
 
 
 def days_to_seconds(days: int) -> int:

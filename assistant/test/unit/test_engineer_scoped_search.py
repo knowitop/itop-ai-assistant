@@ -18,9 +18,12 @@ an organization is.
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import fakeredis
+
 from itop_ai_assistant.config import EmbeddingsConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.repositories.access import AccessRepository
+from itop_ai_assistant.state.counters import DailyCounters
 from itop_ai_assistant.vector import VectorConfig
 from itop_ai_assistant.vector.ports.query import SearchQuery
 from itop_ai_assistant.vector.ports.store import SearchHit
@@ -85,7 +88,8 @@ class TestOrgPrefilterFeedsSearch(unittest.IsolatedAsyncioTestCase):
                 "embeddings": EmbeddingsConfig(base_url="http://emb/v1", model="bge-m3"),
             }[module]
         )
-        search = SimilarSearch(store, config, MagicMock(), sources=[source])
+        counters = DailyCounters(fakeredis.aioredis.FakeRedis(decode_responses=True))
+        search = SimilarSearch(store, config, MagicMock(), counters, sources=[source])
 
         filters = _org_filter(await repo.allowed_org_ids())
         with patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder):

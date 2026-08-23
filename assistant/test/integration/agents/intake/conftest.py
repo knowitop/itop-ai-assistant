@@ -34,6 +34,7 @@ from itop_ai_assistant.itop_client import Itop
 from itop_ai_assistant.repositories.catalog import CatalogRepository
 from itop_ai_assistant.repositories.ticket import TicketRepository
 from itop_ai_assistant.settings.prompt_store import read_prompt_dir
+from itop_ai_assistant.state.counters import DailyCounters
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 
 ITOP_URL = "http://mock-itop/webservices/rest.php"
@@ -115,7 +116,9 @@ def make_ctx(
         processing_id=uuid4(),
         principal=Principal.service(),
         ticket=ticket,
-        ticket_repo=TicketRepository(itop, settings.ticket_mapping),
+        ticket_repo=TicketRepository(
+            itop, settings.ticket_mapping, DailyCounters(fakeredis.aioredis.FakeRedis(decode_responses=True))
+        ),
         catalog_repo=CatalogRepository(itop),
         state_manager=IntakeState(state_manager),
         intake=intake,

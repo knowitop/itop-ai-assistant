@@ -32,12 +32,13 @@ async def _process_safely(handler: WebhookHandler, payload: WebhookPayload, run:
         async with journalled_run(
             deps.journal,
             deps.tracer,
+            deps.counters,
             run,
             kind="webhook",
             subject=str(payload),
             event=str(payload.event),
-        ):
-            await handler(payload, run, deps)
+        ) as frame:
+            frame.result = await handler(payload, run, deps)
     except Exception:
         logger.exception(f"[{run.processing_id}] Processing failed for {payload}")
 

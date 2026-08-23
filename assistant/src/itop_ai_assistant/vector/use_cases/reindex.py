@@ -49,6 +49,7 @@ async def _run(full: bool) -> int:
             deps.vector.vector_store,
             deps.vector.vector_sync,
             deps.vector.vector_journal,
+            deps.counters,
         )
         if full:
             await deps.vector.vector_sync.request_reindex()

@@ -18,6 +18,12 @@ Two rules hold this together:
   would drag the Redis/Qdrant/langchain imports of `core/deps.py` back into the
   core, which is exactly what this file exists to prevent.
 
+`DailyCounters` (`state/counters.py`) is deliberately absent from `RunDeps`,
+for the reason `RunTracer` is: a module is counted, it does not count.
+Everything the telemetry document holds is incremented above the modules — in
+the run frame, the iTop write layer and the model factory — so that a module
+cannot forget to.
+
 `aclose()` appears in no port on purpose: the connection pool belongs to the
 composition root, and no run should be able to close it.
 """

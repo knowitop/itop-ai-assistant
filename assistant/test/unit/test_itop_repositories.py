@@ -8,6 +8,8 @@ the client (TASK-027).
 
 import unittest
 
+import fakeredis
+
 from itop_ai_assistant.config import (
     FaqFieldMap,
     FaqMappingConfig,
@@ -20,6 +22,7 @@ from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.itop.connection import ItopConnection
 from itop_ai_assistant.itop.write_policy import WritePolicy
 from itop_ai_assistant.repositories.sets import ItopRepositories, RepositorySet
+from itop_ai_assistant.state.counters import DailyCounters
 
 _ENGINEER = Principal.delegated("engineer-token", login="jdoe", name="John Doe")
 _SWEEP = "AI assistant · sweep"
@@ -41,8 +44,9 @@ class FakeConfigStore:
 class TestRepositorySet(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.store = FakeConfigStore()
+        self.counters = DailyCounters(fakeredis.aioredis.FakeRedis(decode_responses=True))
         self.connection = ItopConnection(self.store)
-        self.repositories = ItopRepositories(self.connection, self.store, WritePolicy(self.store))
+        self.repositories = ItopRepositories(self.connection, self.store, WritePolicy(self.store), self.counters)
 
     async def asyncTearDown(self):
         await self.connection.aclose()

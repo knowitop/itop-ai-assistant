@@ -5,8 +5,11 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import fakeredis
+
 from itop_ai_assistant.config import EmbeddingsConfig
 from itop_ai_assistant.core.principal import Principal
+from itop_ai_assistant.state.counters import Counter, DailyCounters
 from itop_ai_assistant.vector.config import VectorConfig
 from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchQuery
 from itop_ai_assistant.vector.ports.store import DateRange, SearchHit
@@ -102,7 +105,8 @@ class _SearchTestCase(unittest.IsolatedAsyncioTestCase):
         config = _FakeConfigStore(vector=vector_cfg, embeddings=embeddings_cfg)
         # `build_sources` goes unused once `sources` is injected — same seam
         # as `VectorIndexer`'s, and for the same reason.
-        search = SimilarSearch(store, config, MagicMock(), sources=sources)
+        self.counters = DailyCounters(fakeredis.aioredis.FakeRedis(decode_responses=True))
+        search = SimilarSearch(store, config, MagicMock(), self.counters, sources=sources)
         return search, store, embedder, sources[0]
 
 
@@ -352,6 +356,43 @@ class TestAvailability(_SearchTestCase):
         search, _, _, _ = self._search([], embeddings_cfg=EmbeddingsConfig())
 
         self.assertFalse(await search.available())
+
+
+class TestSearchesAreCounted(_SearchTestCase):
+    """Whether the vector layer earns its complexity is answered here or
+    nowhere: an installation with the layer on and no searches is the answer
+    (REQ-009 R3)."""
+
+    async def _counted(self) -> dict:
+        return await self.counters.read(datetime.now(UTC).date())
+
+    async def test_a_search_with_hits_counts_as_a_search_and_nothing_else(self):
+        search, _, _, _ = self._search([_hit(1, 0.9)])
+
+        await search.find(_query(text="printer is dead"), _ENGINEER)
+
+        counted = await self._counted()
+        self.assertEqual(1, counted[Counter.VECTOR_SEARCHES])
+        self.assertEqual(0, counted[Counter.VECTOR_SEARCHES_EMPTY])
+
+    async def test_a_search_that_found_nothing_counts_as_both(self):
+        search, _, _, _ = self._search([])
+
+        await search.find(_query(text="printer is dead"), _ENGINEER)
+
+        counted = await self._counted()
+        self.assertEqual(1, counted[Counter.VECTOR_SEARCHES])
+        self.assertEqual(1, counted[Counter.VECTOR_SEARCHES_EMPTY])
+
+    async def test_a_deployment_that_cannot_search_counts_no_search(self):
+        """`SearchUnavailable` says the layer is off, not that it looked and
+        found nothing — counting it would make "off" look like "useless"."""
+        search, _, _, _ = self._search([], store_configured=False)
+
+        with self.assertRaises(SearchUnavailable):
+            await search.find(_query(), _ENGINEER)
+
+        self.assertEqual(0, (await self._counted())[Counter.VECTOR_SEARCHES])
 
 
 class TestSearchUnavailable(_SearchTestCase):

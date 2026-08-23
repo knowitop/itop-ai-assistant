@@ -30,6 +30,7 @@ def build_background_tasks(deps: AppDeps, registry: TriggerRegistry) -> Periodic
         deps.vector.vector_store,
         deps.vector.vector_sync,
         deps.vector.vector_journal,
+        deps.counters,
     )
     register_schedules(tasks, registry, deps)
     return tasks
