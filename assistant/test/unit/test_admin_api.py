@@ -20,6 +20,8 @@ from itop_ai_assistant.settings.prompt_store import FilePromptStore, RedisPrompt
 from itop_ai_assistant.state.counters import DailyCounters
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
+from itop_ai_assistant.telemetry.builder import DocumentBuilder
+from itop_ai_assistant.telemetry.install import InstallIdentity
 from itop_ai_assistant.util.build_info import get_build_info
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.assembly import VectorSubsystem
@@ -38,6 +40,7 @@ def _make_deps(redis, settings=None) -> AppDeps:
         return build_vector_sources(itop, cfg)
 
     counters = DailyCounters(redis)
+    install = InstallIdentity(redis)
     vector = VectorSubsystem(
         config_store=config_store,
         itop=itop,
@@ -60,6 +63,10 @@ def _make_deps(redis, settings=None) -> AppDeps:
         ),
         journal=RunJournal(redis),
         counters=counters,
+        install=install,
+        telemetry=DocumentBuilder(
+            settings, config_store, MagicMock(modules=[]), counters, install, vector.vector_search
+        ),
         tracer=NullRunTracer(),
         vector=vector,
     )
@@ -158,6 +165,21 @@ class TestModuleTranslations(AdminApiTestCase):
         props = self.client.get("/api/config/intake/schema?lang=fi").json()["properties"]
 
         self.assertEqual(props["max_questions"]["title"], "Questions to the requester")
+
+    def test_the_language_of_the_request_is_remembered(self):
+        """R10: no mechanism for "what language is this installation in" — the
+        SPA already says so on requests it makes anyway. Recorded by a
+        dependency on the router, so a third endpoint carrying `?lang=`
+        cannot forget to."""
+        self.client.get("/api/modules?lang=ru")
+
+        self.assertEqual("ru", self.client.portal.call(InstallIdentity(self.redis).language))
+
+    def test_a_request_without_a_language_changes_nothing(self):
+        self.client.get("/api/modules?lang=ru")
+        self.client.get("/api/modules")
+
+        self.assertEqual("ru", self.client.portal.call(InstallIdentity(self.redis).language))
 
     def test_the_module_list_is_translated_too(self):
         (intake, *_) = self.client.get("/api/modules?lang=ru").json()

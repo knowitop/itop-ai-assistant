@@ -1,0 +1,83 @@
+"""What the installation remembers about itself: the id and the language."""
+
+import unittest
+from unittest.mock import AsyncMock
+
+import fakeredis
+from redis.exceptions import RedisError
+
+from itop_ai_assistant.telemetry.install import InstallIdentity
+from itop_ai_assistant.util.redis_keyspace import TELEMETRY_INSTALL_ID_FIELD, TELEMETRY_INSTALL_KEY
+
+
+class InstallIdentityTestCase(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        self.install = InstallIdentity(self.redis)
+
+
+class TestInstallId(InstallIdentityTestCase):
+    async def test_generated_once_and_stable_afterwards(self):
+        first = await self.install.install_id()
+
+        self.assertTrue(first)
+        self.assertEqual(first, await self.install.install_id())
+
+    async def test_two_replicas_agree_on_one_id(self):
+        """The loser of the race must adopt the winner's id, not keep its own —
+        otherwise one installation counts as two."""
+        other = InstallIdentity(self.redis)
+
+        self.assertEqual(await self.install.install_id(), await other.install_id())
+
+    async def test_is_not_derived_from_anything(self):
+        """R1: the id must not be a fingerprint of the deployment. Two
+        installations sharing every setting still differ, which is only
+        possible if nothing but randomness went into it."""
+        elsewhere = InstallIdentity(fakeredis.aioredis.FakeRedis(decode_responses=True))
+
+        self.assertNotEqual(await self.install.install_id(), await elsewhere.install_id())
+
+    async def test_a_failing_redis_is_not_swallowed(self):
+        """No Redis, no document: the counters live there too, and R5 forbids
+        the sender a way around that."""
+        broken = InstallIdentity(AsyncMock(hget=AsyncMock(side_effect=RedisError("down"))))
+
+        with self.assertRaises(RedisError):
+            await broken.install_id()
+
+
+class TestAdminLanguage(InstallIdentityTestCase):
+    async def test_unknown_until_somebody_opens_the_admin_ui(self):
+        self.assertIsNone(await self.install.language())
+
+    async def test_remembers_the_last_language_seen(self):
+        await self.install.remember_language("en")
+        await self.install.remember_language("ru")
+
+        self.assertEqual("ru", await self.install.language())
+
+    async def test_drops_the_region(self):
+        await self.install.remember_language("ru-RU")
+
+        self.assertEqual("ru", await self.install.language())
+
+    async def test_ignores_anything_that_is_not_a_language_tag(self):
+        for value in (None, "", "../../etc/passwd", "ООО Ромашка", "en_US_POSIX"):
+            with self.subTest(value=value):
+                await self.install.remember_language(value)
+
+                self.assertIsNone(await self.install.language())
+
+    async def test_recording_survives_a_failing_redis(self):
+        """An admin request must not fail because telemetry could not take a
+        note — the same rule the activity counters follow."""
+        broken = InstallIdentity(AsyncMock(hset=AsyncMock(side_effect=RedisError("down"))))
+
+        await broken.remember_language("ru")
+
+    async def test_the_language_does_not_disturb_the_id(self):
+        install_id = await self.install.install_id()
+        await self.install.remember_language("ru")
+
+        self.assertEqual(install_id, await self.redis.hget(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_ID_FIELD))

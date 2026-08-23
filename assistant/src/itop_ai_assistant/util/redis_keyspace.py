@@ -1,10 +1,10 @@
 """The whole Redis keyspace this service owns, in one place.
 
-Purely declarative — no behavior, no Redis calls. Five owners keep their
-adapters where they always lived (`settings/`, `state/`, `vector/`); this
-module exists so a reader does not have to open all of them to know which
-prefixes and TTLs are in play, and so a new key family has one obvious place
-to register instead of inventing its own convention.
+Purely declarative — no behavior, no Redis calls. Six owners keep their
+adapters where they always lived (`settings/`, `state/`, `vector/`,
+`telemetry/`); this module exists so a reader does not have to open all of them
+to know which prefixes and TTLs are in play, and so a new key family has one
+obvious place to register instead of inventing its own convention.
 
 Key format and TTL *values* are unchanged by this module — it only names
 constants that used to be declared locally in each adapter.
@@ -47,6 +47,17 @@ VECTOR_SWEEP_LOCK_RENEW_INTERVAL_SECONDS = 40
 VECTOR_RUN_PREFIX = f"{VECTOR_PREFIX}run:"
 VECTOR_RUN_INDEX_KEY = f"{VECTOR_PREFIX}runs"
 VECTOR_RUN_INDEX_MAX_ENTRIES = 50
+
+# telemetry/install.py — what we remember about this installation between
+# restarts: the anonymous id it generated for itself and the last admin-UI
+# language it was seen in (REQ-009 R1, R10). One hash, two fields, and no TTL
+# on purpose — expiring the id would make one installation look like a new one
+# every time it lapsed, which is the single number the whole requirement is
+# built to answer. A Redis reset does exactly that, and `docs/telemetry.md`
+# says so rather than the code working around it.
+TELEMETRY_INSTALL_KEY = "telemetry:install"
+TELEMETRY_INSTALL_ID_FIELD = "id"
+TELEMETRY_INSTALL_LANGUAGE_FIELD = "language"
 
 # state/counters.py — one hash per UTC day, a field per counter (REQ-009 R3)
 TELEMETRY_COUNTERS_PREFIX = "telemetry:counters:"

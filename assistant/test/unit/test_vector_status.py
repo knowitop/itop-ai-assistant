@@ -21,6 +21,8 @@ from itop_ai_assistant.settings.prompt_store import FilePromptStore, RedisPrompt
 from itop_ai_assistant.state.counters import DailyCounters
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
+from itop_ai_assistant.telemetry.builder import DocumentBuilder
+from itop_ai_assistant.telemetry.install import InstallIdentity
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.assembly import VectorSubsystem
 from itop_ai_assistant.vector.ports.store import ChunkMetadata, ChunkRecord
@@ -100,6 +102,7 @@ def _make_deps(redis, store_url: str | None = None, **settings_overrides) -> App
         return build_vector_sources(itop, cfg)
 
     counters = DailyCounters(redis)
+    install = InstallIdentity(redis)
     vector = VectorSubsystem(
         config_store=config_store,
         itop=itop,
@@ -122,6 +125,10 @@ def _make_deps(redis, store_url: str | None = None, **settings_overrides) -> App
         ),
         journal=RunJournal(redis),
         counters=counters,
+        install=install,
+        telemetry=DocumentBuilder(
+            settings, config_store, MagicMock(modules=[]), counters, install, vector.vector_search
+        ),
         tracer=NullRunTracer(),
         vector=vector,
     )

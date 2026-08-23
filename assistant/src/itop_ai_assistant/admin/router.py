@@ -12,7 +12,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ValidationError
 
 from itop_ai_assistant.admin.setup import router as setup_router
-from itop_ai_assistant.core.api_deps import get_config_store, get_journal, get_prompt_store, verify_admin_token
+from itop_ai_assistant.core.api_deps import (
+    get_config_store,
+    get_journal,
+    get_prompt_store,
+    remember_admin_language,
+    verify_admin_token,
+)
 from itop_ai_assistant.pipelines.registry import ModuleInfo
 from itop_ai_assistant.request.router import router as request_router
 from itop_ai_assistant.settings.config_store import ConfigStore
@@ -24,7 +30,7 @@ from itop_ai_assistant.vector import router as vector_router
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", dependencies=[Depends(verify_admin_token)])
+router = APIRouter(prefix="/api", dependencies=[Depends(verify_admin_token), Depends(remember_admin_language)])
 router.include_router(setup_router)
 router.include_router(vector_router)
 router.include_router(request_router)

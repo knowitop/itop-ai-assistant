@@ -251,6 +251,40 @@ class PlatformConfig(BaseModel):
     )
 
 
+class TelemetryConfig(BaseModel):
+    """Whether the anonymous daily document leaves this installation — section "telemetry".
+
+    One field, and nothing else can be configured here: the receiver's address,
+    the application id and the ingest key are our own constants and travel in
+    the image. The ingest key is not a secret by nature — analytics vendors
+    ship it inside client applications — so it needs neither a field here nor
+    masking at the setup API boundary (REQ-009 R5). The side benefit is that a
+    section with nothing to configure cannot be configured wrongly: there is
+    no field to point at somebody else's receiver.
+
+    Runtime-editable rather than env-only, unlike tracing (ADR-029, where the
+    switch belongs to the deployment): sending is a periodic task, not a
+    global instrumentor installed once per process, and this is a switch that
+    limits *us* — such a thing must not be less reachable than what it limits.
+    `TELEMETRY_ENABLED` stays as the deployment-time default and neither
+    blocks the button nor outranks it (`.claude/rules/config.md`).
+    """
+
+    # Off until the preview, the switch and `docs/telemetry.md` exist: an
+    # installation that sends data out and cannot show which is what gets a
+    # product blacklisted whole. R5 wants this default on, and it turns on in
+    # the same change that makes the sending visible — not before.
+    enabled: bool = Field(
+        default=False,
+        title="Send anonymous usage telemetry",
+        description=(
+            "One aggregate document a day: counts of what this installation did, which modules are on, "
+            "and the versions it runs. Never ticket content, names, addresses or keys. Applies without "
+            "a restart."
+        ),
+    )
+
+
 def missing_setup(itop: ItopConfig, llm: LlmConfig) -> list[str]:
     """Setup steps still required before the assistant may process tickets.
 
@@ -296,6 +330,10 @@ class Settings(BaseSettings):
     prompts_dir: Path | None = None
     # Default for section "platform" — the installation-wide dry run (REQ-006)
     dry_run: bool = False
+    # Default for section "telemetry" (REQ-009 R5). A deployment-time value —
+    # an unattended install, an image built for one customer — never a lock:
+    # the runtime override wins, as it does for every other section.
+    telemetry_enabled: bool = False
     # Where the built admin SPA lives. The image sets it explicitly; unset =
     # probe the source checkout (see main._find_ui_dist)
     ui_dist_dir: Path | None = None
@@ -434,6 +472,10 @@ class Settings(BaseSettings):
     @property
     def platform(self) -> PlatformConfig:
         return PlatformConfig(dry_run=self.dry_run)
+
+    @property
+    def telemetry(self) -> TelemetryConfig:
+        return TelemetryConfig(enabled=self.telemetry_enabled)
 
     @classmethod
     def settings_customise_sources(

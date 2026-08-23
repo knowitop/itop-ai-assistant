@@ -21,6 +21,8 @@ from itop_ai_assistant.settings.prompt_store import FilePromptStore, PromptStore
 from itop_ai_assistant.state.counters import DailyCounters
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
+from itop_ai_assistant.telemetry.builder import DocumentBuilder
+from itop_ai_assistant.telemetry.install import InstallIdentity
 from itop_ai_assistant.util.redis_keyspace import days_to_seconds
 from itop_ai_assistant.vector import SimilarSearch, VectorSubsystem
 from itop_ai_assistant.vector import build as build_vector  # aliased: this module has its own `build_deps`
@@ -75,6 +77,15 @@ class AppDeps:
     # at once — the run frame, the iTop write layer, the model factory — and
     # read by nothing in this process yet: sending is TASK-064.
     counters: DailyCounters
+    # What this installation remembers about itself between restarts: the id
+    # it generated for itself, and the admin-UI language last seen. A field of
+    # its own rather than something reached through the builder, because the
+    # admin router writes to it on every request carrying `?lang=`
+    # (`core/api_deps.py`) — a different question from assembling a document.
+    install: InstallIdentity
+    # The day's document, assembled on demand (REQ-009). Read by nothing in
+    # this process yet: sending is a later task.
+    telemetry: DocumentBuilder
     # The frame's second recorder, next to the journal it mirrors
     # (`pipelines/runner.py`). Deliberately absent from `RunDeps`: a module
     # neither reaches tracing nor knows it exists — the instrumentation is
@@ -155,6 +166,8 @@ def build_deps(settings: Settings, registry: TriggerRegistry, *, tracer: RunTrac
     write_policy = WritePolicy(config_store)
     counters = DailyCounters(redis)
     itop = ItopRepositories(itop_connection, config_store, write_policy, counters)
+    install = InstallIdentity(redis)
+    vector = build_vector(settings, redis, config_store, itop, counters)
     prompts_dirs = {m.name: m.prompts_dir for m in registry.modules if m.prompts_dir is not None}
 
     return AppDeps(
@@ -167,6 +180,8 @@ def build_deps(settings: Settings, registry: TriggerRegistry, *, tracer: RunTrac
         prompt_store=RedisPromptStore(FilePromptStore(prompts_dirs, settings.prompts_dir), redis),
         journal=RunJournal(redis, ttl_seconds=days_to_seconds(settings.run_ttl_days)),
         counters=counters,
+        install=install,
+        telemetry=DocumentBuilder(settings, config_store, registry, counters, install, vector.vector_search),
         tracer=tracer or NullRunTracer(),
-        vector=build_vector(settings, redis, config_store, itop, counters),
+        vector=vector,
     )

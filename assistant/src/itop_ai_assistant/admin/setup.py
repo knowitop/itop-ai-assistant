@@ -25,6 +25,7 @@ from itop_ai_assistant.config import (
     LlmConfig,
     PlatformConfig,
     SecurityConfig,
+    TelemetryConfig,
     TicketMappingConfig,
     missing_setup,
 )
@@ -47,6 +48,8 @@ SETUP_SECTIONS: dict[str, type[BaseModel]] = {
     "security": SecurityConfig,
     # Installation-wide switches; the dry run lives here (REQ-006)
     "platform": PlatformConfig,
+    # Anonymous usage telemetry — one switch, no secrets (REQ-009 R5)
+    "telemetry": TelemetryConfig,
     "ticket_mapping": TicketMappingConfig,
     "faq_mapping": FaqMappingConfig,
     # Vector store (optional infrastructure — not part of missing_setup)
