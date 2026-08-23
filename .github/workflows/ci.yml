@@ -47,7 +47,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.cache/pre-commit
-          key: pre-commit-${{ runner.os }}-${{ hashFiles('assistant/.pre-commit-config.yaml') }}
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
 
       # The real type gate is the pre-commit hook: mirrors-mypy runs mypy in its
       # own venv (without langchain & co), which catches things that the more
