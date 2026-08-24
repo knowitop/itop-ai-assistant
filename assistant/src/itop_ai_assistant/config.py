@@ -334,6 +334,12 @@ class Settings(BaseSettings):
     # an unattended install, an image built for one customer — never a lock:
     # the runtime override wins, as it does for every other section.
     telemetry_enabled: bool = False
+    # Marks every signal this installation sends as a test one, so the receiver
+    # keeps it out of production queries. Ours, not the administrator's: it
+    # exists for the stand we verify releases on (ADR-031 asks for that check
+    # before every release touching telemetry), and a stand that cannot say
+    # "this is a test" inflates the installation count by one forever.
+    telemetry_test_mode: bool = False
     # Where the built admin SPA lives. The image sets it explicitly; unset =
     # probe the source checkout (see main._find_ui_dist)
     ui_dist_dir: Path | None = None

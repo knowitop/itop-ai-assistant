@@ -14,7 +14,7 @@ import logging
 from dataclasses import asdict
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from langchain_core.tools import tool
 from pydantic import BaseModel, ValidationError
 
@@ -30,11 +30,13 @@ from itop_ai_assistant.config import (
     missing_setup,
 )
 from itop_ai_assistant.core.api_deps import get_config_store
-from itop_ai_assistant.core.deps import create_llm
+from itop_ai_assistant.core.deps import AppDeps, create_llm
 from itop_ai_assistant.core.llm_providers import PROVIDERS, get_provider
 from itop_ai_assistant.itop.connection import create_itop_client
 from itop_ai_assistant.itop.provisioning import provision_itop
+from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.settings.config_store import ConfigStore
+from itop_ai_assistant.telemetry.sender import SEND_TASK
 from itop_ai_assistant.util.text import strip_thinking
 from itop_ai_assistant.vector import VectorConfig, measure_embedding_dimension
 
@@ -56,6 +58,11 @@ SETUP_SECTIONS: dict[str, type[BaseModel]] = {
     "embeddings": EmbeddingsConfig,
     "vector": VectorConfig,
 }
+
+#: The sections `missing_setup` reads. Editing one of them can be the moment
+#: the wizard finishes, which is the moment telemetry is first allowed to send
+#: (REQ-009 R6, `telemetry/sender.py`).
+_SETUP_GATE_SECTIONS = frozenset({"itop", "llm"})
 
 _TEST_TIMEOUT = 30.0  # seconds; keeps connection tests from hanging the wizard
 _PROVISION_TIMEOUT = 60.0  # seconds; provisioning makes ~10 sequential iTop requests
@@ -135,17 +142,49 @@ async def get_section(section: str, config_store: Annotated[ConfigStore, Depends
     return _masked(cfg)
 
 
+async def _setup_missing(config_store: ConfigStore) -> list[str]:
+    itop_cfg = await config_store.get("itop", ItopConfig)
+    llm_cfg = await config_store.get("llm", LlmConfig)
+    return missing_setup(itop_cfg, llm_cfg)
+
+
+async def _note_wizard_finished(request: Request) -> None:
+    """Tell telemetry that the wizard has just been completed.
+
+    The *event*, not the state — and the difference is the whole point
+    (REQ-009 R6). "Setup is complete" is true one second after an upgraded
+    installation restarts, so a first send keyed on the state would leave
+    before anyone could have found the switch; keyed on the transition, it
+    happens on the installation that has just walked through the wizard, and
+    an upgrade waits for the ordinary daily cycle instead.
+
+    Waking the loop only spares the first document the wait for the next tick;
+    the tick decides everything, including whether telemetry is on at all.
+    """
+    deps: AppDeps = request.app.state.deps
+    await deps.install.note_setup_complete()
+    tasks: PeriodicTasks = request.app.state.tasks
+    tasks.wake(SEND_TASK)
+
+
 @router.patch("/{section}")
 async def update_section(
-    section: str, body: dict[str, Any], config_store: Annotated[ConfigStore, Depends(get_config_store)]
+    section: str,
+    body: dict[str, Any],
+    request: Request,
+    config_store: Annotated[ConfigStore, Depends(get_config_store)],
 ) -> dict:
     model = _model_or_404(section)
+    gates_setup = section in _SETUP_GATE_SECTIONS
+    was_incomplete = bool(await _setup_missing(config_store)) if gates_setup else False
     values = await _merged_with_current(config_store, section, model, body)
     try:
         cfg = await config_store.set(section, values, model)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     logger.info(f"Setup section {section!r} updated via admin API")
+    if was_incomplete and not await _setup_missing(config_store):
+        await _note_wizard_finished(request)
     return _masked(cfg)
 
 

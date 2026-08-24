@@ -75,16 +75,18 @@ class AppDeps:
     # The day's activity, and the only aggregate that outlives the journal's
     # TTL and its capped index (`state/counters.py`). Filled from three levels
     # at once — the run frame, the iTop write layer, the model factory — and
-    # read by nothing in this process yet: sending is TASK-064.
+    # read once a day by the telemetry document.
     counters: DailyCounters
     # What this installation remembers about itself between restarts: the id
-    # it generated for itself, and the admin-UI language last seen. A field of
-    # its own rather than something reached through the builder, because the
-    # admin router writes to it on every request carrying `?lang=`
-    # (`core/api_deps.py`) — a different question from assembling a document.
+    # it generated for itself, the admin-UI language last seen, and the dates
+    # the daily send checks before it may send. A field of its own rather than
+    # something reached through the builder, because the admin router writes
+    # to it on every request carrying `?lang=` and the setup API when the
+    # wizard finishes — different questions from assembling a document.
     install: InstallIdentity
-    # The day's document, assembled on demand (REQ-009). Read by nothing in
-    # this process yet: sending is a later task.
+    # The day's document, assembled on demand (REQ-009) — by the daily send
+    # (`telemetry/sender.py`) and by the preview that shows an administrator
+    # what will leave.
     telemetry: DocumentBuilder
     # The frame's second recorder, next to the journal it mirrors
     # (`pipelines/runner.py`). Deliberately absent from `RunDeps`: a module

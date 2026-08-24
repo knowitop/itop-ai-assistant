@@ -58,6 +58,20 @@ VECTOR_RUN_INDEX_MAX_ENTRIES = 50
 TELEMETRY_INSTALL_KEY = "telemetry:install"
 TELEMETRY_INSTALL_ID_FIELD = "id"
 TELEMETRY_INSTALL_LANGUAGE_FIELD = "language"
+# When this installation was first seen, and the day its setup wizard was
+# finished — the two dates the sender compares against before it may send
+# anything at all (REQ-009 R6).
+TELEMETRY_INSTALL_FIRST_SEEN_FIELD = "first_seen"
+TELEMETRY_INSTALL_SETUP_DAY_FIELD = "setup_day"
+
+# telemetry/install.py — one key per UTC day, claimed before a send is
+# attempted. It means "this day is taken", not "this day was delivered": a
+# replica that claims and then fails loses the day, which R8 allows, while
+# double counting is what would corrupt the one number the requirement asks
+# for. Claim-and-forget rather than a renewed lock like the vector sweep's —
+# a send takes seconds, and the TTL is what releases it.
+TELEMETRY_SENT_DAY_PREFIX = "telemetry:sent:"
+TELEMETRY_SENT_DAY_TTL_DAYS = 3
 
 # state/counters.py — one hash per UTC day, a field per counter (REQ-009 R3)
 TELEMETRY_COUNTERS_PREFIX = "telemetry:counters:"

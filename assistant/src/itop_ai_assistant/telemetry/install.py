@@ -1,4 +1,13 @@
-"""What we remember about this installation between restarts: two fields.
+"""What we remember about this installation between restarts, and nothing else.
+
+Four facts and one claim. The facts are the anonymous id, the admin-UI language
+last seen, when the installation was first seen and the day its setup wizard
+was finished; the claim is "these UTC days are already taken" — one key per
+day, held by whichever replica got there first.
+
+The claim lives here rather than in the sender because it is the same
+keyspace and the same Redis handle, and `util/redis_keyspace.py` is easier to
+read with one owner per prefix family than with two adapters over one hash.
 
 The anonymous id (REQ-009 R1) is generated here, once, from nothing — not from
 the iTop URL, not from an organization name, not from a key. Deriving it from
@@ -26,6 +35,7 @@ whoever added it.
 """
 
 import logging
+from datetime import UTC, date, datetime
 from uuid import uuid4
 
 from redis.asyncio import Redis
@@ -33,16 +43,22 @@ from redis.exceptions import RedisError
 
 from itop_ai_assistant.settings.module_locales import normalize_language
 from itop_ai_assistant.util.redis_keyspace import (
+    TELEMETRY_INSTALL_FIRST_SEEN_FIELD,
     TELEMETRY_INSTALL_ID_FIELD,
     TELEMETRY_INSTALL_KEY,
     TELEMETRY_INSTALL_LANGUAGE_FIELD,
+    TELEMETRY_INSTALL_SETUP_DAY_FIELD,
+    TELEMETRY_SENT_DAY_PREFIX,
+    TELEMETRY_SENT_DAY_TTL_DAYS,
+    days_to_seconds,
 )
 
 logger = logging.getLogger(__name__)
 
 
 class InstallIdentity:
-    """The installation's own id, and the language it was last seen in."""
+    """The installation's own id, the language it was last seen in, and the
+    two dates the sender is not allowed to send before."""
 
     def __init__(self, redis: Redis):
         self._redis = redis
@@ -67,6 +83,48 @@ class InstallIdentity:
         # that state at once.
         winner = await self._redis.hget(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_ID_FIELD)
         return str(winner) if winner else candidate
+
+    async def first_seen(self) -> datetime:
+        """When this installation was first seen, recorded on first ask.
+
+        Asked by the sender rather than written where the id is generated, so
+        that an installation upgraded from a build that did not have the field
+        gets an honest value on the first tick instead of no answer at all.
+        Its own field and not the id's creation time: the id may predate this
+        code, the field never does.
+        """
+        now = datetime.now(UTC)
+        if await self._redis.hsetnx(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_FIRST_SEEN_FIELD, now.isoformat()):
+            return now
+        stored = await self._redis.hget(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_FIRST_SEEN_FIELD)
+        return datetime.fromisoformat(str(stored)) if stored else now
+
+    async def note_setup_complete(self) -> None:
+        """Record the day the setup wizard was finished. First one wins.
+
+        `HSETNX`, so an installation reconfigured months later does not look
+        like one that has just been set up — the first send happens once in an
+        installation's life (REQ-009 R6).
+        """
+        today = datetime.now(UTC).date().isoformat()
+        await self._redis.hsetnx(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_SETUP_DAY_FIELD, today)
+
+    async def setup_day(self) -> date | None:
+        """The day the wizard was finished, or `None` — including for every
+        installation that finished it before this field existed."""
+        stored = await self._redis.hget(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_SETUP_DAY_FIELD)
+        return date.fromisoformat(str(stored)) if stored else None
+
+    async def claim_day(self, day: date) -> bool:
+        """Take `day` for this replica, once per installation.
+
+        False means somebody else already has it — the other replica of this
+        installation, or this one an hour ago. The claim is taken *before* the
+        send and is not released if the send fails: a lost day is allowed
+        (R8), a day counted twice is not.
+        """
+        key = f"{TELEMETRY_SENT_DAY_PREFIX}{day.isoformat()}"
+        return bool(await self._redis.set(key, "1", nx=True, ex=days_to_seconds(TELEMETRY_SENT_DAY_TTL_DAYS)))
 
     async def language(self) -> str | None:
         """The last admin-UI language seen, or `None` if nobody has been in."""
