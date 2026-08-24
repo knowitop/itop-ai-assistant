@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "iTop AI 助手",
+    "title": "iTop AI Assistant",
     "token_gate_desc": "Admin API 请求被拒绝，请输入管理员令牌以继续。",
     "field_admin_token": "管理员令牌",
     "btn_save_token": "保存令牌"
@@ -11,7 +11,8 @@
     "modules": "模块",
     "prompts": "提示词",
     "runs": "运行记录",
-    "vector": "向量索引"
+    "vector": "向量索引",
+    "system": "系统"
   },
   "layout": {
     "redis_ok": "Redis 正常",
@@ -88,6 +89,10 @@
     "incomplete": "设置未完成，缺少：",
     "btn_run_wizard": "启动设置向导",
     "btn_edit_direct": "直接编辑连接",
+    "welcome_title": "欢迎！",
+    "welcome_intro": "这是 iTop AI Assistant 的设置向导。接下来的步骤将把助手连接到您的 iTop 和 LLM，并让系统准备就绪。",
+    "welcome_licence": "开源，AGPL-3.0",
+    "welcome_start": "开始设置",
     "step_security_label": "安全",
     "step_security_desc": "访问令牌",
     "step_itop_label": "iTop 连接",
@@ -270,5 +275,18 @@
     "field_reconcile_days": "核对间隔（天）",
     "field_max_chunk_tokens": "每个分块的最大 token 数",
     "field_log_entries": "每个分块的日志条数"
+  },
+  "system": {
+    "title": "系统",
+    "telemetry_title": "匿名使用遥测",
+    "telemetry_desc": "系统每天发送一份汇总文档，其中包含使用情况信息：计数器、已启用的模块以及运行的版本。有关工单内容、姓名、地址或密钥的信息绝不会被传输。",
+    "telemetry_appeal": "这是我们了解助手实际使用活跃程度、哪些功能值得进一步开发、以及哪些问题需要优先关注的唯一途径。由于这是一个开源项目，没有销售团队可以就此咨询，因此这仍是唯一可用的渠道。除非您有充分理由禁用此功能，否则请保持其启用状态。",
+    "install_id": "安装 ID",
+    "copied": "已复制",
+    "not_a_release_build": "此构建版本并非由我们发布，因此不会传输任何数据。遥测数据仅从正式发布的构建版本中发送。",
+    "show_document": "显示今天的文档",
+    "hide_document": "隐藏文档",
+    "what_is_collected": "收集的内容",
+    "repository": "GitHub"
   }
 }

@@ -206,7 +206,7 @@ function ItopForm() {
   if (!loaded) return error ? <Alert color="red">{error}</Alert> : <Loader />;
 
   return (
-    <Stack maw={560}>
+    <Stack maw={720}>
       <StatusAlert error={error} success={success} />
       <TextInput
         label={t('common.field_rest_api_url')}
@@ -326,7 +326,7 @@ function ItopWebhooksForm() {
   };
 
   return (
-    <Stack maw={560}>
+    <Stack maw={720}>
       <Title order={4}>{t('connections.webhooks_title')}</Title>
       {error && (
         <Alert color="red" style={{ whiteSpace: 'pre-wrap' }}>
@@ -527,7 +527,7 @@ function LlmForm() {
   if (!loaded) return error ? <Alert color="red">{error}</Alert> : <Loader />;
 
   return (
-    <Stack maw={560}>
+    <Stack maw={720}>
       <StatusAlert error={error} success={success} />
       <Select
         label={t('common.field_provider')}
@@ -732,7 +732,7 @@ function EmbeddingsForm() {
   if (!loaded) return error ? <Alert color="red">{error}</Alert> : <Loader />;
 
   return (
-    <Stack maw={560}>
+    <Stack maw={720}>
       <StatusAlert error={error} success={success} />
       <TextInput
         label={t('common.field_base_url')}
@@ -864,7 +864,7 @@ function SecurityForm() {
   if (!loaded) return error ? <Alert color="red">{error}</Alert> : <Loader />;
 
   return (
-    <Stack maw={560}>
+    <Stack maw={720}>
       <StatusAlert error={error} success={success} />
       <Text c="dimmed" size="sm">
         {t('connections.security_desc')}

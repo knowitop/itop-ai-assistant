@@ -3,6 +3,13 @@
 
 const TOKEN_KEY = 'admin_token';
 
+// The project's own repository. Lives here rather than in one screen because
+// two of them link into it — the layout's build stamp and the telemetry
+// section's "what is collected", which points at a file in `docs/`.
+export const REPO_URL = 'https://github.com/knowitop/itop-ai-assistant';
+
+export const TELEMETRY_DOC_URL = `${REPO_URL}/blob/main/docs/telemetry.md`;
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -142,6 +149,11 @@ export interface SetupStatus {
   // Installation-wide dry run: runs happen, nothing is written to iTop.
   // Top-level rather than dug out of `sections` — every screen shows it.
   dry_run: boolean;
+  // This installation's own anonymous id, generated once at first start. Shown
+  // on System; it is what a "delete my data" request names. Null while Redis
+  // is unreachable — the rest of this answer still stands, and the
+  // missing-setup list is what the screen needs.
+  install_id: string | null;
   sections: Record<string, unknown>;
 }
 

@@ -14,13 +14,16 @@ from itop_ai_assistant.pipelines.models import RunOutcome
 from itop_ai_assistant.pipelines.registry import ModuleInfo, ScheduleRoute, TriggerRegistry
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.schedule.runner import register_schedules, run_schedule
+from itop_ai_assistant.state.counters import DailyCounters
 from itop_ai_assistant.state.journal import RunJournal
 
 
 class ScheduleRunnerTestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.deps = MagicMock()
-        self.deps.journal = RunJournal(fakeredis.aioredis.FakeRedis(decode_responses=True))
+        redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+        self.deps.journal = RunJournal(redis)
+        self.deps.counters = DailyCounters(redis)
         self.deps.write_policy.dry_run = AsyncMock(return_value=False)
         self.calls: list = []
 

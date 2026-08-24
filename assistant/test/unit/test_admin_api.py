@@ -1,10 +1,12 @@
 import unittest
+from datetime import UTC, datetime
 from importlib.metadata import version as metadata_version
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from redis.exceptions import RedisError
 
 from itop_ai_assistant.agents.intake.prompts import PROMPTS_DIR as INTAKE_PROMPTS_DIR
 from itop_ai_assistant.agents.selfcheck.prompts import PROMPTS_DIR as SELFCHECK_PROMPTS_DIR
@@ -17,8 +19,12 @@ from itop_ai_assistant.main import app
 from itop_ai_assistant.pipelines.registry import ModuleInfo, ScheduleRoute, TriggerRegistry
 from itop_ai_assistant.settings.config_store import RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import FilePromptStore, RedisPromptStore
+from itop_ai_assistant.state.counters import DailyCounters
+from itop_ai_assistant.state.install import InstallIdentity
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
+from itop_ai_assistant.telemetry.builder import DocumentBuilder
+from itop_ai_assistant.telemetry.document import TelemetryDocument
 from itop_ai_assistant.util.build_info import get_build_info
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.assembly import VectorSubsystem
@@ -36,11 +42,13 @@ def _make_deps(redis, settings=None) -> AppDeps:
     def vector_sources(cfg):
         return build_vector_sources(itop, cfg)
 
+    counters = DailyCounters(redis)
+    install = InstallIdentity(redis)
     vector = VectorSubsystem(
         config_store=config_store,
         itop=itop,
         vector_store=vector_store,
-        vector_search=SimilarSearch(vector_store, config_store, build_sources=vector_sources),
+        vector_search=SimilarSearch(vector_store, config_store, vector_sources, counters),
         vector_sync=VectorSyncState(redis),
         vector_journal=IndexJournal(redis),
         vector_sources=vector_sources,
@@ -57,6 +65,11 @@ def _make_deps(redis, settings=None) -> AppDeps:
             FilePromptStore({"intake": INTAKE_PROMPTS_DIR, "selfcheck": SELFCHECK_PROMPTS_DIR}), redis
         ),
         journal=RunJournal(redis),
+        counters=counters,
+        install=install,
+        telemetry=DocumentBuilder(
+            settings, config_store, MagicMock(modules=[]), counters, install, vector.vector_search
+        ),
         tracer=NullRunTracer(),
         vector=vector,
     )
@@ -155,6 +168,21 @@ class TestModuleTranslations(AdminApiTestCase):
         props = self.client.get("/api/config/intake/schema?lang=fi").json()["properties"]
 
         self.assertEqual(props["max_questions"]["title"], "Questions to the requester")
+
+    def test_the_language_of_the_request_is_remembered(self):
+        """R10: no mechanism for "what language is this installation in" — the
+        SPA already says so on requests it makes anyway. Recorded by a
+        dependency on the router, so a third endpoint carrying `?lang=`
+        cannot forget to."""
+        self.client.get("/api/modules?lang=ru")
+
+        self.assertEqual("ru", self.client.portal.call(InstallIdentity(self.redis).language))
+
+    def test_a_request_without_a_language_changes_nothing(self):
+        self.client.get("/api/modules?lang=ru")
+        self.client.get("/api/modules")
+
+        self.assertEqual("ru", self.client.portal.call(InstallIdentity(self.redis).language))
 
     def test_the_module_list_is_translated_too(self):
         (intake, *_) = self.client.get("/api/modules?lang=ru").json()
@@ -387,3 +415,58 @@ class TestAdminAuth(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTelemetryVisibility(AdminApiTestCase):
+    """What an administrator can see about the daily document (REQ-009 R7)."""
+
+    def test_preview_is_the_document_itself_not_a_description_of_it(self):
+        """It has to validate as `TelemetryDocument`, which forbids extras:
+        the preview is only honest if it is the object the sender sends."""
+        response = self.client.get("/api/telemetry/preview")
+
+        self.assertEqual(response.status_code, 200)
+        document = TelemetryDocument.model_validate(response.json())
+        self.assertEqual(datetime.now(UTC).date(), document.day)
+
+    def test_preview_answers_with_telemetry_switched_off(self):
+        """ "Show me what would go out if I turned this on" is the question
+        asked before turning it on — and answering it opens nothing."""
+        self.client.patch("/api/setup/telemetry", json={"enabled": False})
+
+        with patch("httpx.AsyncClient") as client:
+            response = self.client.get("/api/telemetry/preview")
+
+        self.assertEqual(response.status_code, 200)
+        client.assert_not_called()
+
+    def test_the_id_in_the_preview_is_the_installation_id(self):
+        """R1 promises one handle for "delete my data" and for connecting an
+        issue to what we see. It is only a promise if the two agree."""
+        status = self.client.get("/api/setup/status").json()
+        document = self.client.get("/api/telemetry/preview").json()
+
+        self.assertTrue(status["install_id"])
+        self.assertEqual(status["install_id"], document["install_id"])
+
+    def test_state_says_nothing_is_sent_from_a_build_we_did_not_publish(self):
+        """The line the System screen shows: switched on, and still silent."""
+        with patch("itop_ai_assistant.admin.router.is_release_build", return_value=False):
+            body = self.client.get("/api/telemetry").json()
+
+        self.assertEqual({"enabled": True, "sending": False}, body)
+
+    def test_state_says_it_sends_from_a_published_build(self):
+        with patch("itop_ai_assistant.admin.router.is_release_build", return_value=True):
+            body = self.client.get("/api/telemetry").json()
+
+        self.assertEqual({"enabled": True, "sending": True}, body)
+
+    def test_preview_without_redis_is_503_not_a_stack_trace(self):
+        """The builder does not swallow `RedisError` and must not (R5). But
+        the answer to "what leaves today" is that the installation cannot
+        describe itself — which is also what the sender does at this moment."""
+        with patch.object(InstallIdentity, "install_id", side_effect=RedisError("down")):
+            response = self.client.get("/api/telemetry/preview")
+
+        self.assertEqual(response.status_code, 503)

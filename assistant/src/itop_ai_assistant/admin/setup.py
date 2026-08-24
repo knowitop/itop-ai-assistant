@@ -14,9 +14,10 @@ import logging
 from dataclasses import asdict
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from langchain_core.tools import tool
 from pydantic import BaseModel, ValidationError
+from redis.exceptions import RedisError
 
 from itop_ai_assistant.config import (
     EmbeddingsConfig,
@@ -25,15 +26,19 @@ from itop_ai_assistant.config import (
     LlmConfig,
     PlatformConfig,
     SecurityConfig,
+    TelemetryConfig,
     TicketMappingConfig,
     missing_setup,
 )
-from itop_ai_assistant.core.api_deps import get_config_store
-from itop_ai_assistant.core.deps import create_llm
+from itop_ai_assistant.core.api_deps import get_config_store, get_install
+from itop_ai_assistant.core.deps import AppDeps, create_llm
 from itop_ai_assistant.core.llm_providers import PROVIDERS, get_provider
 from itop_ai_assistant.itop.connection import create_itop_client
 from itop_ai_assistant.itop.provisioning import provision_itop
+from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.settings.config_store import ConfigStore
+from itop_ai_assistant.state.install import InstallIdentity
+from itop_ai_assistant.telemetry.sender import SEND_TASK
 from itop_ai_assistant.util.text import strip_thinking
 from itop_ai_assistant.vector import VectorConfig, measure_embedding_dimension
 
@@ -47,12 +52,19 @@ SETUP_SECTIONS: dict[str, type[BaseModel]] = {
     "security": SecurityConfig,
     # Installation-wide switches; the dry run lives here (REQ-006)
     "platform": PlatformConfig,
+    # Anonymous usage telemetry — one switch, no secrets (REQ-009 R5)
+    "telemetry": TelemetryConfig,
     "ticket_mapping": TicketMappingConfig,
     "faq_mapping": FaqMappingConfig,
     # Vector store (optional infrastructure — not part of missing_setup)
     "embeddings": EmbeddingsConfig,
     "vector": VectorConfig,
 }
+
+#: The sections `missing_setup` reads. Editing one of them can be the moment
+#: the wizard finishes, which is the moment telemetry is first allowed to send
+#: (REQ-009 R6, `telemetry/sender.py`).
+_SETUP_GATE_SECTIONS = frozenset({"itop", "llm"})
 
 _TEST_TIMEOUT = 30.0  # seconds; keeps connection tests from hanging the wizard
 _PROVISION_TIMEOUT = 60.0  # seconds; provisioning makes ~10 sequential iTop requests
@@ -88,8 +100,29 @@ async def _merged_with_current(
     return {**current.model_dump(), **body}
 
 
+async def _install_id_or_none(install: InstallIdentity) -> str | None:
+    """This installation's id, or `None` while Redis is unreachable.
+
+    The only read in this handler that would otherwise raise: `ConfigStore`
+    degrades to env defaults on `RedisError`, and `InstallIdentity` must not
+    (the telemetry document may not be built from a half-known installation).
+    So the guard belongs here — this endpoint is what the Setup screen renders
+    and what the layout refetches on every navigation, and a missing-setup list
+    is exactly what an administrator came for when Redis is the thing that is
+    down.
+    """
+    try:
+        return await install.install_id()
+    except RedisError as e:
+        logger.warning(f"Install state unavailable, setup status carries no installation id: {e}")
+        return None
+
+
 @router.get("/status")
-async def setup_status(config_store: Annotated[ConfigStore, Depends(get_config_store)]) -> dict:
+async def setup_status(
+    config_store: Annotated[ConfigStore, Depends(get_config_store)],
+    install: Annotated[InstallIdentity, Depends(get_install)],
+) -> dict:
     itop_cfg = await config_store.get("itop", ItopConfig)
     llm_cfg = await config_store.get("llm", LlmConfig)
     security_cfg = await config_store.get("security", SecurityConfig)
@@ -103,6 +136,10 @@ async def setup_status(config_store: Annotated[ConfigStore, Depends(get_config_s
         # every screen (REQ-006 R6) and this endpoint is the one it already
         # refetches on every navigation.
         "dry_run": platform_cfg.dry_run,
+        # Here for the same reason, and because it identifies the installation
+        # rather than its telemetry (REQ-009 R1): the System screen shows it,
+        # and doesn't need a request of its own for one string.
+        "install_id": await _install_id_or_none(install),
         "sections": {
             "itop": _masked(itop_cfg),
             "llm": _masked(llm_cfg),
@@ -132,17 +169,57 @@ async def get_section(section: str, config_store: Annotated[ConfigStore, Depends
     return _masked(cfg)
 
 
+async def _setup_missing(config_store: ConfigStore) -> list[str]:
+    itop_cfg = await config_store.get("itop", ItopConfig)
+    llm_cfg = await config_store.get("llm", LlmConfig)
+    return missing_setup(itop_cfg, llm_cfg)
+
+
+async def _note_wizard_finished(request: Request) -> None:
+    """Tell telemetry that the wizard has just been completed.
+
+    The *event*, not the state — and the difference is the whole point
+    (REQ-009 R6). "Setup is complete" is true one second after an upgraded
+    installation restarts, so a first send keyed on the state would leave
+    before anyone could have found the switch; keyed on the transition, it
+    happens on the installation that has just walked through the wizard, and
+    an upgrade waits for the ordinary daily cycle instead.
+
+    Waking the loop only spares the first document the wait for the next tick;
+    the tick decides everything, including whether telemetry is on at all.
+    """
+    deps: AppDeps = request.app.state.deps
+    await deps.install.note_setup_complete()
+    tasks: PeriodicTasks = request.app.state.tasks
+    tasks.wake(SEND_TASK)
+
+
 @router.patch("/{section}")
 async def update_section(
-    section: str, body: dict[str, Any], config_store: Annotated[ConfigStore, Depends(get_config_store)]
+    section: str,
+    body: dict[str, Any],
+    request: Request,
+    config_store: Annotated[ConfigStore, Depends(get_config_store)],
 ) -> dict:
     model = _model_or_404(section)
+    gates_setup = section in _SETUP_GATE_SECTIONS
+    was_incomplete = bool(await _setup_missing(config_store)) if gates_setup else False
     values = await _merged_with_current(config_store, section, model, body)
     try:
         cfg = await config_store.set(section, values, model)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
     logger.info(f"Setup section {section!r} updated via admin API")
+    if was_incomplete and not await _setup_missing(config_store):
+        try:
+            await _note_wizard_finished(request)
+        except Exception as e:
+            # The section is saved by now, so anything raised here would
+            # answer 500 for a write that succeeded — and the retry would find
+            # setup already complete, so the transition, and with it the first
+            # document, would be lost for good (REQ-009 R6). Losing it to a
+            # log line is the smaller of the two.
+            logger.warning(f"Telemetry: the finished wizard was not recorded: {e}")
     return _masked(cfg)
 
 

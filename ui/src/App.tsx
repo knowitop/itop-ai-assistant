@@ -10,6 +10,7 @@ import Modules from './Modules';
 import Prompts from './Prompts';
 import Runs from './Runs';
 import SetupWizard from './SetupWizard';
+import System from './System';
 import Vector from './Vector';
 
 // HashRouter keeps all routes under /ui/#/... so FastAPI StaticFiles can serve
@@ -41,6 +42,7 @@ export default function App() {
             <Route path="/prompts" element={<Prompts />} />
             <Route path="/runs" element={<Runs />} />
             <Route path="/vector" element={<Vector />} />
+            <Route path="/system" element={<System />} />
           </Route>
         </Routes>
       </HashRouter>

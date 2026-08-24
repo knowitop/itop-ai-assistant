@@ -1,5 +1,7 @@
+import asyncio
 import json
 import unittest
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs
 
@@ -7,6 +9,7 @@ import fakeredis.aioredis
 import httpx
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from redis.exceptions import RedisError
 
 from itop_ai_assistant.agents.intake.prompts import PROMPTS_DIR as INTAKE_PROMPTS_DIR
 from itop_ai_assistant.agents.selfcheck.prompts import PROMPTS_DIR as SELFCHECK_PROMPTS_DIR
@@ -19,8 +22,12 @@ from itop_ai_assistant.itop_client import Itop
 from itop_ai_assistant.main import app
 from itop_ai_assistant.settings.config_store import RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import FilePromptStore, RedisPromptStore
+from itop_ai_assistant.state.counters import DailyCounters
+from itop_ai_assistant.state.install import InstallIdentity
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
+from itop_ai_assistant.telemetry.builder import DocumentBuilder
+from itop_ai_assistant.util.redis_keyspace import INSTALL_KEY, INSTALL_SETUP_DAY_FIELD
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.assembly import VectorSubsystem
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
@@ -76,11 +83,13 @@ def _make_deps(redis, **settings_overrides) -> AppDeps:
     def vector_sources(cfg):
         return build_vector_sources(itop, cfg)
 
+    counters = DailyCounters(redis)
+    install = InstallIdentity(redis)
     vector = VectorSubsystem(
         config_store=config_store,
         itop=itop,
         vector_store=vector_store,
-        vector_search=SimilarSearch(vector_store, config_store, build_sources=vector_sources),
+        vector_search=SimilarSearch(vector_store, config_store, vector_sources, counters),
         vector_sync=VectorSyncState(redis),
         vector_journal=IndexJournal(redis),
         vector_sources=vector_sources,
@@ -97,6 +106,11 @@ def _make_deps(redis, **settings_overrides) -> AppDeps:
             FilePromptStore({"intake": INTAKE_PROMPTS_DIR, "selfcheck": SELFCHECK_PROMPTS_DIR}), redis
         ),
         journal=RunJournal(redis),
+        counters=counters,
+        install=install,
+        telemetry=DocumentBuilder(
+            settings, config_store, MagicMock(modules=[]), counters, install, vector.vector_search
+        ),
         tracer=NullRunTracer(),
         vector=vector,
     )
@@ -144,6 +158,18 @@ class TestSetupStatus(SetupApiTestCase):
 
         self.assertTrue(body["configured"])
         self.assertEqual(body["sections"]["llm"]["values"]["model"], "from-env")
+
+    def test_status_answers_without_redis(self):
+        """The screen an administrator opens when Redis is what is down.
+
+        `InstallIdentity` does not swallow `RedisError` and must not, so this
+        endpoint carries the guard: the missing-setup list is the answer that
+        was asked for, and the id is the part that has to go missing."""
+        with patch.object(InstallIdentity, "install_id", side_effect=RedisError("down")):
+            response = self.client.get("/api/setup/status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["install_id"])
 
 
 class TestLlmProviders(SetupApiTestCase):
@@ -267,9 +293,74 @@ class TestSetupSections(SetupApiTestCase):
         self.assertEqual(len(body["missing"]), 4)
         self.assertFalse(any("embed" in m.lower() for m in body["missing"]))
 
+    def test_telemetry_section_is_one_switch_and_no_secrets(self):
+        """The receiver's address and the ingest key are our constants and
+        travel in the image — there is nothing here to point at somebody
+        else's collector, and nothing to mask (REQ-009 R5)."""
+        response = self.client.patch("/api/setup/telemetry", json={"enabled": True})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual({"enabled": True}, response.json()["values"])
+        self.assertEqual({}, response.json()["secrets"])
+
+    def test_telemetry_is_on_now_that_the_sending_is_visible(self):
+        """The lock at the end of the chain, read from the other side.
+
+        The default was off while an installation could send data out and not
+        show which — what gets a product blacklisted whole. It turns on with
+        the change that makes the sending visible and not before: the System
+        screen carries the switch and the id, `/api/telemetry/preview` shows
+        the exact document, the wizard says so on its welcome screen, and
+        `docs/telemetry.md` describes all of it (REQ-009 R5).
+        """
+        self.assertIs(True, self.client.get("/api/setup/telemetry").json()["values"]["enabled"])
+
     def test_unknown_section_404(self):
         self.assertEqual(self.client.get("/api/setup/nope").status_code, 404)
         self.assertEqual(self.client.patch("/api/setup/nope", json={}).status_code, 404)
+
+
+class TestFinishingTheWizard(SetupApiTestCase):
+    """The moment telemetry is first allowed to send anything (REQ-009 R6).
+
+    Recorded as an event and not read off the state, because "setup is
+    complete" is also true one second after an upgraded installation restarts
+    — and that installation must wait for the ordinary daily cycle.
+    """
+
+    def _setup_day(self) -> date | None:
+        return asyncio.run(self.client.app.state.deps.install.setup_day())
+
+    def test_the_last_step_of_the_wizard_arms_the_first_send(self):
+        self.client.patch("/api/setup/itop", json={"url": "http://itop/rest.php", "token": "tok"})
+        self.assertIsNone(self._setup_day())
+
+        self.client.patch("/api/setup/llm", json={"base_url": "http://llm/v1", "model": "gpt-test"})
+
+        self.assertEqual(datetime.now(UTC).date(), self._setup_day())
+
+    def test_a_note_that_could_not_be_taken_does_not_fail_the_wizard(self):
+        """The section is saved before telemetry is told anything. A 500 here
+        would report failure for a write that succeeded, and the retry would
+        find setup already complete — so the transition, and the first
+        document with it, would be gone rather than delayed."""
+        install = self.client.app.state.deps.install
+        with patch.object(install, "note_setup_complete", AsyncMock(side_effect=RedisError("down"))):
+            self.client.patch("/api/setup/itop", json={"url": "http://itop/rest.php", "token": "tok"})
+            response = self.client.patch("/api/setup/llm", json={"base_url": "http://llm/v1", "model": "gpt-test"})
+
+        self.assertEqual(200, response.status_code)
+
+    def test_an_installation_reconfigured_later_is_not_a_new_one(self):
+        """Clearing a section and filling it in again is the same transition,
+        and it must not buy a second first send a month on."""
+        armed = datetime.now(UTC).date() - timedelta(days=30)
+        asyncio.run(self.redis.hset(INSTALL_KEY, INSTALL_SETUP_DAY_FIELD, armed.isoformat()))
+
+        self.client.patch("/api/setup/itop", json={"url": "http://itop/rest.php", "token": "tok"})
+        self.client.patch("/api/setup/llm", json={"base_url": "http://llm/v1", "model": "gpt-test"})
+
+        self.assertEqual(armed, self._setup_day())
 
 
 class TestAdminTokenBootstrap(SetupApiTestCase):

@@ -28,7 +28,7 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   `content_sources/` itself. A new name a consumer needs goes into
   `vector/__init__.py`'s re-export list, not around it.
   **The subsystem assembles and owns itself** (TASK-037, rule 6.1): one
-  operation, `build(settings, redis, config_store, itop) -> VectorSubsystem`
+  operation, `build(settings, redis, config_store, itop, counters) -> VectorSubsystem`
   (`assembly.py`), replaces what `core/deps.py` used to import and construct
   by hand (`QdrantChunkStore`, `IndexJournal`, `VectorSyncState`, a
   `vector_sources` closure over `content_sources.registry.build_vector_sources`).

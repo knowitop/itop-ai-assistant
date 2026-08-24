@@ -4,12 +4,18 @@ This page covers everything needed to get the assistant running: the built-in se
 
 ## Setup wizard
 
-The wizard opens automatically at `http://localhost:8001/ui` when the assistant is not yet configured. It walks through four steps and tests each connection before moving on.
+The wizard opens automatically at `http://localhost:8001/ui` when the assistant is not yet configured. A welcome screen comes first; after it, four steps, each testing its connection before moving on.
 
 > [!IMPORTANT]
 > **Before starting the wizard**, create the AI service account in iTop manually — the wizard does not do this. See [Create a service account](#1-create-a-service-account) below.
 
 ![The setup wizard](images/setup_wizard.png)
+
+### Welcome screen
+
+What this is, the licence it is under, and this installation's own anonymous identifier — a random value it generated for itself on first start, worth noting down: it is what a support request or a "delete my data" request names.
+
+The screen also carries the switch for [anonymous usage telemetry](telemetry.md), which is on. It sits here rather than at the end of the wizard for a concrete reason: the first document is sent the moment the last step is saved, so a switch shown only afterwards would come too late to refuse anything. Nothing on this screen blocks **Start setup** or waits for an answer — turn it off if you want to, and carry on either way.
 
 ### Step 1 — Security
 

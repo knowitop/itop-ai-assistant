@@ -10,9 +10,18 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ValidationError
+from redis.exceptions import RedisError
 
 from itop_ai_assistant.admin.setup import router as setup_router
-from itop_ai_assistant.core.api_deps import get_config_store, get_journal, get_prompt_store, verify_admin_token
+from itop_ai_assistant.config import TelemetryConfig
+from itop_ai_assistant.core.api_deps import (
+    get_config_store,
+    get_document_builder,
+    get_journal,
+    get_prompt_store,
+    remember_admin_language,
+    verify_admin_token,
+)
 from itop_ai_assistant.pipelines.registry import ModuleInfo
 from itop_ai_assistant.request.router import router as request_router
 from itop_ai_assistant.settings.config_store import ConfigStore
@@ -20,11 +29,14 @@ from itop_ai_assistant.settings.module_locales import load_translation
 from itop_ai_assistant.settings.prompt_store import PromptStore, PromptStoreError
 from itop_ai_assistant.settings.prompt_validation import PromptValidationError
 from itop_ai_assistant.state.journal import ProcessingRun, RunJournal
+from itop_ai_assistant.telemetry.builder import DocumentBuilder
+from itop_ai_assistant.telemetry.document import TelemetryDocument
+from itop_ai_assistant.util.build_info import is_release_build
 from itop_ai_assistant.vector import router as vector_router
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", dependencies=[Depends(verify_admin_token)])
+router = APIRouter(prefix="/api", dependencies=[Depends(verify_admin_token), Depends(remember_admin_language)])
 router.include_router(setup_router)
 router.include_router(vector_router)
 router.include_router(request_router)
@@ -228,3 +240,65 @@ async def get_run(processing_id: str, journal: Annotated[RunJournal, Depends(get
     if run is None:
         raise HTTPException(status_code=404, detail=f"Run {processing_id} not found")
     return run
+
+
+@router.get("/telemetry")
+async def telemetry_state(
+    request: Request,
+    config_store: Annotated[ConfigStore, Depends(get_config_store)],
+) -> dict:
+    """Whether the daily document is on, and whether it would actually leave.
+
+    Two answers rather than three: the screen needs the outcome, not the terms
+    it is made of. `sending` is false with the switch on whenever this is not a
+    build we published and nothing has said otherwise
+    (`util/build_info.py::is_release_build`, `TELEMETRY_ALLOW_UNPUBLISHED_BUILD`)
+    — the case that would otherwise read as "telemetry is on but my
+    installation never shows up".
+
+    It answers for the build and the switch, not for the calendar: a fresh
+    installation still owes its first document to the end of the wizard, and an
+    upgraded one to the next daily cycle (`telemetry/sender.py`). Neither is a
+    state to render a warning about — both resolve by themselves, and
+    `docs/telemetry.md` is where the timing is explained.
+
+    The installation id is deliberately not here: it belongs to the
+    installation rather than to its telemetry, and travels in
+    `GET /api/setup/status` with the rest of what every screen already asks
+    for (REQ-009 R1).
+    """
+    settings = request.app.state.deps.settings
+    enabled = (await config_store.get("telemetry", TelemetryConfig)).enabled
+    return {
+        "enabled": enabled,
+        "sending": enabled and (is_release_build() or settings.telemetry_allow_unpublished_build),
+    }
+
+
+@router.get("/telemetry/preview")
+async def telemetry_preview(
+    builder: Annotated[DocumentBuilder, Depends(get_document_builder)],
+) -> TelemetryDocument:
+    """The exact document that would leave today (REQ-009 R7).
+
+    Not a diagnostic endpoint and not a description of the format: it calls
+    the same builder the sender calls, so it cannot drift from what is sent
+    the way a documented example always eventually does. This is what answers
+    a customer's security team asking what leaves their network, without
+    making them read our source.
+
+    Answers with the switch off as well, which is the whole point — "show me
+    what would go out if I turned this on" is the question asked *before*
+    turning it on. Nothing here opens a connection to the receiver: the client
+    is built inside `TelemetryDeckSink.send`, which this path never reaches.
+    """
+    try:
+        return await builder.build()
+    except RedisError as e:
+        # The builder does not swallow this and must not (REQ-009 R5): without
+        # Redis there are no counters and no id, so there is no document. But
+        # a stack trace is no answer to "what leaves today" — the honest one
+        # is that the installation cannot describe itself right now, which is
+        # also exactly what the sender does at this moment.
+        logger.info(f"Telemetry preview unavailable, installation state cannot be read: {e}")
+        raise HTTPException(status_code=503, detail="Installation state is unavailable — nothing to describe") from e

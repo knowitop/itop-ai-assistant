@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "iTop AI Assistente",
+    "title": "iTop AI Assistant",
     "token_gate_desc": "L'API di amministrazione ha rifiutato la richiesta. Inserire il token di amministrazione per continuare.",
     "field_admin_token": "Token di amministrazione",
     "btn_save_token": "Salva token"
@@ -11,7 +11,8 @@
     "modules": "Moduli",
     "prompts": "Prompt",
     "runs": "Esecuzioni",
-    "vector": "Indice vettoriale"
+    "vector": "Indice vettoriale",
+    "system": "Sistema"
   },
   "layout": {
     "redis_ok": "Redis OK",
@@ -88,6 +89,10 @@
     "incomplete": "La configurazione è incompleta. Manca:",
     "btn_run_wizard": "Esegui procedura guidata",
     "btn_edit_direct": "Modifica connessioni direttamente",
+    "welcome_title": "Benvenuti!",
+    "welcome_intro": "Questa è la procedura guidata di configurazione di iTop AI Assistant. I passaggi successivi collegano l'assistente al vostro iTop e all'LLM, e preparano il sistema al funzionamento.",
+    "welcome_licence": "Open source, AGPL-3.0",
+    "welcome_start": "Avvia configurazione",
     "step_security_label": "Sicurezza",
     "step_security_desc": "Token di accesso",
     "step_itop_label": "Connessione iTop",
@@ -270,5 +275,18 @@
     "field_reconcile_days": "Intervallo di riconciliazione (giorni)",
     "field_max_chunk_tokens": "Token max per chunk",
     "field_log_entries": "Voci di log per chunk"
+  },
+  "system": {
+    "title": "Sistema",
+    "telemetry_title": "Telemetria di utilizzo anonima",
+    "telemetry_desc": "Ogni giorno viene inviato un documento aggregato con informazioni sull'utilizzo del sistema: contatori, moduli attivi e versioni in esecuzione. Non viene mai trasmessa alcuna informazione sul contenuto dei ticket, nomi, indirizzi o chiavi.",
+    "telemetry_appeal": "Questo è l'unico modo per sapere quanto attivamente viene utilizzato l'assistente, quali funzionalità meritano ulteriore sviluppo e quali problemi richiedono attenzione prioritaria. Trattandosi di un progetto open source senza un team commerciale a cui rivolgere queste domande, questo resta l'unico canale disponibile. Vi preghiamo di lasciare questa funzione attiva, a meno che non abbiate un valido motivo per disattivarla.",
+    "install_id": "ID installazione",
+    "copied": "Copiato",
+    "not_a_release_build": "Questa build non è stata pubblicata da noi, pertanto non viene trasmesso alcun dato. La telemetria viene inviata solo dalle build pubblicate ufficialmente.",
+    "show_document": "Mostra il documento di oggi",
+    "hide_document": "Nascondi documento",
+    "what_is_collected": "Cosa viene raccolto",
+    "repository": "GitHub"
   }
 }

@@ -34,6 +34,9 @@ A full `.env` template with examples is in [`docker/.env.dist`](../docker/.env.d
 | `EMBEDDINGS_BASE_URL` / `EMBEDDINGS_MODEL` / `EMBEDDINGS_API_KEY` | optional | OpenAI-compatible embeddings endpoint for the vector index. `EMBEDDINGS_BASE_URL` must be the full prefix your provider documents, not a bare host:port — for Ollama that's `http://localhost:11434/v1` (not the bare `host:port` used for the LLM chat connection), for Google's Gemini API it's `https://generativelanguage.googleapis.com/v1beta/openai` |
 | `EMBEDDINGS_DIMENSION` | default `1024` | Vector dimension — must match what the model returns |
 | `EMBEDDINGS_BATCH_SIZE` | default `32` | Texts per embeddings request |
+| `TELEMETRY_ENABLED` | default `true` | Send one anonymous document a day about this installation — see [Telemetry](telemetry.md). Editable at runtime; a build you compiled yourself never sends regardless |
+| `TELEMETRY_TEST_MODE` | default `false` | Marks this installation's signals as test ones. For verification stands — see [Telemetry](telemetry.md#builds-that-never-send-anything) |
+| `TELEMETRY_ALLOW_UNPUBLISHED_BUILD` | default `false` | Lets a build we did not publish report anyway — set it if you deployed from source onto a real server and want to be counted. See [Telemetry](telemetry.md#builds-that-never-send-anything) |
 | `TRACING_ENABLED` | default `false` | Send LLM traces to a self-hosted receiver (env-only, requires restart) — see [LLM tracing](#llm-tracing) |
 | `TRACING_ENDPOINT` | default `http://localhost:6006/v1/traces` | OTLP/HTTP endpoint of the trace receiver, full path to `/v1/traces` (env-only) |
 | `TRACING_PROJECT_NAME` | default `itop-ai-assistant` | Project the traces are filed under in the receiver (env-only) |

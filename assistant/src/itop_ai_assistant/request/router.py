@@ -56,6 +56,8 @@ async def run_request(
     )
     subject = route.subject_of(payload)
     logger.info(f"[{run.processing_id}] Running {module}/{action} for {subject}")
-    async with journalled_run(deps.journal, deps.tracer, run, kind="request", subject=subject, event=action):
-        outcome = await route.handler(payload, run, deps)
+    async with journalled_run(
+        deps.journal, deps.tracer, deps.counters, run, kind="request", subject=subject, event=action
+    ) as frame:
+        frame.result = outcome = await route.handler(payload, run, deps)
     return RunRequestResponse(processing_id=run.processing_id, **outcome.model_dump())

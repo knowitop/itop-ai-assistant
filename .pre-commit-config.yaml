@@ -1,0 +1,43 @@
+# https://pre-commit.com/#usage
+#
+# The config sits at the repo root because its hooks cover the whole repository
+# and all of them run from the git root. pre-commit falls back to the root when
+# the working directory has no config of its own, so `uv run pre-commit ...`
+# works from assistant/ — where pre-commit itself is a dev dependency — as well
+# as from the root.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.10
+    hooks:
+      - id: ruff-check
+        args: [--select, I, --fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.19.1
+    hooks:
+      - id: mypy
+        additional_dependencies: [types-PyYAML]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      # The hook fails when the branch *matches*, so the convention is written
+      # inverted: anything that is not <type>/[task-NNN-]<slug> is rejected.
+      # main and master are refused by default — branch before you commit.
+      - id: no-commit-to-branch
+        name: branch is <type>/[task-NNN-]<slug> — see CONTRIBUTING.md
+        args:
+          - --pattern
+          - '^(?!(feat|fix|docs|refactor|test|chore|hotfix)/(task-[0-9]{3,}-)?[a-z0-9]+(-[a-z0-9]+)*$).*'
+
+  - repo: local
+    hooks:
+      - id: lint-imports
+        name: lint-imports
+        # hooks run from the git root; .importlinter lives in assistant/,
+        # so pin uv to that project explicitly.
+        entry: uv run --directory assistant lint-imports
+        language: system
+        pass_filenames: false

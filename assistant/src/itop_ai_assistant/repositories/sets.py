@@ -26,6 +26,7 @@ from itop_ai_assistant.repositories.catalog import CatalogRepository
 from itop_ai_assistant.repositories.faq import FaqRepository
 from itop_ai_assistant.repositories.ticket import TicketRepository
 from itop_ai_assistant.settings.config_store import ConfigStore
+from itop_ai_assistant.state.counters import DailyCounters
 
 
 @dataclass(frozen=True)
@@ -53,10 +54,17 @@ class ItopRepositories:
     else.
     """
 
-    def __init__(self, connection: ItopConnection, config_store: ConfigStore, write_policy: WritePolicy):
+    def __init__(
+        self,
+        connection: ItopConnection,
+        config_store: ConfigStore,
+        write_policy: WritePolicy,
+        counters: DailyCounters,
+    ):
         self._connection = connection
         self._config_store = config_store
         self._write_policy = write_policy
+        self._counters = counters
 
     async def for_principal(self, principal: Principal, *, comment: str) -> RepositorySet:
         """The only way to get a set: one connection view, one identity, one comment.
@@ -80,7 +88,7 @@ class ItopRepositories:
         ticket_mapping = await self._config_store.get("ticket_mapping", TicketMappingConfig)
         faq_mapping = await self._config_store.get("faq_mapping", FaqMappingConfig)
         return RepositorySet(
-            ticket_repo=TicketRepository(client, ticket_mapping),
+            ticket_repo=TicketRepository(client, ticket_mapping, self._counters),
             catalog_repo=CatalogRepository(client),
             access_repo=AccessRepository(client),
             faq_repo=FaqRepository(client, faq_mapping),

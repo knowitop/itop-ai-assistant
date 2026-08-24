@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import fakeredis
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -25,6 +26,7 @@ from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.settings.prompt_store import PromptSet, read_prompt_dir
+from itop_ai_assistant.state.counters import DailyCounters
 from itop_ai_assistant.vector import VectorConfig
 from itop_ai_assistant.vector.ports.store import SearchHit
 from itop_ai_assistant.vector.use_cases.search import SimilarSearch
@@ -143,7 +145,8 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
         self.deps.vector_search = SimilarSearch(
             self.deps.vector_store,
             self.deps.config_store,
-            build_sources=lambda cfg: build_vector_sources(self.deps.itop, cfg),
+            lambda cfg: build_vector_sources(self.deps.itop, cfg),
+            DailyCounters(fakeredis.aioredis.FakeRedis(decode_responses=True)),
         )
 
     def intake_run(self) -> IntakeRun:

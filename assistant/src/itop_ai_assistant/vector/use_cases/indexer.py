@@ -35,6 +35,7 @@ from typing import Any
 from itop_ai_assistant.config import EmbeddingsConfig
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.settings.config_store import ConfigStore
+from itop_ai_assistant.state.counters import Counter, DailyCounters
 from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.chunker import Chunk
 from itop_ai_assistant.vector.config import FamilyConfig, VectorClassConfig, VectorConfig
@@ -78,6 +79,7 @@ def register_vector_sweep(
     vector_store: ChunkStore,
     vector_sync: VectorSyncState,
     vector_journal: IndexJournal,
+    counters: DailyCounters,
 ) -> None:
     """Put the sweep under the process-wide scheduler.
 
@@ -94,7 +96,7 @@ def register_vector_sweep(
 
     tasks.add(
         SWEEP_TASK,
-        VectorIndexer(config_store, vector_sources, vector_store, vector_sync, vector_journal).tick,
+        VectorIndexer(config_store, vector_sources, vector_store, vector_sync, vector_journal, counters).tick,
         interval=interval,
         default_interval=VectorConfig().sweep_interval_seconds,
     )
@@ -120,6 +122,7 @@ class VectorIndexer:
         vector_store: ChunkStore,
         vector_sync: VectorSyncState,
         vector_journal: IndexJournal,
+        counters: DailyCounters,
         sources: Sequence[VectorSource[Any]] | None = None,
     ) -> None:
         self._config_store = config_store
@@ -127,6 +130,7 @@ class VectorIndexer:
         self._vector_store = vector_store
         self._vector_sync = vector_sync
         self._vector_journal = vector_journal
+        self._counters = counters
         self._sources = list(sources) if sources is not None else None
 
     async def tick(self) -> SweepReport:
@@ -155,7 +159,17 @@ class VectorIndexer:
         async with self._vector_sync.sweep_lock() as locked:
             if not locked:
                 return SweepReport(kind="sweep", status="skipped", skip_reason="another sweep holds the lock")
-            return await self._sweep_locked(self._vector_store, vector_cfg, emb_cfg, model)
+            report = await self._sweep_locked(self._vector_store, vector_cfg, emb_cfg, model)
+
+        # Counted here and not in `tick()`, because the timer is not the only
+        # caller: the backfill CLI (`use_cases/reindex.py`) drives this method
+        # directly, and it is the largest embedding workload an installation
+        # ever runs. The pass itself is not counted (REQ-009 R3 asks for
+        # passes; a loop on a timer ticks the same number of times whatever
+        # the installation does, so the number answers nothing). The work is:
+        # how much of the customer's iTop the layer actually keeps embedded.
+        await self._counters.bump(Counter.VECTOR_CHUNKS_EMBEDDED, report.chunks_embedded)
+        return report
 
     async def _sweep_locked(
         self, store: ChunkStore, cfg: VectorConfig, emb_cfg: EmbeddingsConfig, model: str

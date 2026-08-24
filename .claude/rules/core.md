@@ -42,10 +42,10 @@ module.
   run must not be typed into closing it (`test_pipelines_ports.py`).
 - Need something `RunDeps` does not carry? Declare a port at the consumer, as
   `handle_assigned` (`_AssignedDeps`) does — do not widen `RunDeps`. A
-  disjoint five-member slice like the vector sweep's dependencies does not
+  disjoint slice like the vector sweep's dependencies does not
   earn a protocol at all: `VectorIndexer`/`register_vector_sweep` just take
-  the five as explicit parameters (TASK-039) — rule 3.2's criterion is
-  cohesion, not member count, and five unrelated dependencies fail it.
+  them as explicit parameters (TASK-039) — rule 3.2's criterion is
+  cohesion, not member count, and a handful of unrelated dependencies fail it.
 
 ## No module-level singletons
 

@@ -11,7 +11,8 @@
     "modules": "Modules",
     "prompts": "Prompts",
     "runs": "Runs",
-    "vector": "Vector index"
+    "vector": "Vector index",
+    "system": "System"
   },
   "layout": {
     "redis_ok": "redis ok",
@@ -88,6 +89,10 @@
     "incomplete": "Setup is incomplete. Missing:",
     "btn_run_wizard": "Run setup wizard",
     "btn_edit_direct": "Edit connections directly",
+    "welcome_title": "Welcome!",
+    "welcome_intro": "This is the iTop AI Assistant setup wizard. The next steps connect the assistant to your iTop and LLM, and get the system ready to run.",
+    "welcome_licence": "Open source, AGPL-3.0",
+    "welcome_start": "Start setup",
     "step_security_label": "Security",
     "step_security_desc": "Access tokens",
     "step_itop_label": "iTop connection",
@@ -270,5 +275,18 @@
     "field_reconcile_days": "Reconcile interval (days)",
     "field_max_chunk_tokens": "Max tokens per chunk",
     "field_log_entries": "Log entries per chunk"
+  },
+  "system": {
+    "title": "System",
+    "telemetry_title": "Anonymous usage telemetry",
+    "telemetry_desc": "One aggregate document is sent per day, containing information about how the system is used: counters, enabled modules, and the versions it runs on. No information about ticket content, names, addresses, or keys is ever transmitted.",
+    "telemetry_appeal": "This is the only way to find out how actively the assistant is being used, which of its features deserve further development, and which issues need attention first. Since this is an open-source project with no sales team to ask these questions, this remains the only channel available. Please leave this feature enabled unless you have a good reason to disable it.",
+    "install_id": "Installation ID",
+    "copied": "Copied",
+    "not_a_release_build": "This build was not published by us, so no data is transmitted. Telemetry is sent only from officially published builds.",
+    "show_document": "Show today's document",
+    "hide_document": "Hide document",
+    "what_is_collected": "What is collected",
+    "repository": "GitHub"
   }
 }

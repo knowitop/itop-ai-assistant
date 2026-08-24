@@ -143,7 +143,7 @@ function ModulePromptsEditor({ module }: { module: string }) {
 
   return (
     <Grid>
-      <Grid.Col span={{ base: 12, sm: 3 }}>
+      <Grid.Col span={{ base: 12, sm: 2 }}>
         {ignored.length > 0 && (
           <Alert color="yellow" mb="sm">
             {t('prompts.ignored', { names: ignored.join(', ') })}
@@ -172,7 +172,7 @@ function ModulePromptsEditor({ module }: { module: string }) {
           />
         ))}
       </Grid.Col>
-      <Grid.Col span={{ base: 12, sm: 9 }}>
+      <Grid.Col span={{ base: 12, sm: 10 }}>
         {selected && (
           <Stack>
             {data.broken[selected] && (

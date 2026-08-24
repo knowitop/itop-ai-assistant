@@ -13,10 +13,12 @@ real thing.
 
 import json
 import unittest
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs
 from uuid import uuid4
 
+import fakeredis
 import httpx
 
 from itop_ai_assistant.agents.intake.config import IntakeConfig
@@ -40,6 +42,7 @@ from itop_ai_assistant.itop_client import Itop
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.settings.prompt_store import PromptSet, read_prompt_dir
+from itop_ai_assistant.state.counters import Counter, DailyCounters
 from itop_ai_assistant.vector import VectorConfig
 from itop_ai_assistant.webhook.models import WebhookPayload
 
@@ -89,8 +92,9 @@ class TestIntakeWritesNothingOnADryRun(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.transport = RecordingTransport()
         self.store = FakeConfigStore(dry_run=True)
+        self.counters = DailyCounters(fakeredis.aioredis.FakeRedis(decode_responses=True))
         self.connection = ItopConnection(self.store)
-        self.repositories = ItopRepositories(self.connection, self.store, WritePolicy(self.store))
+        self.repositories = ItopRepositories(self.connection, self.store, WritePolicy(self.store), self.counters)
 
         self.ticket = Ticket(
             obj_class="Incident",
@@ -148,6 +152,18 @@ class TestIntakeWritesNothingOnADryRun(unittest.IsolatedAsyncioTestCase):
         # Both writes of this run — the classification and the public question —
         # would have been core/update; nothing but reads left the client.
         self.assertEqual({"core/get"}, set(self.transport.operations))
+
+    async def test_the_dry_run_still_counts_what_it_would_have_done(self):
+        """The counters sit above the point the write is dropped, so a dry run
+        reports intent (REQ-009 R3). Deliberately: an installation running a
+        week in dry run must not read as a dead one, and the mode travels in
+        the document beside the counters."""
+        await self._run()
+
+        counted = await self.counters.read(datetime.now(UTC).date())
+
+        self.assertEqual(1, counted[Counter.ITOP_FIELD_UPDATE])
+        self.assertEqual(1, counted[Counter.ITOP_PUBLIC_COMMENT])
 
     async def test_the_model_is_not_told_that_its_writes_went_nowhere(self):
         await self._run()

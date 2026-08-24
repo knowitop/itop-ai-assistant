@@ -29,9 +29,12 @@ RUN uv sync --frozen --no-dev --extra tracing --no-install-project --no-editable
 # run time through importlib.metadata and _build_info.py. No git here: the
 # tag is something CI already knows, so it is handed over rather than
 # rediscovered from history. Unset (a local build) yields the 0.0.0 fallback.
+# BUILD_CHANNEL is what telemetry gates on: `release` only from the publish
+# workflow, so an image built here by hand reports nothing.
 ARG APP_VERSION=""
 ARG BUILD_COMMIT=""
-ENV SETUPTOOLS_SCM_PRETEND_VERSION=${APP_VERSION} BUILD_COMMIT=${BUILD_COMMIT}
+ARG BUILD_CHANNEL=""
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=${APP_VERSION} BUILD_COMMIT=${BUILD_COMMIT} BUILD_CHANNEL=${BUILD_CHANNEL}
 
 # Install the application itself. --no-editable puts the package inside the
 # venv, so the runtime image needs nothing but /app/.venv.

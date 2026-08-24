@@ -39,6 +39,7 @@ from typing import Protocol
 from itop_ai_assistant.config import EmbeddingsConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.settings.config_store import ConfigStore
+from itop_ai_assistant.state.counters import Counter, DailyCounters
 from itop_ai_assistant.vector.adapters.embedder import EmbeddingsClient
 from itop_ai_assistant.vector.config import VectorConfig
 from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchQuery, SearchResult
@@ -56,10 +57,10 @@ class CandidateSource(Protocol):
     consumer). Sweeping, chunking and the source's declared vocabulary are the
     indexer's business; a search that could name them could also call them.
 
-    Stays a `Protocol` where the indexer's five-member, disjoint slice does
-    not (TASK-039): two closely related members describing one source versus
-    five unrelated dependencies of a sweep — rule 3.2's actual criterion is
-    cohesion, not member count.
+    Stays a `Protocol` where the indexer's disjoint slice does not
+    (TASK-039): two closely related members describing one source versus a
+    handful of unrelated dependencies of a sweep — rule 3.2's actual criterion
+    is cohesion, not member count.
     """
 
     @property
@@ -121,12 +122,14 @@ class SimilarSearch:
         store: ChunkStore,
         config: ConfigStore,
         build_sources: Callable[[VectorConfig], Sequence[CandidateSource]],
+        counters: DailyCounters,
         *,
         sources: Sequence[CandidateSource] | None = None,
     ) -> None:
         self._store = store
         self._config = config
         self._build_sources = build_sources
+        self._counters = counters
         self._sources = sources
 
     def _unavailable(self, vector_cfg: VectorConfig, embeddings_cfg: EmbeddingsConfig) -> str | None:
@@ -161,7 +164,23 @@ class SimilarSearch:
         and `UnknownFamily` when nothing is registered for `query.family` —
         both before an embeddings client is created, so a bad call costs no
         connection and no embedding.
+
+        Also the one place a search is counted (REQ-009 R3): the vector layer
+        justifies its complexity here or nowhere, and an installation with the
+        layer on and no searches is the answer to that. Counted after the
+        search happened, so the two exceptions count as nothing — they say the
+        deployment cannot search, not that it looked and found nothing. Every
+        empty outcome counts as both: no text, no hits, or every hit dropped
+        by visibility.
         """
+        result = await self._search(query, principal)
+        await self._counters.bump(Counter.VECTOR_SEARCHES)
+        if not result.hits:
+            await self._counters.bump(Counter.VECTOR_SEARCHES_EMPTY)
+        return result
+
+    async def _search(self, query: SearchQuery, principal: Principal) -> SearchResult:
+        """The search itself; `find` is this plus the counting."""
         vector_cfg = await self._config.get("vector", VectorConfig)
         embeddings_cfg = await self._config.get("embeddings", EmbeddingsConfig)
         unavailable = self._unavailable(vector_cfg, embeddings_cfg)
@@ -209,7 +228,7 @@ class SimilarSearch:
         One call per class rather than one per object: the probe takes a
         list of ids. The share dropped here is the metric ADR-003 asks for —
         it says how far the pre-filter has drifted from the real rights.
-        Capping to `top` happens in `find()`, after this — here the count
+        Capping to `top` happens in `_search()`, after this — here the count
         must stay uncontaminated by that cut, or `FindStats.dropped_by_resolve`
         (TASK-014) would report "dropped by the source" for objects the top-N
         limit dropped.

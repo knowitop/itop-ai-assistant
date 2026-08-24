@@ -53,12 +53,13 @@ async def run_schedule(route: ScheduleRoute, deps: AppDeps) -> RunOutcome:
     async with journalled_run(
         deps.journal,
         deps.tracer,
+        deps.counters,
         run,
         kind="schedule",
         subject=route.subject or route.label,
         event=route.name,
-    ):
-        outcome = await route.handler(run, deps)
+    ) as frame:
+        frame.result = outcome = await route.handler(run, deps)
     logger.info(f"[{run.processing_id}] {route.label}: {outcome.status} {outcome.detail}".rstrip())
     return outcome
 

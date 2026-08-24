@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "iTop AI Asistente",
+    "title": "iTop AI Assistant",
     "token_gate_desc": "La API de administración rechazó la solicitud. Ingrese el token de administrador para continuar.",
     "field_admin_token": "Token de administrador",
     "btn_save_token": "Guardar token"
@@ -11,7 +11,8 @@
     "modules": "Módulos",
     "prompts": "Prompts",
     "runs": "Ejecuciones",
-    "vector": "Índice vectorial"
+    "vector": "Índice vectorial",
+    "system": "Sistema"
   },
   "layout": {
     "redis_ok": "Redis OK",
@@ -88,6 +89,10 @@
     "incomplete": "La configuración está incompleta. Falta:",
     "btn_run_wizard": "Ejecutar asistente de configuración",
     "btn_edit_direct": "Editar conexiones directamente",
+    "welcome_title": "¡Bienvenido!",
+    "welcome_intro": "Este es el asistente de configuración de iTop AI Assistant. Los siguientes pasos conectan el asistente con su iTop y con el LLM, y dejan el sistema listo para funcionar.",
+    "welcome_licence": "Código abierto, AGPL-3.0",
+    "welcome_start": "Iniciar configuración",
     "step_security_label": "Seguridad",
     "step_security_desc": "Tokens de acceso",
     "step_itop_label": "Conexión iTop",
@@ -270,5 +275,18 @@
     "field_reconcile_days": "Intervalo de conciliación (días)",
     "field_max_chunk_tokens": "Máx. tokens por chunk",
     "field_log_entries": "Entradas de log por chunk"
+  },
+  "system": {
+    "title": "Sistema",
+    "telemetry_title": "Telemetría de uso anónima",
+    "telemetry_desc": "Se envía un documento agregado al día, con información sobre el uso del sistema: contadores, módulos habilitados y las versiones en las que se ejecuta. Nunca se transmite información sobre el contenido de los tickets, nombres, direcciones o claves.",
+    "telemetry_appeal": "Esta es la única forma de saber qué tan activamente se utiliza el asistente, qué funciones merecen mayor desarrollo y qué problemas requieren atención prioritaria. Al tratarse de un proyecto de código abierto sin un equipo de ventas al que consultar, este es el único canal disponible. Por favor, deje esta función activada a menos que tenga una buena razón para desactivarla.",
+    "install_id": "ID de instalación",
+    "copied": "Copiado",
+    "not_a_release_build": "Esta compilación no fue publicada por nosotros, por lo que no se transmite ningún dato. La telemetría solo se envía desde compilaciones publicadas oficialmente.",
+    "show_document": "Mostrar el documento de hoy",
+    "hide_document": "Ocultar documento",
+    "what_is_collected": "Qué se recopila",
+    "repository": "GitHub"
   }
 }

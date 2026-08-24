@@ -45,6 +45,7 @@ source_modules =
     itop_ai_assistant.schedule
     itop_ai_assistant.settings
     itop_ai_assistant.state
+    itop_ai_assistant.telemetry
     itop_ai_assistant.util
     itop_ai_assistant.vector
     itop_ai_assistant.webhook

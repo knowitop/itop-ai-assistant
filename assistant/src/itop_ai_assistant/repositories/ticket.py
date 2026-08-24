@@ -6,6 +6,7 @@ from itop_ai_assistant.config import TicketMappingConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.itop_client import Itop
+from itop_ai_assistant.state.counters import Counter, DailyCounters
 from itop_ai_assistant.util.text import ITOP_DATETIME_FORMAT, parse_itop_dt
 
 logger = logging.getLogger(__name__)
@@ -29,11 +30,26 @@ class TicketRepository:
     All knowledge of the customer's iTop datamodel (attribute names, absent
     fields per class) lives in the `ticket_mapping` config — processing code
     works with semantic field names only.
+
+    Also where the installation's writes are counted (REQ-009 R3). Here rather
+    than in the module that meant them, for the reason the dry run is enforced
+    here and not there: a rule every new module has to remember is a rule the
+    first forgetful module breaks, and it breaks silently — as "that customer
+    somehow asks no questions". What the counters name is therefore the write
+    that happened, not what it meant; the reading of a public comment as "a
+    question the intake module asked" belongs to the document builder, in one
+    place.
+
+    In the dry run the write is dropped below this point (`Itop.read_only`),
+    so what is counted then is the intent. Deliberately: an installation
+    running a week in dry run must not look like a dead one, and the document
+    carries the mode alongside the counters.
     """
 
-    def __init__(self, itop: Itop, mapping: TicketMappingConfig):
+    def __init__(self, itop: Itop, mapping: TicketMappingConfig, counters: DailyCounters):
         self._itop = itop
         self.mapping = mapping
+        self._counters = counters
 
     async def fetch(self, obj_class: str, ticket_id: str) -> Ticket | None:
         # Request only the attributes the mapping reads — fetching everything
@@ -127,12 +143,15 @@ class TicketRepository:
             raw_fields[attr_code] = value
         if raw_fields:
             await self._itop.schema(ticket.obj_class).update({"id": ticket.id}, raw_fields)
+            await self._counters.bump(Counter.ITOP_FIELD_UPDATE)
 
     async def append_public_log(self, ticket: Ticket, message: str) -> None:
         await self._append_log(ticket, "public_log", message)
+        await self._counters.bump(Counter.ITOP_PUBLIC_COMMENT)
 
     async def append_private_log(self, ticket: Ticket, message: str) -> None:
         await self._append_log(ticket, "private_log", message)
+        await self._counters.bump(Counter.ITOP_PRIVATE_NOTE)
 
     async def _append_log(self, ticket: Ticket, semantic_log: str, message: str) -> None:
         attr_code = self.mapping.for_class(ticket.obj_class).get(semantic_log)

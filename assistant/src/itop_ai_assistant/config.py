@@ -163,8 +163,13 @@ class LlmConfig(RuntimeSectionConfig):
     supports_forced_tool_choice: bool | None = None
 
     # Reserved by create_llm — allowing them in `params` would silently
-    # override the section's own fields.
-    _RESERVED_PARAMS: ClassVar[frozenset[str]] = frozenset({"model", "model_provider", "base_url", "api_key"})
+    # override the section's own fields. `callbacks` is on the list for a
+    # sharper reason than the others: it carries the telemetry counter
+    # (`core/llm_counters.py`), and a value here would replace it rather than
+    # add to it — the counting would stop, and nothing would say so.
+    _RESERVED_PARAMS: ClassVar[frozenset[str]] = frozenset(
+        {"model", "model_provider", "base_url", "api_key", "callbacks"}
+    )
 
     @model_validator(mode="after")
     def check_provider_and_params(self) -> "LlmConfig":
@@ -246,6 +251,43 @@ class PlatformConfig(BaseModel):
     )
 
 
+class TelemetryConfig(BaseModel):
+    """Whether the anonymous daily document leaves this installation — section "telemetry".
+
+    One field, and nothing else can be configured here: the receiver's address,
+    the application id and the ingest key are our own constants and travel in
+    the image. The ingest key is not a secret by nature — analytics vendors
+    ship it inside client applications — so it needs neither a field here nor
+    masking at the setup API boundary (REQ-009 R5). The side benefit is that a
+    section with nothing to configure cannot be configured wrongly: there is
+    no field to point at somebody else's receiver.
+
+    Runtime-editable rather than env-only, unlike tracing (ADR-029, where the
+    switch belongs to the deployment): sending is a periodic task, not a
+    global instrumentor installed once per process, and this is a switch that
+    limits *us* — such a thing must not be less reachable than what it limits.
+    `TELEMETRY_ENABLED` stays as the deployment-time default and neither
+    blocks the button nor outranks it (`.claude/rules/config.md`).
+    """
+
+    # On by default, which R5 asks for and which only became allowable once
+    # the sending was visible: the System screen carries the switch and the
+    # installation id, `GET /api/telemetry/preview` shows the exact document
+    # that would leave today, the setup wizard says so on its welcome screen
+    # before a single setting is saved, and `docs/telemetry.md` describes the
+    # whole of it. An installation that sends data out and cannot show which
+    # gets a product blacklisted whole — that is what this default waited for.
+    enabled: bool = Field(
+        default=True,
+        title="Send anonymous usage telemetry",
+        description=(
+            "One aggregate document a day: counts of what this installation did, which modules are on, "
+            "and the versions it runs. Never ticket content, names, addresses or keys. Applies without "
+            "a restart."
+        ),
+    )
+
+
 def missing_setup(itop: ItopConfig, llm: LlmConfig) -> list[str]:
     """Setup steps still required before the assistant may process tickets.
 
@@ -291,6 +333,30 @@ class Settings(BaseSettings):
     prompts_dir: Path | None = None
     # Default for section "platform" — the installation-wide dry run (REQ-006)
     dry_run: bool = False
+    # Default for section "telemetry" (REQ-009 R5). A deployment-time value —
+    # an unattended install, an image built for one customer — never a lock:
+    # the runtime override wins, as it does for every other section. Says
+    # nothing about a build we did not publish: those send nothing whatever
+    # this holds (`util/build_info.py::is_release_build`).
+    telemetry_enabled: bool = True
+    # Marks every signal as a test one, so the receiver keeps it out of
+    # production queries. Ours, not the administrator's: it exists for the
+    # stand we verify releases on (ADR-031 asks for that check before every
+    # release touching telemetry), and a stand that cannot say "this is a
+    # test" inflates the installation count by one forever.
+    #
+    # It marks and nothing else. Whether a build may send at all is the flag
+    # below — the two used to be one, and a stand needing both is a smaller
+    # cost than "mark this as test" and "send from an unpublished build"
+    # being impossible to ask for separately.
+    telemetry_test_mode: bool = False
+    # Lets a build we did not publish send anyway (`telemetry/sender.py`).
+    # Two callers: the verification stand, which sets it together with the
+    # flag above, and an installation deployed from source onto a real server
+    # — which is otherwise never counted, because nothing can tell it from a
+    # developer's laptop. Setting this says "count me", and it is the
+    # administrator's to set, unlike the test mark.
+    telemetry_allow_unpublished_build: bool = False
     # Where the built admin SPA lives. The image sets it explicitly; unset =
     # probe the source checkout (see main._find_ui_dist)
     ui_dist_dir: Path | None = None
@@ -429,6 +495,10 @@ class Settings(BaseSettings):
     @property
     def platform(self) -> PlatformConfig:
         return PlatformConfig(dry_run=self.dry_run)
+
+    @property
+    def telemetry(self) -> TelemetryConfig:
+        return TelemetryConfig(enabled=self.telemetry_enabled)
 
     @classmethod
     def settings_customise_sources(

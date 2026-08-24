@@ -1,8 +1,11 @@
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from pydantic import ValidationError
+
 from itop_ai_assistant.config import LlmConfig, get_settings
 from itop_ai_assistant.core.deps import build_deps, create_llm
+from itop_ai_assistant.core.llm_counters import LlmCallCounter
 from itop_ai_assistant.pipelines.registry import build_registry
 
 
@@ -74,6 +77,28 @@ class TestCreateLlm(unittest.TestCase):
     def test_params_are_forwarded(self):
         llm = create_llm(LlmConfig(model="m", base_url="http://llm/v1", params={"temperature": 0.4}))
         self.assertEqual(llm.temperature, 0.4)
+
+    def test_the_wizards_probe_gets_a_model_that_counts_nothing(self):
+        """`admin/setup.py` calls the free function: two probes fire per click
+        on "Test", and an installation still choosing an endpoint must not read
+        as one doing work (`core/llm_counters.py`)."""
+        llm = create_llm(LlmConfig(model="m", base_url="http://llm/v1"))
+
+        self.assertIsNone(llm.callbacks)
+
+    def test_a_module_gets_a_model_that_counts_its_calls(self):
+        settings = get_settings()
+        deps = build_deps(settings, build_registry(settings))
+
+        llm = deps.create_llm(LlmConfig(model="m", base_url="http://llm/v1"))
+
+        self.assertEqual([LlmCallCounter], [type(handler) for handler in llm.callbacks])
+
+    def test_the_counter_cannot_be_displaced_by_configuration(self):
+        """`callbacks` in `llm.params` would replace the handler rather than
+        add to it — the counting would stop and nothing would say so."""
+        with self.assertRaises(ValidationError):
+            LlmConfig(model="m", base_url="http://llm/v1", params={"callbacks": []})
 
 
 if __name__ == "__main__":

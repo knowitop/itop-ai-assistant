@@ -94,6 +94,26 @@ query needs a full YAML rule (relational/composite logic ast-grep run can't
 express). Avoid plain `grep`/`rg` for code unless a plain-text search is
 explicitly what's wanted (docs, config values, strings).
 
+## Branches
+
+`<type>/[task-NNN-]<slug>` — lowercase, words joined by hyphens.
+
+| Part | |
+|---|---|
+| `type` | `feat` `fix` `docs` `refactor` `test` `chore` `hotfix` |
+| `task-NNN` | the `dev-docs/tasks/TASK-NNN-*` entry the branch closes; omitted when the work has no task |
+| `slug` | what the branch does, two to four words |
+
+```
+feat/task-062-telemetry-daily-counters
+refactor/task-023-package-layers
+chore/pre-commit-bump
+```
+
+The `no-commit-to-branch` `pre-commit` hook rejects commits on a branch that
+does not match — and on `main`, which is never committed to directly.
+`CONTRIBUTING.md` carries the same rules for human contributors.
+
 ## Development Commands
 
 See `assistant/CLAUDE.md`.

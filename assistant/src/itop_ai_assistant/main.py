@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from redis.exceptions import RedisError
 
 from itop_ai_assistant.admin.router import router as admin_router
 from itop_ai_assistant.config import ItopConfig, LlmConfig, SecurityConfig, get_settings, missing_setup
@@ -73,6 +74,15 @@ async def lifespan(app: FastAPI):
     deps = build_deps(settings, registry, tracer=setup_tracing(settings))
     for module in registry.modules:
         await check_module_prompts(module, deps.prompt_store)
+
+    # The installation's own id, generated once and written before anyone asks
+    # for it: the System screen shows it, and a support request or a "delete
+    # my data" ask names it. A start without Redis is not an error worth
+    # failing over — both values are still written on first ask (REQ-009 R1).
+    try:
+        await deps.install.register()
+    except RedisError as e:
+        logger.warning(f"Install state unavailable, this installation is not on record yet: {e}")
 
     # Setup diagnostics against the *effective* config (Redis overrides > env)
     security = await deps.config_store.get("security", SecurityConfig)

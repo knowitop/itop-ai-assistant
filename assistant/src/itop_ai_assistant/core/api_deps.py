@@ -26,7 +26,9 @@ from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.settings.prompt_store import PromptStore
+from itop_ai_assistant.state.install import InstallIdentity
 from itop_ai_assistant.state.journal import RunJournal
+from itop_ai_assistant.telemetry.builder import DocumentBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,36 @@ def get_prompt_store(request: Request) -> PromptStore:
 def get_journal(request: Request) -> RunJournal:
     deps: AppDeps = request.app.state.deps
     return deps.journal
+
+
+def get_install(request: Request) -> InstallIdentity:
+    deps: AppDeps = request.app.state.deps
+    return deps.install
+
+
+def get_document_builder(request: Request) -> DocumentBuilder:
+    deps: AppDeps = request.app.state.deps
+    return deps.telemetry
+
+
+async def remember_admin_language(request: Request) -> None:
+    """Note the language the admin UI is speaking, for the telemetry document.
+
+    Hung on the admin router as a whole rather than called from the two
+    handlers that read `lang` today (REQ-009 R10). The rule "remember to
+    record it" is one a third endpoint would break, and the failure would
+    look like an installation whose administrators never picked a language —
+    the same argument that put the activity counters in the iTop write layer
+    instead of in each module.
+
+    A request without `lang` touches Redis not at all, and a language that is
+    not a language tag is dropped by `InstallIdentity` rather than stored.
+    """
+    lang = request.query_params.get("lang")
+    if lang is None:
+        return
+    deps: AppDeps = request.app.state.deps
+    await deps.install.remember_language(lang)
 
 
 async def verify_webhook_token(

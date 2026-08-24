@@ -21,6 +21,7 @@ from itop_ai_assistant.domain.identity import ObjectIdentity
 from itop_ai_assistant.main import app
 from itop_ai_assistant.pipelines.models import RunOutcome
 from itop_ai_assistant.pipelines.registry import ModuleInfo, RequestRoute, build_registry
+from itop_ai_assistant.state.counters import DailyCounters
 from itop_ai_assistant.state.journal import RunJournal
 
 
@@ -35,7 +36,9 @@ def _mock_deps(security: SecurityConfig | None = None, configured: bool = True) 
 
     deps = MagicMock()
     deps.config_store.get = AsyncMock(side_effect=lambda module, model: sections[module])
-    deps.journal = RunJournal(fakeredis.aioredis.FakeRedis(decode_responses=True))
+    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    deps.journal = RunJournal(redis)
+    deps.counters = DailyCounters(redis)
     deps.state_manager.acquire_lock = AsyncMock(return_value=True)
     deps.state_manager.release_lock = AsyncMock()
     deps.write_policy.dry_run = AsyncMock(return_value=False)

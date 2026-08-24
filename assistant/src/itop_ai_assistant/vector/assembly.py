@@ -36,6 +36,7 @@ from itop_ai_assistant.config import Settings
 from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.settings.config_store import ConfigStore
+from itop_ai_assistant.state.counters import DailyCounters
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.config import VectorConfig
 from itop_ai_assistant.vector.ports.source import VectorSource
@@ -75,7 +76,13 @@ class VectorSubsystem:
         await self.vector_store.aclose()
 
 
-def build(settings: Settings, redis: Redis, config_store: ConfigStore, itop: ItopRepositories) -> VectorSubsystem:
+def build(
+    settings: Settings,
+    redis: Redis,
+    config_store: ConfigStore,
+    itop: ItopRepositories,
+    counters: DailyCounters,
+) -> VectorSubsystem:
     """Assemble the subsystem once, at startup — the composition root's one
     call into `vector/`, mirroring `build_registry(settings)` for modules.
     """
@@ -93,5 +100,5 @@ def build(settings: Settings, redis: Redis, config_store: ConfigStore, itop: Ito
         vector_sync=VectorSyncState(redis),
         vector_journal=IndexJournal(redis),
         vector_sources=vector_sources,
-        vector_search=SimilarSearch(vector_store, config_store, build_sources=vector_sources),
+        vector_search=SimilarSearch(vector_store, config_store, vector_sources, counters),
     )

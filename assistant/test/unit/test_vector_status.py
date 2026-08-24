@@ -18,8 +18,11 @@ from itop_ai_assistant.itop.write_policy import WritePolicy
 from itop_ai_assistant.main import app
 from itop_ai_assistant.settings.config_store import RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import FilePromptStore, RedisPromptStore
+from itop_ai_assistant.state.counters import DailyCounters
+from itop_ai_assistant.state.install import InstallIdentity
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
+from itop_ai_assistant.telemetry.builder import DocumentBuilder
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.assembly import VectorSubsystem
 from itop_ai_assistant.vector.ports.store import ChunkMetadata, ChunkRecord
@@ -98,11 +101,13 @@ def _make_deps(redis, store_url: str | None = None, **settings_overrides) -> App
     def vector_sources(cfg):
         return build_vector_sources(itop, cfg)
 
+    counters = DailyCounters(redis)
+    install = InstallIdentity(redis)
     vector = VectorSubsystem(
         config_store=config_store,
         itop=itop,
         vector_store=vector_store,
-        vector_search=SimilarSearch(vector_store, config_store, build_sources=vector_sources),
+        vector_search=SimilarSearch(vector_store, config_store, vector_sources, counters),
         vector_sync=VectorSyncState(redis),
         vector_journal=IndexJournal(redis),
         vector_sources=vector_sources,
@@ -119,6 +124,11 @@ def _make_deps(redis, store_url: str | None = None, **settings_overrides) -> App
             FilePromptStore({"intake": INTAKE_PROMPTS_DIR, "selfcheck": SELFCHECK_PROMPTS_DIR}), redis
         ),
         journal=RunJournal(redis),
+        counters=counters,
+        install=install,
+        telemetry=DocumentBuilder(
+            settings, config_store, MagicMock(modules=[]), counters, install, vector.vector_search
+        ),
         tracer=NullRunTracer(),
         vector=vector,
     )
@@ -138,8 +148,8 @@ class VectorStatusTestCase(unittest.TestCase):
         self.client = self.enterContext(TestClient(app))
         self.redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
         _install(self.client, _make_deps(self.redis))
-        # The lifespan built a real (empty) scheduler: no qdrant_url in the
-        # test settings, so the sweep loop was never registered
+        # An empty scheduler — `conftest.no_background_loops` stubs the one
+        # the lifespan would have built. The tests below mock `wake` on it.
         self.tasks = self.client.app.state.tasks
 
 
