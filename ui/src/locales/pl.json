@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "iTop AI Asystent",
+    "title": "iTop AI Assistant",
     "token_gate_desc": "API administracyjne odrzuciło żądanie. Wprowadź token administratora, aby kontynuować.",
     "field_admin_token": "Token administratora",
     "btn_save_token": "Zapisz token"
@@ -11,7 +11,8 @@
     "modules": "Moduły",
     "prompts": "Prompty",
     "runs": "Uruchomienia",
-    "vector": "Indeks wektorowy"
+    "vector": "Indeks wektorowy",
+    "system": "System"
   },
   "layout": {
     "redis_ok": "Redis OK",
@@ -88,6 +89,10 @@
     "incomplete": "Konfiguracja jest niekompletna. Brakuje:",
     "btn_run_wizard": "Uruchom kreatora konfiguracji",
     "btn_edit_direct": "Edytuj połączenia bezpośrednio",
+    "welcome_title": "Witamy!",
+    "welcome_intro": "To kreator konfiguracji iTop AI Assistant. Kolejne kroki połączą asystenta z Twoim iTop i LLM oraz przygotują system do pracy.",
+    "welcome_licence": "Open source, AGPL-3.0",
+    "welcome_start": "Rozpocznij konfigurację",
     "step_security_label": "Bezpieczeństwo",
     "step_security_desc": "Tokeny dostępu",
     "step_itop_label": "Połączenie iTop",
@@ -270,5 +275,18 @@
     "field_reconcile_days": "Interwał uzgadniania (dni)",
     "field_max_chunk_tokens": "Maks. tokenów na chunk",
     "field_log_entries": "Wpisy logu na chunk"
+  },
+  "system": {
+    "title": "System",
+    "telemetry_title": "Anonimowa telemetria użycia",
+    "telemetry_desc": "Raz dziennie wysyłany jest jeden zagregowany dokument zawierający informacje o użytkowaniu systemu: liczniki, włączone moduły oraz wersje, na których działa. Informacje o treści zgłoszeń, nazwiskach, adresach ani kluczach nigdy nie są przekazywane.",
+    "telemetry_appeal": "To jedyny sposób, by dowiedzieć się, jak intensywnie używany jest asystent, które jego funkcje zasługują na dalszy rozwój i które problemy wymagają priorytetowej uwagi. Ponieważ jest to projekt open source bez zespołu sprzedaży, który mógłby odpowiedzieć na te pytania, jest to jedyny dostępny kanał. Prosimy zostawić tę funkcję włączoną, chyba że masz istotny powód, by ją wyłączyć.",
+    "install_id": "Identyfikator instalacji",
+    "copied": "Skopiowano",
+    "not_a_release_build": "Ta wersja nie została opublikowana przez nas, dlatego żadne dane nie są przesyłane. Telemetria jest wysyłana wyłącznie z oficjalnie opublikowanych wersji.",
+    "show_document": "Pokaż dzisiejszy dokument",
+    "hide_document": "Ukryj dokument",
+    "what_is_collected": "Co jest zbierane",
+    "repository": "GitHub"
   }
 }

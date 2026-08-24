@@ -6,8 +6,8 @@ was finished; the claim is "these UTC days are already taken" — one key per
 day, held by whichever replica got there first.
 
 Telemetry is the biggest reader here, not the owner. The id identifies the
-*installation*: the admin UI shows it on the wizard's welcome screen before
-anything has been sent, and a support request names it. That is why this file
+*installation*: the admin UI shows it on the System screen, and a support
+request names it. That is why this file
 sits in `state/` rather than in `telemetry/`, and why its keys carry no
 `telemetry:` prefix — the one exception being the claim, which says what
 telemetry has already reported and is named for what it is.
@@ -74,8 +74,8 @@ class InstallIdentity:
         """Put this installation on record: its id and when it was first seen.
 
         Called once at startup (`main.py`) so that the id exists before anyone
-        asks for it — the wizard's welcome screen shows it before a single
-        setting has been saved. Both writes are `HSETNX` underneath, so
+        asks for it — the System screen shows it, and a support request or a
+        "delete my data" ask names it. Both writes are `HSETNX` underneath, so
         calling this on every start of every replica records nothing twice.
 
         Not the only way either value comes to exist: both getters still write

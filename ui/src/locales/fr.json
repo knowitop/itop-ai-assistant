@@ -11,7 +11,8 @@
     "modules": "Modules",
     "prompts": "Prompts",
     "runs": "Exécutions",
-    "vector": "Index vectoriel"
+    "vector": "Index vectoriel",
+    "system": "Système"
   },
   "layout": {
     "redis_ok": "Redis OK",
@@ -88,6 +89,10 @@
     "incomplete": "La configuration est incomplète. Manquant :",
     "btn_run_wizard": "Lancer l'assistant de configuration",
     "btn_edit_direct": "Modifier les connexions directement",
+    "welcome_title": "Bienvenue !",
+    "welcome_intro": "Ceci est l'assistant de configuration d'iTop AI Assistant. Les étapes suivantes connectent l'assistant à votre iTop et au LLM, et préparent le système à fonctionner.",
+    "welcome_licence": "Open source, AGPL-3.0",
+    "welcome_start": "Démarrer la configuration",
     "step_security_label": "Sécurité",
     "step_security_desc": "Jetons d'accès",
     "step_itop_label": "Connexion iTop",
@@ -270,5 +275,18 @@
     "field_reconcile_days": "Intervalle de réconciliation (jours)",
     "field_max_chunk_tokens": "Tokens max par chunk",
     "field_log_entries": "Entrées de journal par chunk"
+  },
+  "system": {
+    "title": "Système",
+    "telemetry_title": "Télémétrie d'utilisation anonyme",
+    "telemetry_desc": "Un document agrégé est envoyé chaque jour, contenant des informations sur l'utilisation du système : compteurs, modules activés et versions exécutées. Aucune information sur le contenu des tickets, les noms, les adresses ou les clés n'est jamais transmise.",
+    "telemetry_appeal": "C'est le seul moyen de savoir à quel point l'assistant est réellement utilisé, quelles fonctionnalités méritent d'être développées davantage et quels problèmes nécessitent une attention prioritaire. Le projet étant open source et ne disposant pas d'équipe commerciale à qui poser ces questions, ce canal reste le seul disponible. Merci de laisser cette fonctionnalité activée, sauf si vous avez une bonne raison de la désactiver.",
+    "install_id": "Identifiant d'installation",
+    "copied": "Copié",
+    "not_a_release_build": "Cette build n'a pas été publiée par nous, aucune donnée n'est donc transmise. La télémétrie n'est envoyée qu'à partir des builds officiellement publiées.",
+    "show_document": "Afficher le document du jour",
+    "hide_document": "Masquer le document",
+    "what_is_collected": "Ce qui est collecté",
+    "repository": "GitHub"
   }
 }

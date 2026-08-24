@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "iTop AI Assistent",
+    "title": "iTop AI Assistant",
     "token_gate_desc": "Die Admin-API hat die Anfrage abgelehnt. Geben Sie das Admin-Token ein, um fortzufahren.",
     "field_admin_token": "Admin-Token",
     "btn_save_token": "Token speichern"
@@ -11,7 +11,8 @@
     "modules": "Module",
     "prompts": "Prompts",
     "runs": "Ausführungen",
-    "vector": "Vektorindex"
+    "vector": "Vektorindex",
+    "system": "System"
   },
   "layout": {
     "redis_ok": "Redis OK",
@@ -88,6 +89,10 @@
     "incomplete": "Einrichtung ist unvollständig. Fehlend:",
     "btn_run_wizard": "Einrichtungsassistenten starten",
     "btn_edit_direct": "Verbindungen direkt bearbeiten",
+    "welcome_title": "Willkommen!",
+    "welcome_intro": "Dies ist der Einrichtungsassistent für iTop AI Assistant. Die nächsten Schritte verbinden den Assistenten mit Ihrem iTop und LLM und bereiten das System für den Betrieb vor.",
+    "welcome_licence": "Open Source, AGPL-3.0",
+    "welcome_start": "Einrichtung starten",
     "step_security_label": "Sicherheit",
     "step_security_desc": "Zugriffstoken",
     "step_itop_label": "iTop-Verbindung",
@@ -270,5 +275,18 @@
     "field_reconcile_days": "Abgleichintervall (Tage)",
     "field_max_chunk_tokens": "Max. Tokens pro Chunk",
     "field_log_entries": "Logeinträge pro Chunk"
+  },
+  "system": {
+    "title": "System",
+    "telemetry_title": "Anonyme Nutzungstelemetrie",
+    "telemetry_desc": "Einmal täglich wird ein aggregiertes Dokument mit Informationen zur Nutzung des Systems übermittelt: Zähler, aktivierte Module und die verwendeten Versionen. Informationen zu Ticketinhalten, Namen, Adressen oder Schlüsseln werden niemals übermittelt.",
+    "telemetry_appeal": "Dies ist der einzige Weg zu erfahren, wie intensiv der Assistent genutzt wird, welche seiner Funktionen eine Weiterentwicklung verdienen und welche Probleme vorrangig behoben werden sollten. Da es sich um ein Open-Source-Projekt ohne Vertriebsteam handelt, das man dazu befragen könnte, bleibt dies der einzige Kommunikationskanal. Bitte lassen Sie diese Funktion aktiviert, sofern Sie keinen triftigen Grund haben, sie zu deaktivieren.",
+    "install_id": "Installations-ID",
+    "copied": "Kopiert",
+    "not_a_release_build": "Dieser Build wurde nicht von uns veröffentlicht, daher werden keine Daten übermittelt. Telemetriedaten werden ausschließlich von offiziell veröffentlichten Builds gesendet.",
+    "show_document": "Heutiges Dokument anzeigen",
+    "hide_document": "Dokument ausblenden",
+    "what_is_collected": "Was erfasst wird",
+    "repository": "GitHub"
   }
 }

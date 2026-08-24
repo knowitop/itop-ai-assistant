@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "iTop AI Asistent",
+    "title": "iTop AI Assistant",
     "token_gate_desc": "Admin API odmietlo požiadavku. Zadajte admin token pre pokračovanie.",
     "field_admin_token": "Admin token",
     "btn_save_token": "Uložiť token"
@@ -11,7 +11,8 @@
     "modules": "Moduly",
     "prompts": "Prompty",
     "runs": "Spustenia",
-    "vector": "Vektorový index"
+    "vector": "Vektorový index",
+    "system": "Systém"
   },
   "layout": {
     "redis_ok": "Redis OK",
@@ -88,6 +89,10 @@
     "incomplete": "Nastavenie je neúplné. Chýba:",
     "btn_run_wizard": "Spustiť sprievodcu nastavením",
     "btn_edit_direct": "Upraviť pripojenia priamo",
+    "welcome_title": "Vitajte!",
+    "welcome_intro": "Toto je sprievodca nastavením iTop AI Assistant. Nasledujúce kroky prepoja asistenta s vaším iTop a LLM a pripravia systém na prevádzku.",
+    "welcome_licence": "Open source, AGPL-3.0",
+    "welcome_start": "Spustiť nastavenie",
     "step_security_label": "Zabezpečenie",
     "step_security_desc": "Prístupové tokeny",
     "step_itop_label": "Pripojenie iTop",
@@ -270,5 +275,18 @@
     "field_reconcile_days": "Interval zosúladenia (dni)",
     "field_max_chunk_tokens": "Max. tokenov na chunk",
     "field_log_entries": "Záznamov logu na chunk"
+  },
+  "system": {
+    "title": "Systém",
+    "telemetry_title": "Anonymná telemetria používania",
+    "telemetry_desc": "Raz denne sa odosiela jeden agregovaný dokument obsahujúci informácie o používaní systému: počítadlá, zapnuté moduly a verzie, na ktorých beží. Informácie o obsahu ticketov, menách, adresách ani kľúčoch sa nikdy neprenášajú.",
+    "telemetry_appeal": "Je to jediný spôsob, ako zistiť, ako aktívne je asistent používaný, ktoré jeho funkcie si zaslúžia ďalší rozvoj a ktoré problémy vyžadujú prednostnú pozornosť. Keďže ide o open source projekt bez obchodného tímu, ktorého by bolo možné sa opýtať, zostáva toto jediným dostupným kanálom. Ponechajte prosím túto funkciu zapnutú, pokiaľ nemáte závažný dôvod ju vypnúť.",
+    "install_id": "ID inštalácie",
+    "copied": "Skopírované",
+    "not_a_release_build": "Tento build sme nezverejnili my, preto nie sú odosielané žiadne dáta. Telemetria je odosielaná iba z oficiálne zverejnených buildov.",
+    "show_document": "Zobraziť dnešný dokument",
+    "hide_document": "Skryť dokument",
+    "what_is_collected": "Čo sa zhromažďuje",
+    "repository": "GitHub"
   }
 }

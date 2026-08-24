@@ -159,6 +159,18 @@ class TestSetupStatus(SetupApiTestCase):
         self.assertTrue(body["configured"])
         self.assertEqual(body["sections"]["llm"]["values"]["model"], "from-env")
 
+    def test_status_answers_without_redis(self):
+        """The screen an administrator opens when Redis is what is down.
+
+        `InstallIdentity` does not swallow `RedisError` and must not, so this
+        endpoint carries the guard: the missing-setup list is the answer that
+        was asked for, and the id is the part that has to go missing."""
+        with patch.object(InstallIdentity, "install_id", side_effect=RedisError("down")):
+            response = self.client.get("/api/setup/status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.json()["install_id"])
+
 
 class TestLlmProviders(SetupApiTestCase):
     def test_registry_is_served_for_the_ui(self):

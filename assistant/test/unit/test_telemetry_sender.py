@@ -225,15 +225,31 @@ class TestWhichBuildMaySend(SenderTestCase):
         self.assertEqual([], self.sink.documents)
         self.assertEqual([], await self.redis.keys("install:telemetry-sent:*"))
 
-    async def test_test_mode_lets_an_unpublished_build_send(self):
-        """How the stand — and a developer checking the path on purpose — sends
-        anything at all. The signal is marked as test by the sink, so it stays
-        out of product queries."""
+    async def test_an_unpublished_build_sends_when_it_is_allowed_to(self):
+        """How the stand — and a real server deployed from source, which is
+        otherwise never counted — sends anything at all. Separate from the test
+        mark: whether a build may send and whether its signal is a test one are
+        different questions, and the stand answers yes to both."""
         await self._configure()
         await self._first_seen(timedelta(days=5))
 
         with self._unpublished():
-            sender = TelemetrySender(self.config_store, self.builder, self.install, self.sink, test_mode=True)
+            sender = TelemetrySender(
+                self.config_store, self.builder, self.install, self.sink, allow_unpublished_build=True
+            )
             await sender.tick()
 
         self.assertEqual(1, len(self.sink.documents))
+
+    async def test_the_test_mark_alone_does_not_unlock_an_unpublished_build(self):
+        """`TELEMETRY_TEST_MODE` marks what is sent and decides nothing about
+        whether anything is."""
+        await self._configure()
+        await self._first_seen(timedelta(days=5))
+
+        with self._unpublished():
+            await TelemetrySender(
+                self.config_store, self.builder, self.install, TelemetryDeckSink(test_mode=True)
+            ).tick()
+
+        self.assertEqual([], self.sink.documents)

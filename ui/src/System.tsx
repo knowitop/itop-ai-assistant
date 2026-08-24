@@ -61,7 +61,7 @@ export default function System() {
 // the first document leaves the moment the wizard is finished, so the chance
 // to say no has to come before any of it (REQ-009 R6). What surrounds it
 // differs between the two places, so each composes its own — the id and the
-// preview belong on System, the wizard links to them instead.
+// preview stay on System, the wizard only links out to what's collected.
 export function TelemetrySwitch() {
   const { t } = useTranslation();
   const [state, setState] = useState<TelemetryState | null>(null);
@@ -108,14 +108,12 @@ export function TelemetrySwitch() {
         />
       </Group>
 
-      <Text size="sm">{t('system.telemetry_appeal')}</Text>
+      <Alert color="blue">{t('system.telemetry_appeal')}</Alert>
 
       {/* Switched on and still silent — the one state that would otherwise
           read as "telemetry is on but my installation never shows up". */}
       {state.enabled && !state.sending && (
-        <Text size="sm" c="dimmed">
-          {t('system.not_a_release_build')}
-        </Text>
+        <Alert color="orange">{t('system.not_a_release_build')}</Alert>
       )}
 
       {error && (

@@ -2,9 +2,9 @@
 
 The assistant sends one anonymous document a day about the installation it runs in: counts of what it did, which modules are on, and the versions it runs. It is on by default and switched off in one click.
 
-This page describes that document in full. It is not the authority on it, though — the installation itself is. **System → Show today's document** prints the exact JSON that would leave today, and `GET /api/telemetry/preview` returns the same thing to a script. Both call the same code the sender calls, so neither can drift from what is actually sent. If this page and that document ever disagree, the document is right.
+This page describes that document in full, but the installation itself is the authority on it. **System → Show today's document** prints the exact JSON that would leave today, and `GET /api/telemetry/preview` returns the same thing to a script; both go through the code the sender uses. If this page and that document ever disagree, the document is right.
 
-The preview answers with telemetry switched off as well, which is the point: "show me what would go out if I turned this on" is a question asked before turning it on.
+The preview answers with telemetry switched off as well — "show me what would go out if I turned this on" is a question asked before turning it on.
 
 ---
 
@@ -20,7 +20,7 @@ There is no other channel. The project is open source and has no sales team call
 
 ## What is sent
 
-One document per installation per UTC day. Not a stream of events — a stream would eventually carry ticket text, because it only takes one field turning out to be something other than it looked. A day's counter physically cannot.
+One document per installation per UTC day: a day's counters, not a stream of events. A counter has no room for ticket text.
 
 ### Build
 
@@ -40,9 +40,9 @@ One document per installation per UTC day. Not a stream of events — a stream w
 | `admin_language` | The language the admin UI was last used in, or absent if nobody has opened it |
 | `utc_offset_minutes` | The installation's offset from UTC, as a number. It cannot name a city |
 
-Country is **not** a field. The receiver derives it from the connection address (see below), which is better than us computing it, because the only thing we could compute it from is your configuration.
+Country is **not** a field, and nothing derives one on arrival either — the receiver does that for signals from its web SDK, and these are not those. Where an installation is, we do not know; the nearest thing in the document is an offset from UTC.
 
-Redis is not a field either: the document is assembled out of Redis, so the field could never hold `false`, and a constant dressed as an observation is worse than no observation.
+Redis is not a field either: the document is assembled out of Redis, so the field could never hold `false`.
 
 ### Configuration
 
@@ -55,7 +55,9 @@ Redis is not a field either: the document is assembled out of Redis, so the fiel
 
 `settings` is a rule, not a list. Every configurable section is scanned, and each field whose declared type is `bool` or `int` travels under `<section>_<field>` — today that is `intake_enabled`, `intake_max_questions`, `intake_max_iterations`, `intake_classify_enabled`, `intake_max_classify_questions`, `intake_clarify_enabled`, `intake_handoff_note_enabled`, `intake_similar_enabled`, `intake_similar_max_age_days`, `intake_similar_candidates`, `intake_similar_top`, `vector_enabled`, `vector_sweep_interval_seconds`, `vector_sweep_page_size`, `vector_reconcile_interval_days`, `vector_max_chunk_tokens`, `vector_log_entries_per_chunk`.
 
-A module written next year describes itself here without a line of code changing. And a module's OQL, its class list, its note templates cannot appear here at all — not because somebody remembered to exclude them, but because they are neither a `bool` nor an `int`.
+A module's OQL, its class list, its note templates cannot appear here at all: they are neither a `bool` nor an `int`.
+
+One consequence worth knowing, because it is visible in the document: a module switched off in the environment before startup (`INTAKE_ENABLED=false`) is never registered, so **none** of its fields appear — not even `intake_enabled: false`. Switched off later through the admin UI, it stays registered and reports `intake_enabled: false` like any other value. So an absent group means "not running here", by either route; it does not distinguish a module this build does not have from one this installation never started.
 
 ### Activity
 
@@ -83,7 +85,7 @@ Fifteen counters, for the day the document covers. Every one of them is present 
 
 ## What is never sent
 
-This is a list of what the document cannot contain, and it is an obligation rather than a promise — our agreement with the receiver puts the composition of what we send on us.
+What the document cannot contain, under our agreement with the receiver:
 
 - **Ticket content of any kind** — subjects, descriptions, resolutions, public comments, private notes.
 - **Names** — of people, of organizations, of teams.
@@ -91,13 +93,13 @@ This is a list of what the document cannot contain, and it is an obligation rath
 - **Credentials** — keys, tokens, passwords.
 - **iTop object identifiers** — no ticket id, no person id, no organization id.
 
-Two things hold that line, and neither of them is discipline at the call site.
+Two rules hold that line, neither of which depends on discipline at the call site.
 
-**A value that is not recognized becomes `other`.** The model name is the case worth spelling out: it is not an enumeration and cannot be turned into one, so what guards it is its shape. A name shaped like a model id travels; `qwen3-32b-final-from-Pete` does not, and neither does anything with a comment appended to it, in any alphabet. The provider is a real enumeration — a value we do not ship becomes `other` outright.
+**A value that is not recognized becomes `other`.** The provider is an enumeration: a value this build does not ship travels as `other`. The model name cannot be an enumeration, so it is checked by shape — a name shaped like a model id travels, `qwen3-32b-final-from-Pete` does not, and neither does anything with a comment appended to it, in any alphabet.
 
-**Everything else is a number or a flag.** The configuration group admits only `bool` and `int` values, and the activity group only integers. Prose has nowhere to go.
+**Everything else is a number or a flag.** The configuration group admits only `bool` and `int` values, the activity group only integers. Prose has nowhere to go.
 
-Not sent, and worth naming because their absence is deliberate: error messages, stack traces, and model traces. An exception message carries ticket content freely — a model's answer inside a validation error, an iTop response body inside a parse error — so those are a separate question with a separate switch, and today they are not sent at all. Describing something that does not happen is how a page stops being believed.
+Error messages, stack traces and model traces are not sent either. An exception message carries ticket content freely — a model's answer inside a validation error, an iTop response body inside a parse error — so they would need a switch of their own; there is none today, and nothing of the kind leaves.
 
 ---
 
@@ -109,25 +111,22 @@ Not sent, and worth naming because their absence is deliberate: error messages, 
 - [Terms](https://telemetrydeck.com/terms/)
 - [Data processing agreement](https://telemetrydeck.com/dpa/)
 - [How their anonymization works](https://telemetrydeck.com/docs/articles/anonymization-how-it-works/)
+- [Privacy FAQ — what is collected, and what is not](https://telemetrydeck.com/docs/guides/privacy-faq/)
 
-They were chosen partly because they are in the EU rather than the US: two comparable services cut off access by IP address for everyone in Russia, retroactively and without warning, and a significant share of installations sit there.
+### What the receiver does
 
-### What the receiver does, as opposed to what we do
+These are their commitments and not ours, so read them at the source rather than take this summary for them:
 
-Stated separately because these are their commitments and not ours, and you should read them at the source rather than take our summary for it:
-
-- **IP addresses are not stored.** The country is derived from part of the address, on the fly, and the address itself is not kept — which is why we do not send a country field ourselves.
-- **The identity field is hashed again on arrival**, with their own salt. Their documentation says the point is that neither they nor we can reverse it.
+- **IP addresses are not stored** — not in their database, not in their logs, nowhere. They do read the address of a *web* request far enough to name a country, but the documents this service sends go to the plain ingest API, which does no such lookup: no country is derived from ours, and none is stored.
+- **The identity field is hashed again on arrival**, with their own salt, so that neither they nor we can reverse it.
 
 ### The installation id
 
 Your installation has an anonymous id — a random value it generated for itself on first start, out of nothing. Not derived from your iTop URL, not from your organization name, not from a key: if it were derived from anything, it would be a fingerprint of that thing.
 
-It is shown on the wizard's welcome screen and on the **System** screen, and it travels in the document as an ordinary field.
+It is shown on the **System** screen, and it travels in the document as an ordinary field — which is what makes the next section possible at all.
 
-**It is sent as it is, and that is deliberate.** Hashing it on our side would protect nothing, because the value is random to begin with — a hash of it is the same random value in a different alphabet. Meanwhile the receiver hashes the identity field again on arrival, so an installation cannot be looked up by *that*. The plain field in the document is the only handle that works, and it is what makes the next section possible at all.
-
-One cost of storing it where we store it: it lives in Redis, the only state this service owns. Reset Redis and this installation gets a new id, and our count of installations goes up by one. We would rather write that down than work around it by keeping state in a second place.
+It lives in Redis, the only state this service owns. Reset Redis and the installation gets a new id, and counts as a new installation from then on.
 
 ### "Delete my data"
 
@@ -138,7 +137,7 @@ Two routes, and the second one does not depend on anyone's goodwill.
 
 ### It is a one-way channel
 
-The receiver sends nothing back to your installation. No update notifications, no configuration, no commands. There is no code path for it to answer on, and that is a property worth keeping rather than losing later to "the connection is open anyway".
+The receiver sends nothing back to your installation. No update notifications, no configuration, no commands — there is no code path for it to answer on.
 
 ---
 
@@ -154,9 +153,17 @@ What does continue is the counting. The daily counters keep being written into R
 
 Telemetry reports from **released builds only** — the images we publish from a git tag. A checkout you cloned and ran with `uv sync`, or an image you built yourself, sends nothing regardless of the switch, and the System screen says so.
 
-This keeps developers' machines out of the count of installations. It has a cost we would rather name than hide: an installation deployed from source onto a real server also never reports, and never counts. There is nothing to tell it apart from a laptop — both report the same kind of version — and guessing would be worse than the silence.
+This is a stamp, not a guess: the workflow that publishes an image marks the artifact as a release build, and nothing else does. It is not read off the version number, so a checkout sitting exactly on a tag is still not a published image.
 
-To send from such a build on purpose, set `TELEMETRY_TEST_MODE=true`. Signals are then marked as test and stay out of our product numbers; this is what our own verification stand uses.
+This keeps developers' machines out of the count of installations. But an installation deployed from source onto a real server is not a developer's machine, and nothing in the build can tell the two apart — so if that is you, say so:
+
+```
+TELEMETRY_ALLOW_UNPUBLISHED_BUILD=true
+```
+
+That installation then reports like any other, and counts like any other. Left unset, it never reports and is never counted.
+
+`TELEMETRY_TEST_MODE=true` is a different switch and does not unlock anything: it marks whatever is sent as a test signal, so it stays out of our product numbers. Our own verification stand sets both — it runs an unpublished build, and its numbers are not real.
 
 ---
 
@@ -166,4 +173,4 @@ A fresh installation sends its first document **when the setup wizard is finishe
 
 An installation that was upgraded rather than newly set up has no such moment, so it waits for the ordinary cycle: yesterday's day, whole, and never sooner than 24 hours after the installation was first seen.
 
-After that, one document a day. If the receiver is unreachable, that day is lost — there is no queue, no retry tomorrow, and no error anywhere in your interface. Telemetry is not allowed to become an incident in somebody else's production, and it is not valuable enough to fight for: one installation missing one day changes no conclusion we would draw.
+After that, one document a day. If the receiver is unreachable, that day is lost — there is no queue, no retry tomorrow, and no error anywhere in your interface. Telemetry is not allowed to become an incident in your production, and one installation missing one day changes no conclusion we would draw.

@@ -160,29 +160,31 @@ function DryRunSwitch() {
   if (dryRun === null) return error ? <Alert color="red">{error}</Alert> : null;
 
   return (
-    <Alert color={dryRun ? 'yellow' : 'gray'} variant={dryRun ? 'light' : 'transparent'} p="sm">
-      <Group justify="space-between" wrap="nowrap" align="flex-start">
-        <Stack gap={2}>
-          <Text fw={600} size="sm">
-            {t('modules.dry_run_title')}
+    <Stack maw={720}>
+      <Alert color={dryRun ? 'yellow' : 'gray'} variant={dryRun ? 'light' : 'transparent'} p="sm">
+        <Group justify="space-between" wrap="nowrap" align="flex-start">
+          <Stack gap={2}>
+            <Text fw={600} size="sm">
+              {t('modules.dry_run_title')}
+            </Text>
+            <Text size="sm" c="dimmed">
+              {t('modules.dry_run_desc')}
+            </Text>
+          </Stack>
+          <Switch
+            checked={dryRun}
+            disabled={busy}
+            onChange={(e) => void toggle(e.currentTarget.checked)}
+            aria-label={t('modules.dry_run_title')}
+          />
+        </Group>
+        {error && (
+          <Text size="sm" c="red" mt="xs">
+            {error}
           </Text>
-          <Text size="sm" c="dimmed">
-            {t('modules.dry_run_desc')}
-          </Text>
-        </Stack>
-        <Switch
-          checked={dryRun}
-          disabled={busy}
-          onChange={(e) => void toggle(e.currentTarget.checked)}
-          aria-label={t('modules.dry_run_title')}
-        />
-      </Group>
-      {error && (
-        <Text size="sm" c="red" mt="xs">
-          {error}
-        </Text>
-      )}
-    </Alert>
+        )}
+      </Alert>
+    </Stack>
   );
 }
 

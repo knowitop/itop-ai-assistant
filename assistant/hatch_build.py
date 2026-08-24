@@ -24,7 +24,14 @@ TEMPLATE = '''"""Generated at build time by hatch_build.py — do not edit."""
 version = {version!r}
 commit = {commit!r}
 built_at = {built_at!r}
+channel = {channel!r}
 '''
+
+#: What a build calls itself when nobody said otherwise. Only the workflow that
+#: publishes an image sets `BUILD_CHANNEL`, so everything else — a checkout, a
+#: `uv build`, an image somebody built themselves — is `local` by default
+#: rather than by detection.
+LOCAL_CHANNEL = "local"
 
 
 def _git(root: Path, *args: str) -> str | None:
@@ -40,6 +47,19 @@ def _git(root: Path, *args: str) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return out.stdout.strip()
+
+
+def _channel() -> str:
+    """Whether this artifact is one we publish, said rather than inferred.
+
+    Telemetry refuses to report from anything that is not `release`
+    (`util/build_info.py::is_release_build`), so the answer must not depend on
+    the shape of a version string: a checkout sitting exactly on a tag reads a
+    clean release number, and `local_scheme` in `pyproject.toml` decides that
+    shape for reasons of its own. `.github/workflows/docker-publish.yml` is the
+    only place that passes `BUILD_CHANNEL=release`.
+    """
+    return os.environ.get("BUILD_CHANNEL") or LOCAL_CHANNEL
 
 
 def _commit(root: Path) -> str | None:
@@ -64,6 +84,7 @@ class BuildInfoHook(BuildHookInterface):
                 version=self.metadata.version,
                 commit=_commit(root),
                 built_at=datetime.now(UTC).replace(microsecond=0).isoformat(),
+                channel=_channel(),
             ),
             encoding="utf-8",
         )

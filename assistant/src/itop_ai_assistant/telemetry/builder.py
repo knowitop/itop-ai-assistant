@@ -105,6 +105,13 @@ class DocumentBuilder:
         The declared type is what decides, not the value: a field annotated
         `str | None` that happens to be unset stays out, so a section cannot
         start leaking the day somebody fills it in.
+
+        Registered modules, which is not the same as existing ones: a module
+        switched off in the environment never registers (`pipeline.register`
+        returns early), so its whole group is absent rather than reporting
+        `<module>_enabled: false`. Switched off through the admin API instead,
+        it is registered and says so. Absent therefore means "not running
+        here" by either route — `docs/telemetry.md` says the same.
         """
         sections: dict[str, type[BaseModel]] = {
             module.name: module.config_model for module in self._registry.modules if module.config_model is not None

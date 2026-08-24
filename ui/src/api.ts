@@ -150,9 +150,10 @@ export interface SetupStatus {
   // Top-level rather than dug out of `sections` — every screen shows it.
   dry_run: boolean;
   // This installation's own anonymous id, generated once at first start. Shown
-  // on the wizard's welcome screen and on System; it is what a "delete my
-  // data" request names.
-  install_id: string;
+  // on System; it is what a "delete my data" request names. Null while Redis
+  // is unreachable — the rest of this answer still stands, and the
+  // missing-setup list is what the screen needs.
+  install_id: string | null;
   sections: Record<string, unknown>;
 }
 

@@ -3,9 +3,14 @@
 Three questions, not two. Before "is it on" comes "is this a build we
 published": a checkout that finished the setup wizard would otherwise report
 from a developer's machine and inflate the count of installations, which is
-the one number REQ-009 exists to produce. `TELEMETRY_TEST_MODE` is how such a
-build sends anyway when somebody means it — marked as test, so the receiver
-keeps it out of product queries.
+the one number REQ-009 exists to produce. The build says which it is rather
+than being guessed from its version number (`util/build_info.py`).
+
+`TELEMETRY_ALLOW_UNPUBLISHED_BUILD` is how such a build sends anyway when
+somebody means it — a stand, or a real server deployed from source that would
+otherwise never be counted. It is not `TELEMETRY_TEST_MODE`: that one marks
+what is sent, and marking a real installation as test is exactly as wrong as
+counting a laptop.
 
 Infrastructure, not a business module — the same shelf as the vector sweep and
 for the same reason (`pipelines/registry.py`): a tick with no module, no
@@ -77,7 +82,7 @@ def register_telemetry_send(
     install: InstallIdentity,
     sink: TelemetrySink,
     *,
-    test_mode: bool = False,
+    allow_unpublished_build: bool = False,
 ) -> None:
     """Put the daily send under the process-wide scheduler.
 
@@ -92,7 +97,7 @@ def register_telemetry_send(
 
     tasks.add(
         SEND_TASK,
-        TelemetrySender(config_store, builder, install, sink, test_mode=test_mode).tick,
+        TelemetrySender(config_store, builder, install, sink, allow_unpublished_build=allow_unpublished_build).tick,
         interval=interval,
         default_interval=_TICK_INTERVAL_SECONDS,
     )
@@ -108,13 +113,13 @@ class TelemetrySender:
         install: InstallIdentity,
         sink: TelemetrySink,
         *,
-        test_mode: bool = False,
+        allow_unpublished_build: bool = False,
     ) -> None:
         self._config = config_store
         self._builder = builder
         self._install = install
         self._sink = sink
-        self._test_mode = test_mode
+        self._allow_unpublished_build = allow_unpublished_build
 
     async def tick(self) -> None:
         try:
@@ -129,7 +134,7 @@ class TelemetrySender:
         # First, and before the config is read: a build we did not publish must
         # not reach Redis, let alone the network, on the strength of a switch
         # that is on by default (`util/build_info.py::is_release_build`).
-        if not (is_release_build() or self._test_mode):
+        if not (is_release_build() or self._allow_unpublished_build):
             return
         if not (await self._config.get("telemetry", TelemetryConfig)).enabled:
             return

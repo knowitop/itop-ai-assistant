@@ -58,10 +58,11 @@ class Environment(BaseModel):
     `vector_available` says the harder thing next to it: not "the store is
     deployed" but "the layer answers".
 
-    Country and region are absent on purpose and not by omission: the receiver
-    derives the country from the connection address (ADR-031), and we have
-    nothing to compute it from except the customer's own configuration — that
-    is, from exactly what we must not touch.
+    Country and region are absent on purpose and not by omission: we have
+    nothing to compute a country from except the customer's own configuration
+    — that is, exactly what we must not touch. The receiver does not supply
+    one either: it reads the request address only for signals from its web
+    SDK, and ours go to the plain ingest API (ADR-031).
     """
 
     model_config = _STRICT

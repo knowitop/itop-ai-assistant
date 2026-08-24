@@ -24,7 +24,7 @@ import { Link } from 'react-router-dom';
 
 import { apiGet, apiSend, fetchSetupStatus, REPO_URL, SetupStatus, setToken, TELEMETRY_DOC_URL } from './api';
 import { loadLlmProviders, LlmProvider } from './Connections';
-import { InstallId, TelemetrySwitch } from './System';
+import { TelemetrySwitch } from './System';
 
 // GET /api/setup/{section} shape (same as in Connections): non-secret values
 // plus is-set flags for secrets.
@@ -122,7 +122,7 @@ export default function SetupWizard() {
 
   if (!wizardActive) {
     return (
-      <Stack maw={640}>
+      <Stack maw={720}>
         <Title order={2}>{t('setup.title')}</Title>
         {status.configured ? (
           <Alert color="green">{t('setup.configured')}</Alert>
@@ -147,7 +147,7 @@ export default function SetupWizard() {
   }
 
   if (!started) {
-    return <WelcomeScreen status={status} onStart={() => setStarted(true)} />;
+    return <WelcomeScreen onStart={() => setStarted(true)} />;
   }
 
   const finish = async () => {
@@ -162,7 +162,7 @@ export default function SetupWizard() {
 
   // Security comes first: the webhooks step needs a saved webhook token.
   return (
-    <Stack maw={640}>
+    <Stack maw={720}>
       <Title order={2}>{t('setup.wizard_title')}</Title>
       <Stepper active={step} onStepClick={setStep} allowNextStepsSelect={false} size="xs">
         <Stepper.Step
@@ -738,10 +738,10 @@ function ProvisionReport({ report }: { report: ProvisionItem[] }) {
 // visibility, and it owes it *here*: the first document leaves the moment the
 // last step is saved (REQ-009 R6), so a switch shown only afterwards would
 // come too late to refuse anything.
-function WelcomeScreen({ status, onStart }: { status: SetupStatus; onStart: () => void }) {
+function WelcomeScreen({ onStart }: { onStart: () => void }) {
   const { t } = useTranslation();
   return (
-    <Stack maw={640}>
+    <Stack maw={720}>
       <Title order={2}>{t('setup.welcome_title')}</Title>
       <Text>{t('setup.welcome_intro')}</Text>
       <Group gap="lg">
@@ -752,7 +752,6 @@ function WelcomeScreen({ status, onStart }: { status: SetupStatus; onStart: () =
           {t('system.repository')}
         </Anchor>
       </Group>
-      {status.install_id && <InstallId value={status.install_id} />}
       <Divider />
       <TelemetrySwitch />
       <Anchor href={TELEMETRY_DOC_URL} target="_blank" rel="noopener noreferrer" size="sm">

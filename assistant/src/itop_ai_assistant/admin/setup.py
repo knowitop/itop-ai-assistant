@@ -17,6 +17,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from langchain_core.tools import tool
 from pydantic import BaseModel, ValidationError
+from redis.exceptions import RedisError
 
 from itop_ai_assistant.config import (
     EmbeddingsConfig,
@@ -29,13 +30,14 @@ from itop_ai_assistant.config import (
     TicketMappingConfig,
     missing_setup,
 )
-from itop_ai_assistant.core.api_deps import get_config_store
+from itop_ai_assistant.core.api_deps import get_config_store, get_install
 from itop_ai_assistant.core.deps import AppDeps, create_llm
 from itop_ai_assistant.core.llm_providers import PROVIDERS, get_provider
 from itop_ai_assistant.itop.connection import create_itop_client
 from itop_ai_assistant.itop.provisioning import provision_itop
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.settings.config_store import ConfigStore
+from itop_ai_assistant.state.install import InstallIdentity
 from itop_ai_assistant.telemetry.sender import SEND_TASK
 from itop_ai_assistant.util.text import strip_thinking
 from itop_ai_assistant.vector import VectorConfig, measure_embedding_dimension
@@ -98,10 +100,28 @@ async def _merged_with_current(
     return {**current.model_dump(), **body}
 
 
+async def _install_id_or_none(install: InstallIdentity) -> str | None:
+    """This installation's id, or `None` while Redis is unreachable.
+
+    The only read in this handler that would otherwise raise: `ConfigStore`
+    degrades to env defaults on `RedisError`, and `InstallIdentity` must not
+    (the telemetry document may not be built from a half-known installation).
+    So the guard belongs here — this endpoint is what the Setup screen renders
+    and what the layout refetches on every navigation, and a missing-setup list
+    is exactly what an administrator came for when Redis is the thing that is
+    down.
+    """
+    try:
+        return await install.install_id()
+    except RedisError as e:
+        logger.warning(f"Install state unavailable, setup status carries no installation id: {e}")
+        return None
+
+
 @router.get("/status")
 async def setup_status(
-    request: Request,
     config_store: Annotated[ConfigStore, Depends(get_config_store)],
+    install: Annotated[InstallIdentity, Depends(get_install)],
 ) -> dict:
     itop_cfg = await config_store.get("itop", ItopConfig)
     llm_cfg = await config_store.get("llm", LlmConfig)
@@ -117,10 +137,9 @@ async def setup_status(
         # refetches on every navigation.
         "dry_run": platform_cfg.dry_run,
         # Here for the same reason, and because it identifies the installation
-        # rather than its telemetry (REQ-009 R1): the setup wizard shows it on
-        # its welcome screen and the System screen shows it again, and neither
-        # needs a request of its own for one string.
-        "install_id": await request.app.state.deps.install.install_id(),
+        # rather than its telemetry (REQ-009 R1): the System screen shows it,
+        # and doesn't need a request of its own for one string.
+        "install_id": await _install_id_or_none(install),
         "sections": {
             "itop": _masked(itop_cfg),
             "llm": _masked(llm_cfg),

@@ -6,7 +6,6 @@ never built — an editable install straight from a checkout — and then the
 answer is an honest "dev".
 """
 
-import re
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib.metadata import PackageNotFoundError
@@ -15,13 +14,13 @@ from importlib.metadata import version as metadata_version
 DISTRIBUTION = "itop-ai-assistant"
 UNKNOWN_VERSION = "dev"
 
-#: A release number and nothing else — no `.dev`, no `+local`, no `rc`.
-_RELEASE_VERSION = re.compile(r"^\d+(\.\d+)*$")
+#: The channel a build claims when it was not stamped as anything: an editable
+#: install, a `uv build`, an image somebody built themselves.
+LOCAL_CHANNEL = "local"
 
-#: `fallback-version` from `pyproject.toml`: what hatch-vcs answers when there
-#: is no repository to read a tag from. It has the shape of a release and is
-#: the opposite of one.
-_NO_REPOSITORY = "0.0.0"
+#: The one channel telemetry reports from — stamped only by the workflow that
+#: publishes an image (`hatch_build.py::_channel`).
+RELEASE_CHANNEL = "release"
 
 
 @dataclass(frozen=True)
@@ -29,6 +28,8 @@ class BuildInfo:
     version: str
     commit: str | None
     built_at: str | None
+    #: `release` for an artifact we published, `local` for everything else.
+    channel: str = LOCAL_CHANNEL
 
 
 @lru_cache(maxsize=1)
@@ -41,6 +42,9 @@ def get_build_info() -> BuildInfo:
         version=_build_info.version or _metadata_version(),
         commit=_build_info.commit,
         built_at=_build_info.built_at,
+        # `getattr`, because a stamp written by an older `hatch_build.py` has
+        # no such field and the honest reading of its silence is `local`.
+        channel=getattr(_build_info, "channel", LOCAL_CHANNEL),
     )
 
 
@@ -59,19 +63,18 @@ def is_release_build() -> bool:
     setup wizard would otherwise inflate the count of installations — the one
     number the requirement exists to produce.
 
-    The version answers this and the commit does not. `hatch_build.py` stamps a
-    commit for an editable install too, so a checkout has one; but the version
-    comes from the git tag through hatch-vcs, and images are published from
-    tags alone (`.github/workflows/docker-publish.yml` runs on `push: tags` and
-    passes the semver through `SETUPTOOLS_SCM_PRETEND_VERSION`). A checkout
-    between tags therefore reads `0.4.1.dev5`, a locally built image reads the
-    no-repository fallback, and only a published artifact reads `0.4.1`.
+    The build says so itself. It is not read off the version, which only ever
+    approximated the question: `local_scheme` in `pyproject.toml` decides
+    whether a checkout's version carries a local segment, so a clone sitting
+    exactly on a tag reads a clean `0.5.0` — dirty working tree included — and
+    would pass a test on shape. `BUILD_CHANNEL=release` is passed by one line
+    of `.github/workflows/docker-publish.yml` and by nothing else.
 
-    The cost is named rather than worked around: an installation deployed from
-    source onto a real server never reports and is never counted. Nothing here
-    can tell it from a laptop — both say `0.4.1.dev5` — and guessing would be
-    worse than the silence. `TELEMETRY_TEST_MODE` is the way to send from such
-    a build deliberately, marked as test.
+    A build that is not `release` can still send when somebody means it:
+    `TELEMETRY_ALLOW_UNPUBLISHED_BUILD` is that switch, and it is separate from
+    `TELEMETRY_TEST_MODE`, which only marks what is sent (`telemetry/sender.py`).
+    Without it, an installation deployed from source never reports and is never
+    counted — a cost named rather than guessed around, since nothing here can
+    tell such a server from a laptop.
     """
-    version = get_build_info().version
-    return version != _NO_REPOSITORY and _RELEASE_VERSION.match(version) is not None
+    return get_build_info().channel == RELEASE_CHANNEL

@@ -76,8 +76,8 @@ async def lifespan(app: FastAPI):
         await check_module_prompts(module, deps.prompt_store)
 
     # The installation's own id, generated once and written before anyone asks
-    # for it: the setup wizard shows it on its welcome screen, before a single
-    # setting has been saved. A start without Redis is not an error worth
+    # for it: the System screen shows it, and a support request or a "delete
+    # my data" ask names it. A start without Redis is not an error worth
     # failing over — both values are still written on first ask (REQ-009 R1).
     try:
         await deps.install.register()

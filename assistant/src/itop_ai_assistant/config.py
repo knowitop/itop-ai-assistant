@@ -339,15 +339,24 @@ class Settings(BaseSettings):
     # nothing about a build we did not publish: those send nothing whatever
     # this holds (`util/build_info.py::is_release_build`).
     telemetry_enabled: bool = True
-    # Two jobs, one flag. It marks every signal as a test one, so the receiver
-    # keeps it out of production queries — ours, not the administrator's: it
-    # exists for the stand we verify releases on (ADR-031 asks for that check
-    # before every release touching telemetry), and a stand that cannot say
-    # "this is a test" inflates the installation count by one forever. And it
-    # is what lets a build we did not publish send at all, which is how that
-    # stand — and a developer checking the path on purpose — gets to send
-    # anything (`telemetry/sender.py`).
+    # Marks every signal as a test one, so the receiver keeps it out of
+    # production queries. Ours, not the administrator's: it exists for the
+    # stand we verify releases on (ADR-031 asks for that check before every
+    # release touching telemetry), and a stand that cannot say "this is a
+    # test" inflates the installation count by one forever.
+    #
+    # It marks and nothing else. Whether a build may send at all is the flag
+    # below — the two used to be one, and a stand needing both is a smaller
+    # cost than "mark this as test" and "send from an unpublished build"
+    # being impossible to ask for separately.
     telemetry_test_mode: bool = False
+    # Lets a build we did not publish send anyway (`telemetry/sender.py`).
+    # Two callers: the verification stand, which sets it together with the
+    # flag above, and an installation deployed from source onto a real server
+    # — which is otherwise never counted, because nothing can tell it from a
+    # developer's laptop. Setting this says "count me", and it is the
+    # administrator's to set, unlike the test mark.
+    telemetry_allow_unpublished_build: bool = False
     # Where the built admin SPA lives. The image sets it explicitly; unset =
     # probe the source checkout (see main._find_ui_dist)
     ui_dist_dir: Path | None = None

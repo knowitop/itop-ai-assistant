@@ -250,10 +250,17 @@ async def telemetry_state(
     """Whether the daily document is on, and whether it would actually leave.
 
     Two answers rather than three: the screen needs the outcome, not the terms
-    it is made of. `sending` is false with the switch on whenever this is not
-    a build we published (`util/build_info.py::is_release_build`) — the case
-    that would otherwise read as "telemetry is on but my installation never
-    shows up".
+    it is made of. `sending` is false with the switch on whenever this is not a
+    build we published and nothing has said otherwise
+    (`util/build_info.py::is_release_build`, `TELEMETRY_ALLOW_UNPUBLISHED_BUILD`)
+    — the case that would otherwise read as "telemetry is on but my
+    installation never shows up".
+
+    It answers for the build and the switch, not for the calendar: a fresh
+    installation still owes its first document to the end of the wizard, and an
+    upgraded one to the next daily cycle (`telemetry/sender.py`). Neither is a
+    state to render a warning about — both resolve by themselves, and
+    `docs/telemetry.md` is where the timing is explained.
 
     The installation id is deliberately not here: it belongs to the
     installation rather than to its telemetry, and travels in
@@ -264,7 +271,7 @@ async def telemetry_state(
     enabled = (await config_store.get("telemetry", TelemetryConfig)).enabled
     return {
         "enabled": enabled,
-        "sending": enabled and (is_release_build() or settings.telemetry_test_mode),
+        "sending": enabled and (is_release_build() or settings.telemetry_allow_unpublished_build),
     }
 
 
