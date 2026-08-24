@@ -1,10 +1,12 @@
 import unittest
+from datetime import UTC, datetime
 from importlib.metadata import version as metadata_version
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from redis.exceptions import RedisError
 
 from itop_ai_assistant.agents.intake.prompts import PROMPTS_DIR as INTAKE_PROMPTS_DIR
 from itop_ai_assistant.agents.selfcheck.prompts import PROMPTS_DIR as SELFCHECK_PROMPTS_DIR
@@ -18,10 +20,11 @@ from itop_ai_assistant.pipelines.registry import ModuleInfo, ScheduleRoute, Trig
 from itop_ai_assistant.settings.config_store import RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import FilePromptStore, RedisPromptStore
 from itop_ai_assistant.state.counters import DailyCounters
+from itop_ai_assistant.state.install import InstallIdentity
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.telemetry.builder import DocumentBuilder
-from itop_ai_assistant.telemetry.install import InstallIdentity
+from itop_ai_assistant.telemetry.document import TelemetryDocument
 from itop_ai_assistant.util.build_info import get_build_info
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.assembly import VectorSubsystem
@@ -412,3 +415,58 @@ class TestAdminAuth(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTelemetryVisibility(AdminApiTestCase):
+    """What an administrator can see about the daily document (REQ-009 R7)."""
+
+    def test_preview_is_the_document_itself_not_a_description_of_it(self):
+        """It has to validate as `TelemetryDocument`, which forbids extras:
+        the preview is only honest if it is the object the sender sends."""
+        response = self.client.get("/api/telemetry/preview")
+
+        self.assertEqual(response.status_code, 200)
+        document = TelemetryDocument.model_validate(response.json())
+        self.assertEqual(datetime.now(UTC).date(), document.day)
+
+    def test_preview_answers_with_telemetry_switched_off(self):
+        """ "Show me what would go out if I turned this on" is the question
+        asked before turning it on — and answering it opens nothing."""
+        self.client.patch("/api/setup/telemetry", json={"enabled": False})
+
+        with patch("httpx.AsyncClient") as client:
+            response = self.client.get("/api/telemetry/preview")
+
+        self.assertEqual(response.status_code, 200)
+        client.assert_not_called()
+
+    def test_the_id_in_the_preview_is_the_installation_id(self):
+        """R1 promises one handle for "delete my data" and for connecting an
+        issue to what we see. It is only a promise if the two agree."""
+        status = self.client.get("/api/setup/status").json()
+        document = self.client.get("/api/telemetry/preview").json()
+
+        self.assertTrue(status["install_id"])
+        self.assertEqual(status["install_id"], document["install_id"])
+
+    def test_state_says_nothing_is_sent_from_a_build_we_did_not_publish(self):
+        """The line the System screen shows: switched on, and still silent."""
+        with patch("itop_ai_assistant.admin.router.is_release_build", return_value=False):
+            body = self.client.get("/api/telemetry").json()
+
+        self.assertEqual({"enabled": True, "sending": False}, body)
+
+    def test_state_says_it_sends_from_a_published_build(self):
+        with patch("itop_ai_assistant.admin.router.is_release_build", return_value=True):
+            body = self.client.get("/api/telemetry").json()
+
+        self.assertEqual({"enabled": True, "sending": True}, body)
+
+    def test_preview_without_redis_is_503_not_a_stack_trace(self):
+        """The builder does not swallow `RedisError` and must not (R5). But
+        the answer to "what leaves today" is that the installation cannot
+        describe itself — which is also what the sender does at this moment."""
+        with patch.object(InstallIdentity, "install_id", side_effect=RedisError("down")):
+            response = self.client.get("/api/telemetry/preview")
+
+        self.assertEqual(response.status_code, 503)

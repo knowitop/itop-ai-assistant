@@ -9,13 +9,13 @@ from redis.exceptions import RedisError
 
 from itop_ai_assistant.config import ItopConfig, LlmConfig, Settings, TelemetryConfig, get_settings
 from itop_ai_assistant.settings.config_store import RedisConfigStore
-from itop_ai_assistant.telemetry.install import InstallIdentity
+from itop_ai_assistant.state.install import InstallIdentity
 from itop_ai_assistant.telemetry.sender import TelemetrySender
 from itop_ai_assistant.telemetry.telemetrydeck import TelemetryDeckSink
 from itop_ai_assistant.util.redis_keyspace import (
-    TELEMETRY_INSTALL_FIRST_SEEN_FIELD,
-    TELEMETRY_INSTALL_KEY,
-    TELEMETRY_INSTALL_SETUP_DAY_FIELD,
+    INSTALL_FIRST_SEEN_FIELD,
+    INSTALL_KEY,
+    INSTALL_SETUP_DAY_FIELD,
 )
 
 
@@ -44,6 +44,12 @@ class SenderTestCase(unittest.IsolatedAsyncioTestCase):
         self.builder = AsyncMock()
         self.sink = _Sink()
         self.today = datetime.now(UTC).date()
+        # These cases are about *which day*, so the build gate is held open:
+        # the test suite runs from a checkout, where nothing sends at all
+        # (`TestWhichBuildMaySend`).
+        release = patch("itop_ai_assistant.telemetry.sender.is_release_build", return_value=True)
+        release.start()
+        self.addCleanup(release.stop)
 
     async def _configure(self, *, enabled: bool = True, setup_complete: bool = True) -> None:
         await self.config_store.set("telemetry", {"enabled": enabled}, TelemetryConfig)
@@ -52,12 +58,10 @@ class SenderTestCase(unittest.IsolatedAsyncioTestCase):
             await self.config_store.set("llm", {"base_url": "http://llm/v1", "model": "gpt-test"}, LlmConfig)
 
     async def _first_seen(self, ago: timedelta) -> None:
-        await self.redis.hset(
-            TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_FIRST_SEEN_FIELD, (datetime.now(UTC) - ago).isoformat()
-        )
+        await self.redis.hset(INSTALL_KEY, INSTALL_FIRST_SEEN_FIELD, (datetime.now(UTC) - ago).isoformat())
 
     async def _wizard_finished(self, day: date) -> None:
-        await self.redis.hset(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_SETUP_DAY_FIELD, day.isoformat())
+        await self.redis.hset(INSTALL_KEY, INSTALL_SETUP_DAY_FIELD, day.isoformat())
 
     def _sender(self, sink=None) -> TelemetrySender:
         return TelemetrySender(self.config_store, self.builder, self.install, sink or self.sink)
@@ -187,3 +191,49 @@ class TestOneSendPerInstallation(SenderTestCase):
         await self._sender(refusing).tick()
 
         self.assertEqual(1, len(refusing.documents))
+
+
+class TestWhichBuildMaySend(SenderTestCase):
+    """A build we did not publish reports nothing (REQ-009 R5).
+
+    With the switch on by default, every clone that finished the setup wizard
+    would otherwise count as an installation — the one number the requirement
+    exists to produce.
+    """
+
+    def _unpublished(self):
+        return patch("itop_ai_assistant.telemetry.sender.is_release_build", return_value=False)
+
+    async def test_a_checkout_sends_nothing_and_opens_nothing(self):
+        await self._configure()
+        await self._first_seen(timedelta(days=5))
+
+        with self._unpublished(), patch("httpx.AsyncClient") as client:
+            await TelemetrySender(self.config_store, self.builder, self.install, TelemetryDeckSink()).tick()
+
+        client.assert_not_called()
+        self.builder.build.assert_not_awaited()
+
+    async def test_the_gate_comes_before_the_switch_is_even_read(self):
+        """Nothing is read and nothing is claimed — the tick ends before Redis."""
+        await self._configure()
+        await self._first_seen(timedelta(days=5))
+
+        with self._unpublished():
+            await self._sender().tick()
+
+        self.assertEqual([], self.sink.documents)
+        self.assertEqual([], await self.redis.keys("install:telemetry-sent:*"))
+
+    async def test_test_mode_lets_an_unpublished_build_send(self):
+        """How the stand — and a developer checking the path on purpose — sends
+        anything at all. The signal is marked as test by the sink, so it stays
+        out of product queries."""
+        await self._configure()
+        await self._first_seen(timedelta(days=5))
+
+        with self._unpublished():
+            sender = TelemetrySender(self.config_store, self.builder, self.install, self.sink, test_mode=True)
+            await sender.tick()
+
+        self.assertEqual(1, len(self.sink.documents))

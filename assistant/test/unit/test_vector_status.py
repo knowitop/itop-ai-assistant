@@ -19,10 +19,10 @@ from itop_ai_assistant.main import app
 from itop_ai_assistant.settings.config_store import RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import FilePromptStore, RedisPromptStore
 from itop_ai_assistant.state.counters import DailyCounters
+from itop_ai_assistant.state.install import InstallIdentity
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.telemetry.builder import DocumentBuilder
-from itop_ai_assistant.telemetry.install import InstallIdentity
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.assembly import VectorSubsystem
 from itop_ai_assistant.vector.ports.store import ChunkMetadata, ChunkRecord

@@ -1,9 +1,16 @@
-"""What we remember about this installation between restarts, and nothing else.
+"""What this installation remembers about itself between restarts.
 
 Four facts and one claim. The facts are the anonymous id, the admin-UI language
 last seen, when the installation was first seen and the day its setup wizard
 was finished; the claim is "these UTC days are already taken" — one key per
 day, held by whichever replica got there first.
+
+Telemetry is the biggest reader here, not the owner. The id identifies the
+*installation*: the admin UI shows it on the wizard's welcome screen before
+anything has been sent, and a support request names it. That is why this file
+sits in `state/` rather than in `telemetry/`, and why its keys carry no
+`telemetry:` prefix — the one exception being the claim, which says what
+telemetry has already reported and is named for what it is.
 
 The claim lives here rather than in the sender because it is the same
 keyspace and the same Redis handle, and `util/redis_keyspace.py` is easier to
@@ -43,13 +50,13 @@ from redis.exceptions import RedisError
 
 from itop_ai_assistant.settings.module_locales import normalize_language
 from itop_ai_assistant.util.redis_keyspace import (
-    TELEMETRY_INSTALL_FIRST_SEEN_FIELD,
-    TELEMETRY_INSTALL_ID_FIELD,
-    TELEMETRY_INSTALL_KEY,
-    TELEMETRY_INSTALL_LANGUAGE_FIELD,
-    TELEMETRY_INSTALL_SETUP_DAY_FIELD,
-    TELEMETRY_SENT_DAY_PREFIX,
-    TELEMETRY_SENT_DAY_TTL_DAYS,
+    INSTALL_FIRST_SEEN_FIELD,
+    INSTALL_ID_FIELD,
+    INSTALL_KEY,
+    INSTALL_LANGUAGE_FIELD,
+    INSTALL_SETUP_DAY_FIELD,
+    INSTALL_TELEMETRY_SENT_PREFIX,
+    INSTALL_TELEMETRY_SENT_TTL_DAYS,
     days_to_seconds,
 )
 
@@ -63,6 +70,20 @@ class InstallIdentity:
     def __init__(self, redis: Redis):
         self._redis = redis
 
+    async def register(self) -> None:
+        """Put this installation on record: its id and when it was first seen.
+
+        Called once at startup (`main.py`) so that the id exists before anyone
+        asks for it — the wizard's welcome screen shows it before a single
+        setting has been saved. Both writes are `HSETNX` underneath, so
+        calling this on every start of every replica records nothing twice.
+
+        Not the only way either value comes to exist: both getters still write
+        on first ask, and that is what covers a start where Redis was down.
+        """
+        await self.install_id()
+        await self.first_seen()
+
     async def install_id(self) -> str:
         """This installation's anonymous id, generated on first ask.
 
@@ -70,26 +91,29 @@ class InstallIdentity:
         with the same id, so the one that loses the race reads the winner's
         value instead of keeping its own.
         """
-        stored = await self._redis.hget(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_ID_FIELD)
+        stored = await self._redis.hget(INSTALL_KEY, INSTALL_ID_FIELD)
         if stored:
             return str(stored)
         candidate = uuid4().hex
-        if await self._redis.hsetnx(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_ID_FIELD, candidate):
+        if await self._redis.hsetnx(INSTALL_KEY, INSTALL_ID_FIELD, candidate):
             return candidate
         # Ours was refused, so the winner's value is the one this installation
         # is known by. Nothing there means the key went away between the two
         # commands: the candidate is a truthful id for one installation, and
         # the alternative is the same non-answer from every installation in
         # that state at once.
-        winner = await self._redis.hget(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_ID_FIELD)
+        winner = await self._redis.hget(INSTALL_KEY, INSTALL_ID_FIELD)
         return str(winner) if winner else candidate
 
     async def first_seen(self) -> datetime:
         """When this installation was first seen, recorded on first ask.
 
-        Asked by the sender rather than written where the id is generated, so
-        that an installation upgraded from a build that did not have the field
-        gets an honest value on the first tick instead of no answer at all.
+        Written at startup next to the id (`register`), so the moment means
+        the first start rather than the first telemetry tick. Still recorded
+        on first ask as well, which is what gives an honest value to an
+        installation upgraded from a build without the field, or one whose
+        Redis was down when it started.
+
         Its own field and not the id's creation time: the id may predate this
         code, the field never does.
 
@@ -101,14 +125,14 @@ class InstallIdentity:
         failed.
         """
         now = datetime.now(UTC)
-        if await self._redis.hsetnx(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_FIRST_SEEN_FIELD, now.isoformat()):
+        if await self._redis.hsetnx(INSTALL_KEY, INSTALL_FIRST_SEEN_FIELD, now.isoformat()):
             return now
-        stored = await self._redis.hget(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_FIRST_SEEN_FIELD)
+        stored = await self._redis.hget(INSTALL_KEY, INSTALL_FIRST_SEEN_FIELD)
         moment = _as_moment(stored)
         if moment is not None:
             return moment
-        logger.warning(f"Telemetry: {TELEMETRY_INSTALL_FIRST_SEEN_FIELD} is not a moment ({stored!r}), taken as now")
-        await self._redis.hset(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_FIRST_SEEN_FIELD, now.isoformat())
+        logger.warning(f"Telemetry: {INSTALL_FIRST_SEEN_FIELD} is not a moment ({stored!r}), taken as now")
+        await self._redis.hset(INSTALL_KEY, INSTALL_FIRST_SEEN_FIELD, now.isoformat())
         return now
 
     async def note_setup_complete(self) -> None:
@@ -119,7 +143,7 @@ class InstallIdentity:
         installation's life (REQ-009 R6).
         """
         today = datetime.now(UTC).date().isoformat()
-        await self._redis.hsetnx(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_SETUP_DAY_FIELD, today)
+        await self._redis.hsetnx(INSTALL_KEY, INSTALL_SETUP_DAY_FIELD, today)
 
     async def setup_day(self) -> date | None:
         """The day the wizard was finished, or `None`.
@@ -129,13 +153,13 @@ class InstallIdentity:
         field holds something that is not a date. The last one costs the first
         document; raising instead would cost every document after it.
         """
-        stored = await self._redis.hget(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_SETUP_DAY_FIELD)
+        stored = await self._redis.hget(INSTALL_KEY, INSTALL_SETUP_DAY_FIELD)
         if not stored:
             return None
         try:
             return date.fromisoformat(str(stored))
         except ValueError:
-            logger.warning(f"Telemetry: {TELEMETRY_INSTALL_SETUP_DAY_FIELD} is not a date ({stored!r}), ignored")
+            logger.warning(f"Telemetry: {INSTALL_SETUP_DAY_FIELD} is not a date ({stored!r}), ignored")
             return None
 
     async def claim_day(self, day: date) -> bool:
@@ -146,12 +170,12 @@ class InstallIdentity:
         document exists and before it is sent, and it is not released if the
         send fails: a lost day is allowed (R8), a day counted twice is not.
         """
-        key = f"{TELEMETRY_SENT_DAY_PREFIX}{day.isoformat()}"
-        return bool(await self._redis.set(key, "1", nx=True, ex=days_to_seconds(TELEMETRY_SENT_DAY_TTL_DAYS)))
+        key = f"{INSTALL_TELEMETRY_SENT_PREFIX}{day.isoformat()}"
+        return bool(await self._redis.set(key, "1", nx=True, ex=days_to_seconds(INSTALL_TELEMETRY_SENT_TTL_DAYS)))
 
     async def language(self) -> str | None:
         """The last admin-UI language seen, or `None` if nobody has been in."""
-        stored = await self._redis.hget(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_LANGUAGE_FIELD)
+        stored = await self._redis.hget(INSTALL_KEY, INSTALL_LANGUAGE_FIELD)
         return str(stored) if stored else None
 
     async def remember_language(self, lang: str | None) -> None:
@@ -165,9 +189,9 @@ class InstallIdentity:
         if normalized is None:
             return
         try:
-            await self._redis.hset(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_LANGUAGE_FIELD, normalized)
+            await self._redis.hset(INSTALL_KEY, INSTALL_LANGUAGE_FIELD, normalized)
         except RedisError as e:
-            logger.warning(f"Telemetry install state unavailable, language {normalized!r} not recorded: {e}")
+            logger.warning(f"Install state unavailable, language {normalized!r} not recorded: {e}")
 
 
 def _as_moment(stored: object) -> datetime | None:

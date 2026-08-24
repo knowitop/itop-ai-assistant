@@ -165,3 +165,16 @@ Optional — the screen only does something when `QDRANT_URL` points at a Qdrant
 An object is indexed as several **fragments**, matched separately — a query can look like another ticket's description without looking like its solution, and keeping them apart is what makes the difference visible. Which fragments exist is decided by the indexing source, not by you: tickets have `profile`, `body`, `solution` and the two case logs. For each of the first three you pick the semantic fields that feed it (title, description, solution, service, subcategory) — that is where you adapt to a customized iTop datamodel. A fragment with no fields selected produces nothing, and the screen warns when a class ends up producing nothing at all.
 
 The two log fragments have no fields to choose: their content is fixed by the source, so they are simply on or off. **`log:private` is marked `internal`** — it holds engineer-only notes, and switching it on means their embeddings are stored in the vector database. It is off by default on purpose. Internal fragments are never returned to searches run on behalf of a caller; that boundary is enforced in code and is not a setting.
+
+---
+
+## System
+
+Housekeeping about the installation itself, as opposed to what it does with tickets (Modules) or which systems it talks to (Connections).
+
+Today it holds one thing: **anonymous usage telemetry** — the switch, this installation's identifier, and **Show today's document**, which prints the exact JSON that would be sent today. Not an example and not a description of the format: it is produced by the same code the sender uses, so it cannot drift from what actually leaves. It answers with telemetry switched off too, which is what makes it useful before deciding.
+
+The switch applies immediately, without a restart. A line appears when telemetry is on and still silent — that happens on a build we did not publish, which never sends whatever the switch says.
+
+What is collected, who receives it, and how to have it deleted: [Telemetry](telemetry.md).
+

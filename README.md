@@ -153,6 +153,7 @@ Open `http://localhost:8001/ui` — the **Setup Wizard** starts automatically an
 - [**Admin UI**](docs/admin-ui.md) — Connections, Modules, Prompts, Runs and Vector index screens
 - [**Configuration**](docs/configuration.md) — environment variables, module settings, dry run, LLM tracing, supported LLM providers and the vector index
 - [**Customizing prompts**](docs/prompts.md) — editing LLM prompts via UI or files
+- [**Telemetry**](docs/telemetry.md) — the anonymous daily document: every field, who receives it, and how to switch it off
 
 ---
 

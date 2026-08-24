@@ -270,12 +270,15 @@ class TelemetryConfig(BaseModel):
     blocks the button nor outranks it (`.claude/rules/config.md`).
     """
 
-    # Off until the preview, the switch and `docs/telemetry.md` exist: an
-    # installation that sends data out and cannot show which is what gets a
-    # product blacklisted whole. R5 wants this default on, and it turns on in
-    # the same change that makes the sending visible — not before.
+    # On by default, which R5 asks for and which only became allowable once
+    # the sending was visible: the System screen carries the switch and the
+    # installation id, `GET /api/telemetry/preview` shows the exact document
+    # that would leave today, the setup wizard says so on its welcome screen
+    # before a single setting is saved, and `docs/telemetry.md` describes the
+    # whole of it. An installation that sends data out and cannot show which
+    # gets a product blacklisted whole — that is what this default waited for.
     enabled: bool = Field(
-        default=False,
+        default=True,
         title="Send anonymous usage telemetry",
         description=(
             "One aggregate document a day: counts of what this installation did, which modules are on, "
@@ -332,13 +335,18 @@ class Settings(BaseSettings):
     dry_run: bool = False
     # Default for section "telemetry" (REQ-009 R5). A deployment-time value —
     # an unattended install, an image built for one customer — never a lock:
-    # the runtime override wins, as it does for every other section.
-    telemetry_enabled: bool = False
-    # Marks every signal this installation sends as a test one, so the receiver
-    # keeps it out of production queries. Ours, not the administrator's: it
+    # the runtime override wins, as it does for every other section. Says
+    # nothing about a build we did not publish: those send nothing whatever
+    # this holds (`util/build_info.py::is_release_build`).
+    telemetry_enabled: bool = True
+    # Two jobs, one flag. It marks every signal as a test one, so the receiver
+    # keeps it out of production queries — ours, not the administrator's: it
     # exists for the stand we verify releases on (ADR-031 asks for that check
     # before every release touching telemetry), and a stand that cannot say
-    # "this is a test" inflates the installation count by one forever.
+    # "this is a test" inflates the installation count by one forever. And it
+    # is what lets a build we did not publish send at all, which is how that
+    # stand — and a developer checking the path on purpose — gets to send
+    # anything (`telemetry/sender.py`).
     telemetry_test_mode: bool = False
     # Where the built admin SPA lives. The image sets it explicitly; unset =
     # probe the source checkout (see main._find_ui_dist)

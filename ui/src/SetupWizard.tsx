@@ -1,8 +1,10 @@
 import {
   Alert,
+  Anchor,
   Badge,
   Button,
   Code,
+  Divider,
   Group,
   List,
   Loader,
@@ -20,8 +22,9 @@ import { ReactNode, useEffect, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 
-import { apiGet, apiSend, fetchSetupStatus, SetupStatus, setToken } from './api';
+import { apiGet, apiSend, fetchSetupStatus, REPO_URL, SetupStatus, setToken, TELEMETRY_DOC_URL } from './api';
 import { loadLlmProviders, LlmProvider } from './Connections';
+import { InstallId, TelemetrySwitch } from './System';
 
 // GET /api/setup/{section} shape (same as in Connections): non-secret values
 // plus is-set flags for secrets.
@@ -96,6 +99,12 @@ export default function SetupWizard() {
   const [status, setStatus] = useState<SetupStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [wizardActive, setWizardActive] = useState(false);
+  // The welcome screen comes before the stepper rather than as a step of it:
+  // nothing about it belongs in the progress header, and the four steps keep
+  // their numbers. Not remembered across reloads on purpose — the wizard
+  // restarts at its first step anyway, and showing the telemetry switch once
+  // more costs nothing.
+  const [started, setStarted] = useState(false);
   const [step, setStep] = useState(0);
 
   useEffect(() => {
@@ -135,6 +144,10 @@ export default function SetupWizard() {
         </Group>
       </Stack>
     );
+  }
+
+  if (!started) {
+    return <WelcomeScreen status={status} onStart={() => setStarted(true)} />;
   }
 
   const finish = async () => {
@@ -710,6 +723,45 @@ function ProvisionReport({ report }: { report: ProvisionItem[] }) {
         ))}
       </Table.Tbody>
     </Table>
+  );
+}
+
+// What an administrator meets before anything is configured: what this is,
+// under what licence, which installation this is — and that telemetry is on,
+// with the switch right here.
+//
+// Not a consent gate, deliberately (REQ-009 R5): the switch is already on,
+// "Start" is never blocked and never waits for an answer, and there is no
+// yes/no pair anywhere on the screen. An asked question gets answered "no" by
+// most administrators as the cheaper option, and a requirement answered by a
+// quarter of installations is not worth having. What the screen owes is
+// visibility, and it owes it *here*: the first document leaves the moment the
+// last step is saved (REQ-009 R6), so a switch shown only afterwards would
+// come too late to refuse anything.
+function WelcomeScreen({ status, onStart }: { status: SetupStatus; onStart: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <Stack maw={640}>
+      <Title order={2}>{t('setup.welcome_title')}</Title>
+      <Text>{t('setup.welcome_intro')}</Text>
+      <Group gap="lg">
+        <Anchor href={`${REPO_URL}/blob/main/LICENSE`} target="_blank" rel="noopener noreferrer" size="sm">
+          {t('setup.welcome_licence')}
+        </Anchor>
+        <Anchor href={REPO_URL} target="_blank" rel="noopener noreferrer" size="sm">
+          {t('system.repository')}
+        </Anchor>
+      </Group>
+      {status.install_id && <InstallId value={status.install_id} />}
+      <Divider />
+      <TelemetrySwitch />
+      <Anchor href={TELEMETRY_DOC_URL} target="_blank" rel="noopener noreferrer" size="sm">
+        {t('system.what_is_collected')}
+      </Anchor>
+      <Group>
+        <Button onClick={onStart}>{t('setup.welcome_start')}</Button>
+      </Group>
+    </Stack>
   );
 }
 

@@ -30,9 +30,9 @@ from itop_ai_assistant.config import LlmConfig, PlatformConfig, Settings
 from itop_ai_assistant.pipelines.registry import TriggerRegistry
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.state.counters import DailyCounters
+from itop_ai_assistant.state.install import InstallIdentity
 from itop_ai_assistant.telemetry import normalize
 from itop_ai_assistant.telemetry.document import Build, Configuration, Environment, TelemetryDocument
-from itop_ai_assistant.telemetry.install import InstallIdentity
 from itop_ai_assistant.util.build_info import get_build_info
 from itop_ai_assistant.vector import SimilarSearch, VectorConfig
 

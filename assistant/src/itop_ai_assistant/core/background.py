@@ -44,6 +44,9 @@ def build_background_tasks(deps: AppDeps, registry: TriggerRegistry) -> Periodic
         # to the loop that knows nothing about it. Constructing it opens
         # nothing: the HTTP client lives inside one `send`.
         TelemetryDeckSink(test_mode=deps.settings.telemetry_test_mode),
+        # The same flag twice, for two different jobs: the sink marks the
+        # signal, the sender lets an unpublished build send one at all.
+        test_mode=deps.settings.telemetry_test_mode,
     )
     register_schedules(tasks, registry, deps)
     return tasks

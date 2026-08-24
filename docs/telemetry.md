@@ -1,0 +1,169 @@
+# Telemetry
+
+The assistant sends one anonymous document a day about the installation it runs in: counts of what it did, which modules are on, and the versions it runs. It is on by default and switched off in one click.
+
+This page describes that document in full. It is not the authority on it, though — the installation itself is. **System → Show today's document** prints the exact JSON that would leave today, and `GET /api/telemetry/preview` returns the same thing to a script. Both call the same code the sender calls, so neither can drift from what is actually sent. If this page and that document ever disagree, the document is right.
+
+The preview answers with telemetry switched off as well, which is the point: "show me what would go out if I turned this on" is a question asked before turning it on.
+
+---
+
+## Why it exists
+
+You install this yourself, on your own servers, in a configuration we have never seen. That is the deployment model on purpose — but it means we cannot see a single thing about how the product actually runs unless you tell us.
+
+Without that, decisions get made on guesses: which LLM providers to support properly, which of the twelve interface languages to keep current, whether the vector layer earns its complexity, what to fix next. A wrong guess costs a month of work on the wrong thing.
+
+There is no other channel. The project is open source and has no sales team calling customers, no license server, no phone-home besides this. Fifteen integers a day is what we get instead.
+
+---
+
+## What is sent
+
+One document per installation per UTC day. Not a stream of events — a stream would eventually carry ticket text, because it only takes one field turning out to be something other than it looked. A day's counter physically cannot.
+
+### Build
+
+| Field | What it is |
+|---|---|
+| `version` | The release this installation runs |
+| `commit` | The commit that release was built from |
+| `python_version` | Major and minor only — `3.13`, never the patch |
+| `containerized` | Whether it runs in a container |
+
+### Environment
+
+| Field | What it is |
+|---|---|
+| `qdrant` | Whether a Qdrant URL is configured |
+| `vector_available` | Whether the vector layer actually answers — not the same question |
+| `admin_language` | The language the admin UI was last used in, or absent if nobody has opened it |
+| `utc_offset_minutes` | The installation's offset from UTC, as a number. It cannot name a city |
+
+Country is **not** a field. The receiver derives it from the connection address (see below), which is better than us computing it, because the only thing we could compute it from is your configuration.
+
+Redis is not a field either: the document is assembled out of Redis, so the field could never hold `false`, and a constant dressed as an observation is worse than no observation.
+
+### Configuration
+
+| Field | What it is |
+|---|---|
+| `dry_run` | Whether the installation is in [dry run](configuration.md#dry-run) |
+| `llm_provider` | One of the providers this build ships, or `other` |
+| `llm_model` | The model name, if it has the shape of a model name, else `other` |
+| `settings` | Every `bool` and `int` any module's settings section declares |
+
+`settings` is a rule, not a list. Every configurable section is scanned, and each field whose declared type is `bool` or `int` travels under `<section>_<field>` — today that is `intake_enabled`, `intake_max_questions`, `intake_max_iterations`, `intake_classify_enabled`, `intake_max_classify_questions`, `intake_clarify_enabled`, `intake_handoff_note_enabled`, `intake_similar_enabled`, `intake_similar_max_age_days`, `intake_similar_candidates`, `intake_similar_top`, `vector_enabled`, `vector_sweep_interval_seconds`, `vector_sweep_page_size`, `vector_reconcile_interval_days`, `vector_max_chunk_tokens`, `vector_log_entries_per_chunk`.
+
+A module written next year describes itself here without a line of code changing. And a module's OQL, its class list, its note templates cannot appear here at all — not because somebody remembered to exclude them, but because they are neither a `bool` nor an `int`.
+
+### Activity
+
+Fifteen counters, for the day the document covers. Every one of them is present in every document, including the zeros.
+
+| Counter | What it counts |
+|---|---|
+| `runs_webhook` | Runs started by an iTop webhook |
+| `runs_request` | Runs started by an explicit request |
+| `runs_schedule` | Runs started on a timer |
+| `runs_failed` | Runs that ended in an error |
+| `runs_skipped` | Runs that stopped before doing anything — lock held, object gone, or the module's own guard said no |
+| `itop_public_comment` | Public log entries written to iTop |
+| `itop_private_note` | Private notes written to iTop |
+| `itop_field_update` | Ticket field changes written to iTop |
+| `llm_calls` | Calls to the model |
+| `llm_failures` | Calls to the model that failed |
+| `llm_tokens_in` | Prompt tokens |
+| `llm_tokens_out` | Completion tokens |
+| `vector_searches` | Similarity searches |
+| `vector_searches_empty` | Similarity searches that found nothing |
+| `vector_chunks_embedded` | Text chunks sent for embedding |
+
+---
+
+## What is never sent
+
+This is a list of what the document cannot contain, and it is an obligation rather than a promise — our agreement with the receiver puts the composition of what we send on us.
+
+- **Ticket content of any kind** — subjects, descriptions, resolutions, public comments, private notes.
+- **Names** — of people, of organizations, of teams.
+- **Addresses** — URLs, hostnames, IP addresses, endpoint addresses, your iTop's location.
+- **Credentials** — keys, tokens, passwords.
+- **iTop object identifiers** — no ticket id, no person id, no organization id.
+
+Two things hold that line, and neither of them is discipline at the call site.
+
+**A value that is not recognized becomes `other`.** The model name is the case worth spelling out: it is not an enumeration and cannot be turned into one, so what guards it is its shape. A name shaped like a model id travels; `qwen3-32b-final-from-Pete` does not, and neither does anything with a comment appended to it, in any alphabet. The provider is a real enumeration — a value we do not ship becomes `other` outright.
+
+**Everything else is a number or a flag.** The configuration group admits only `bool` and `int` values, and the activity group only integers. Prose has nowhere to go.
+
+Not sent, and worth naming because their absence is deliberate: error messages, stack traces, and model traces. An exception message carries ticket content freely — a model's answer inside a validation error, an iTop response body inside a parse error — so those are a separate question with a separate switch, and today they are not sent at all. Describing something that does not happen is how a page stops being believed.
+
+---
+
+## Who receives it
+
+**TelemetryDeck GmbH**, Augsburg, Germany. Signals are posted to `nom.telemetrydeck.com`.
+
+- [Privacy policy](https://telemetrydeck.com/privacy/)
+- [Terms](https://telemetrydeck.com/terms/)
+- [Data processing agreement](https://telemetrydeck.com/dpa/)
+- [How their anonymization works](https://telemetrydeck.com/docs/articles/anonymization-how-it-works/)
+
+They were chosen partly because they are in the EU rather than the US: two comparable services cut off access by IP address for everyone in Russia, retroactively and without warning, and a significant share of installations sit there.
+
+### What the receiver does, as opposed to what we do
+
+Stated separately because these are their commitments and not ours, and you should read them at the source rather than take our summary for it:
+
+- **IP addresses are not stored.** The country is derived from part of the address, on the fly, and the address itself is not kept — which is why we do not send a country field ourselves.
+- **The identity field is hashed again on arrival**, with their own salt. Their documentation says the point is that neither they nor we can reverse it.
+
+### The installation id
+
+Your installation has an anonymous id — a random value it generated for itself on first start, out of nothing. Not derived from your iTop URL, not from your organization name, not from a key: if it were derived from anything, it would be a fingerprint of that thing.
+
+It is shown on the wizard's welcome screen and on the **System** screen, and it travels in the document as an ordinary field.
+
+**It is sent as it is, and that is deliberate.** Hashing it on our side would protect nothing, because the value is random to begin with — a hash of it is the same random value in a different alphabet. Meanwhile the receiver hashes the identity field again on arrival, so an installation cannot be looked up by *that*. The plain field in the document is the only handle that works, and it is what makes the next section possible at all.
+
+One cost of storing it where we store it: it lives in Redis, the only state this service owns. Reset Redis and this installation gets a new id, and our count of installations goes up by one. We would rather write that down than work around it by keeping state in a second place.
+
+### "Delete my data"
+
+Two routes, and the second one does not depend on anyone's goodwill.
+
+1. **Ask.** Send us your installation id — from the System screen — and we will file the deletion request with the receiver. Their dashboard can filter by that field, so the data of one installation can be found; deleting it selectively is a support request on their side rather than a button on ours.
+2. **Switch it off and wait.** Data on our plan is retained for three months. Turn telemetry off and everything about your installation ages out within that window, with nobody's cooperation required.
+
+### It is a one-way channel
+
+The receiver sends nothing back to your installation. No update notifications, no configuration, no commands. There is no code path for it to answer on, and that is a property worth keeping rather than losing later to "the connection is open anyway".
+
+---
+
+## Switching it off
+
+**System → Anonymous usage telemetry.** Applies immediately, no restart. Or set `TELEMETRY_ENABLED=false` before starting the container — the switch in the UI outranks it either way, so a deployment default never locks an administrator out of turning it off.
+
+With it off, nothing leaves: no connection is opened to the receiver, and its name is not even resolved.
+
+What does continue is the counting. The daily counters keep being written into Redis, where they expire after three days, because they are cheap and the switch may be turned back on. They simply never go anywhere.
+
+### Builds that never send anything
+
+Telemetry reports from **released builds only** — the images we publish from a git tag. A checkout you cloned and ran with `uv sync`, or an image you built yourself, sends nothing regardless of the switch, and the System screen says so.
+
+This keeps developers' machines out of the count of installations. It has a cost we would rather name than hide: an installation deployed from source onto a real server also never reports, and never counts. There is nothing to tell it apart from a laptop — both report the same kind of version — and guessing would be worse than the silence.
+
+To send from such a build on purpose, set `TELEMETRY_TEST_MODE=true`. Signals are then marked as test and stay out of our product numbers; this is what our own verification stand uses.
+
+---
+
+## When the first document is sent
+
+A fresh installation sends its first document **when the setup wizard is finished** — which is why the wizard says so on its welcome screen, before a single setting is saved, with the switch right there. That first document covers a partial day and is the only one that ever does.
+
+An installation that was upgraded rather than newly set up has no such moment, so it waits for the ordinary cycle: yesterday's day, whole, and never sooner than 24 hours after the installation was first seen.
+
+After that, one document a day. If the receiver is unreachable, that day is lost — there is no queue, no retry tomorrow, and no error anywhere in your interface. Telemetry is not allowed to become an incident in somebody else's production, and it is not valuable enough to fight for: one installation missing one day changes no conclusion we would draw.

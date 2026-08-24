@@ -11,7 +11,8 @@
     "modules": "Modules",
     "prompts": "Prompts",
     "runs": "Runs",
-    "vector": "Vector index"
+    "vector": "Vector index",
+    "system": "System"
   },
   "layout": {
     "redis_ok": "redis ok",
@@ -88,6 +89,10 @@
     "incomplete": "Setup is incomplete. Missing:",
     "btn_run_wizard": "Run setup wizard",
     "btn_edit_direct": "Edit connections directly",
+    "welcome_title": "iTop AI Assistant",
+    "welcome_intro": "An AI layer on top of iTop: it reads new tickets, classifies them against your service catalogue, asks the requester at most one clarifying question at a time, and hands the ticket to an engineer with what it found. iTop stays the system of record — this service writes into it and stores nothing of its own. The next four steps connect it to your iTop and to a model.",
+    "welcome_licence": "Open source, AGPL-3.0",
+    "welcome_start": "Start setup",
     "step_security_label": "Security",
     "step_security_desc": "Access tokens",
     "step_itop_label": "iTop connection",
@@ -270,5 +275,18 @@
     "field_reconcile_days": "Reconcile interval (days)",
     "field_max_chunk_tokens": "Max tokens per chunk",
     "field_log_entries": "Log entries per chunk"
+  },
+  "system": {
+    "title": "System",
+    "telemetry_title": "Anonymous usage telemetry",
+    "telemetry_desc": "One aggregate document a day: counts of what this installation did, which modules are on, and the versions it runs. Never ticket content, names, addresses or keys. Applies without a restart.",
+    "telemetry_appeal": "This is the only way we learn that the assistant is being used at all, which parts of it are worth building on, and what to fix next — there is no other channel, and the project is open source with no sales team to ask. Please leave it on unless you have a reason not to.",
+    "install_id": "Installation ID",
+    "copied": "Copied",
+    "not_a_release_build": "This build was not published by us, so nothing is sent — telemetry reports from released builds only.",
+    "show_document": "Show today's document",
+    "hide_document": "Hide document",
+    "what_is_collected": "What is collected",
+    "repository": "GitHub"
   }
 }

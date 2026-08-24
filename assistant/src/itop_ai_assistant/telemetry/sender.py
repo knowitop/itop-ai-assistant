@@ -1,5 +1,12 @@
 """Whether to send, and for which day. Everything else belongs to somebody else.
 
+Three questions, not two. Before "is it on" comes "is this a build we
+published": a checkout that finished the setup wizard would otherwise report
+from a developer's machine and inflate the count of installations, which is
+the one number REQ-009 exists to produce. `TELEMETRY_TEST_MODE` is how such a
+build sends anyway when somebody means it — marked as test, so the receiver
+keeps it out of product queries.
+
 Infrastructure, not a business module — the same shelf as the vector sweep and
 for the same reason (`pipelines/registry.py`): a tick with no module, no
 subject and no principal is not a trigger, and giving it a schedule route
@@ -45,9 +52,10 @@ from redis.exceptions import RedisError
 from itop_ai_assistant.config import ItopConfig, LlmConfig, TelemetryConfig, missing_setup
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
 from itop_ai_assistant.settings.config_store import ConfigStore
+from itop_ai_assistant.state.install import InstallIdentity
 from itop_ai_assistant.telemetry.builder import DocumentBuilder
-from itop_ai_assistant.telemetry.install import InstallIdentity
 from itop_ai_assistant.telemetry.ports import TelemetrySink
+from itop_ai_assistant.util.build_info import is_release_build
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +76,8 @@ def register_telemetry_send(
     builder: DocumentBuilder,
     install: InstallIdentity,
     sink: TelemetrySink,
+    *,
+    test_mode: bool = False,
 ) -> None:
     """Put the daily send under the process-wide scheduler.
 
@@ -82,7 +92,7 @@ def register_telemetry_send(
 
     tasks.add(
         SEND_TASK,
-        TelemetrySender(config_store, builder, install, sink).tick,
+        TelemetrySender(config_store, builder, install, sink, test_mode=test_mode).tick,
         interval=interval,
         default_interval=_TICK_INTERVAL_SECONDS,
     )
@@ -97,11 +107,14 @@ class TelemetrySender:
         builder: DocumentBuilder,
         install: InstallIdentity,
         sink: TelemetrySink,
+        *,
+        test_mode: bool = False,
     ) -> None:
         self._config = config_store
         self._builder = builder
         self._install = install
         self._sink = sink
+        self._test_mode = test_mode
 
     async def tick(self) -> None:
         try:
@@ -113,6 +126,11 @@ class TelemetrySender:
             logger.info(f"telemetry: nothing to send, installation state unavailable: {e}")
 
     async def _send_if_due(self) -> None:
+        # First, and before the config is read: a build we did not publish must
+        # not reach Redis, let alone the network, on the strength of a switch
+        # that is on by default (`util/build_info.py::is_release_build`).
+        if not (is_release_build() or self._test_mode):
+            return
         if not (await self._config.get("telemetry", TelemetryConfig)).enabled:
             return
         itop = await self._config.get("itop", ItopConfig)

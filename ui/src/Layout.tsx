@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { loadLanguage } from './i18n';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 
-import { BuildInfo, fetchHealth, fetchSetupStatus, fetchVersion, Health, SetupStatus } from './api';
+import { BuildInfo, fetchHealth, fetchSetupStatus, fetchVersion, Health, REPO_URL, SetupStatus } from './api';
 
 const NAV = [
   { to: '/setup', key: 'nav.setup' },
@@ -14,9 +14,8 @@ const NAV = [
   { to: '/prompts', key: 'nav.prompts' },
   { to: '/runs', key: 'nav.runs' },
   { to: '/vector', key: 'nav.vector' },
+  { to: '/system', key: 'nav.system' },
 ];
-
-const REPO_URL = 'https://github.com/knowitop/itop-ai-assistant';
 
 const LANGUAGES = [
   { value: 'en', label: 'English' },        // ~1.5B speakers

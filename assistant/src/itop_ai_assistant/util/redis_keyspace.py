@@ -48,30 +48,33 @@ VECTOR_RUN_PREFIX = f"{VECTOR_PREFIX}run:"
 VECTOR_RUN_INDEX_KEY = f"{VECTOR_PREFIX}runs"
 VECTOR_RUN_INDEX_MAX_ENTRIES = 50
 
-# telemetry/install.py — what we remember about this installation between
+# state/install.py — what we remember about this installation between
 # restarts: the anonymous id it generated for itself and the last admin-UI
-# language it was seen in (REQ-009 R1, R10). One hash, two fields, and no TTL
-# on purpose — expiring the id would make one installation look like a new one
-# every time it lapsed, which is the single number the whole requirement is
-# built to answer. A Redis reset does exactly that, and `docs/telemetry.md`
-# says so rather than the code working around it.
-TELEMETRY_INSTALL_KEY = "telemetry:install"
-TELEMETRY_INSTALL_ID_FIELD = "id"
-TELEMETRY_INSTALL_LANGUAGE_FIELD = "language"
+# language it was seen in (REQ-009 R1, R10). Not under a `telemetry:` prefix,
+# because the id identifies the installation rather than its telemetry — the
+# admin UI shows it before anything has been sent, and it is what a support
+# request names. One hash and no TTL on purpose — expiring the id would make
+# one installation look like a new one every time it lapsed, which is the
+# single number the whole requirement is built to answer. A Redis reset does
+# exactly that, and `docs/telemetry.md` says so rather than the code working
+# around it.
+INSTALL_KEY = "install"
+INSTALL_ID_FIELD = "id"
+INSTALL_LANGUAGE_FIELD = "language"
 # When this installation was first seen, and the day its setup wizard was
 # finished — the two dates the sender compares against before it may send
 # anything at all (REQ-009 R6).
-TELEMETRY_INSTALL_FIRST_SEEN_FIELD = "first_seen"
-TELEMETRY_INSTALL_SETUP_DAY_FIELD = "setup_day"
+INSTALL_FIRST_SEEN_FIELD = "first_seen"
+INSTALL_SETUP_DAY_FIELD = "setup_day"
 
-# telemetry/install.py — one key per UTC day, claimed before a send is
+# state/install.py — one key per UTC day, claimed before a send is
 # attempted. It means "this day is taken", not "this day was delivered": a
 # replica that claims and then fails loses the day, which R8 allows, while
 # double counting is what would corrupt the one number the requirement asks
 # for. Claim-and-forget rather than a renewed lock like the vector sweep's —
 # a send takes seconds, and the TTL is what releases it.
-TELEMETRY_SENT_DAY_PREFIX = "telemetry:sent:"
-TELEMETRY_SENT_DAY_TTL_DAYS = 3
+INSTALL_TELEMETRY_SENT_PREFIX = "install:telemetry-sent:"
+INSTALL_TELEMETRY_SENT_TTL_DAYS = 3
 
 # state/counters.py — one hash per UTC day, a field per counter (REQ-009 R3)
 TELEMETRY_COUNTERS_PREFIX = "telemetry:counters:"

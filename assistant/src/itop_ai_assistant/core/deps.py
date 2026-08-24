@@ -19,10 +19,10 @@ from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.settings.config_store import ConfigStore, RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import FilePromptStore, PromptStore, RedisPromptStore
 from itop_ai_assistant.state.counters import DailyCounters
+from itop_ai_assistant.state.install import InstallIdentity
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.telemetry.builder import DocumentBuilder
-from itop_ai_assistant.telemetry.install import InstallIdentity
 from itop_ai_assistant.util.redis_keyspace import days_to_seconds
 from itop_ai_assistant.vector import SimilarSearch, VectorSubsystem
 from itop_ai_assistant.vector import build as build_vector  # aliased: this module has its own `build_deps`

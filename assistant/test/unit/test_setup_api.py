@@ -23,11 +23,11 @@ from itop_ai_assistant.main import app
 from itop_ai_assistant.settings.config_store import RedisConfigStore
 from itop_ai_assistant.settings.prompt_store import FilePromptStore, RedisPromptStore
 from itop_ai_assistant.state.counters import DailyCounters
+from itop_ai_assistant.state.install import InstallIdentity
 from itop_ai_assistant.state.journal import RunJournal
 from itop_ai_assistant.state.ticket_state import TicketStateManager
 from itop_ai_assistant.telemetry.builder import DocumentBuilder
-from itop_ai_assistant.telemetry.install import InstallIdentity
-from itop_ai_assistant.util.redis_keyspace import TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_SETUP_DAY_FIELD
+from itop_ai_assistant.util.redis_keyspace import INSTALL_KEY, INSTALL_SETUP_DAY_FIELD
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.assembly import VectorSubsystem
 from itop_ai_assistant.vector.state.index_journal import IndexJournal
@@ -291,11 +291,17 @@ class TestSetupSections(SetupApiTestCase):
         self.assertEqual({"enabled": True}, response.json()["values"])
         self.assertEqual({}, response.json()["secrets"])
 
-    def test_telemetry_is_off_until_the_preview_and_the_docs_exist(self):
-        """An installation that sends data out and cannot show which is what
-        gets a product blacklisted whole. The default turns on in the change
-        that makes the sending visible, not before."""
-        self.assertIs(False, self.client.get("/api/setup/telemetry").json()["values"]["enabled"])
+    def test_telemetry_is_on_now_that_the_sending_is_visible(self):
+        """The lock at the end of the chain, read from the other side.
+
+        The default was off while an installation could send data out and not
+        show which — what gets a product blacklisted whole. It turns on with
+        the change that makes the sending visible and not before: the System
+        screen carries the switch and the id, `/api/telemetry/preview` shows
+        the exact document, the wizard says so on its welcome screen, and
+        `docs/telemetry.md` describes all of it (REQ-009 R5).
+        """
+        self.assertIs(True, self.client.get("/api/setup/telemetry").json()["values"]["enabled"])
 
     def test_unknown_section_404(self):
         self.assertEqual(self.client.get("/api/setup/nope").status_code, 404)
@@ -337,7 +343,7 @@ class TestFinishingTheWizard(SetupApiTestCase):
         """Clearing a section and filling it in again is the same transition,
         and it must not buy a second first send a month on."""
         armed = datetime.now(UTC).date() - timedelta(days=30)
-        asyncio.run(self.redis.hset(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_SETUP_DAY_FIELD, armed.isoformat()))
+        asyncio.run(self.redis.hset(INSTALL_KEY, INSTALL_SETUP_DAY_FIELD, armed.isoformat()))
 
         self.client.patch("/api/setup/itop", json={"url": "http://itop/rest.php", "token": "tok"})
         self.client.patch("/api/setup/llm", json={"base_url": "http://llm/v1", "model": "gpt-test"})

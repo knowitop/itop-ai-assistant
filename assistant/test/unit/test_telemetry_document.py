@@ -12,9 +12,9 @@ from itop_ai_assistant.config import LlmConfig, Settings, get_settings
 from itop_ai_assistant.pipelines.registry import ModuleInfo
 from itop_ai_assistant.settings.config_store import RedisConfigStore
 from itop_ai_assistant.state.counters import Counter, DailyCounters
+from itop_ai_assistant.state.install import InstallIdentity
 from itop_ai_assistant.telemetry.builder import DocumentBuilder
 from itop_ai_assistant.telemetry.document import TelemetryDocument
-from itop_ai_assistant.telemetry.install import InstallIdentity
 
 DAY = date(2026, 8, 20)
 

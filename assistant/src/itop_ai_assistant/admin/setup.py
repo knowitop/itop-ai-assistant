@@ -99,7 +99,10 @@ async def _merged_with_current(
 
 
 @router.get("/status")
-async def setup_status(config_store: Annotated[ConfigStore, Depends(get_config_store)]) -> dict:
+async def setup_status(
+    request: Request,
+    config_store: Annotated[ConfigStore, Depends(get_config_store)],
+) -> dict:
     itop_cfg = await config_store.get("itop", ItopConfig)
     llm_cfg = await config_store.get("llm", LlmConfig)
     security_cfg = await config_store.get("security", SecurityConfig)
@@ -113,6 +116,11 @@ async def setup_status(config_store: Annotated[ConfigStore, Depends(get_config_s
         # every screen (REQ-006 R6) and this endpoint is the one it already
         # refetches on every navigation.
         "dry_run": platform_cfg.dry_run,
+        # Here for the same reason, and because it identifies the installation
+        # rather than its telemetry (REQ-009 R1): the setup wizard shows it on
+        # its welcome screen and the System screen shows it again, and neither
+        # needs a request of its own for one string.
+        "install_id": await request.app.state.deps.install.install_id(),
         "sections": {
             "itop": _masked(itop_cfg),
             "llm": _masked(llm_cfg),

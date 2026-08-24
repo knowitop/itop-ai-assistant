@@ -26,7 +26,9 @@ from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.settings.prompt_store import PromptStore
+from itop_ai_assistant.state.install import InstallIdentity
 from itop_ai_assistant.state.journal import RunJournal
+from itop_ai_assistant.telemetry.builder import DocumentBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,16 @@ def get_prompt_store(request: Request) -> PromptStore:
 def get_journal(request: Request) -> RunJournal:
     deps: AppDeps = request.app.state.deps
     return deps.journal
+
+
+def get_install(request: Request) -> InstallIdentity:
+    deps: AppDeps = request.app.state.deps
+    return deps.install
+
+
+def get_document_builder(request: Request) -> DocumentBuilder:
+    deps: AppDeps = request.app.state.deps
+    return deps.telemetry
 
 
 async def remember_admin_language(request: Request) -> None:
