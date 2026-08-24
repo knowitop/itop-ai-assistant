@@ -92,12 +92,24 @@ class InstallIdentity:
         gets an honest value on the first tick instead of no answer at all.
         Its own field and not the id's creation time: the id may predate this
         code, the field never does.
+
+        A value that cannot be read as a moment is replaced by this one rather
+        than raised over. Both dates here are reachable by hand — a restore, a
+        support session — and the sender guards only against `RedisError`, so
+        a stray value would raise on every hourly tick and stop telemetry for
+        the life of the installation, with nothing in the log but a tick that
+        failed.
         """
         now = datetime.now(UTC)
         if await self._redis.hsetnx(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_FIRST_SEEN_FIELD, now.isoformat()):
             return now
         stored = await self._redis.hget(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_FIRST_SEEN_FIELD)
-        return datetime.fromisoformat(str(stored)) if stored else now
+        moment = _as_moment(stored)
+        if moment is not None:
+            return moment
+        logger.warning(f"Telemetry: {TELEMETRY_INSTALL_FIRST_SEEN_FIELD} is not a moment ({stored!r}), taken as now")
+        await self._redis.hset(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_FIRST_SEEN_FIELD, now.isoformat())
+        return now
 
     async def note_setup_complete(self) -> None:
         """Record the day the setup wizard was finished. First one wins.
@@ -110,18 +122,29 @@ class InstallIdentity:
         await self._redis.hsetnx(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_SETUP_DAY_FIELD, today)
 
     async def setup_day(self) -> date | None:
-        """The day the wizard was finished, or `None` — including for every
-        installation that finished it before this field existed."""
+        """The day the wizard was finished, or `None`.
+
+        `None` covers three cases that the sender treats alike: no wizard was
+        ever finished, it was finished before this field existed, and the
+        field holds something that is not a date. The last one costs the first
+        document; raising instead would cost every document after it.
+        """
         stored = await self._redis.hget(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_SETUP_DAY_FIELD)
-        return date.fromisoformat(str(stored)) if stored else None
+        if not stored:
+            return None
+        try:
+            return date.fromisoformat(str(stored))
+        except ValueError:
+            logger.warning(f"Telemetry: {TELEMETRY_INSTALL_SETUP_DAY_FIELD} is not a date ({stored!r}), ignored")
+            return None
 
     async def claim_day(self, day: date) -> bool:
         """Take `day` for this replica, once per installation.
 
         False means somebody else already has it — the other replica of this
-        installation, or this one an hour ago. The claim is taken *before* the
-        send and is not released if the send fails: a lost day is allowed
-        (R8), a day counted twice is not.
+        installation, or this one an hour ago. The claim is taken once the
+        document exists and before it is sent, and it is not released if the
+        send fails: a lost day is allowed (R8), a day counted twice is not.
         """
         key = f"{TELEMETRY_SENT_DAY_PREFIX}{day.isoformat()}"
         return bool(await self._redis.set(key, "1", nx=True, ex=days_to_seconds(TELEMETRY_SENT_DAY_TTL_DAYS)))
@@ -145,3 +168,19 @@ class InstallIdentity:
             await self._redis.hset(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_LANGUAGE_FIELD, normalized)
         except RedisError as e:
             logger.warning(f"Telemetry install state unavailable, language {normalized!r} not recorded: {e}")
+
+
+def _as_moment(stored: object) -> datetime | None:
+    """A stored timestamp, or `None` if it is not one.
+
+    A value without a zone is read as UTC, which is the only zone this file
+    ever writes. The alternative is not a stricter guard but a `TypeError`:
+    the sender subtracts the result from an aware `now`.
+    """
+    if not stored:
+        return None
+    try:
+        moment = datetime.fromisoformat(str(stored))
+    except ValueError:
+        return None
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)

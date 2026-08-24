@@ -75,9 +75,14 @@ TELEMETRY_SENT_DAY_TTL_DAYS = 3
 
 # state/counters.py — one hash per UTC day, a field per counter (REQ-009 R3)
 TELEMETRY_COUNTERS_PREFIX = "telemetry:counters:"
-# Weeks, not a day: a day's counters must survive several missed sends in a row.
-# Losing them to our own TTL is not the same thing as the missed day R8 allows.
-TELEMETRY_COUNTERS_TTL_DAYS = 14
+# Long enough to be read, and no longer. A day is asked for exactly once, by
+# the tick that sends it the day after (`telemetry/sender.py`), and the sender
+# never looks further back than yesterday — R8 spends a missed day rather than
+# queueing it. So the reachable window is one day plus the tick that reads it,
+# and the third day is the slack. Deliberately the same number as the claim
+# above: the key that says a day is taken and the counters it was taken for
+# fall out of Redis together.
+TELEMETRY_COUNTERS_TTL_DAYS = 3
 
 
 def days_to_seconds(days: int) -> int:

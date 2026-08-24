@@ -148,8 +148,8 @@ class VectorStatusTestCase(unittest.TestCase):
         self.client = self.enterContext(TestClient(app))
         self.redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
         _install(self.client, _make_deps(self.redis))
-        # The lifespan built a real (empty) scheduler: no qdrant_url in the
-        # test settings, so the sweep loop was never registered
+        # An empty scheduler — `conftest.no_background_loops` stubs the one
+        # the lifespan would have built. The tests below mock `wake` on it.
         self.tasks = self.client.app.state.tasks
 
 

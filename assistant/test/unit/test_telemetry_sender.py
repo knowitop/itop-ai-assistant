@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import fakeredis
+from redis.exceptions import RedisError
 
 from itop_ai_assistant.config import ItopConfig, LlmConfig, Settings, TelemetryConfig, get_settings
 from itop_ai_assistant.settings.config_store import RedisConfigStore
@@ -159,6 +160,20 @@ class TestOneSendPerInstallation(SenderTestCase):
 
         await self._sender().tick()
         await TelemetrySender(self.config_store, self.builder, InstallIdentity(self.redis), self.sink).tick()
+
+        self.assertEqual(1, len(self.sink.documents))
+
+    async def test_a_day_that_could_not_be_built_is_not_burned(self):
+        """The claim exists so that one day never reaches the receiver twice.
+        A document that failed to assemble never reached it once, so spending
+        the day on it would buy nothing — and `_day_due` offers yesterday and
+        nothing older, so a day spent here is a day gone for good."""
+        await self._configure()
+        await self._first_seen(timedelta(days=5))
+        self.builder.build.side_effect = [RedisError("down"), object()]
+
+        await self._sender().tick()
+        await self._sender().tick()
 
         self.assertEqual(1, len(self.sink.documents))
 

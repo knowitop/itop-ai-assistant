@@ -1,13 +1,19 @@
-"""What the installation remembers about itself: the id and the language."""
+"""What the installation remembers about itself: the id, the language, the dates."""
 
 import unittest
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
 import fakeredis
 from redis.exceptions import RedisError
 
 from itop_ai_assistant.telemetry.install import InstallIdentity
-from itop_ai_assistant.util.redis_keyspace import TELEMETRY_INSTALL_ID_FIELD, TELEMETRY_INSTALL_KEY
+from itop_ai_assistant.util.redis_keyspace import (
+    TELEMETRY_INSTALL_FIRST_SEEN_FIELD,
+    TELEMETRY_INSTALL_ID_FIELD,
+    TELEMETRY_INSTALL_KEY,
+    TELEMETRY_INSTALL_SETUP_DAY_FIELD,
+)
 
 
 class InstallIdentityTestCase(unittest.IsolatedAsyncioTestCase):
@@ -99,3 +105,39 @@ class TestAdminLanguage(InstallIdentityTestCase):
         await self.install.remember_language("ru")
 
         self.assertEqual(install_id, await self.redis.hget(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_ID_FIELD))
+
+
+class TestTheDatesTheSenderChecks(InstallIdentityTestCase):
+    """Both fields are reachable by hand — a restore, a support session — and
+    the sender guards only against `RedisError`. A value it cannot parse would
+    raise on every hourly tick and stop telemetry for the life of the
+    installation, with nothing in the log but a tick that failed."""
+
+    async def _store(self, field: str, value: str) -> None:
+        await self.redis.hset(TELEMETRY_INSTALL_KEY, field, value)
+
+    async def test_first_seen_is_recorded_once_and_kept(self):
+        first = await self.install.first_seen()
+
+        self.assertEqual(first, await InstallIdentity(self.redis).first_seen())
+
+    async def test_a_first_seen_nobody_can_read_is_replaced_not_raised_over(self):
+        await self._store(TELEMETRY_INSTALL_FIRST_SEEN_FIELD, "yesterday-ish")
+
+        moment = await self.install.first_seen()
+
+        self.assertGreater(moment, datetime.now(UTC) - timedelta(minutes=1))
+        # Healed in place, so the next tick parses it instead of warning again.
+        self.assertEqual(moment, await self.install.first_seen())
+
+    async def test_a_first_seen_without_a_zone_is_read_as_utc(self):
+        """Not strictness for its own sake: the sender subtracts this from an
+        aware `now`, and a naive value raises `TypeError` there."""
+        await self._store(TELEMETRY_INSTALL_FIRST_SEEN_FIELD, "2026-08-04T10:00:00")
+
+        self.assertEqual(datetime(2026, 8, 4, 10, 0, tzinfo=UTC), await self.install.first_seen())
+
+    async def test_a_setup_day_nobody_can_read_costs_one_document_not_all_of_them(self):
+        await self._store(TELEMETRY_INSTALL_SETUP_DAY_FIELD, "2026-8-4")
+
+        self.assertIsNone(await self.install.setup_day())

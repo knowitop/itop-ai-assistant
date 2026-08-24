@@ -25,7 +25,6 @@ HOSTILE = (
     # The example R4 spells out: a model name somebody renamed after himself
     "qwen3-32b-финальный-от-Пети",
     "Внутренняя модель поддержки ООО «Ромашка»",
-    "http://llm.internal.acme.corp:8000/v1",
     "gpt-4o but only for the night shift",
     "модель",
     "a" * 200,
@@ -62,8 +61,31 @@ class TestModelName(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(value, model_name(value))
 
-    def test_a_registry_prefix_is_still_a_model_id(self):
+    def test_the_owner_travels_with_the_name(self):
+        """It is the only thing separating a model from somebody's rebuild of
+        it, and "the original or a community quant" is the first question
+        asked of an installation that answers poorly."""
         self.assertEqual("qwen/qwen3-32b", model_name("Qwen/Qwen3-32B"))
+        self.assertEqual("google/gemma-4-31b-it", model_name("google/gemma-4-31B-it"))
+        self.assertEqual("cyankiwi/gemma-4-31b-it-awq-4bit", model_name("cyankiwi/gemma-4-31B-it-AWQ-4bit"))
+
+    def test_a_location_keeps_the_model_and_loses_the_tree_above_it(self):
+        """An endpoint nobody gave a model name to serves the location it was
+        started with — the ordinary state of a self-hosted install. The last
+        segment is the model; the tree or the bucket above it is the
+        customer's."""
+        self.assertEqual("qwen3-32b-awq", model_name("/srv/models/Qwen3-32B-AWQ"))
+        self.assertEqual("qwen3-0.6b-q4_k_m.gguf", model_name("./Qwen3-0.6B-Q4_K_M.gguf"))
+        self.assertEqual("current", model_name("models/acme-prod/current"))
+        # `vllm serve s3://… --load-format runai_streamer`, and the same for
+        # gs:// and Azure Blob: a documented way to start, not a mistake.
+        self.assertEqual("llama-3-8b", model_name("s3://acme-prod-weights/Llama-3-8b"))
+
+    def test_an_address_is_not_second_guessed_but_loses_its_host(self):
+        """Whether the administrator filled in the right box is not this
+        module's question. Reading the value as what it claims to be happens
+        to drop the host anyway: it sits before the last slash."""
+        self.assertEqual("v1", model_name("http://llm.internal.acme.corp:8000/v1"))
 
     def test_anything_not_shaped_like_one_becomes_other(self):
         for value in HOSTILE:

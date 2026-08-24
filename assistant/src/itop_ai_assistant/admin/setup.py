@@ -184,7 +184,15 @@ async def update_section(
         raise HTTPException(status_code=422, detail=str(e)) from e
     logger.info(f"Setup section {section!r} updated via admin API")
     if was_incomplete and not await _setup_missing(config_store):
-        await _note_wizard_finished(request)
+        try:
+            await _note_wizard_finished(request)
+        except Exception as e:
+            # The section is saved by now, so anything raised here would
+            # answer 500 for a write that succeeded — and the retry would find
+            # setup already complete, so the transition, and with it the first
+            # document, would be lost for good (REQ-009 R6). Losing it to a
+            # log line is the smaller of the two.
+            logger.warning(f"Telemetry: the finished wizard was not recorded: {e}")
     return _masked(cfg)
 
 

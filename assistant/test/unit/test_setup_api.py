@@ -9,6 +9,7 @@ import fakeredis.aioredis
 import httpx
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from redis.exceptions import RedisError
 
 from itop_ai_assistant.agents.intake.prompts import PROMPTS_DIR as INTAKE_PROMPTS_DIR
 from itop_ai_assistant.agents.selfcheck.prompts import PROMPTS_DIR as SELFCHECK_PROMPTS_DIR
@@ -319,6 +320,18 @@ class TestFinishingTheWizard(SetupApiTestCase):
         self.client.patch("/api/setup/llm", json={"base_url": "http://llm/v1", "model": "gpt-test"})
 
         self.assertEqual(datetime.now(UTC).date(), self._setup_day())
+
+    def test_a_note_that_could_not_be_taken_does_not_fail_the_wizard(self):
+        """The section is saved before telemetry is told anything. A 500 here
+        would report failure for a write that succeeded, and the retry would
+        find setup already complete — so the transition, and the first
+        document with it, would be gone rather than delayed."""
+        install = self.client.app.state.deps.install
+        with patch.object(install, "note_setup_complete", AsyncMock(side_effect=RedisError("down"))):
+            self.client.patch("/api/setup/itop", json={"url": "http://itop/rest.php", "token": "tok"})
+            response = self.client.patch("/api/setup/llm", json={"base_url": "http://llm/v1", "model": "gpt-test"})
+
+        self.assertEqual(200, response.status_code)
 
     def test_an_installation_reconfigured_later_is_not_a_new_one(self):
         """Clearing a section and filling it in again is the same transition,

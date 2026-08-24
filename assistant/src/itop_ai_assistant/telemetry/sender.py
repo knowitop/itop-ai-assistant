@@ -22,6 +22,14 @@ Which day, in full:
   "the wizard is finished" is true a second after a restart, and without it an
   installation would report before anyone could have found the switch.
 
+The claim sits between building the document and sending it, and that is the
+only place it can sit. Before the build, a day would be spent by anything that
+went wrong while assembling it — and nothing had yet been counted anywhere, so
+the loss would buy nothing. After the send, two replicas could both deliver
+the same day, which is the one outcome the claim exists to prevent. Between
+them, the day is spent only once there is a document to spend it on, and it is
+spent before that document can leave twice.
+
 Failure is a non-event in both directions (R8). A receiver that times out or
 answers 500 leaves nothing behind — no journal entry, no alarm, no queue, and
 the day stays claimed, so nothing retries it tomorrow. Redis being gone ends
@@ -116,10 +124,10 @@ class TelemetrySender:
         if due is None:
             return
         day, first = due
-        if not await self._install.claim_day(day):
-            return
 
         document = await self._builder.build(day)
+        if not await self._install.claim_day(day):
+            return
         if await self._sink.send(document, first=first):
             logger.info(f"telemetry: document for {day.isoformat()} sent")
 
