@@ -38,6 +38,24 @@ class TestInstallId(InstallIdentityTestCase):
 
         self.assertNotEqual(await self.install.install_id(), await elsewhere.install_id())
 
+    async def test_the_loser_of_the_race_adopts_the_winners_id(self):
+        """`HSETNX` refused our value, so the winner's is the one this
+        installation is already known by."""
+        raced = InstallIdentity(
+            AsyncMock(hget=AsyncMock(side_effect=[None, "written-first"]), hsetnx=AsyncMock(return_value=0))
+        )
+
+        self.assertEqual("written-first", await raced.install_id())
+
+    async def test_a_key_that_went_away_does_not_become_an_id(self):
+        """Nothing to re-read is not an id: the same non-answer from every
+        installation in that state would collapse them into one."""
+        vanished = InstallIdentity(
+            AsyncMock(hget=AsyncMock(side_effect=[None, None]), hsetnx=AsyncMock(return_value=0))
+        )
+
+        self.assertRegex(await vanished.install_id(), r"^[0-9a-f]{32}$")
+
     async def test_a_failing_redis_is_not_swallowed(self):
         """No Redis, no document: the counters live there too, and R5 forbids
         the sender a way around that."""

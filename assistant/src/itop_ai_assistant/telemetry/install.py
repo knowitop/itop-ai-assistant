@@ -58,10 +58,15 @@ class InstallIdentity:
         if stored:
             return str(stored)
         candidate = uuid4().hex
-        await self._redis.hsetnx(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_ID_FIELD, candidate)
-        # Re-read rather than trusting the return value: the loser of the race
-        # must hand back what the winner wrote.
-        return str(await self._redis.hget(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_ID_FIELD))
+        if await self._redis.hsetnx(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_ID_FIELD, candidate):
+            return candidate
+        # Ours was refused, so the winner's value is the one this installation
+        # is known by. Nothing there means the key went away between the two
+        # commands: the candidate is a truthful id for one installation, and
+        # the alternative is the same non-answer from every installation in
+        # that state at once.
+        winner = await self._redis.hget(TELEMETRY_INSTALL_KEY, TELEMETRY_INSTALL_ID_FIELD)
+        return str(winner) if winner else candidate
 
     async def language(self) -> str | None:
         """The last admin-UI language seen, or `None` if nobody has been in."""
