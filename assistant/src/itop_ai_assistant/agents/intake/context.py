@@ -8,7 +8,7 @@ from itop_ai_assistant.repositories.ticket import TicketRepository
 from itop_ai_assistant.vector import SimilarSearch
 
 from .config import IntakeConfig
-from .domain import IntakeScope
+from .domain import Classification, IntakeScope
 from .state import IntakeState
 
 
@@ -37,6 +37,10 @@ class IntakeContext:
     # read the composition of actions from here, never from `intake` — that
     # one stays the source of thresholds and texts.
     scope: IntakeScope
+    # Which services mean "not classified" — read once per run, like `scope`.
+    # Whatever asks whether this ticket is classified asks through this, never
+    # by comparing `ticket.service_id` with `intake` itself.
+    classification: Classification
     ai_name: str
     # `similar` holds the subsystem's door (TASK-033), not a search assembled
     # for this run — None on a deployment without vectors, and the tool that

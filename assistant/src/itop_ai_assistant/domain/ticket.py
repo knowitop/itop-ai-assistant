@@ -42,11 +42,3 @@ class Ticket(BaseModel, ObjectIdentifiable):
     @property
     def identity(self) -> ObjectIdentity:
         return ObjectIdentity(obj_class=self.obj_class, obj_id=self.id)
-
-    @property
-    def has_service(self) -> bool:
-        return self.service_id is not None
-
-    @property
-    def has_subcategory(self) -> bool:
-        return self.subcategory_id is not None

@@ -4,7 +4,7 @@ Resolved through `Settings.module_defaults` / `RedisConfigStore`, not a field
 of `Settings` — see `settings/config_store.py`.
 """
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from itop_ai_assistant.settings.ui_hints import ui
 
@@ -102,6 +102,21 @@ class IntakeConfig(BaseModel):
         gt=0,
         title="Of them, before the ticket is classified",
         description="The share of the questions above that may be spent while the ticket is still unclassified.",
+        json_schema_extra=ui(group="Classification"),
+    )
+    # Which catalog entries mean "nobody classified this" — an intake concern
+    # (when this module has work to do), not the datamodel mapping's: the
+    # mapping says which attribute holds the service, this says which values
+    # inside it carry no classification.
+    unclassified_service_ids: list[str] = Field(
+        default=[],
+        title='Services that mean "not classified"',
+        description=(
+            "Numeric IDs of the services that stand for a missing classification — the one a mail gateway "
+            "fills in, for instance. A ticket carrying such a service is treated as unclassified together "
+            "with its subcategory, and the service itself is never offered to the model. The ID is in the "
+            "address bar when the service is open in iTop."
+        ),
         json_schema_extra=ui(group="Classification"),
     )
     classify_service_oql: str = Field(
@@ -233,6 +248,28 @@ class IntakeConfig(BaseModel):
         ),
         json_schema_extra=ui(group="Similar solved tickets", advanced=True),
     )
+
+    @field_validator("unclassified_service_ids", mode="after")
+    @classmethod
+    def _check_service_ids(cls, value: list[str]) -> list[str]:
+        """Numeric IDs only — a name here fails silently and forever.
+
+        An administrator sees names in iTop, and "Mail request" typed into this
+        field saves cleanly and never matches anything: the module would keep
+        skipping exactly the tickets the field was filled in for. Saving is the
+        one moment the mistake is still visible.
+        """
+        cleaned: list[str] = []
+        for item in value:
+            stripped = item.strip()
+            # `isascii` as well: "²" and "١٢٣" are digits to Python and not IDs to iTop
+            if not (stripped.isascii() and stripped.isdigit()):
+                raise ValueError(
+                    f"{item!r} is not a service ID: this field takes the numeric IDs of services, not their "
+                    "names. Open the service in iTop and read `id=` from the address bar."
+                )
+            cleaned.append(stripped)
+        return cleaned
 
     @model_validator(mode="after")
     def _check_similar_budget(self) -> "IntakeConfig":

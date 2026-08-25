@@ -359,6 +359,28 @@ class TestForcedToolChoice(IntakeAgentTestCase):
         self.repos.ticket_repo.append_public_log.assert_awaited_once()
 
 
+class TestServiceThatMeansNotClassified(IntakeAgentTestCase):
+    """What arrives from a mail gateway: both fields filled, nothing chosen."""
+
+    def setUp(self):
+        super().setUp()
+        self.ticket.service_id = "8"
+        self.ticket.subcategory_id = "80"
+        self.intake_cfg = IntakeConfig(unclassified_service_ids=["8"])
+
+    async def test_the_ticket_is_classified_and_the_journal_says_what_it_came_with(self):
+        model = await self.run_agent(
+            [
+                ai([call("set_classification", {"service_id": 10, "subcategory_id": 101}, "c1")]),
+                ai([call("finish_handoff", {"note": "Printer is dead."}, "h1")]),
+            ]
+        )
+
+        self.repos.ticket_repo.set_fields.assert_awaited_once()
+        self.assertIn("set_classification", model.bound_tools[0])
+        self.assertIn(("classification", "service=unclassified(8) subcategory=80"), self.journal_steps())
+
+
 class TestClassifiedTicket(IntakeAgentTestCase):
     """Round 2+: the ticket is already classified, so the run is about the
     ticket's completeness only."""
@@ -476,7 +498,9 @@ class TestSwitchedOffActions(IntakeAgentTestCase):
         # Otherwise "the agent did nothing" is indistinguishable from a breakage
         await self.run_agent([ai([call("finish_processing", {}, "f1")])])
 
-        self.assertEqual(self.journal_steps()[0], ("scope", "classify=on clarify=on handoff_note=off similar=off"))
+        steps = self.journal_steps()
+        self.assertEqual(steps[0], ("scope", "classify=on clarify=on handoff_note=off similar=off"))
+        self.assertEqual(steps[1], ("classification", "service=none subcategory=none"))
 
     async def test_the_silent_finish_replaces_the_handoff_and_ends_the_run(self):
         model = await self.run_agent(

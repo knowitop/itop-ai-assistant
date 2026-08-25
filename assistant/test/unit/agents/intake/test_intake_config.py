@@ -28,6 +28,29 @@ class TestIntakeConfig(unittest.TestCase):
         self.assertEqual(IntakeConfig(similar_candidates=5, similar_top=5).similar_top, 5)
 
 
+class TestUnclassifiedServices(unittest.TestCase):
+    """A name typed here would save cleanly and never match anything."""
+
+    def test_declaring_nothing_is_the_default(self):
+        self.assertEqual(IntakeConfig().unclassified_service_ids, [])
+
+    def test_ids_are_kept(self):
+        self.assertEqual(IntakeConfig(unclassified_service_ids=["7", "12"]).unclassified_service_ids, ["7", "12"])
+
+    def test_surrounding_spaces_are_trimmed(self):
+        self.assertEqual(IntakeConfig(unclassified_service_ids=[" 7 "]).unclassified_service_ids, ["7"])
+
+    def test_a_service_name_is_rejected_with_where_to_find_the_id(self):
+        with self.assertRaises(ValidationError) as ctx:
+            IntakeConfig(unclassified_service_ids=["Mail request"])
+
+        self.assertIn("address bar", str(ctx.exception))
+
+    def test_an_empty_string_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            IntakeConfig(unclassified_service_ids=[" "])
+
+
 class TestQuestionBudget(unittest.TestCase):
     def test_defaults_leave_the_completeness_phase_one_question(self):
         cfg = IntakeConfig()

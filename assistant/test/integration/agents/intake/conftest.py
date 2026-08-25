@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 from itop_ai_assistant.agents.intake.config import IntakeConfig
 from itop_ai_assistant.agents.intake.context import IntakeContext
-from itop_ai_assistant.agents.intake.domain import IntakeScope
+from itop_ai_assistant.agents.intake.domain import Classification, IntakeScope
 from itop_ai_assistant.agents.intake.prompts import PROMPTS_DIR as INTAKE_PROMPTS_DIR
 from itop_ai_assistant.agents.intake.prompts import build_intake_prompts
 from itop_ai_assistant.agents.intake.state import IntakeState
@@ -131,6 +131,7 @@ def make_ctx(
             handoff_note=intake.handoff_note_enabled,
             similar=False,
         ),
+        classification=Classification(unclassified_services=frozenset(intake.unclassified_service_ids)),
         # Matches _AI_PERSON_FIELDS, i.e. what IdentityRepository would return
         ai_name="ai-assistant",
     )

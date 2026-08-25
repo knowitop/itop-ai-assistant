@@ -7,7 +7,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from itop_ai_assistant.agents.intake import tools
 from itop_ai_assistant.agents.intake.agent import TERMINAL_TOOLS
 from itop_ai_assistant.agents.intake.config import IntakeConfig
-from itop_ai_assistant.agents.intake.domain import IntakeScope
+from itop_ai_assistant.agents.intake.domain import Classification, IntakeScope
 from itop_ai_assistant.agents.intake.state import TicketState
 from itop_ai_assistant.agents.intake.tools import ToolRejection
 from itop_ai_assistant.core.principal import Principal
@@ -39,14 +39,21 @@ def _scope(**overrides: bool) -> IntakeScope:
     return IntakeScope(**{"classify": True, "clarify": True, "handoff_note": True, "similar": True, **overrides})
 
 
-def _offered(ticket: Ticket, scope: IntakeScope | None = None) -> list[str]:
-    return [t.name for t in tools.tools_for(ticket, scope or _scope())]
+def _classification(*unclassified_services: str) -> Classification:
+    return Classification(unclassified_services=frozenset(unclassified_services))
+
+
+def _offered(
+    ticket: Ticket, scope: IntakeScope | None = None, classification: Classification | None = None
+) -> list[str]:
+    return [t.name for t in tools.tools_for(ticket, scope or _scope(), classification or _classification())]
 
 
 def _make_runtime(
     ticket: Ticket | None = None,
     messages: list | None = None,
     scope: IntakeScope | None = None,
+    classification: Classification | None = None,
     **state_kwargs,
 ) -> MagicMock:
     """Mirror of test_nodes_classify._make_runtime, for ToolRuntime."""
@@ -56,6 +63,7 @@ def _make_runtime(
     runtime.context.ticket = ticket or _ticket()
     runtime.context.intake = IntakeConfig()
     runtime.context.scope = scope or _scope()
+    runtime.context.classification = classification or _classification()
     runtime.context.ai_name = "ai-assistant"
     runtime.context.think_tags = ("think",)
     runtime.context.catalog_repo.find_services = AsyncMock(return_value=_services())
@@ -116,6 +124,12 @@ class TestToolSchemas(unittest.TestCase):
 
     def test_half_classified_ticket_still_gets_the_classification_tools(self):
         self.assertIn("set_classification", _offered(_ticket(service_id="10")))
+
+    def test_a_declared_service_is_not_a_classification(self):
+        # What arrives from a mail gateway: both fields filled, nothing chosen
+        offered = _offered(_ticket(service_id="7", subcategory_id="70"), _scope(similar=False), _classification("7"))
+
+        self.assertIn("set_classification", offered)
 
     def test_a_deployment_that_does_not_classify_never_gets_those_tools(self):
         # Not "classify only if unclassified" — the stage does not exist here,
@@ -181,6 +195,14 @@ class TestGetServiceCatalog(unittest.IsolatedAsyncioTestCase):
         result = await tools.get_service_catalog.coroutine(runtime=runtime)
 
         self.assertIn("- ID 10: Printing", result)
+        self.assertIn("- ID 20: Network", result)
+
+    async def test_a_declared_service_is_not_offered(self):
+        runtime = _make_runtime(classification=_classification("10"))
+
+        result = await tools.get_service_catalog.coroutine(runtime=runtime)
+
+        self.assertNotIn("Printing", result)
         self.assertIn("- ID 20: Network", result)
 
     async def test_oql_is_bound_to_the_ticket(self):
@@ -285,6 +307,17 @@ class TestSetClassification(unittest.IsolatedAsyncioTestCase):
         self.assertIn("10", message)
         self.assertIn("20", message)
         self.assertIn("post_public_question", message)
+        runtime.context.ticket_repo.set_fields.assert_not_called()
+
+    async def test_a_declared_service_is_rejected_by_the_existing_validation(self):
+        # No rule of its own: the service is absent from the catalog this
+        # reads, so classifying into it is refused like any unknown id
+        runtime = _make_runtime(classification=_classification("10"))
+
+        with self.assertRaises(ToolRejection) as ctx:
+            await tools.set_classification.coroutine(service_id=10, subcategory_id=101, runtime=runtime)
+
+        self.assertIn("not available", str(ctx.exception))
         runtime.context.ticket_repo.set_fields.assert_not_called()
 
     async def test_subcategory_of_another_service_is_rejected(self):
