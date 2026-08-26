@@ -357,8 +357,8 @@ class Settings(BaseSettings):
     # developer's laptop. Setting this says "count me", and it is the
     # administrator's to set, unlike the test mark.
     telemetry_allow_unpublished_build: bool = False
-    # Where the built admin SPA lives. The image sets it explicitly; unset =
-    # probe the source checkout (see main._find_ui_dist)
+    # An admin SPA to serve instead of the one inside the package — for a
+    # deployment that builds its own (see main._find_ui_dist)
     ui_dist_dir: Path | None = None
 
     # iTop
