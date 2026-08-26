@@ -15,10 +15,25 @@ export const AVAILABLE_LANGUAGES = Object.keys(bundles)
   .map((path) => path.slice(PREFIX.length, -SUFFIX.length))
   .sort();
 
+/** "ru-RU" → "ru" if we have that bundle, else null. */
+function matchLanguage(lang: string): string | null {
+  const code = lang.toLowerCase().split('-')[0];
+  return AVAILABLE_LANGUAGES.includes(code) ? code : null;
+}
+
 /** "ru-RU" → "ru"; anything we have no bundle for → "en". */
 export function resolveLanguage(lang: string | null | undefined): string {
-  const code = (lang ?? '').toLowerCase().split('-')[0];
-  return AVAILABLE_LANGUAGES.includes(code) ? code : FALLBACK;
+  return matchLanguage(lang ?? '') ?? FALLBACK;
+}
+
+/** First of the browser's preferred languages we ship a bundle for, else "en". */
+function detectBrowserLanguage(): string {
+  const candidates = navigator.languages?.length ? navigator.languages : [navigator.language];
+  for (const candidate of candidates) {
+    const match = matchLanguage(candidate);
+    if (match) return match;
+  }
+  return FALLBACK;
 }
 
 async function loadBundle(lang: string): Promise<Record<string, unknown>> {
@@ -26,8 +41,11 @@ async function loadBundle(lang: string): Promise<Record<string, unknown>> {
   return module.default;
 }
 
+// No stored preference yet (first visit, or a wiped localStorage) → offer the
+// browser's own language instead of always opening in English. Not persisted:
+// it stays a default, not a choice, until the user picks one in Layout.tsx.
 const stored = localStorage.getItem('locale');
-const initialLang = resolveLanguage(stored);
+const initialLang = stored !== null ? resolveLanguage(stored) : detectBrowserLanguage();
 // Rewrite an unusable stored value so the fallback is not re-resolved forever.
 if (stored !== null && stored !== initialLang) localStorage.setItem('locale', initialLang);
 

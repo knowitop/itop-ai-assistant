@@ -167,7 +167,7 @@ The current release covers the first-contact intake loop — intercepting new ti
 - **Engineer console** — an AI panel inside the iTop ticket page: explicit slash commands for summaries, similar past tickets and draft replies, plus free-text questions answered by a read-only agent that cannot change the ticket.
 - **User memory** — persistent context per user across tickets: no repeated questions about device or department, automatic adaptation to technical vs. non-technical communication style and pattern detection across a user's ticket history.
 
-Feedback and ideas are welcome in [GitHub Issues](../../issues).
+Feedback and ideas are welcome in [GitHub Issues](https://github.com/knowitop/itop-ai-assistant/issues).
 
 ---
 
@@ -197,7 +197,7 @@ Only the unit tests run by default; the integration suite is opt-in because it n
 cd ui
 npm ci
 npm run dev     # hot-reload dev server
-npm run build   # production build into ui/dist
+npm run build   # production build, straight into the Python package
 ```
 
 Architecture details and development conventions are in [CLAUDE.md](CLAUDE.md).

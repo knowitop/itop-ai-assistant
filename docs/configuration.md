@@ -41,7 +41,7 @@ A full `.env` template with examples is in [`docker/.env.dist`](../docker/.env.d
 | `TRACING_ENDPOINT` | default `http://localhost:6006/v1/traces` | OTLP/HTTP endpoint of the trace receiver, full path to `/v1/traces` (env-only) |
 | `TRACING_PROJECT_NAME` | default `itop-ai-assistant` | Project the traces are filed under in the receiver (env-only) |
 | `PROMPTS_DIR` | optional | Directory with prompt file overrides (env-only) — see [Customizing prompts](prompts.md) |
-| `UI_DIST_DIR` | optional | Directory with the built admin SPA (env-only). The Docker image sets it; running from a source checkout finds `ui/dist` on its own |
+| `UI_DIST_DIR` | optional | An admin SPA to serve instead of the one shipped inside the package (env-only). Only needed by a deployment that builds its own |
 | `LOG_LEVEL` | default `INFO` | Logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR` (env-only) |
 
 > [!NOTE]

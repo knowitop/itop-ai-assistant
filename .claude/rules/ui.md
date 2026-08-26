@@ -32,9 +32,11 @@ instinct to reach for a library is exactly what they forbid:
   backend applies it (ADR-030), so the request carries `?lang=${i18n.language}`
   and the screen refetches when the language changes. A module's field is never
   translated in `ui/src/locales/*.json` — nothing reads such a key.
-- Builds into `ui/dist`, served by FastAPI at `/ui` (API stays under `/api`). In
-  dev use the vite proxy to `:8001` — no CORS. The admin token lives in
-  `localStorage`; 401 shows the token entry screen.
+- Builds into `assistant/src/itop_ai_assistant/ui_dist` — the SPA is part of the
+  Python package (ADR-032), which is what lets a `pip install` serve the setup
+  wizard. Served by FastAPI at `/ui` (API stays under `/api`). In dev use the
+  vite proxy to `:8001` — no CORS. The admin token lives in `localStorage`;
+  401 shows the token entry screen.
 - **New user-facing strings: add only to `locales/en.json` by default.** The
   other locales (`cs`, `de`, `es`, `fr`, `it`, `kk`, `pl`, `ru`, `sk`, `uk`,
   `zh`) are translated on request, not automatically on every UI change — ask
@@ -50,5 +52,5 @@ instinct to reach for a library is exactly what they forbid:
 ```bash
 npm ci          # install pinned dependencies
 npm run dev     # vite dev server, proxies /api, /health and /version to :8001
-npm run build   # tsc --noEmit + production build into ui/dist
+npm run build   # tsc --noEmit + production build into the Python package
 ```
