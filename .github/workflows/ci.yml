@@ -69,6 +69,33 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
+  # The image used to be built only by a tag, which is how a Dockerfile that
+  # could not build reached a release. Pull requests only: everything merged
+  # gets built by docker-publish.yml on its way to `edge`, so building here too
+  # would do the same work twice. amd64 and never pushed — a gate, not a
+  # publication — sharing the gha cache with the workflow that does publish.
+  image:
+    name: Build Docker image
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./assistant/Dockerfile
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   ui:
     name: Build admin UI
     runs-on: ubuntu-latest
