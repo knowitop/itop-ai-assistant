@@ -69,6 +69,31 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
+  # The image is otherwise built only by a tag, which is how a Dockerfile that
+  # could not build reached a release. amd64 only and never pushed: this is a
+  # gate, not a publication — docker-publish.yml does the multi-arch build, and
+  # the shared gha cache makes its rebuild cheap.
+  image:
+    name: Build Docker image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./assistant/Dockerfile
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   ui:
     name: Build admin UI
     runs-on: ubuntu-latest

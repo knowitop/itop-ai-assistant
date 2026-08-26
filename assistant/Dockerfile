@@ -1,9 +1,14 @@
 # Build context is the repository root (ui/ and assistant/ are siblings):
 #   docker build -f assistant/Dockerfile .
+#
+# The build stages mirror that layout under /src rather than flattening it.
+# Both the frontend's output path and the package's own metadata are written
+# relative to the repository root, so a stage that holds only one directory
+# resolves `..` to something that isn't there.
 
 FROM node:22-alpine AS ui-builder
 
-WORKDIR /ui
+WORKDIR /src/ui
 
 # Install dependencies first — this layer is cached unless the lockfile changes
 COPY ui/package.json ui/package-lock.json ./
@@ -15,7 +20,13 @@ RUN npm run build
 # ---- python dependencies + the project itself ----
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
-WORKDIR /app
+WORKDIR /src/assistant
+
+# The venv is built where it will finally live, not beside the project: a venv
+# carries absolute paths in its script shebangs, so moving it between the build
+# and runtime stages leaves them pointing at a directory that is not there and
+# the entrypoint dies with "no such file or directory".
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 
 # Install dependencies into a separate venv — this layer is cached unless lockfile changes.
 # `--extra tracing` even though tracing is off by default (TRACING_ENABLED): an
@@ -36,14 +47,20 @@ ARG BUILD_COMMIT=""
 ARG BUILD_CHANNEL=""
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=${APP_VERSION} BUILD_COMMIT=${BUILD_COMMIT} BUILD_CHANNEL=${BUILD_CHANNEL}
 
+# The package's description is the repository README, assembled at build time
+# (hatch-fancy-pypi-readme in pyproject.toml), so the build needs the file that
+# sits beside this directory in a checkout. Copied before the source because it
+# changes far less often.
+COPY README.md /src/README.md
+
 # Install the application itself. --no-editable puts the package inside the
-# venv, so the runtime image needs nothing but /app/.venv.
+# venv, so the runtime image needs nothing but the venv.
 COPY assistant/ ./
 # The SPA is part of the package (ADR-032) — `npm run build` writes it here in
 # a checkout, and here is where the wheel picks it up. Copied after the source
 # so a frontend change does not invalidate the layers above, and so the build
 # fails (hatch_build.py) if the stage above produced nothing.
-COPY --from=ui-builder /assistant/src/itop_ai_assistant/ui_dist ./src/itop_ai_assistant/ui_dist
+COPY --from=ui-builder /src/assistant/src/itop_ai_assistant/ui_dist ./src/itop_ai_assistant/ui_dist
 RUN uv sync --frozen --no-dev --extra tracing --no-editable
 
 # ---- runtime image ----
