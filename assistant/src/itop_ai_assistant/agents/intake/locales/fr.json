@@ -39,6 +39,10 @@
       "title": "Dont, avant classification",
       "description": "La part des questions ci-dessus utilisable tant que la demande n'est pas classée."
     },
+    "unclassified_service_ids": {
+      "title": "Services qui signifient « non classé »",
+      "description": "Identifiants numériques des services qui tiennent lieu de classification absente — celui qu'une passerelle de messagerie renseigne, par exemple. Une demande portant un tel service est considérée comme non classée, sa sous-catégorie comprise, et le service lui-même n'est jamais proposé au modèle. L'identifiant figure dans la barre d'adresse lorsque le service est ouvert dans iTop."
+    },
     "classify_service_oql": {
       "title": "Requête du catalogue de services",
       "description": "OQL des services proposés à l'organisation du demandeur. `:this` désigne la demande."

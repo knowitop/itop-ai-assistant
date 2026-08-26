@@ -39,6 +39,10 @@
       "title": "Di cui, prima della classificazione",
       "description": "La quota delle domande sopra spendibile finché il ticket non è ancora classificato."
     },
+    "unclassified_service_ids": {
+      "title": "Servizi che significano «non classificato»",
+      "description": "ID numerici dei servizi che stanno al posto di una classificazione mancante — per esempio quello che compila un gateway di posta. Un ticket con un servizio del genere è considerato non classificato insieme alla sua sottocategoria, e il servizio stesso non viene mai proposto al modello. L'ID è nella barra degli indirizzi quando il servizio è aperto in iTop."
+    },
     "classify_service_oql": {
       "title": "Query del catalogo servizi",
       "description": "OQL dei servizi offerti all'organizzazione del richiedente. `:this` è il ticket."

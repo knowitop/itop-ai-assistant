@@ -39,6 +39,10 @@
       "title": "W tym przed sklasyfikowaniem zgłoszenia",
       "description": "Część powyższych pytań, którą można wykorzystać, dopóki zgłoszenie nie jest sklasyfikowane."
     },
+    "unclassified_service_ids": {
+      "title": "Usługi oznaczające „niesklasyfikowane”",
+      "description": "Numeryczne identyfikatory usług, które zastępują brakującą klasyfikację — na przykład ta, którą wstawia bramka pocztowa. Zgłoszenie z taką usługą jest uznawane za niesklasyfikowane wraz z jego podkategorią, a sama usługa nigdy nie jest proponowana modelowi. Identyfikator widać w pasku adresu, gdy usługa jest otwarta w iTopie."
+    },
     "classify_service_oql": {
       "title": "Zapytanie katalogu usług",
       "description": "OQL usług oferowanych organizacji zgłaszającego. `:this` to zgłoszenie."

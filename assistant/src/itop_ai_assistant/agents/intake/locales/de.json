@@ -39,6 +39,10 @@
       "title": "Davon vor der Klassifizierung",
       "description": "Der Anteil der obigen Fragen, der verbraucht werden darf, solange das Ticket noch nicht klassifiziert ist."
     },
+    "unclassified_service_ids": {
+      "title": "Services, die „nicht klassifiziert“ bedeuten",
+      "description": "Numerische IDs der Services, die für eine fehlende Klassifizierung stehen — etwa der, den ein Mail-Gateway einträgt. Ein Ticket mit einem solchen Service gilt samt seiner Unterkategorie als nicht klassifiziert, und der Service selbst wird dem Modell nie angeboten. Die ID steht in der Adressleiste, wenn der Service in iTop geöffnet ist."
+    },
     "classify_service_oql": {
       "title": "Abfrage des Servicekatalogs",
       "description": "OQL für die Services, die der Organisation des Melders angeboten werden. `:this` ist das Ticket."

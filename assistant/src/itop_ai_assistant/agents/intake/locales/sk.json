@@ -39,6 +39,10 @@
       "title": "Z toho pred klasifikáciou požiadavky",
       "description": "Podiel vyššie uvedených otázok, ktorý sa smie minúť, kým požiadavka nie je klasifikovaná."
     },
+    "unclassified_service_ids": {
+      "title": "Služby, ktoré znamenajú „neklasifikované“",
+      "description": "Číselné identifikátory služieb, ktoré zastupujú chýbajúcu klasifikáciu — napríklad tá, ktorú doplní poštová brána. Požiadavka s takouto službou sa považuje za neklasifikovanú vrátane jej podkategórie a samotná služba sa modelu nikdy neponúkne. Identifikátor je vidieť v adresnom riadku, keď je služba otvorená v iTope."
+    },
     "classify_service_oql": {
       "title": "Dopyt na katalóg služieb",
       "description": "OQL služieb ponúkaných organizácii žiadateľa. `:this` je požiadavka."

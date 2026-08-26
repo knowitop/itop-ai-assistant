@@ -39,6 +39,10 @@
       "title": "De ellas, antes de clasificar el ticket",
       "description": "La parte de las preguntas anteriores que puede gastarse mientras el ticket sigue sin clasificar."
     },
+    "unclassified_service_ids": {
+      "title": "Servicios que significan «sin clasificar»",
+      "description": "IDs numéricos de los servicios que sustituyen a una clasificación ausente — por ejemplo, el que rellena una pasarela de correo. Un ticket con ese servicio se considera sin clasificar junto con su subcategoría, y el servicio en sí nunca se le ofrece al modelo. El ID aparece en la barra de direcciones cuando el servicio está abierto en iTop."
+    },
     "classify_service_oql": {
       "title": "Consulta del catálogo de servicios",
       "description": "OQL de los servicios ofrecidos a la organización del solicitante. `:this` es el ticket."
