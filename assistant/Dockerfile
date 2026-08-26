@@ -39,6 +39,11 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION=${APP_VERSION} BUILD_COMMIT=${BUILD_COMMIT} B
 # Install the application itself. --no-editable puts the package inside the
 # venv, so the runtime image needs nothing but /app/.venv.
 COPY assistant/ ./
+# The SPA is part of the package (ADR-032) — `npm run build` writes it here in
+# a checkout, and here is where the wheel picks it up. Copied after the source
+# so a frontend change does not invalidate the layers above, and so the build
+# fails (hatch_build.py) if the stage above produced nothing.
+COPY --from=ui-builder /assistant/src/itop_ai_assistant/ui_dist ./src/itop_ai_assistant/ui_dist
 RUN uv sync --frozen --no-dev --extra tracing --no-editable
 
 # ---- runtime image ----
@@ -49,15 +54,12 @@ LABEL org.opencontainers.image.licenses="AGPL-3.0"
 
 WORKDIR /app
 
-# The venv already contains the application, its build stamp, default prompts
-# and config.yaml — no source, and no .git, reaches the runtime image
+# The venv already contains the application, its build stamp, default prompts,
+# config.yaml and the admin SPA — no source, and no .git, reaches the runtime
+# image
 COPY --from=builder /app/.venv ./.venv
 
-# The admin SPA is not a Python artifact — it is copied alongside
-COPY --from=ui-builder /ui/dist ./ui/dist
-
 ENV PATH="/app/.venv/bin:$PATH"
-ENV UI_DIST_DIR=/app/ui/dist
 
 EXPOSE 8000
 

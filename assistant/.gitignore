@@ -250,4 +250,7 @@ cython_debug/
 # Generated at build time by hatch_build.py
 src/itop_ai_assistant/_build_info.py
 
+# Built by `npm run build` in ui/ — see ui/vite.config.ts
+src/itop_ai_assistant/ui_dist/
+
 .import_linter_cache/

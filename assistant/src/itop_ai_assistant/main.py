@@ -126,19 +126,15 @@ app.include_router(admin_router)
 
 
 def _find_ui_dist() -> Path | None:
-    # The SPA build is not part of the Python package, so an installed
-    # deployment has to be told where it is — the image sets UI_DIST_DIR.
-    # Without it, walk up from this file looking for a source checkout, where
-    # ui/ is a sibling of assistant/ at the repo root.
+    # `npm run build` writes the SPA straight into the package (see
+    # ui/vite.config.ts), so a checkout and an installed wheel look the same
+    # from here. UI_DIST_DIR is the override for a deployment serving a build
+    # of its own; set but wrong, it means no UI rather than a silent fallback.
     if settings.ui_dist_dir is not None:
         candidate = settings.ui_dist_dir
         return candidate if (candidate / "index.html").is_file() else None
-    here = Path(__file__).resolve()
-    for root in here.parents[1:4]:
-        candidate = root / "ui" / "dist"
-        if (candidate / "index.html").is_file():
-            return candidate
-    return None
+    packaged = Path(__file__).resolve().parent / "ui_dist"
+    return packaged if (packaged / "index.html").is_file() else None
 
 
 _ui_dist = _find_ui_dist()

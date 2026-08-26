@@ -61,9 +61,14 @@ local_scheme = "no-local-version"
 [tool.hatch.build.hooks.custom]
 
 [tool.hatch.build]
-# The stamp is generated, hence gitignored, and hatchling leaves VCS-ignored
-# files out of the artifact unless they are named here.
-artifacts = ["src/itop_ai_assistant/_build_info.py"]
+# Both are generated, hence gitignored, and hatchling leaves VCS-ignored files
+# out of the artifact unless they are named here. The SPA is a directory and a
+# bare path is enough — it goes in recursively, into the wheel and the sdist
+# alike, which is what lets `pip install` from the sdist work without Node.
+artifacts = [
+    "src/itop_ai_assistant/_build_info.py",
+    "src/itop_ai_assistant/ui_dist",
+]
 
 [tool.uv]
 # Without this uv reuses a cached build after a commit or a new tag, and the

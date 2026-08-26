@@ -197,7 +197,7 @@ Only the unit tests run by default; the integration suite is opt-in because it n
 cd ui
 npm ci
 npm run dev     # hot-reload dev server
-npm run build   # production build into ui/dist
+npm run build   # production build, straight into the Python package
 ```
 
 Architecture details and development conventions are in [CLAUDE.md](CLAUDE.md).
