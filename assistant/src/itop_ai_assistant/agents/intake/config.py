@@ -249,26 +249,37 @@ class IntakeConfig(BaseModel):
         json_schema_extra=ui(group="Similar solved tickets", advanced=True),
     )
 
-    @field_validator("unclassified_service_ids", mode="after")
+    @field_validator("unclassified_service_ids", mode="before")
     @classmethod
-    def _check_service_ids(cls, value: list[str]) -> list[str]:
-        """Numeric IDs only — a name here fails silently and forever.
+    def _check_service_ids(cls, value: object) -> object:
+        """Numeric IDs only, in the one shape a ticket can carry.
 
-        An administrator sees names in iTop, and "Mail request" typed into this
-        field saves cleanly and never matches anything: the module would keep
-        skipping exactly the tickets the field was filled in for. Saving is the
-        one moment the mistake is still visible.
+        Anything else here fails silently and forever: an administrator sees
+        names in iTop, and "Mail request" typed into this field saves cleanly
+        and never matches anything, so the module would keep classifying
+        exactly the tickets the field was filled in for. Saving is the one
+        moment the mistake is still visible. The same holds for the values
+        that only look like IDs — a ticket carries `str()` of iTop's JSON
+        integer, so "007" would never equal "7", and 0 is the empty external
+        key, read as no service at all.
+
+        `mode="before"`, because an ID written as a JSON number is the same ID
+        — that is how yaml and a hand-written PUT body encode it, while the
+        admin UI sends strings — and pydantic would otherwise refuse it with a
+        generic message instead of this one.
         """
+        if not isinstance(value, list):
+            return value
         cleaned: list[str] = []
         for item in value:
-            stripped = item.strip()
+            stripped = str(item).strip()
             # `isascii` as well: "²" and "١٢٣" are digits to Python and not IDs to iTop
-            if not (stripped.isascii() and stripped.isdigit()):
+            if not (stripped.isascii() and stripped.isdigit()) or int(stripped) == 0:
                 raise ValueError(
                     f"{item!r} is not a service ID: this field takes the numeric IDs of services, not their "
                     "names. Open the service in iTop and read `id=` from the address bar."
                 )
-            cleaned.append(stripped)
+            cleaned.append(str(int(stripped)))
         return cleaned
 
     @model_validator(mode="after")
