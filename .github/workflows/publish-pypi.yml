@@ -1,0 +1,87 @@
+name: Build and publish Python package
+
+on:
+  push:
+    tags:
+      - "v*"
+  # Manual runs go to TestPyPI — the way to rehearse a release without
+  # spending a version number on PyPI, which never lets one be reused.
+  workflow_dispatch:
+
+jobs:
+  # No package is published unless lint, mypy and the whole test suite pass.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build-and-publish:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'workflow_dispatch' && 'testpypi' || 'pypi' }}
+    permissions:
+      contents: read
+      # Trusted publishing: the OIDC token is the credential, there is no
+      # API token to store. The publisher is registered on PyPI's side and
+      # names this workflow file, so renaming it breaks the release.
+      id-token: write
+
+    steps:
+      - name: Checkout
+        # Unshallow: hatch-vcs derives the version from the tag, and it has to
+        # see the tags to do it.
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # The SPA is part of the package (ADR-032), so this has to happen before
+      # the wheel is built — assistant/hatch_build.py refuses to build without
+      # it rather than shipping a package with no admin UI.
+      - name: Build admin UI
+        working-directory: ui
+        run: npm ci && npm run build
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: assistant/uv.lock
+
+      - name: Build sdist and wheel
+        working-directory: assistant
+        # `uv build` builds the wheel from the sdist, where there is no git —
+        # the stamp has to be handed over the same way the image build does it
+        # (assistant/Dockerfile), or the published package reports itself as a
+        # local build and telemetry stays silent.
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+          BUILD_CHANNEL: release
+        run: uv build
+
+      - name: Check the artifacts
+        working-directory: assistant
+        # The admin SPA reaching the wheel is exactly the thing no test covers
+        # and no user reports politely.
+        run: |
+          uvx check-wheel-contents dist/*.whl
+          unzip -l dist/*.whl | grep -q 'itop_ai_assistant/ui_dist/index.html'
+          uvx twine check dist/*
+
+      - name: Publish to TestPyPI
+        if: github.event_name == 'workflow_dispatch'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: assistant/dist
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Publish to PyPI
+        if: github.event_name == 'push'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: assistant/dist
