@@ -69,13 +69,15 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
-  # The image is otherwise built only by a tag, which is how a Dockerfile that
-  # could not build reached a release. amd64 only and never pushed: this is a
-  # gate, not a publication — docker-publish.yml does the multi-arch build, and
-  # the shared gha cache makes its rebuild cheap.
+  # The image used to be built only by a tag, which is how a Dockerfile that
+  # could not build reached a release. Pull requests only: everything merged
+  # gets built by docker-publish.yml on its way to `edge`, so building here too
+  # would do the same work twice. amd64 and never pushed — a gate, not a
+  # publication — sharing the gha cache with the workflow that does publish.
   image:
     name: Build Docker image
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
 
     steps:
       - name: Checkout
