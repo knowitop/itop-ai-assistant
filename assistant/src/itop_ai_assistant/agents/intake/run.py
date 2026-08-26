@@ -44,6 +44,14 @@ class IntakeRun(TicketRun):
         # First step of the journal: with actions switchable, "the agent did
         # nothing" has to be readable as a setting rather than as a breakage
         await self.step("scope", domain.format_scope(composed.context.scope))
+        # Second step, and written whether or not this run classifies: what the
+        # ticket arrived with is gone the moment `set_classification` writes,
+        # and a ticket that came in with a service meaning "not classified"
+        # reads as classified everywhere else in iTop.
+        await self.step(
+            "classification",
+            domain.format_incoming_classification(ticket, composed.context.classification),
+        )
         await IntakeAgentRun(
             composed.agent,
             composed.context,

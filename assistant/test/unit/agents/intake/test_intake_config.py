@@ -28,6 +28,41 @@ class TestIntakeConfig(unittest.TestCase):
         self.assertEqual(IntakeConfig(similar_candidates=5, similar_top=5).similar_top, 5)
 
 
+class TestUnclassifiedServices(unittest.TestCase):
+    """A name typed here would save cleanly and never match anything."""
+
+    def test_declaring_nothing_is_the_default(self):
+        self.assertEqual(IntakeConfig().unclassified_service_ids, [])
+
+    def test_ids_are_kept(self):
+        self.assertEqual(IntakeConfig(unclassified_service_ids=["7", "12"]).unclassified_service_ids, ["7", "12"])
+
+    def test_surrounding_spaces_are_trimmed(self):
+        self.assertEqual(IntakeConfig(unclassified_service_ids=[" 7 "]).unclassified_service_ids, ["7"])
+
+    def test_a_service_name_is_rejected_with_where_to_find_the_id(self):
+        with self.assertRaises(ValidationError) as ctx:
+            IntakeConfig(unclassified_service_ids=["Mail request"])
+
+        self.assertIn("address bar", str(ctx.exception))
+
+    def test_an_empty_string_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            IntakeConfig(unclassified_service_ids=[" "])
+
+    def test_an_id_written_as_a_number_is_the_same_id(self):
+        """yaml and a hand-written PUT body encode IDs as JSON integers."""
+        self.assertEqual(IntakeConfig(unclassified_service_ids=[7]).unclassified_service_ids, ["7"])
+
+    def test_a_padded_id_is_normalised_to_what_a_ticket_carries(self):
+        self.assertEqual(IntakeConfig(unclassified_service_ids=["007"]).unclassified_service_ids, ["7"])
+
+    def test_zero_is_rejected(self):
+        """iTop's empty external key — it reaches the ticket as no service at all."""
+        with self.assertRaises(ValidationError):
+            IntakeConfig(unclassified_service_ids=["0"])
+
+
 class TestQuestionBudget(unittest.TestCase):
     def test_defaults_leave_the_completeness_phase_one_question(self):
         cfg = IntakeConfig()

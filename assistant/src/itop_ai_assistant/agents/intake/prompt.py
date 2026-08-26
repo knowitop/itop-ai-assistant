@@ -23,10 +23,11 @@ from langchain_core.prompts import PromptTemplate
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.repositories.catalog import CatalogRepository
-from itop_ai_assistant.util.text import bind_oql, html_to_markdown
+from itop_ai_assistant.util.text import html_to_markdown
 
+from . import catalog
 from .context import IntakeContext
-from .domain import IntakeScope, closing_tools, needs_classification
+from .domain import Classification, IntakeScope, closing_tools, needs_classification
 from .prompts import IntakePrompts
 
 
@@ -62,21 +63,27 @@ def build_conversation_xml(entries: list[LogEntry], ai_name: str, caller_name: s
     return "\n".join(lines)
 
 
-async def build_service_context(ticket: Ticket, catalog: CatalogRepository) -> str:
+async def build_service_context(ticket: Ticket, repo: CatalogRepository, classification: Classification) -> str:
     """Describe the classification the ticket already carries.
 
     Matters on round 2+: without it the agent would re-read the subcategory
     list on every run just to learn what it picked last time.
+
+    Read through `classification` rather than off the ticket: a service that
+    means "not classified" must not be described to the model as one, and its
+    description must not be fetched from iTop to say so.
     """
     parts = []
-    if ticket.service_id is not None:
-        service = await catalog.get_service(ticket.service_id)
+    service_id = classification.service_of(ticket)
+    subcategory_id = classification.subcategory_of(ticket)
+    if service_id is not None:
+        service = await repo.get_service(service_id)
         if service:
             parts.append(f"Service: {service.name}")
             if service.description:
                 parts.append(f"Service description:\n{service.description}")
-    if ticket.subcategory_id is not None:
-        subcategory = await catalog.get_subcategory(ticket.subcategory_id)
+    if subcategory_id is not None:
+        subcategory = await repo.get_subcategory(subcategory_id)
         if subcategory:
             parts.append(f"Subcategory: {subcategory.name}")
             if subcategory.description:
@@ -87,7 +94,7 @@ async def build_service_context(ticket: Ticket, catalog: CatalogRepository) -> s
     return "\n".join(parts)
 
 
-def format_session_scope(scope: IntakeScope, ticket: Ticket) -> str:
+def format_session_scope(scope: IntakeScope, ticket: Ticket, classification: Classification) -> str:
     """List what this run may do, and what ends it.
 
     Assembled in code rather than kept as a template fragment — the same call
@@ -99,7 +106,7 @@ def format_session_scope(scope: IntakeScope, ticket: Ticket) -> str:
     may classify while the tools are withheld spends a turn looking for them.
     """
     actions = []
-    if needs_classification(scope, ticket):
+    if needs_classification(scope, ticket, classification):
         actions.append("- Classify the ticket: set its service and its subcategory.")
     if scope.clarify:
         actions.append("- Ask the requester one clarifying question, and end the session with it.")
@@ -141,7 +148,7 @@ def build_system_prompt(scope: IntakeScope, prompts: IntakePrompts) -> str:
 
 async def build_initial_messages(ctx: IntakeContext, prompts: IntakePrompts) -> list[BaseMessage]:
     ticket = ctx.ticket
-    service_context = await build_service_context(ticket, ctx.catalog_repo)
+    service_context = await build_service_context(ticket, ctx.catalog_repo, ctx.classification)
 
     messages: list[BaseMessage] = [SystemMessage(content=build_system_prompt(ctx.scope, prompts))]
 
@@ -149,8 +156,8 @@ async def build_initial_messages(ctx: IntakeContext, prompts: IntakePrompts) -> 
     # ticket, or a deployment that does not classify at all (`tools_for`
     # withholds the tools either way). The list would otherwise ride along in
     # the message history, paid for on every model call of the run.
-    if needs_classification(ctx.scope, ticket):
-        services = await ctx.catalog_repo.find_services(bind_oql(ctx.intake.classify_service_oql, ticket.model_dump()))
+    if needs_classification(ctx.scope, ticket, ctx.classification):
+        services = await catalog.offered_services(ctx)
         catalog_text = PromptTemplate.from_template(prompts.catalog_human).format(services=format_options(services))
         messages.append(HumanMessage(content=catalog_text))
 
@@ -160,7 +167,7 @@ async def build_initial_messages(ctx: IntakeContext, prompts: IntakePrompts) -> 
         description=html_to_markdown(ticket.description),
         conversation=build_conversation_xml(ticket.public_log, ctx.ai_name, ticket.caller_name),
         service_context=service_context,
-        session_scope=format_session_scope(ctx.scope, ticket),
+        session_scope=format_session_scope(ctx.scope, ticket, ctx.classification),
     )
     messages.append(HumanMessage(content=ticket_text))
     return messages

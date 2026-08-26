@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from itop_ai_assistant.agents.intake.config import IntakeConfig
 from itop_ai_assistant.agents.intake.context import IntakeContext
-from itop_ai_assistant.agents.intake.domain import IntakeScope
+from itop_ai_assistant.agents.intake.domain import Classification, IntakeScope
 from itop_ai_assistant.agents.intake.prompt import (
     build_conversation_xml,
     build_initial_messages,
@@ -33,6 +33,10 @@ def _ticket(**overrides) -> Ticket:
         caller_name="John Doe",
     )
     return Ticket(**{**defaults, **overrides})
+
+
+def _classification(*unclassified_services: str) -> Classification:
+    return Classification(unclassified_services=frozenset(unclassified_services))
 
 
 def _scope(**overrides: bool) -> IntakeScope:
@@ -106,21 +110,32 @@ class TestServiceContext(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_unclassified_ticket_does_not_hit_itop(self):
-        text = await build_service_context(_ticket(), self.catalog)
+        text = await build_service_context(_ticket(), self.catalog, _classification())
+
+        self.assertIn("Not classified yet", text)
+        self.catalog.get_service.assert_not_called()
+        self.catalog.get_subcategory.assert_not_called()
+
+    async def test_a_declared_service_is_neither_described_nor_read(self):
+        ticket = _ticket(service_id="7", subcategory_id="70")
+
+        text = await build_service_context(ticket, self.catalog, _classification("7"))
 
         self.assertIn("Not classified yet", text)
         self.catalog.get_service.assert_not_called()
         self.catalog.get_subcategory.assert_not_called()
 
     async def test_classified_ticket_includes_descriptions(self):
-        text = await build_service_context(_ticket(service_id="10", subcategory_id="101"), self.catalog)
+        text = await build_service_context(
+            _ticket(service_id="10", subcategory_id="101"), self.catalog, _classification()
+        )
 
         self.assertIn("Service: Printing", text)
         self.assertIn("Subcategory: Hardware fault", text)
         self.assertIn("Need model", text)
 
     async def test_service_only(self):
-        text = await build_service_context(_ticket(service_id="10"), self.catalog)
+        text = await build_service_context(_ticket(service_id="10"), self.catalog, _classification())
 
         self.assertIn("Service: Printing", text)
         self.catalog.get_subcategory.assert_not_called()
@@ -130,7 +145,7 @@ class TestSessionScope(unittest.TestCase):
     """The list the model reads must be the tool set it was handed."""
 
     def test_everything_on(self):
-        text = format_session_scope(_scope(), _ticket())
+        text = format_session_scope(_scope(), _ticket(), _classification())
 
         self.assertIn("Classify the ticket", text)
         self.assertIn("clarifying question", text)
@@ -141,12 +156,19 @@ class TestSessionScope(unittest.TestCase):
     def test_a_classified_ticket_is_not_told_to_classify(self):
         # `tools_for` withholds the classification tools here, so promising
         # the stage would send the model looking for them
-        text = format_session_scope(_scope(), _ticket(service_id="10", subcategory_id="101"))
+        text = format_session_scope(_scope(), _ticket(service_id="10", subcategory_id="101"), _classification())
 
         self.assertNotIn("Classify the ticket", text)
 
+    def test_a_ticket_with_a_declared_service_is_told_to_classify(self):
+        text = format_session_scope(_scope(), _ticket(service_id="7", subcategory_id="70"), _classification("7"))
+
+        self.assertIn("Classify the ticket", text)
+
     def test_switched_off_actions_are_not_listed(self):
-        text = format_session_scope(_scope(clarify=False, handoff_note=False, similar=False), _ticket())
+        text = format_session_scope(
+            _scope(clarify=False, handoff_note=False, similar=False), _ticket(), _classification()
+        )
 
         self.assertIn("Classify the ticket", text)
         self.assertNotIn("clarifying question", text)
@@ -198,7 +220,9 @@ class TestInitialMessages(unittest.IsolatedAsyncioTestCase):
         self.catalog.get_service = AsyncMock(return_value=None)
         self.catalog.get_subcategory = AsyncMock(return_value=None)
 
-    def _context(self, ticket: Ticket, scope: IntakeScope | None = None) -> IntakeContext:
+    def _context(
+        self, ticket: Ticket, scope: IntakeScope | None = None, classification: Classification | None = None
+    ) -> IntakeContext:
         return IntakeContext(
             processing_id=uuid4(),
             principal=Principal.service(),
@@ -208,6 +232,7 @@ class TestInitialMessages(unittest.IsolatedAsyncioTestCase):
             state_manager=MagicMock(),
             intake=IntakeConfig(),
             scope=scope or _scope(),
+            classification=classification or _classification(),
             ai_name="ai-assistant",
         )
 
@@ -259,6 +284,16 @@ class TestInitialMessages(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([m.type for m in messages], ["system", "human"])
         self.catalog.find_services.assert_not_called()
         self.assertNotIn("Service catalog", messages[1].text)
+
+    async def test_a_declared_service_is_absent_from_the_catalog_message(self):
+        self.catalog.find_services = AsyncMock(
+            return_value=[Service(id="10", name="Printing"), Service(id="7", name="Mail request")]
+        )
+
+        messages = await build_initial_messages(self._context(_ticket(), classification=_classification("7")), _PROMPTS)
+
+        self.assertIn("- ID 10: Printing", messages[1].text)
+        self.assertNotIn("Mail request", messages[1].text)
 
     async def test_service_oql_is_bound_to_the_ticket(self):
         await build_initial_messages(self._context(_ticket(org_id="42")), _PROMPTS)

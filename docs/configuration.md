@@ -133,6 +133,7 @@ Set in the [Admin UI → Modules](admin-ui.md#modules) or via `PUT /api/config/i
 | **Classification** | | |
 | `classify_enabled` | `true` | Let the module set the service and the subcategory of the ticket |
 | `max_classify_questions` | `2` | How many of `max_questions` may be spent while the ticket is still unclassified — must not exceed it |
+| `unclassified_service_ids` | `[]` | Numeric IDs of the services that stand for a missing classification — see [Services that mean "not classified"](#services-that-mean-not-classified) |
 | **Clarification** | | |
 | `clarify_enabled` | `true` | Let the module ask the requester clarifying questions in the public log |
 | **Handoff note** | | |
@@ -149,6 +150,25 @@ Set in the [Admin UI → Modules](admin-ui.md#modules) or via `PUT /api/config/i
 
 > [!NOTE]
 > The `similar_*` thresholds only do something when `similar_enabled` is on **and** the [vector index](#vector-index) is switched on with an embeddings endpoint configured. Without any of that, the agent is not given the search tool at all and the handoff note carries no references.
+
+### Services that mean "not classified"
+
+Service and subcategory are mandatory in iTop, so a ticket that nobody classified still arrives with both filled in. A mail gateway has to put *something* there and puts the same thing every time — a service like "Mail request" with a subcategory like "Other". To the module that ticket looks classified, and the one channel where no classification exists at all is the one it skips.
+
+List those services in `unclassified_service_ids` and the module reads them as an empty field: the ticket is classified as any other, and the service itself is never offered to the model, so it cannot be classified back into it.
+
+Subcategories are not listed. A subcategory belongs to exactly one service, so the ones under a declared service are covered along with it — the mail gateway's "Other" needs no entry of its own.
+
+The setting takes **numeric IDs**, not names: a renamed service keeps working, and a name typed here would save cleanly and never match anything. To find the ID, open the service in iTop and read `id=` from the address bar:
+
+```
+https://itop.example.com/pages/UI.php?operation=details&class=Service&id=7
+                                                                       ↑
+```
+
+A value that is not a number is rejected when you save it (422 from the admin API).
+
+Run journal: the `classification` step of every run records what the ticket arrived with — `service=unclassified(7) subcategory=70` for the case above, `service=none subcategory=none` for a genuinely empty ticket, plain IDs for a real classification.
 
 ### Which actions the module performs
 
@@ -174,7 +194,7 @@ With `handoff_note_enabled: false` the private log of the ticket stays empty wha
 > [!IMPORTANT]
 > `enabled` and `classes` are read at **startup**, not per ticket: changing them in the admin UI does not re-route webhooks until the service restarts. Every other setting applies from the next ticket.
 
-Every run leaves a trace in [Admin UI → Runs](admin-ui.md#runs) (`GET /api/runs`): a `scope` step naming the actions the run was allowed to perform (`classify=on clarify=off …`), one `agent` step per model turn (the tools it called and with which arguments), one `tool:<name>` step per result (`[success]` / `[error]` plus the text), and a final `usage` step with model calls, tokens in/out and wall time.
+Every run leaves a trace in [Admin UI → Runs](admin-ui.md#runs) (`GET /api/runs`): a `scope` step naming the actions the run was allowed to perform (`classify=on clarify=off …`), a `classification` step recording what the ticket arrived with, one `agent` step per model turn (the tools it called and with which arguments), one `tool:<name>` step per result (`[success]` / `[error]` plus the text), and a final `usage` step with model calls, tokens in/out and wall time.
 
 ---
 

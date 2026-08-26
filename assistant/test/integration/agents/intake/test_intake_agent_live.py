@@ -28,7 +28,7 @@ async def _run(ctx):
     agent = build_intake_agent(
         create_llm(llm_cfg),
         ctx.intake,
-        tools_for(ctx.ticket, ctx.scope),
+        tools_for(ctx.ticket, ctx.scope, ctx.classification),
         force_tool_choice=llm_cfg.endpoint_forces_tool_choice,
     )
     messages = await build_initial_messages(ctx, _PROMPTS)

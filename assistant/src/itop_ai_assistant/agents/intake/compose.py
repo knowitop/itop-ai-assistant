@@ -21,7 +21,7 @@ from itop_ai_assistant.repositories.sets import RepositorySet
 from .agent import build_intake_agent
 from .config import IntakeConfig
 from .context import IntakeContext
-from .domain import IntakeScope
+from .domain import Classification, IntakeScope
 from .prompt import build_initial_messages
 from .prompts import MODULE, build_intake_prompts
 from .state import IntakeState
@@ -53,6 +53,7 @@ async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps,
         handoff_note=cfg.handoff_note_enabled,
         similar=similar is not None,
     )
+    classification = Classification(unclassified_services=frozenset(cfg.unclassified_service_ids))
     context = IntakeContext(
         processing_id=run.processing_id,
         principal=run.principal,
@@ -62,13 +63,14 @@ async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps,
         state_manager=IntakeState(deps.state_manager),
         intake=cfg,
         scope=scope,
+        classification=classification,
         ai_name=ai_name,
         similar=similar,
     )
     agent = build_intake_agent(
         deps.create_llm(llm_cfg, cfg.model),
         cfg,
-        tools_for(ticket, scope),
+        tools_for(ticket, scope, classification),
         # Nothing here can deliver prose, so force a tool call wherever the
         # endpoint accepts being forced
         force_tool_choice=llm_cfg.endpoint_forces_tool_choice,

@@ -39,6 +39,10 @@
       "title": "其中在工单分类之前",
       "description": "在工单尚未分类时，可从上述提问额度中支出的份额。"
     },
+    "unclassified_service_ids": {
+      "title": "表示“未分类”的服务",
+      "description": "代表分类缺失的那些服务的数字 ID——例如邮件网关填入的那一个。带有此类服务的工单连同其子类别一并视为未分类，该服务本身也永远不会提供给模型。在 iTop 中打开该服务时，地址栏里就是它的 ID。"
+    },
     "classify_service_oql": {
       "title": "服务目录查询",
       "description": "查询向申报人所属组织提供的服务的 OQL。`:this` 表示该工单。"

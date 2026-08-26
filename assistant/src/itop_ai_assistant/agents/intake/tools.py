@@ -21,8 +21,10 @@ from langchain_core.tools import BaseTool, tool
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.util.text import bind_oql, html_to_markdown
 
+from . import catalog
 from .context import IntakeContext
 from .domain import (
+    Classification,
     IntakeScope,
     NonBlankText,
     QuestionBudget,
@@ -92,7 +94,7 @@ async def get_service_catalog(runtime: IntakeToolRuntime) -> str:
     """
     ctx = runtime.context
     _reject_if_repeated(runtime, "get_service_catalog", {})
-    services = await ctx.catalog_repo.find_services(bind_oql(ctx.intake.classify_service_oql, ctx.ticket.model_dump()))
+    services = await catalog.offered_services(ctx)
     return f"Services available to this organization:\n{format_options(services)}"
 
 
@@ -137,7 +139,7 @@ async def set_classification(service_id: int, subcategory_id: int, runtime: Inta
     ticket = ctx.ticket
     # Read the catalog fresh: the model may be working from a stale list, and
     # this id comes from an LLM straight into an OQL query
-    services = await ctx.catalog_repo.find_services(bind_oql(ctx.intake.classify_service_oql, ticket.model_dump()))
+    services = await catalog.offered_services(ctx)
     valid_service_ids = {service.id for service in services}
     if str(service_id) not in valid_service_ids:
         raise ToolRejection(
@@ -261,7 +263,7 @@ async def post_public_question(question: str, runtime: IntakeToolRuntime) -> str
     # come back. A deployment that does not classify has no classification
     # sub-limit to spend, however empty the ticket's fields are — otherwise the
     # question is refused over a stage nobody ran.
-    classifying = needs_classification(ctx.scope, ticket)
+    classifying = needs_classification(ctx.scope, ticket, ctx.classification)
     state = await ctx.state_manager.get(str(ticket.identity))
     cfg = ctx.intake
     budget = check_question_budget(
@@ -350,7 +352,7 @@ TOOLS: list[BaseTool] = [
 ]
 
 
-def tools_for(ticket: Ticket, scope: IntakeScope) -> list[BaseTool]:
+def tools_for(ticket: Ticket, scope: IntakeScope, classification: Classification) -> list[BaseTool]:
     """The tools this run may use — assembled, not picked from ready-made sets.
 
     Two rules decide, and both take the tool away rather than ask the model
@@ -370,7 +372,7 @@ def tools_for(ticket: Ticket, scope: IntakeScope) -> list[BaseTool]:
     handoff note is on, `finish_processing` where it is off. Without it a run
     with no way to end burns `max_iterations` on every ticket.
     """
-    tools: list[BaseTool] = list(_CLASSIFICATION_TOOLS) if needs_classification(scope, ticket) else []
+    tools: list[BaseTool] = list(_CLASSIFICATION_TOOLS) if needs_classification(scope, ticket, classification) else []
     if scope.clarify:
         tools.append(post_public_question)
     tools.append(finish_handoff if scope.handoff_note else finish_processing)

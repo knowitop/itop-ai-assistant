@@ -46,7 +46,7 @@ Adapting to a customized iTop datamodel must stay a config change, not a code
 change.
 
 Processing code works with the semantic `Ticket` model (`domain/ticket.py`) —
-`subcategory_id`, `caller_name`, `ticket.label`, `ticket.has_service` — never
+`subcategory_id`, `caller_name`, `ticket.label`, `ticket.service_id` — never
 with raw dicts. Distinct iTop classes get distinct models
 (`Service` / `ServiceSubcategory`).
 

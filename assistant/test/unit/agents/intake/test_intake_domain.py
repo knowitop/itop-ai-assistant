@@ -1,11 +1,13 @@
 import unittest
 
 from itop_ai_assistant.agents.intake.domain import (
+    Classification,
     IntakeScope,
     NonBlankText,
     QuestionBudget,
     check_question_budget,
     closing_tools,
+    format_incoming_classification,
     format_scope,
     needs_classification,
     stop_reason,
@@ -16,6 +18,10 @@ from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 
 def _ticket(status: str = "new", public_log: list[LogEntry] | None = None) -> Ticket:
     return Ticket(obj_class="Incident", id="123", status=status, public_log=public_log or [])
+
+
+def _classification(*unclassified_services: str) -> Classification:
+    return Classification(unclassified_services=frozenset(unclassified_services))
 
 
 def _scope(**overrides: bool) -> IntakeScope:
@@ -76,33 +82,84 @@ class TestCheckQuestionBudget(unittest.TestCase):
         self.assertEqual(result, QuestionBudget.EXHAUSTED)
 
 
+def _classified(service_id: str = "10", subcategory_id: str = "101") -> Ticket:
+    ticket = _ticket()
+    ticket.service_id, ticket.subcategory_id = service_id, subcategory_id
+    return ticket
+
+
+class TestClassification(unittest.TestCase):
+    """Which values of a mandatory field still mean "nobody classified this"."""
+
+    def test_a_declared_service_reads_as_empty(self):
+        self.assertIsNone(_classification("7").service_of(_classified(service_id="7")))
+
+    def test_any_other_service_reads_as_it_stands(self):
+        self.assertEqual(_classification("7").service_of(_classified(service_id="10")), "10")
+
+    def test_declaring_nothing_changes_nothing(self):
+        ticket = _classified()
+
+        self.assertEqual(_classification().service_of(ticket), "10")
+        self.assertEqual(_classification().subcategory_of(ticket), "101")
+
+    def test_the_subcategory_of_a_declared_service_reads_as_empty(self):
+        # Nobody declares it: a subcategory belongs to one service, so the mail
+        # gateway's "Other" is unreachable except under the service above it
+        ticket = _classified(service_id="7", subcategory_id="70")
+
+        self.assertIsNone(_classification("7").subcategory_of(ticket))
+
+    def test_an_empty_field_stays_empty(self):
+        self.assertIsNone(_classification("7").service_of(_ticket()))
+        self.assertIsNone(_classification("7").subcategory_of(_ticket()))
+
+
 class TestNeedsClassification(unittest.TestCase):
     """Where "the administrator allowed it" meets "the ticket still needs it"."""
 
-    @staticmethod
-    def _classified() -> Ticket:
-        ticket = _ticket()
-        ticket.service_id, ticket.subcategory_id = "10", "101"
-        return ticket
-
     def test_enabled_and_unclassified(self):
-        self.assertTrue(needs_classification(_scope(), _ticket()))
+        self.assertTrue(needs_classification(_scope(), _ticket(), _classification()))
 
     def test_enabled_but_already_classified(self):
-        self.assertFalse(needs_classification(_scope(), self._classified()))
+        self.assertFalse(needs_classification(_scope(), _classified(), _classification()))
 
     def test_disabled_and_unclassified(self):
         # The stage nobody runs: an empty subcategory is not a reason to start
-        self.assertFalse(needs_classification(_scope(classify=False), _ticket()))
+        self.assertFalse(needs_classification(_scope(classify=False), _ticket(), _classification()))
 
     def test_disabled_and_already_classified(self):
-        self.assertFalse(needs_classification(_scope(classify=False), self._classified()))
+        self.assertFalse(needs_classification(_scope(classify=False), _classified(), _classification()))
 
     def test_half_classified_ticket_still_needs_it(self):
         ticket = _ticket()
         ticket.service_id = "10"
 
-        self.assertTrue(needs_classification(_scope(), ticket))
+        self.assertTrue(needs_classification(_scope(), ticket, _classification()))
+
+    def test_a_ticket_carrying_a_declared_service_needs_it(self):
+        ticket = _classified(service_id="7", subcategory_id="70")
+
+        self.assertTrue(needs_classification(_scope(), ticket, _classification("7")))
+
+
+class TestFormatIncomingClassification(unittest.TestCase):
+    def test_an_empty_ticket_says_so(self):
+        self.assertEqual(format_incoming_classification(_ticket(), _classification()), "service=none subcategory=none")
+
+    def test_a_real_classification_is_the_ids(self):
+        self.assertEqual(
+            format_incoming_classification(_classified(), _classification("7")),
+            "service=10 subcategory=101",
+        )
+
+    def test_a_declared_service_is_marked_and_the_subcategory_stays_raw(self):
+        ticket = _classified(service_id="7", subcategory_id="70")
+
+        self.assertEqual(
+            format_incoming_classification(ticket, _classification("7")),
+            "service=unclassified(7) subcategory=70",
+        )
 
 
 class TestClosingTools(unittest.TestCase):
