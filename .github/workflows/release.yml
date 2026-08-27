@@ -12,9 +12,6 @@ on:
     # waiting for a release. Tags are what produce a version.
     branches:
       - main
-  # Manual runs go to TestPyPI — the way to rehearse a release without
-  # spending a version number on PyPI, which never lets one be reused.
-  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -43,8 +40,6 @@ jobs:
   docker:
     name: Publish Docker image
     needs: ci
-    # A TestPyPI rehearsal is about the package; no image comes out of it.
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -158,10 +153,10 @@ jobs:
     name: Publish Python package
     needs: ci
     # A push to main produces `edge`, which is not a version — PyPI never sees
-    # it. Tags publish for real, a manual run rehearses on TestPyPI.
-    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    # it. Only a tag publishes.
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'workflow_dispatch' && 'testpypi' || 'pypi' }}
+    environment: pypi
     permissions:
       contents: read
       # Trusted publishing: the OIDC token is the credential, there is no
@@ -218,15 +213,7 @@ jobs:
           unzip -l dist/*.whl | grep -q 'itop_ai_assistant/ui_dist/index.html'
           uvx twine check dist/*
 
-      - name: Publish to TestPyPI
-        if: github.event_name == 'workflow_dispatch'
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: assistant/dist
-          repository-url: https://test.pypi.org/legacy/
-
       - name: Publish to PyPI
-        if: github.event_name == 'push'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: assistant/dist
