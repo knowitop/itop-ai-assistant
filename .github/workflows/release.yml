@@ -1,0 +1,232 @@
+name: Release
+
+# One workflow for both artifacts, because the gate is what costs time: two
+# publishing workflows meant two full runs of the same suite on every tag.
+# `ci` below is that single run, and both publishers hang off it.
+
+on:
+  push:
+    tags:
+      - "v*"
+    # `edge` follows main, so a deployment can track what is merged without
+    # waiting for a release. Tags are what produce a version.
+    branches:
+      - main
+  # Manual runs go to TestPyPI — the way to rehearse a release without
+  # spending a version number on PyPI, which never lets one be reused.
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  # A newer merge supersedes the `edge` build it overtakes. A tag is cut once
+  # and must not be cancelled by anything.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  GHCR_IMAGE: ghcr.io/${{ github.repository }}
+  # Empty in a fork: ghcr follows whoever forked, but Docker Hub is one
+  # organisation whose secrets a fork does not have. The steps that need it
+  # skip on empty rather than failing on a login with no password. The name
+  # repeats github.repository because the organisation is called the same in
+  # both places, not because one is derived from the other.
+  DOCKERHUB_IMAGE: ${{ github.repository == 'knowitop/itop-ai-assistant' && 'knowitop/itop-ai-assistant' || '' }}
+
+jobs:
+  # Nothing is published unless lint, mypy and the whole test suite pass.
+  ci:
+    uses: ./.github/workflows/ci.yml
+    # The suite's only secret, named rather than passed with `secrets: inherit`
+    # — the tests have no business holding the publishing credentials.
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  docker:
+    name: Publish Docker image
+    needs: ci
+    # A TestPyPI rehearsal is about the package; no image comes out of it.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_IMAGE != ''
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # Two registries off one build: every tag below is repeated for each
+          # image, and the push sends the same digest to both. An empty line
+          # (a fork, no Docker Hub) is ignored.
+          images: |
+            ${{ env.GHCR_IMAGE }}
+            ${{ env.DOCKERHUB_IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=edge,branch=main
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./assistant/Dockerfile
+          # `edge` is multi-arch as well as a release: it exists so that a fresh
+          # main can be run on someone's own machine, and a good half of those
+          # are arm. Building it amd64-only saved two minutes and produced an
+          # image that would not start on a mac.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Baked into the package at build time (assistant/hatch_build.py),
+          # not read at run time — the same values the OCI labels carry.
+          #
+          # Both are tag-only, for different reasons. On a branch build the
+          # metadata action's version is the literal "edge", which is not a
+          # version any build backend will accept; empty falls back to 0.0.0.
+          # And `release` is what telemetry reports from — an image following
+          # main is not a release and must not claim to be one.
+          build-args: |
+            APP_VERSION=${{ startsWith(github.ref, 'refs/tags/') && steps.meta.outputs.version || '' }}
+            BUILD_COMMIT=${{ github.sha }}
+            BUILD_CHANNEL=${{ startsWith(github.ref, 'refs/tags/') && 'release' || 'edge' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install uv
+        if: env.DOCKERHUB_IMAGE != ''
+        # Pinned to an exact tag: astral-sh does not publish a moving `v9`.
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.13"
+
+      # The Docker Hub page is the repository README, the same text the PyPI
+      # page carries. Its links are relative to the repository, which is a 404
+      # anywhere else, and the substitutions that fix that already live in
+      # assistant/pyproject.toml — rendering through the same tool keeps one
+      # copy of those rules instead of a second script with the same regexes.
+      - name: Render the Docker Hub description
+        if: env.DOCKERHUB_IMAGE != ''
+        working-directory: assistant
+        run: uvx hatch-fancy-pypi-readme -o "$GITHUB_WORKSPACE/dockerhub-readme.md"
+
+      - name: Read the short description
+        id: short
+        if: env.DOCKERHUB_IMAGE != ''
+        # The line Docker Hub shows in search results, taken from where the
+        # PyPI page takes it rather than written out a second time.
+        run: |
+          text=$(python3 -c 'import tomllib; print(tomllib.load(open("assistant/pyproject.toml", "rb"))["project"]["description"])')
+          echo "text=$text" >> "$GITHUB_OUTPUT"
+
+      # Runs on a merge into main as well as on a tag: the page is the
+      # project's shop window, not a snapshot of the last release, so a fix to
+      # README.md should not wait weeks for the next version.
+      - name: Sync the Docker Hub description
+        if: env.DOCKERHUB_IMAGE != ''
+        uses: peter-evans/dockerhub-description@v5
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.DOCKERHUB_IMAGE }}
+          readme-filepath: ./dockerhub-readme.md
+          short-description: ${{ steps.short.outputs.text }}
+
+  pypi:
+    name: Publish Python package
+    needs: ci
+    # A push to main produces `edge`, which is not a version — PyPI never sees
+    # it. Tags publish for real, a manual run rehearses on TestPyPI.
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'workflow_dispatch' && 'testpypi' || 'pypi' }}
+    permissions:
+      contents: read
+      # Trusted publishing: the OIDC token is the credential, there is no
+      # API token to store. The publisher is registered on PyPI's side and
+      # names this workflow file, so renaming it breaks the release.
+      id-token: write
+
+    steps:
+      - name: Checkout
+        # Unshallow: hatch-vcs derives the version from the tag, and it has to
+        # see the tags to do it.
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # The SPA is part of the package (ADR-032), so this has to happen before
+      # the wheel is built — assistant/hatch_build.py refuses to build without
+      # it rather than shipping a package with no admin UI.
+      - name: Build admin UI
+        working-directory: ui
+        run: npm ci && npm run build
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: assistant/uv.lock
+
+      - name: Build sdist and wheel
+        working-directory: assistant
+        # `uv build` builds the wheel from the sdist, where there is no git —
+        # the stamp has to be handed over the same way the image build does it
+        # (assistant/Dockerfile), or the published package reports itself as a
+        # local build and telemetry stays silent.
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+          BUILD_CHANNEL: release
+        run: uv build
+
+      - name: Check the artifacts
+        working-directory: assistant
+        # The admin SPA reaching the wheel is exactly the thing no test covers
+        # and no user reports politely.
+        run: |
+          uvx check-wheel-contents dist/*.whl
+          unzip -l dist/*.whl | grep -q 'itop_ai_assistant/ui_dist/index.html'
+          uvx twine check dist/*
+
+      - name: Publish to TestPyPI
+        if: github.event_name == 'workflow_dispatch'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: assistant/dist
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Publish to PyPI
+        if: github.event_name == 'push'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: assistant/dist

@@ -1,11 +1,17 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
-  # Called by docker-publish.yml so a release build cannot skip the gates.
+  # The gate every publication hangs off — release.yml calls it, and nothing
+  # reaches ghcr, Docker Hub or PyPI unless it passes. No push trigger of its
+  # own: release.yml runs on a push to main too, and a second trigger would
+  # only run the same suite twice.
   workflow_call:
+    secrets:
+      # A called workflow gets no secrets unless they are handed to it, and
+      # without this one the coverage upload below quietly stops working.
+      CODECOV_TOKEN:
+        required: false
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -71,9 +77,11 @@ jobs:
 
   # The image used to be built only by a tag, which is how a Dockerfile that
   # could not build reached a release. Pull requests only: everything merged
-  # gets built by docker-publish.yml on its way to `edge`, so building here too
-  # would do the same work twice. amd64 and never pushed — a gate, not a
-  # publication — sharing the gha cache with the workflow that does publish.
+  # gets built by release.yml on its way to `edge`, so building here too would
+  # do the same work twice. amd64 and never pushed — a gate, not a publication
+  # — sharing the gha cache with the workflow that does publish. amd64 alone
+  # because nothing in this build is architecture-specific: no compilation, no
+  # dependency outside a wheel. arm64 is proven on every merge into main.
   image:
     name: Build Docker image
     runs-on: ubuntu-latest
