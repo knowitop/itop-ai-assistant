@@ -141,7 +141,7 @@ A deployment that brings its own compose file can pull the image directly, from 
 docker pull knowitop/itop-ai-assistant      # or: ghcr.io/knowitop/itop-ai-assistant
 ```
 
-Version tags (`0.5.1`, `0.5`, `0`, `latest`) follow releases; `edge` follows `main`. Both registries carry `linux/amd64` and `linux/arm64`.
+Version tags follow releases — the full version, its `major.minor`, its `major`, and `latest`; `edge` follows `main`. Both registries carry `linux/amd64` and `linux/arm64`.
 
 Once running:
 
