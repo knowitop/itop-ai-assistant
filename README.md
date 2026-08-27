@@ -1,7 +1,9 @@
 # iTop AI Assistant
 
-[![CI](https://github.com/knowitop/itop-ai-assistant/actions/workflows/ci.yml/badge.svg)](https://github.com/knowitop/itop-ai-assistant/actions/workflows/ci.yml)
+[![Release](https://github.com/knowitop/itop-ai-assistant/actions/workflows/release.yml/badge.svg)](https://github.com/knowitop/itop-ai-assistant/actions/workflows/release.yml)
 [![codecov](https://codecov.io/gh/knowitop/itop-ai-assistant/graph/badge.svg)](https://codecov.io/gh/knowitop/itop-ai-assistant)
+[![PyPI](https://img.shields.io/pypi/v/itop-ai-assistant?logo=pypi&logoColor=white)](https://pypi.org/project/itop-ai-assistant/)
+[![Docker Hub](https://img.shields.io/docker/v/knowitop/itop-ai-assistant?sort=semver&logo=docker&logoColor=white&label=docker%20hub)](https://hub.docker.com/r/knowitop/itop-ai-assistant)
 
 AI-powered middleware for [Combodo iTop](https://www.itophub.io/) that reduces ticket back-and-forth and helps engineers start working faster.
 
@@ -132,6 +134,14 @@ docker compose up -d
 ```
 
 The compose stack starts iTop, Redis, Qdrant and the assistant together. If you already have an iTop, Redis or Qdrant instance, comment out those services in `docker-compose.yml`.
+
+A deployment that brings its own compose file can pull the image directly, from [Docker Hub](https://hub.docker.com/r/knowitop/itop-ai-assistant) or from [GHCR](https://github.com/knowitop/itop-ai-assistant/pkgs/container/itop-ai-assistant):
+
+```bash
+docker pull knowitop/itop-ai-assistant      # or: ghcr.io/knowitop/itop-ai-assistant
+```
+
+Version tags (`0.5.1`, `0.5`, `0`, `latest`) follow releases; `edge` follows `main`. Both registries carry `linux/amd64` and `linux/arm64`.
 
 Once running:
 

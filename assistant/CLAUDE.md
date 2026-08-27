@@ -14,9 +14,10 @@ cd ../docker && docker-compose up -d   # full stack: iTop + assistant + Redis + 
 **Before pushing**, run what CI runs: `uv run pre-commit run --all-files` and
 `uv run pytest`. Note that `pre-commit run mypy --all-files` is the **strict**
 type gate — `uv run mypy src/` is not the same check and passing it proves
-less. CI (`.github/workflows/ci.yml`) runs on every push to `main` and every PR
-and gates the image publish; it adds `npm run build` for the UI.
-`test/integration` needs a real model endpoint and is excluded there.
+less. CI (`.github/workflows/ci.yml`) runs on every PR, and `release.yml` calls
+it on every push to `main` and every tag — nothing reaches ghcr, Docker Hub or
+PyPI unless it passes. It adds `npm run build` for the UI. `test/integration`
+needs a real model endpoint and is excluded there.
 
 **Live verification on the stand** (`docker-compose up`, manual checks against
 the running stack) happens only after the user confirms — don't start the
