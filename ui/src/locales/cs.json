@@ -264,7 +264,7 @@
     "family_source_unknown": "Žádný registrovaný zdroj neodpovídá tomuto názvu rodiny — pravděpodobně byl odstraněn z kódu. Uložené třídy zůstávají zachovány, ale nelze je zde konfigurovat; pokud byla rodina přidána omylem, odeberte ji.",
     "field_family_sweep_interval": "Přepis intervalu průchodu (sekundy)",
     "field_family_log_entries": "Přepis počtu záznamů logu na chunk",
-    "field_family_override_desc": "Prázdné = použije se systémová hodnota nastavená výše",
+    "field_family_override_desc": "Prázdné = použije se systémová hodnota z karty Indexer",
     "fragment_source_defined": "Obsah určuje zdroj",
     "fragment_off": "Žádná pole — tento fragment se neindexuje",
     "badge_internal": "interní",

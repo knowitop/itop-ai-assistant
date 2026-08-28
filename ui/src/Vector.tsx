@@ -4,7 +4,6 @@ import {
   Button,
   Card,
   CloseButton,
-  Divider,
   Fieldset,
   Group,
   Loader,
@@ -140,9 +139,12 @@ function labelKey(prefix: string, name: string): string {
   return `vector.${prefix}.${name.replace(':', '_')}`;
 }
 
-async function resetSection(section: string, confirmMsg: string): Promise<boolean> {
+// `fields` scopes the reset to the ones this form owns — the vector section is
+// split across two forms, and resetting one must not revert the other's.
+async function resetSection(section: string, confirmMsg: string, fields?: string[]): Promise<boolean> {
   if (!window.confirm(confirmMsg)) return false;
-  await apiSend('DELETE', `/setup/${section}`);
+  const query = fields?.length ? `?${fields.map((f) => `fields=${encodeURIComponent(f)}`).join('&')}` : '';
+  await apiSend('DELETE', `/setup/${section}${query}`);
   return true;
 }
 
@@ -186,13 +188,17 @@ export default function Vector() {
       <Tabs defaultValue="status" keepMounted={false}>
         <Tabs.List>
           <Tabs.Tab value="status">{t('vector.tab_status')}</Tabs.Tab>
-          <Tabs.Tab value="settings">{t('vector.tab_settings')}</Tabs.Tab>
+          <Tabs.Tab value="indexer">{t('vector.section_indexer')}</Tabs.Tab>
+          <Tabs.Tab value="classes">{t('vector.section_classes')}</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="status" pt="md">
           <VectorStatusPanel />
         </Tabs.Panel>
-        <Tabs.Panel value="settings" pt="md">
-          <VectorSettingsForm />
+        <Tabs.Panel value="indexer" pt="md">
+          <IndexerSettingsForm />
+        </Tabs.Panel>
+        <Tabs.Panel value="classes" pt="md">
+          <ClassesSettingsForm />
         </Tabs.Panel>
       </Tabs>
     </Stack>
@@ -411,22 +417,129 @@ function VectorStatusPanel() {
   );
 }
 
-function VectorSettingsForm() {
+// The scalar half of the vector section — the fields the indexer tab owns,
+// declared once so the payload, the form and the scoped reset cannot drift
+// apart. `step` marks the only non-integer setting.
+const INDEXER_FIELDS: { key: string; label: string; description?: string; min: number; step?: number }[] = [
+  { key: 'sweep_interval_seconds', label: 'field_sweep_interval', min: 1 },
+  { key: 'sweep_page_size', label: 'field_sweep_page_size', min: 1 },
+  { key: 'sweep_throttle_seconds', label: 'field_sweep_throttle', min: 0, step: 0.1 },
+  { key: 'reconcile_interval_days', label: 'field_reconcile_days', min: 1 },
+  { key: 'max_chunk_tokens', label: 'field_max_chunk_tokens', min: 1 },
+  { key: 'log_entries_per_chunk', label: 'field_log_entries', min: 1 },
+  {
+    key: 'max_chunks_per_object',
+    label: 'field_max_chunks_per_object',
+    description: 'field_max_chunks_per_object_hint',
+    min: 1,
+  },
+];
+
+// Every key the indexer form writes — `enabled` plus the numbers above. What
+// its reset scopes itself to, so it never reverts the classes the other tab
+// owns (and the other way round).
+const INDEXER_KEYS = ['enabled', ...INDEXER_FIELDS.map((f) => f.key)];
+
+function IndexerSettingsForm() {
   const { t } = useTranslation();
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Indexer (shared) settings
   const [enabled, setEnabled] = useState(false);
-  const [sweepInterval, setSweepInterval] = useState<number | string>('');
-  const [sweepPageSize, setSweepPageSize] = useState<number | string>('');
-  const [sweepThrottle, setSweepThrottle] = useState<number | string>('');
-  const [reconcileDays, setReconcileDays] = useState<number | string>('');
-  const [maxChunkTokens, setMaxChunkTokens] = useState<number | string>('');
-  const [maxChunksPerObject, setMaxChunksPerObject] = useState<number | string>('');
-  const [logEntries, setLogEntries] = useState<number | string>('');
+  // Empty string = "leave the stored value alone" on save, same as before.
+  const [numbers, setNumbers] = useState<Record<string, number | string>>({});
+
+  const load = async () => {
+    const data = await apiGet<SectionData>('/setup/vector');
+    setEnabled(Boolean(data.values.enabled));
+    setNumbers(
+      Object.fromEntries(INDEXER_FIELDS.map((f) => [f.key, (data.values[f.key] as number) ?? ''])),
+    );
+    setLoaded(true);
+  };
+
+  useEffect(() => {
+    load().catch((e: Error) => setError(e.message));
+  }, []);
+
+  const save = async () => {
+    const b: Record<string, unknown> = { enabled };
+    for (const f of INDEXER_FIELDS) {
+      const value = numbers[f.key];
+      if (value !== '' && value !== undefined) b[f.key] = Number(value);
+    }
+    setBusy(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await apiSend<SectionData>('PATCH', '/setup/vector', b);
+      await load();
+      setSuccess(t('common.saved'));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reset = async () => {
+    setError(null);
+    setSuccess(null);
+    try {
+      const confirmMsg = t('connections.reset_confirm', { section: t('vector.section_indexer') });
+      if (!(await resetSection('vector', confirmMsg, INDEXER_KEYS))) return;
+      await load();
+      setSuccess(t('common.section_reset'));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  if (!loaded) return error ? <Alert color="red">{error}</Alert> : <Loader />;
+
+  return (
+    // One field per row: the descriptions are long enough that side by side
+    // they wrap into unreadable columns.
+    <Stack maw={720}>
+      <StatusAlert error={error} success={success} />
+      <Switch
+        label={t('vector.field_enabled')}
+        description={t('vector.field_enabled_desc')}
+        checked={enabled}
+        onChange={(e) => setEnabled(e.currentTarget.checked)}
+      />
+      {INDEXER_FIELDS.map((f) => (
+        <NumberInput
+          key={f.key}
+          label={t(`vector.${f.label}`)}
+          description={f.description ? t(`vector.${f.description}`) : undefined}
+          min={f.min}
+          step={f.step}
+          value={numbers[f.key] ?? ''}
+          onChange={(value) => setNumbers((prev) => ({ ...prev, [f.key]: value }))}
+        />
+      ))}
+      <Group>
+        <Button onClick={save} loading={busy}>
+          {t('common.btn_save')}
+        </Button>
+        <Button variant="subtle" color="red" onClick={reset}>
+          {t('common.btn_reset_defaults')}
+        </Button>
+      </Group>
+    </Stack>
+  );
+}
+
+function ClassesSettingsForm() {
+  const { t } = useTranslation();
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
   // Per-family settings, one section per registered source (never guessed —
   // /vector/sources always lists every registered family, TASK-021).
   const [families, setFamilies] = useState<FamilyCfg[]>([]);
@@ -440,14 +553,6 @@ function VectorSettingsForm() {
       apiGet<{ sources: SourceInfo[] }>('/vector/sources'),
     ]);
     setSources(vocab.sources);
-    setEnabled(Boolean(data.values.enabled));
-    setSweepInterval((data.values.sweep_interval_seconds as number) ?? '');
-    setSweepPageSize((data.values.sweep_page_size as number) ?? '');
-    setSweepThrottle((data.values.sweep_throttle_seconds as number) ?? '');
-    setReconcileDays((data.values.reconcile_interval_days as number) ?? '');
-    setMaxChunkTokens((data.values.max_chunk_tokens as number) ?? '');
-    setMaxChunksPerObject((data.values.max_chunks_per_object as number) ?? '');
-    setLogEntries((data.values.log_entries_per_chunk as number) ?? '');
     const saved =
       (data.values.families as Record<
         string,
@@ -536,25 +641,13 @@ function VectorSettingsForm() {
       if (f.logEntriesPerChunk !== '') entry.log_entries_per_chunk = Number(f.logEntriesPerChunk);
       familiesPayload[f.name] = entry;
     }
-    // families is always sent in full — an empty dict is a meaningful value
-    // under PATCH-merge (removes every family); empty numbers keep the
-    // stored value.
-    const b: Record<string, unknown> = {
-      enabled,
-      families: familiesPayload,
-    };
-    if (sweepInterval !== '') b.sweep_interval_seconds = Number(sweepInterval);
-    if (sweepPageSize !== '') b.sweep_page_size = Number(sweepPageSize);
-    if (sweepThrottle !== '') b.sweep_throttle_seconds = Number(sweepThrottle);
-    if (reconcileDays !== '') b.reconcile_interval_days = Number(reconcileDays);
-    if (maxChunkTokens !== '') b.max_chunk_tokens = Number(maxChunkTokens);
-    if (maxChunksPerObject !== '') b.max_chunks_per_object = Number(maxChunksPerObject);
-    if (logEntries !== '') b.log_entries_per_chunk = Number(logEntries);
     setBusy(true);
     setError(null);
     setSuccess(null);
     try {
-      await apiSend<SectionData>('PATCH', '/setup/vector', b);
+      // families is always sent in full — an empty dict is a meaningful value
+      // under PATCH-merge (removes every family).
+      await apiSend<SectionData>('PATCH', '/setup/vector', { families: familiesPayload });
       await load();
       setSuccess(t('common.saved'));
     } catch (e) {
@@ -568,8 +661,8 @@ function VectorSettingsForm() {
     setError(null);
     setSuccess(null);
     try {
-      if (!(await resetSection('vector', t('connections.reset_confirm', { section: 'vector' }))))
-        return;
+      const confirmMsg = t('connections.reset_confirm', { section: t('vector.section_classes') });
+      if (!(await resetSection('vector', confirmMsg, ['families']))) return;
       await load();
       setSuccess(t('common.section_reset'));
     } catch (e) {
@@ -582,63 +675,6 @@ function VectorSettingsForm() {
   return (
     <Stack maw={720}>
       <StatusAlert error={error} success={success} />
-      <Title order={4}>{t('vector.section_indexer')}</Title>
-      <Switch
-        label={t('vector.field_enabled')}
-        description={t('vector.field_enabled_desc')}
-        checked={enabled}
-        onChange={(e) => setEnabled(e.currentTarget.checked)}
-      />
-      <Group grow>
-        <NumberInput
-          label={t('vector.field_sweep_interval')}
-          min={1}
-          value={sweepInterval}
-          onChange={setSweepInterval}
-        />
-        <NumberInput
-          label={t('vector.field_sweep_page_size')}
-          min={1}
-          value={sweepPageSize}
-          onChange={setSweepPageSize}
-        />
-        <NumberInput
-          label={t('vector.field_sweep_throttle')}
-          min={0}
-          step={0.1}
-          value={sweepThrottle}
-          onChange={setSweepThrottle}
-        />
-      </Group>
-      <Group grow>
-        <NumberInput
-          label={t('vector.field_reconcile_days')}
-          min={1}
-          value={reconcileDays}
-          onChange={setReconcileDays}
-        />
-        <NumberInput
-          label={t('vector.field_max_chunk_tokens')}
-          min={1}
-          value={maxChunkTokens}
-          onChange={setMaxChunkTokens}
-        />
-        <NumberInput
-          label={t('vector.field_log_entries')}
-          min={1}
-          value={logEntries}
-          onChange={setLogEntries}
-        />
-        <NumberInput
-          label={t('vector.field_max_chunks_per_object')}
-          description={t('vector.field_max_chunks_per_object_hint')}
-          min={1}
-          value={maxChunksPerObject}
-          onChange={setMaxChunksPerObject}
-        />
-      </Group>
-      <Divider />
-      <Title order={4}>{t('vector.section_classes')}</Title>
       <Text c="dimmed" size="sm">
         {t('vector.fragments_explainer')}
       </Text>

@@ -1,6 +1,7 @@
 """The read path: candidates from the index, confirmed by the source."""
 
 import unittest
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -72,7 +73,7 @@ class _FakeConfigStore:
     async def set(self, module: str, values: dict, model: type) -> Any:
         raise NotImplementedError
 
-    async def reset(self, module: str) -> None:
+    async def reset(self, module: str, fields: Sequence[str] | None = None) -> None:
         raise NotImplementedError
 
 

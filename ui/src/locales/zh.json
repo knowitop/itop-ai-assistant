@@ -264,7 +264,7 @@
     "family_source_unknown": "没有已注册的数据源匹配这个系列名称——它可能已从代码中移除。已保存的类会保留，但无法在此处配置；如果该系列是误添加的，请删除它。",
     "field_family_sweep_interval": "扫描间隔覆盖值（秒）",
     "field_family_log_entries": "每个分块的日志条数覆盖值",
-    "field_family_override_desc": "留空 = 使用上方设置的系统级值",
+    "field_family_override_desc": "留空 = 使用「索引器」标签页中的系统级值",
     "fragment_source_defined": "内容由数据源决定",
     "fragment_off": "未选择字段 —— 该片段不会被索引",
     "badge_internal": "内部",

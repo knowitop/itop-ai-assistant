@@ -264,7 +264,7 @@
     "family_source_unknown": "No registered source matches this family name — it was likely removed from the code. Its saved classes are kept but cannot be configured here; remove the family if it was added by mistake.",
     "field_family_sweep_interval": "Sweep interval override (seconds)",
     "field_family_log_entries": "Log entries per chunk override",
-    "field_family_override_desc": "Blank = use the system-wide value set above",
+    "field_family_override_desc": "Blank = use the system-wide value from the Indexer tab",
     "fragment_source_defined": "Content is defined by the source",
     "fragment_off": "No fields — this fragment is not indexed",
     "badge_internal": "internal",

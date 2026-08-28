@@ -264,7 +264,7 @@
     "family_source_unknown": "Keine registrierte Quelle entspricht diesem Familiennamen — sie wurde vermutlich aus dem Code entfernt. Ihre gespeicherten Klassen bleiben erhalten, können hier aber nicht konfiguriert werden; entfernen Sie die Familie, falls sie versehentlich hinzugefügt wurde.",
     "field_family_sweep_interval": "Durchlaufintervall-Override (Sekunden)",
     "field_family_log_entries": "Logeinträge pro Chunk-Override",
-    "field_family_override_desc": "Leer = den oben eingestellten systemweiten Wert verwenden",
+    "field_family_override_desc": "Leer = den systemweiten Wert aus dem Tab „Indexer“ verwenden",
     "fragment_source_defined": "Inhalt wird von der Quelle festgelegt",
     "fragment_off": "Keine Felder — dieses Fragment wird nicht indexiert",
     "badge_internal": "intern",

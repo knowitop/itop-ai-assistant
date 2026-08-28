@@ -264,7 +264,7 @@
     "family_source_unknown": "Żadne zarejestrowane źródło nie odpowiada tej nazwie rodziny — prawdopodobnie zostało usunięte z kodu. Jej zapisane klasy są zachowane, ale nie można ich tu konfigurować; usuń rodzinę, jeśli została dodana przez pomyłkę.",
     "field_family_sweep_interval": "Nadpisanie interwału przebiegu (sekundy)",
     "field_family_log_entries": "Nadpisanie liczby wpisów logu na chunk",
-    "field_family_override_desc": "Puste = użyj wartości systemowej ustawionej powyżej",
+    "field_family_override_desc": "Puste = użyj wartości systemowej z zakładki Indeksator",
     "fragment_source_defined": "Zawartość określa źródło",
     "fragment_off": "Brak pól — ten fragment nie jest indeksowany",
     "badge_internal": "wewnętrzny",

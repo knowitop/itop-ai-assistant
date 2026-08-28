@@ -52,6 +52,16 @@ class TestRedisConfigStore(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(cfg.max_questions, 3)
 
+    async def test_reset_of_named_fields_leaves_the_rest_overridden(self):
+        store, _ = _make_store()
+        await store.set("intake", {"max_questions": 5, "max_classify_questions": 1}, IntakeConfig)
+
+        await store.reset("intake", ["max_questions"])
+        cfg = await store.get("intake", IntakeConfig)
+
+        self.assertEqual(cfg.max_questions, 3)
+        self.assertEqual(cfg.max_classify_questions, 1)
+
     async def test_corrupt_stored_value_falls_back_to_defaults(self):
         store, redis = _make_store()
         await redis.set("config:intake", "{not json")

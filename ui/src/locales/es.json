@@ -264,7 +264,7 @@
     "family_source_unknown": "Ninguna fuente registrada coincide con este nombre de familia — probablemente se eliminó del código. Sus clases guardadas se conservan, pero no se pueden configurar aquí; elimine la familia si se añadió por error.",
     "field_family_sweep_interval": "Anulación del intervalo de barrido (segundos)",
     "field_family_log_entries": "Anulación de entradas de log por chunk",
-    "field_family_override_desc": "Vacío = usar el valor global definido arriba",
+    "field_family_override_desc": "Vacío = usar el valor global de la pestaña Indexador",
     "fragment_source_defined": "El contenido lo define la fuente",
     "fragment_off": "Sin campos: este fragmento no se indexa",
     "badge_internal": "interno",

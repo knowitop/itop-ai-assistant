@@ -264,7 +264,7 @@
     "family_source_unknown": "Nessuna sorgente registrata corrisponde a questo nome di famiglia — probabilmente è stata rimossa dal codice. Le sue classi salvate vengono mantenute ma non possono essere configurate qui; rimuovi la famiglia se è stata aggiunta per errore.",
     "field_family_sweep_interval": "Override intervallo di scansione (secondi)",
     "field_family_log_entries": "Override voci di log per chunk",
-    "field_family_override_desc": "Vuoto = usa il valore globale impostato sopra",
+    "field_family_override_desc": "Vuoto = usa il valore globale della scheda Indexer",
     "fragment_source_defined": "Il contenuto è definito dalla sorgente",
     "fragment_off": "Nessun campo: questo frammento non viene indicizzato",
     "badge_internal": "interno",

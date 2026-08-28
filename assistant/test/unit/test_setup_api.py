@@ -229,6 +229,21 @@ class TestSetupSections(SetupApiTestCase):
         self.assertEqual(response.status_code, 204)
         self.assertEqual(self.client.get("/api/setup/llm").json()["values"]["model"], "env-model")
 
+    def test_delete_with_fields_resets_only_those(self):
+        # The vector section is edited by two forms; each resets its own fields.
+        self.client.patch("/api/setup/vector", json={"enabled": True, "sweep_page_size": 7})
+
+        response = self.client.delete("/api/setup/vector?fields=sweep_page_size")
+
+        self.assertEqual(response.status_code, 204)
+        values = self.client.get("/api/setup/vector").json()["values"]
+        self.assertTrue(values["enabled"])
+        self.assertEqual(values["sweep_page_size"], 100)
+
+    def test_delete_with_unknown_field_is_rejected(self):
+        response = self.client.delete("/api/setup/vector?fields=nope")
+        self.assertEqual(response.status_code, 422)
+
     def test_ticket_mapping_is_editable(self):
         response = self.client.patch(
             "/api/setup/ticket_mapping", json={"class_overrides": {"Incident": {"title": None}}}

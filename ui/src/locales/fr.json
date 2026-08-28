@@ -264,7 +264,7 @@
     "family_source_unknown": "Aucune source enregistrée ne correspond à ce nom de famille — elle a probablement été supprimée du code. Ses classes enregistrées sont conservées mais ne peuvent pas être configurées ici ; supprimez la famille si elle a été ajoutée par erreur.",
     "field_family_sweep_interval": "Surcharge de l'intervalle de balayage (secondes)",
     "field_family_log_entries": "Surcharge des entrées de journal par chunk",
-    "field_family_override_desc": "Vide = utiliser la valeur globale définie ci-dessus",
+    "field_family_override_desc": "Vide = utiliser la valeur globale de l'onglet Indexeur",
     "fragment_source_defined": "Le contenu est défini par la source",
     "fragment_off": "Aucun champ — ce fragment n'est pas indexé",
     "badge_internal": "interne",

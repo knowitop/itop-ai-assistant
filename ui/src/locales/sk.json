@@ -264,7 +264,7 @@
     "family_source_unknown": "Žiadny registrovaný zdroj nezodpovedá tomuto názvu rodiny — pravdepodobne bol odstránený z kódu. Jej uložené triedy zostávajú zachované, ale nedajú sa tu nakonfigurovať; ak bola rodina pridaná omylom, odstráňte ju.",
     "field_family_sweep_interval": "Prepísanie intervalu prechodu (sekundy)",
     "field_family_log_entries": "Prepísanie počtu záznamov logu na chunk",
-    "field_family_override_desc": "Prázdne = použije sa systémová hodnota nastavená vyššie",
+    "field_family_override_desc": "Prázdne = použije sa systémová hodnota z karty Indexer",
     "fragment_source_defined": "Obsah určuje zdroj",
     "fragment_off": "Žiadne polia — tento fragment sa neindexuje",
     "badge_internal": "interný",
