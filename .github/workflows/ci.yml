@@ -104,6 +104,27 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # Read the Docs builds and hosts the site; this only guards against a broken
+  # build reaching main. `--strict` turns MkDocs warnings (dead links, pages
+  # missing from the nav, unreadable files) into a non-zero exit. The doc
+  # toolchain is not a project dependency, so it is pulled in ad hoc rather
+  # than through uv.lock.
+  docs:
+    name: Build docs (mkdocs --strict)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Build
+        run: uv run --no-project --with-requirements docs/requirements.txt -- mkdocs build --strict
+
   ui:
     name: Build admin UI
     runs-on: ubuntu-latest

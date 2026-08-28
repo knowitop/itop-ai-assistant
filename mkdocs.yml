@@ -1,0 +1,66 @@
+site_name: iTop AI Assistant
+site_description: >-
+  Python middleware that adds an AI layer on top of the Combodo iTop ITSM
+  platform.
+site_url: https://itop-ai-assistant.readthedocs.io/
+repo_url: https://github.com/knowitop/itop-ai-assistant
+repo_name: knowitop/itop-ai-assistant
+edit_uri: edit/main/docs/
+copyright: >-
+  Documentation for <a href="https://github.com/knowitop/itop-ai-assistant">itop-ai-assistant</a>
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - navigation.footer
+    - content.action.edit
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+    - toc.follow
+
+plugins:
+  - search
+  # Renders GitHub-style "> [!NOTE]" / "> [!IMPORTANT]" blockquotes as Material
+  # admonitions. The sources keep the GitHub syntax so they stay readable on
+  # github.com; this plugin translates them at build time.
+  - callouts
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+
+nav:
+  - Home: index.md
+  - Setup: setup.md
+  - Admin UI: admin-ui.md
+  - Configuration: configuration.md
+  - Customizing prompts: prompts.md
+  - Telemetry: telemetry.md
