@@ -957,9 +957,13 @@ interface SectionSchema {
   $defs?: Record<string, { properties?: Record<string, MappingFieldProp> }>;
 }
 
-function mappingFieldProps(schema: SectionSchema): Record<string, MappingFieldProp> {
+// undefined when the schema is not shaped as expected. An empty field set must
+// never reach the form: saving it would PATCH `fields: {}`, and the top-level
+// merge would reset every semantic field to its model default.
+function mappingFieldProps(schema: SectionSchema): Record<string, MappingFieldProp> | undefined {
   const ref = schema.properties?.fields?.$ref?.split('/').pop();
-  return (ref ? schema.$defs?.[ref]?.properties : undefined) ?? {};
+  const found = ref ? schema.$defs?.[ref]?.properties : undefined;
+  return found && Object.keys(found).length > 0 ? found : undefined;
 }
 
 // Semantic field → iTop attribute code, one row per field. The fields come
@@ -989,6 +993,7 @@ function MappingForm({ section }: { section: MappingSection }) {
       apiGet<SectionData>(`/setup/${section}`),
     ]);
     const fieldProps = mappingFieldProps(schema);
+    if (!fieldProps) throw new Error(`Unexpected schema for ${section}: no field definitions`);
     const stored = (data.values.fields ?? {}) as Record<string, string | null>;
     const initial: Record<string, string | null> = {};
     for (const name of Object.keys(fieldProps)) initial[name] = stored[name] ?? null;
@@ -1095,7 +1100,12 @@ function MappingForm({ section }: { section: MappingSection }) {
                 <Switch
                   checked={fields[name] === null}
                   aria-label={`${name}: ${t('connections.mapping_absent')}`}
-                  onChange={(e) => setField(name, e.currentTarget.checked ? null : '')}
+                  // Turning it off seeds the value the placeholder was showing:
+                  // an empty input means the same as the switch, so leaving it
+                  // empty would undo the switch on save.
+                  onChange={(e) =>
+                    setField(name, e.currentTarget.checked ? null : (prop.default ?? ''))
+                  }
                 />
               </Table.Td>
             </Table.Tr>
@@ -1112,7 +1122,10 @@ function MappingForm({ section }: { section: MappingSection }) {
           </Text>
           <JsonInput
             value={overrides}
-            onChange={setOverrides}
+            onChange={(value) => {
+              setSuccess(null);
+              setOverrides(value);
+            }}
             autosize
             minRows={4}
             formatOnBlur
