@@ -32,6 +32,11 @@ instinct to reach for a library is exactly what they forbid:
   backend applies it (ADR-030), so the request carries `?lang=${i18n.language}`
   and the screen refetches when the language changes. A module's field is never
   translated in `ui/src/locales/*.json` — nothing reads such a key.
+- The data model mapping form (Connections) is generated the same way, from
+  `GET /api/setup/{section}/schema` — the semantic fields of
+  `TicketFieldMap`/`FaqFieldMap` are never listed in TypeScript either. Their
+  names are identifiers on both sides of the row, so they are shown as they
+  are and get no locale keys; only a field's schema `description` is prose.
 - Builds into `assistant/src/itop_ai_assistant/ui_dist` — the SPA is part of the
   Python package (ADR-032), which is what lets a `pip install` serve the setup
   wizard. Served by FastAPI at `/ui` (API stays under `/api`). In dev use the

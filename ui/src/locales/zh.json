@@ -123,7 +123,7 @@
     "tab_llm": "LLM",
     "tab_embeddings": "Embeddings",
     "tab_security": "安全",
-    "tab_ticket_mapping": "工单映射",
+    "tab_mapping": "数据模型映射",
     "reset_confirm": "将「{{section}}」部分重置为环境变量/yaml 默认值？",
     "webhooks_title": "iTop Webhooks",
     "webhooks_desc": "在 iTop 中创建触发器和 Webhook 以调用助手（使用已保存的 Webhook 令牌）。需要 iTop <b>管理员</b>账户 — 凭据仅使用一次，不会存储。现有对象不会被修改。",
@@ -151,7 +151,15 @@
     "embeddings_model_desc": "端点提供的嵌入模型；必须支持多语言，例如 bge-m3",
     "embeddings_test_ok": "模型 {{model}} 已响应 — 维度 {{dimension}}",
     "embeddings_dimension_mismatch": "端点返回的维度为 {{actual}}，但配置中为 {{expected}} — 请修正“维度”字段",
-    "ticket_mapping_desc": "将语义工单字段映射到 iTop 数据模型：<code>fields</code>（语义名称 → 属性代码，null 表示属性不存在），<code>class_overrides</code>（各类别的差异），<code>active_statuses</code>（助手可操作的状态）。"
+    "mapping_title_ticket_mapping": "工单",
+    "mapping_desc_ticket_mapping": "工单语义如何映射到您的 iTop 数据模型 — iTop 被定制后，请修改这里而不是代码。",
+    "mapping_title_faq_mapping": "FAQ",
+    "mapping_desc_faq_mapping": "知识库文章同理。定制后的 FAQ 类不一定具备默认值假定的全部属性，而标准 iTop 的 FAQ 既无生命周期状态也无日期字段 — 请把数据模型中不存在的属性标记为「属性不存在」，否则索引会因 iTop 不认识的属性而失败。",
+    "mapping_field": "语义字段",
+    "mapping_attribute": "iTop 属性代码",
+    "mapping_absent": "属性不存在",
+    "class_overrides": "按类别覆盖",
+    "class_overrides_desc": "工单各类别之间的局部差异，叠加在上面的字段之上：<code>{\"Incident\": {\"request_type\": null}}</code>。仅接受上面列出的语义名称。"
   },
   "modules": {
     "title": "模块",

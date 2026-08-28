@@ -50,12 +50,15 @@ Only needed for the optional [vector index](#vector-index). Leave it empty and i
 - **Webhook Token** and **Admin Token** — write-only fields with generate, copy and clear buttons
 - Clearing the admin token puts the API back into open (unauthenticated) mode — a confirmation is required
 
-### Ticket mapping tab
+### Data model mapping tab
 
-How semantic ticket fields map onto your iTop datamodel — edit this instead of the code when iTop has been customized:
+How our semantics map onto your iTop datamodel — edit this instead of the code when iTop has been customized. Two sections, **Tickets** and **FAQ**, with the same form: one row per semantic field, the iTop attribute code on the right, and a **No such attribute** switch for what your datamodel does not have.
 
-- `fields` — semantic name → iTop attribute code (`null` = the attribute does not exist)
-- `class_overrides` — per-class differences (e.g. `Incident` has no `request_type`)
+- The row list comes from the model itself, so it always shows every field the assistant can use
+- The switch stores `null`. It matters: an attribute left mapped but missing from iTop makes the request fail — this is how indexing of the FAQ family breaks on a datamodel without `error_code`
+- Saving writes the whole section, so nothing you left alone is lost
+- **Per-class overrides** (tickets only) — point differences between the ticket classes, merged over the fields above, e.g. `{"Incident": {"request_type": null}}`. A JSON editor; an unknown semantic name is rejected with the server's message
+- **Reset to defaults** puts the section back to what env/yaml say
 
 ---
 

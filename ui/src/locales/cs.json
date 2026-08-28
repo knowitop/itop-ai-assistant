@@ -123,7 +123,7 @@
     "tab_llm": "LLM",
     "tab_embeddings": "Embeddingy",
     "tab_security": "Zabezpečení",
-    "tab_ticket_mapping": "Mapování ticketů",
+    "tab_mapping": "Mapování datového modelu",
     "reset_confirm": "Obnovit sekci \"{{section}}\" na výchozí hodnoty env/yaml?",
     "webhooks_title": "iTop webhooky",
     "webhooks_desc": "Vytvoří triggery a webhooky v iTop, které volají tohoto asistenta (používá uložený webhook token). Vyžaduje účet <b>administrátora</b> iTop — přihlašovací údaje jsou použity jednou a nikdy neukládány. Existující objekty nejsou změněny.",
@@ -151,7 +151,15 @@
     "embeddings_model_desc": "Model embeddingů, jak jej vystavuje endpoint; musí být vícejazyčný, např. bge-m3",
     "embeddings_test_ok": "Model {{model}} odpověděl — dimenze {{dimension}}",
     "embeddings_dimension_mismatch": "Endpoint vrátil dimenzi {{actual}}, ale konfigurace uvádí {{expected}} — opravte pole „Dimenze“",
-    "ticket_mapping_desc": "Mapuje sémantická pole ticketů na datový model iTop: <code>fields</code> (sémantický název → kód atributu, null = atribut chybí), <code>class_overrides</code> (rozdíly pro jednotlivé třídy), <code>active_statuses</code> (kdy asistent může jednat)."
+    "mapping_title_ticket_mapping": "Tickety",
+    "mapping_desc_ticket_mapping": "Jak se sémantika ticketů promítá do vašeho datového modelu iTop — upravte toto místo kódu, pokud byl iTop přizpůsoben.",
+    "mapping_title_faq_mapping": "FAQ",
+    "mapping_desc_faq_mapping": "Totéž pro články znalostní báze. Přizpůsobená třída FAQ nemusí mít všechny atributy, které výchozí hodnoty předpokládají, a standardní iTop u FAQ nemá ani stav životního cyklu, ani data — označte jako chybějící to, co váš datový model nemá, jinak indexace selže na atributu, který iTop nezná.",
+    "mapping_field": "Sémantické pole",
+    "mapping_attribute": "Kód atributu iTop",
+    "mapping_absent": "Atribut neexistuje",
+    "class_overrides": "Přepisy pro jednotlivé třídy",
+    "class_overrides_desc": "Dílčí rozdíly mezi třídami ticketů, aplikované na pole výše: <code>{\"Incident\": {\"request_type\": null}}</code>. Přijímají se pouze sémantické názvy uvedené výše."
   },
   "modules": {
     "title": "Moduly",

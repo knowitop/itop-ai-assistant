@@ -123,7 +123,7 @@
     "tab_llm": "LLM",
     "tab_embeddings": "Embeddings",
     "tab_security": "Security",
-    "tab_ticket_mapping": "Ticket mapping",
+    "tab_mapping": "Data model mapping",
     "reset_confirm": "Reset the \"{{section}}\" section to env/yaml defaults?",
     "webhooks_title": "iTop webhooks",
     "webhooks_desc": "Creates the triggers and webhooks in iTop that call this assistant (uses the saved webhook token). Requires an iTop <b>administrator</b> account — the credentials are used once and never stored. Existing objects are left untouched.",
@@ -151,7 +151,15 @@
     "embeddings_model_desc": "Embedding model as exposed by the endpoint; must be multilingual, e.g. bge-m3",
     "embeddings_test_ok": "Model {{model}} responded — dimension {{dimension}}",
     "embeddings_dimension_mismatch": "The endpoint returned dimension {{actual}} but the config says {{expected}} — fix the Dimension field",
-    "ticket_mapping_desc": "Maps semantic ticket fields onto the iTop datamodel: <code>fields</code> (semantic name → attribute code, null = attribute absent), <code>class_overrides</code> (per-class differences)."
+    "mapping_title_ticket_mapping": "Tickets",
+    "mapping_desc_ticket_mapping": "How ticket semantics map onto your iTop datamodel — edit this instead of the code when iTop has been customized.",
+    "mapping_title_faq_mapping": "FAQ",
+    "mapping_desc_faq_mapping": "The same for knowledge base articles. A customized FAQ class need not carry every attribute the defaults assume, and stock iTop has no lifecycle status and no dates on FAQ — mark what your datamodel lacks as absent, or indexing fails on the attribute iTop does not know.",
+    "mapping_field": "Semantic field",
+    "mapping_attribute": "iTop attribute code",
+    "mapping_absent": "No such attribute",
+    "class_overrides": "Per-class overrides",
+    "class_overrides_desc": "Point differences between the ticket classes, merged over the fields above: <code>{\"Incident\": {\"request_type\": null}}</code>. Only the semantic names listed above are accepted."
   },
   "modules": {
     "title": "Modules",

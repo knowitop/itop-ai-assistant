@@ -162,6 +162,17 @@ async def llm_providers() -> dict:
     return {"providers": [asdict(provider) for provider in PROVIDERS.values()]}
 
 
+@router.get("/{section}/schema")
+async def get_section_schema(section: str) -> dict:
+    """The section's JSON Schema — the mapping form is built from it.
+
+    Same reason as `/config/{module}/schema` for modules: a form must not
+    carry its own list of fields, or a new field would need a UI change
+    (ADR-025). Values are not involved, so nothing here needs masking.
+    """
+    return _model_or_404(section).model_json_schema()
+
+
 @router.get("/{section}")
 async def get_section(section: str, config_store: Annotated[ConfigStore, Depends(get_config_store)]) -> dict:
     model = _model_or_404(section)
