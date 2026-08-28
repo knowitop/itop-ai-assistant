@@ -237,6 +237,32 @@ class TestSetupSections(SetupApiTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["values"]["class_overrides"], {"Incident": {"title": None}})
 
+    def test_section_schema_describes_the_mapping_fields(self):
+        # The mapping form is built from this: no list of semantic fields lives in the SPA.
+        body = self.client.get("/api/setup/faq_mapping/schema").json()
+
+        fields = body["$defs"]["FaqFieldMap"]["properties"]
+        self.assertIn("error_code", fields)
+        self.assertIn("FaqFieldMap", body["properties"]["fields"]["$ref"])
+
+    def test_section_schema_unknown_section_is_404(self):
+        self.assertEqual(self.client.get("/api/setup/nope/schema").status_code, 404)
+
+    def test_faq_mapping_unmaps_an_attribute_the_datamodel_lacks(self):
+        # The form sends `fields` whole, which is what a section-level merge
+        # requires: a body of one key would reset the rest to model defaults.
+        response = self.client.patch(
+            "/api/setup/faq_mapping",
+            json={"fields": {"title": "name", "error_code": None, "key_words": "key_words"}},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        values = self.client.get("/api/setup/faq_mapping").json()["values"]
+        self.assertIsNone(values["fields"]["error_code"])
+        self.assertEqual(values["fields"]["title"], "name")
+        # Omitted from the body, so back to the model default rather than kept
+        self.assertEqual(values["fields"]["summary"], "summary")
+
     def test_embeddings_section_masks_api_key(self):
         self.client.patch("/api/setup/embeddings", json={"base_url": "http://emb/v1", "api_key": "sk-emb"})
 

@@ -123,7 +123,7 @@
     "tab_llm": "LLM",
     "tab_embeddings": "Embeddingy",
     "tab_security": "Zabezpečenie",
-    "tab_ticket_mapping": "Mapovanie ticketov",
+    "tab_mapping": "Mapovanie dátového modelu",
     "reset_confirm": "Obnoviť sekciu \"{{section}}\" na predvolené hodnoty env/yaml?",
     "webhooks_title": "iTop webhooky",
     "webhooks_desc": "Vytvorí triggery a webhooky v iTop, ktoré volajú tohto asistenta (používa uložený webhook token). Vyžaduje účet <b>administrátora</b> iTop — prihlasovacie údaje sú použité raz a nikdy neuložené. Existujúce objekty nie sú zmenené.",
@@ -151,7 +151,15 @@
     "embeddings_model_desc": "Model embeddingov, ako ho vystavuje endpoint; musí byť viacjazyčný, napr. bge-m3",
     "embeddings_test_ok": "Model {{model}} odpovedal — dimenzia {{dimension}}",
     "embeddings_dimension_mismatch": "Endpoint vrátil dimenziu {{actual}}, ale konfigurácia uvádza {{expected}} — opravte pole „Dimenzia“",
-    "ticket_mapping_desc": "Mapuje sémantické polia ticketov na dátový model iTop: <code>fields</code> (sémantický názov → kód atribútu, null = atribút chýba), <code>class_overrides</code> (rozdiely pre jednotlivé triedy), <code>active_statuses</code> (kedy asistent môže konať)."
+    "mapping_title_ticket_mapping": "Tickety",
+    "mapping_desc_ticket_mapping": "Ako sa sémantika ticketov premieta do vášho dátového modelu iTop — upravte toto namiesto kódu, ak bol iTop prispôsobený.",
+    "mapping_title_faq_mapping": "FAQ",
+    "mapping_desc_faq_mapping": "To isté pre články databázy znalostí. Prispôsobená trieda FAQ nemusí mať všetky atribúty, ktoré predpokladajú predvolené hodnoty, a štandardný iTop nemá pri FAQ ani stav životného cyklu, ani dátumy — označte ako chýbajúce to, čo váš dátový model nemá, inak indexácia zlyhá na atribúte, ktorý iTop nepozná.",
+    "mapping_field": "Sémantické pole",
+    "mapping_attribute": "Kód atribútu iTop",
+    "mapping_absent": "Atribút neexistuje",
+    "class_overrides": "Prepisy pre jednotlivé triedy",
+    "class_overrides_desc": "Čiastkové rozdiely medzi triedami ticketov, aplikované na polia vyššie: <code>{\"Incident\": {\"request_type\": null}}</code>. Prijímajú sa iba sémantické názvy uvedené vyššie."
   },
   "modules": {
     "title": "Moduly",

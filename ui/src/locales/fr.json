@@ -123,7 +123,7 @@
     "tab_llm": "LLM",
     "tab_embeddings": "Embeddings",
     "tab_security": "Sécurité",
-    "tab_ticket_mapping": "Mappage des tickets",
+    "tab_mapping": "Mappage du modèle de données",
     "reset_confirm": "Réinitialiser la section « {{section}} » aux valeurs par défaut env/yaml ?",
     "webhooks_title": "Webhooks iTop",
     "webhooks_desc": "Crée les déclencheurs et webhooks dans iTop qui appellent cet assistant (utilise le jeton webhook enregistré). Nécessite un compte <b>administrateur</b> iTop — les identifiants sont utilisés une fois et jamais stockés. Les objets existants ne sont pas modifiés.",
@@ -151,7 +151,15 @@
     "embeddings_model_desc": "Modèle d'embeddings tel qu'exposé par l'endpoint ; doit être multilingue, p. ex. bge-m3",
     "embeddings_test_ok": "Le modèle {{model}} a répondu — dimension {{dimension}}",
     "embeddings_dimension_mismatch": "L'endpoint a renvoyé la dimension {{actual}}, mais la configuration indique {{expected}} — corrigez le champ « Dimension »",
-    "ticket_mapping_desc": "Mappe les champs sémantiques des tickets sur le modèle de données iTop : <code>fields</code> (nom sémantique → code d'attribut, null = attribut absent), <code>class_overrides</code> (différences par classe), <code>active_statuses</code> (quand l'assistant peut agir)."
+    "mapping_title_ticket_mapping": "Tickets",
+    "mapping_desc_ticket_mapping": "Comment la sémantique des tickets se projette sur votre modèle de données iTop — modifiez ceci plutôt que le code lorsque iTop a été personnalisé.",
+    "mapping_title_faq_mapping": "FAQ",
+    "mapping_desc_faq_mapping": "Idem pour les articles de la base de connaissances. Une classe FAQ personnalisée ne porte pas nécessairement tous les attributs supposés par les valeurs par défaut, et iTop standard n'a ni statut de cycle de vie ni dates sur FAQ : marquez comme absent ce que votre modèle de données n'a pas, sinon l'indexation échoue sur un attribut qu'iTop ne connaît pas.",
+    "mapping_field": "Champ sémantique",
+    "mapping_attribute": "Code d'attribut iTop",
+    "mapping_absent": "Attribut absent",
+    "class_overrides": "Surcharges par classe",
+    "class_overrides_desc": "Différences ponctuelles entre les classes de tickets, appliquées par-dessus les champs ci-dessus : <code>{\"Incident\": {\"request_type\": null}}</code>. Seuls les noms sémantiques listés ci-dessus sont acceptés."
   },
   "modules": {
     "title": "Modules",

@@ -123,7 +123,7 @@
     "tab_llm": "LLM",
     "tab_embeddings": "Embeddings",
     "tab_security": "Sicherheit",
-    "tab_ticket_mapping": "Ticket-Mapping",
+    "tab_mapping": "Datenmodell-Mapping",
     "reset_confirm": "Abschnitt \"{{section}}\" auf env/yaml-Standardwerte zurücksetzen?",
     "webhooks_title": "iTop-Webhooks",
     "webhooks_desc": "Erstellt die Auslöser und Webhooks in iTop, die diesen Assistenten aufrufen (verwendet das gespeicherte Webhook-Token). Erfordert ein iTop-<b>Administrator</b>-Konto — die Anmeldedaten werden einmal verwendet und niemals gespeichert. Bestehende Objekte werden nicht verändert.",
@@ -151,7 +151,15 @@
     "embeddings_model_desc": "Embedding-Modell, wie vom Endpunkt bereitgestellt; muss mehrsprachig sein, z. B. bge-m3",
     "embeddings_test_ok": "Modell {{model}} hat geantwortet — Dimension {{dimension}}",
     "embeddings_dimension_mismatch": "Der Endpunkt lieferte Dimension {{actual}}, die Konfiguration erwartet {{expected}} — korrigieren Sie das Feld „Dimension“",
-    "ticket_mapping_desc": "Bildet semantische Ticket-Felder auf das iTop-Datenmodell ab: <code>fields</code> (semantischer Name → Attributcode, null = Attribut fehlt), <code>class_overrides</code> (klassenspezifische Unterschiede), <code>active_statuses</code> (wann der Assistent handeln darf)."
+    "mapping_title_ticket_mapping": "Tickets",
+    "mapping_desc_ticket_mapping": "Wie die Ticket-Semantik auf Ihr iTop-Datenmodell abgebildet wird — bearbeiten Sie dies statt des Codes, wenn iTop angepasst wurde.",
+    "mapping_title_faq_mapping": "FAQ",
+    "mapping_desc_faq_mapping": "Dasselbe für Artikel der Wissensdatenbank. Eine angepasste FAQ-Klasse muss nicht alle Attribute besitzen, die die Standardwerte annehmen, und im Standard-iTop hat FAQ weder einen Lebenszyklus-Status noch Datumsfelder — markieren Sie als fehlend, was Ihr Datenmodell nicht hat, sonst scheitert die Indexierung an einem Attribut, das iTop nicht kennt.",
+    "mapping_field": "Semantisches Feld",
+    "mapping_attribute": "iTop-Attributcode",
+    "mapping_absent": "Attribut fehlt",
+    "class_overrides": "Klassenspezifische Überschreibungen",
+    "class_overrides_desc": "Punktuelle Unterschiede zwischen den Ticket-Klassen, über die Felder oben gelegt: <code>{\"Incident\": {\"request_type\": null}}</code>. Akzeptiert werden nur die oben aufgeführten semantischen Namen."
   },
   "modules": {
     "title": "Module",
