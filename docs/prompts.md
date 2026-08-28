@@ -1,6 +1,6 @@
 # Customizing prompts
 
-All LLM prompts are plain Markdown templates. The packaged defaults ship inside the Python package, in [`assistant/src/itop_ai_assistant/agents/intake/prompts/`](../assistant/src/itop_ai_assistant/agents/intake/prompts). You can override any of them without touching the code.
+All LLM prompts are plain Markdown templates. The packaged defaults ship inside the Python package, in [`assistant/src/itop_ai_assistant/agents/intake/prompts/`](https://github.com/knowitop/itop-ai-assistant/tree/main/assistant/src/itop_ai_assistant/agents/intake/prompts). You can override any of them without touching the code.
 
 ---
 

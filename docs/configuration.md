@@ -4,7 +4,7 @@ Settings resolve in priority order: **runtime overrides (setup API / admin UI, s
 
 Environment variables are the IaC-friendly path; the setup API edits the same settings at runtime without a restart. Only the bootstrap values (`REDIS_URL`, `QDRANT_URL`, `LOG_LEVEL`, `PROMPTS_DIR`, `UI_DIST_DIR`) are env-only and require a restart to change.
 
-A full `.env` template with examples is in [`docker/.env.dist`](../docker/.env.dist). `assistant/config.yaml` is committed to the repository and holds non-secret defaults — it is the convenient place for structured values like `LLM_PARAMS`, which env vars can only express as a JSON string.
+A full `.env` template with examples is in [`docker/.env.dist`](https://github.com/knowitop/itop-ai-assistant/blob/main/docker/.env.dist). `assistant/config.yaml` is committed to the repository and holds non-secret defaults — it is the convenient place for structured values like `LLM_PARAMS`, which env vars can only express as a JSON string.
 
 ---
 

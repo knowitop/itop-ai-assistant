@@ -4,6 +4,7 @@
 [![codecov](https://codecov.io/gh/knowitop/itop-ai-assistant/graph/badge.svg)](https://codecov.io/gh/knowitop/itop-ai-assistant)
 [![PyPI](https://img.shields.io/pypi/v/itop-ai-assistant?logo=pypi&logoColor=white)](https://pypi.org/project/itop-ai-assistant/)
 [![Docker Hub](https://img.shields.io/docker/v/knowitop/itop-ai-assistant?sort=semver&logo=docker&logoColor=white&label=docker%20hub)](https://hub.docker.com/r/knowitop/itop-ai-assistant)
+[![Docs](https://img.shields.io/readthedocs/itop-ai-assistant?logo=readthedocs&logoColor=white)](https://itop-ai-assistant.readthedocs.io/)
 
 AI-powered middleware for [Combodo iTop](https://www.itophub.io/) that reduces ticket back-and-forth and helps engineers start working faster.
 
@@ -158,6 +159,8 @@ Open `http://localhost:8001/ui` — the **Setup Wizard** starts automatically an
 ---
 
 ## Documentation
+
+Also hosted, with search, at **[itop-ai-assistant.readthedocs.io](https://itop-ai-assistant.readthedocs.io/)**.
 
 - [**Setup**](docs/setup.md) — setup wizard walkthrough, manual iTop configuration, and how to try the assistant on your own data first
 - [**Admin UI**](docs/admin-ui.md) — Connections, Modules, Prompts, Runs and Vector index screens
