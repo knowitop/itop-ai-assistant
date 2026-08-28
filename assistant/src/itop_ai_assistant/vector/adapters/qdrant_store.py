@@ -47,6 +47,11 @@ _META_COLLECTION = "chunks_meta"
 _DENSE = "dense"
 _SPARSE = "sparse"
 _SCROLL_PAGE = 256
+# Qdrant refuses a request larger than 32 MB (default service.max_request_size_mb),
+# and the sweep writes a whole object in one call — an object with a thousand
+# chunks would exceed it. A 4096-dimensional vector is ~85 KB of JSON, so this
+# ceiling keeps a request around 11 MB at any sane dimension.
+_UPSERT_BATCH = 128
 # Stable namespace so a chunk's point id is a pure function of its identity —
 # re-indexing the same chunk must overwrite it, never add a twin.
 _ID_NAMESPACE = uuid.UUID("6f0f5f8e-6a1d-5c2b-9a3e-0c1d2e3f4a5b")
@@ -187,7 +192,12 @@ class QdrantChunkStore(ChunkStore):
         return meta
 
     async def upsert_chunks(self, chunks: list[ChunkRecord], *, family: str, model: str, dim: int) -> int:
-        """Idempotent insert-or-update by (obj_class, obj_id, chunk_kind, chunk_n)."""
+        """Idempotent insert-or-update by (obj_class, obj_id, chunk_kind, chunk_n).
+
+        Written in batches of `_UPSERT_BATCH` points: point ids are
+        deterministic, so splitting the call changes nothing but the size of
+        one request.
+        """
         if not chunks:
             return 0
         meta = _require_active(await self.active_meta(family))
@@ -200,7 +210,9 @@ class QdrantChunkStore(ChunkStore):
             )
             for c in chunks
         ]
-        await self.client.upsert(collection_name=self.collection_name(family, meta.version), points=points, wait=True)
+        name = self.collection_name(family, meta.version)
+        for start in range(0, len(points), _UPSERT_BATCH):
+            await self.client.upsert(collection_name=name, points=points[start : start + _UPSERT_BATCH], wait=True)
         return len(points)
 
     async def get_chunk_digests(self, family: str, obj_class: str, obj_id: int) -> dict[tuple[str, int], ChunkDigest]:

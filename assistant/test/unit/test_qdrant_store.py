@@ -216,6 +216,21 @@ class TestUpsert(QdrantStoreCase):
         stats = await self.store.stats(_FAMILY)
         self.assertEqual(stats.rows, 2)
 
+    async def test_a_large_object_is_written_in_several_requests(self):
+        # One request per object would exceed Qdrant's 32 MB request limit for
+        # an object with a thousand chunks (a base64 attachment in the body).
+        chunks = [_chunk(1, "body", n) for n in range(5)]
+
+        with (
+            patch("itop_ai_assistant.vector.adapters.qdrant_store._UPSERT_BATCH", 2),
+            patch.object(self.store.client, "upsert", wraps=self.store.client.upsert) as upsert,
+        ):
+            written = await self.store.upsert_chunks(chunks, family=_FAMILY, model="test-model", dim=4)
+
+        self.assertEqual(upsert.call_count, 3)
+        self.assertEqual(written, 5)
+        self.assertEqual((await self.store.stats(_FAMILY)).rows, 5)
+
     async def test_rewriting_the_same_chunk_updates_it(self):
         await self.store.upsert_chunks([_chunk(1, digest="old")], family=_FAMILY, model="test-model", dim=4)
         await self.store.upsert_chunks([_chunk(1, digest="new")], family=_FAMILY, model="test-model", dim=4)

@@ -163,6 +163,30 @@ class TestHtmlToMarkdown(unittest.TestCase):
         self.assertNotIn("color", result)
         self.assertIn("text", result)
 
+    def test_inline_base64_image_stripped(self):
+        result = html_to_markdown('<p>before <img src="data:image/png;base64,iVBORw0KGgo=" alt="scr"> after</p>')
+        self.assertNotIn("base64", result)
+        self.assertNotIn("![", result)
+        self.assertIn("before", result)
+        self.assertIn("after", result)
+
+    def test_plain_image_stripped(self):
+        result = html_to_markdown('<p>text</p><img src="diagram.png" alt="схема">')
+        self.assertNotIn("diagram.png", result)
+        self.assertNotIn("схема", result)
+        self.assertIn("text", result)
+
+    def test_base64_link_keeps_its_text_without_the_uri(self):
+        self.assertEqual(
+            html_to_markdown('<a href="data:image/png;base64,iVBORw0KGgo=">см. вложение</a>'), "см. вложение"
+        )
+
+    def test_base64_video_stripped(self):
+        self.assertEqual(html_to_markdown('<video src="data:video/mp4;base64,AAAAIGZ0" controls></video>'), "")
+
+    def test_ordinary_link_preserved(self):
+        self.assertEqual(html_to_markdown('<a href="https://example.com">док</a>'), "[док](https://example.com)")
+
     def test_nested_tags(self):
         result = html_to_markdown("<p>Hello <strong>world</strong></p>")
         self.assertIn("Hello", result)
