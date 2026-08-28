@@ -769,7 +769,6 @@ function EmbeddingsForm() {
         <NumberInput
           label={t('common.field_dimension')}
           min={1}
-          max={4000}
           value={dimension}
           onChange={setDimension}
         />

@@ -49,8 +49,9 @@ _SPARSE = "sparse"
 _SCROLL_PAGE = 256
 # Qdrant refuses a request larger than 32 MB (default service.max_request_size_mb),
 # and the sweep writes a whole object in one call — an object with a thousand
-# chunks would exceed it. A 4096-dimensional vector is ~85 KB of JSON, so this
-# ceiling keeps a request around 11 MB at any sane dimension.
+# chunks would exceed it. A 4096-dimensional vector — the widest model in use
+# today — is ~85 KB of JSON, so this ceiling keeps a request around 11 MB, and
+# stays under 32 MB up to about 16384 dimensions.
 _UPSERT_BATCH = 128
 # The same ceiling for the calls that carry no vectors: a payload rewrite is
 # ~1 KB per point and a delete is a bare id, so they can go far wider.

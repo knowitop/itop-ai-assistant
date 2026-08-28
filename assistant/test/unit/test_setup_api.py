@@ -285,7 +285,7 @@ class TestSetupSections(SetupApiTestCase):
         self.assertEqual(body["values"]["dimension"], 1024)
 
     def test_embeddings_invalid_dimension_rejected(self):
-        response = self.client.patch("/api/setup/embeddings", json={"dimension": 4097})
+        response = self.client.patch("/api/setup/embeddings", json={"dimension": 0})
         self.assertEqual(response.status_code, 422)
 
     def test_vector_section_is_editable(self):

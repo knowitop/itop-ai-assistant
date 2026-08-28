@@ -212,9 +212,14 @@ class EmbeddingsConfig(RuntimeSectionConfig):
     base_url: str | None = None
     model: str | None = None
     api_key: str | None = None
-    # Qdrant has no hard ceiling here; the bound is a sanity check, and ADR-006
-    # points the default the other way — MRL truncation to 512 or 256.
-    dimension: int = Field(default=1024, gt=0, le=4096)
+    # No upper bound: this declares the model's native vector length rather than
+    # choosing one — the OpenAI `dimensions` truncation parameter is deliberately
+    # not sent (see vector.adapters.embedder), so changing the length means
+    # changing the model. Qdrant has no ceiling of its own either, and the real
+    # check is elsewhere: POST /api/setup/test-embeddings measures what the
+    # endpoint returns, and EmbeddingsClient re-checks every batch against this
+    # value. Any number here would only reject a legitimate config.
+    dimension: int = Field(default=1024, gt=0)
     batch_size: int = Field(default=32, gt=0)
     timeout: float = 30.0
 
