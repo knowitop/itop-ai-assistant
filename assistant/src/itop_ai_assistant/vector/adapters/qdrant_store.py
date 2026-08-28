@@ -26,7 +26,7 @@ of a ticket.
 """
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 
 from qdrant_client import AsyncQdrantClient, models
@@ -52,6 +52,9 @@ _SCROLL_PAGE = 256
 # chunks would exceed it. A 4096-dimensional vector is ~85 KB of JSON, so this
 # ceiling keeps a request around 11 MB at any sane dimension.
 _UPSERT_BATCH = 128
+# The same ceiling for the calls that carry no vectors: a payload rewrite is
+# ~1 KB per point and a delete is a bare id, so they can go far wider.
+_PAYLOAD_BATCH = 1024
 # Stable namespace so a chunk's point id is a pure function of its identity —
 # re-indexing the same chunk must overwrite it, never add a twin.
 _ID_NAMESPACE = uuid.UUID("6f0f5f8e-6a1d-5c2b-9a3e-0c1d2e3f4a5b")
@@ -195,8 +198,11 @@ class QdrantChunkStore(ChunkStore):
         """Idempotent insert-or-update by (obj_class, obj_id, chunk_kind, chunk_n).
 
         Written in batches of `_UPSERT_BATCH` points: point ids are
-        deterministic, so splitting the call changes nothing but the size of
-        one request.
+        deterministic, so a repeated batch overwrites itself and the split
+        costs nothing on the happy path. It does cost the all-or-nothing
+        write an object used to get: if a later batch fails, the earlier ones
+        stay committed and the object is searchable half-indexed until a
+        sweep gets through it whole.
         """
         if not chunks:
             return 0
@@ -211,8 +217,8 @@ class QdrantChunkStore(ChunkStore):
             for c in chunks
         ]
         name = self.collection_name(family, meta.version)
-        for start in range(0, len(points), _UPSERT_BATCH):
-            await self.client.upsert(collection_name=name, points=points[start : start + _UPSERT_BATCH], wait=True)
+        for batch in _batches(points, _UPSERT_BATCH):
+            await self.client.upsert(collection_name=name, points=batch, wait=True)
         return len(points)
 
     async def get_chunk_digests(self, family: str, obj_class: str, obj_id: int) -> dict[tuple[str, int], ChunkDigest]:
@@ -251,6 +257,11 @@ class QdrantChunkStore(ChunkStore):
         `set_payload` (merge): a key `filters` no longer sends must
         disappear from the point, and the indexer already has the full
         payload here, so a merge would leave stale keys behind forever.
+
+        Split into `_PAYLOAD_BATCH` requests for the same reason the upsert
+        is: a fragment's `filters` or `visibility` changing re-hashes the
+        metadata of every chunk of every object, so this list is as long as
+        the whole object here too.
         """
         if not chunks:
             return 0
@@ -266,9 +277,9 @@ class QdrantChunkStore(ChunkStore):
             )
             for c in chunks
         ]
-        await self.client.batch_update_points(
-            collection_name=self.collection_name(family, meta.version), update_operations=operations, wait=True
-        )
+        name = self.collection_name(family, meta.version)
+        for batch in _batches(operations, _PAYLOAD_BATCH):
+            await self.client.batch_update_points(collection_name=name, update_operations=batch, wait=True)
         return len(operations)
 
     async def stats(self, family: str) -> IndexStats | None:
@@ -302,11 +313,9 @@ class QdrantChunkStore(ChunkStore):
         if meta is None:
             return 0
         point_ids = [_point_id(obj_class, obj_id, kind, n) for kind, n in keys]
-        await self.client.delete(
-            collection_name=self.collection_name(family, meta.version),
-            points_selector=models.PointIdsList(points=point_ids),
-            wait=True,
-        )
+        name = self.collection_name(family, meta.version)
+        for batch in _batches(point_ids, _PAYLOAD_BATCH):
+            await self.client.delete(collection_name=name, points_selector=models.PointIdsList(points=batch), wait=True)
         return len(point_ids)
 
     async def list_object_ids(self, family: str, obj_class: str, after: int = 0, limit: int = 1000) -> list[int]:
@@ -486,6 +495,12 @@ class QdrantChunkStore(ChunkStore):
             await self.client.create_payload_index(
                 collection_name=name, field_name=field, field_schema=models.PayloadSchemaType.DATETIME
             )
+
+
+def _batches[T](items: list[T], size: int) -> Iterator[list[T]]:
+    """Slice a write into requests Qdrant will accept — see `_UPSERT_BATCH`."""
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
 
 
 def _point_id(obj_class: str, obj_id: int, chunk_kind: str, chunk_n: int) -> str:

@@ -348,6 +348,20 @@ class TestDeletion(QdrantStoreCase):
             set(await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1)), {("body", 0), ("solution", 0)}
         )
 
+    async def test_a_long_key_list_is_deleted_in_several_requests(self):
+        chunks = [_chunk(1, "body", n) for n in range(5)]
+        await self.store.upsert_chunks(chunks, family=_FAMILY, model="test-model", dim=4)
+
+        with (
+            patch("itop_ai_assistant.vector.adapters.qdrant_store._PAYLOAD_BATCH", 2),
+            patch.object(self.store.client, "delete", wraps=self.store.client.delete) as delete,
+        ):
+            removed = await self.store.delete_chunks(_FAMILY, "UserRequest", 1, [("body", n) for n in range(5)])
+
+        self.assertEqual(delete.call_count, 3)
+        self.assertEqual(removed, 5)
+        self.assertEqual(await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1), {})
+
     async def test_deleting_an_empty_list_touches_nothing(self):
         await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
 
@@ -781,6 +795,29 @@ class TestMetadataUpdate(QdrantStoreCase):
             collection_name=self.store.collection_name(_FAMILY, 1), limit=10, with_payload=False, with_vectors=True
         )
         self.assertEqual(before[0].vector, after[0].vector)
+
+    async def test_a_large_object_is_rewritten_in_several_requests(self):
+        # A fragment's filters or visibility changing re-hashes every chunk of
+        # the object, so this list is as long as the upsert's.
+        chunks = [_chunk(1, "body", n) for n in range(5)]
+        await self.store.upsert_chunks(chunks, family=_FAMILY, model="test-model", dim=4)
+        metas = [_meta(1, "body", n, status="resolved-later") for n in range(5)]
+
+        with (
+            patch("itop_ai_assistant.vector.adapters.qdrant_store._PAYLOAD_BATCH", 2),
+            patch.object(
+                self.store.client, "batch_update_points", wraps=self.store.client.batch_update_points
+            ) as batch_update,
+        ):
+            updated = await self.store.update_chunk_metadata(metas, family=_FAMILY)
+
+        self.assertEqual(batch_update.call_count, 3)
+        self.assertEqual(updated, 5)
+        digests = await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1)
+        self.assertEqual(
+            {key: d.meta_hash for key, d in digests.items()},
+            {(m.chunk_kind, m.chunk_n): m.meta_hash for m in metas},
+        )
 
     async def test_a_dropped_filter_key_is_removed_not_merged(self):
         # `_meta`'s `status`/`org_id` kwargs always land in `filters` now, so

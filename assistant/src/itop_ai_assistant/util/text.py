@@ -69,11 +69,16 @@ def html_to_markdown(text: str | None) -> str:
     if not text:
         return ""
     soup = BeautifulSoup(text, "html.parser")
-    # <img> goes with script/style: a picture is noise both for an embedding
-    # and for a prompt, and a screenshot pasted into the body as
-    # data:image/...;base64 is unrolled by markdownify into megabytes of "text".
-    for tag in soup(["script", "style", "img"]):
+    for tag in soup(["script", "style"]):
         tag.decompose()
+    # An <img> leaves the document but its alt text stays: the picture itself
+    # is noise for an embedding and for a prompt, and a screenshot pasted into
+    # the body as data:image/...;base64 is unrolled by markdownify into
+    # megabytes of "text" — while the alt is often the only description of a
+    # diagram a KB article has.
+    for image in soup("img"):
+        alt = image.get("alt")
+        image.replace_with(alt if isinstance(alt, str) else "")
     # The same URI also arrives as an attribute — an <a href>, a <video src>,
     # a <source src>. The address is dropped, not the node: the link's own
     # text ("see attachment") is worth keeping. Any attribute of any tag

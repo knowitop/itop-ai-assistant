@@ -53,14 +53,21 @@ class EmbeddingsClient:
         if self._cfg.api_key:
             headers["Authorization"] = f"Bearer {self._cfg.api_key}"
         url = self._cfg.base_url.rstrip("/") + "/embeddings"
+        # Every call here is billed by a paid endpoint, so what was sent is
+        # worth a line even when it succeeds.
+        chars = sum(len(t) for t in texts)
+        logger.debug(f"embeddings: {len(texts)} texts, {chars} chars → {self._cfg.model}")
         try:
             response = await self._client.post(url, json={"model": self._cfg.model, "input": texts}, headers=headers)
             response.raise_for_status()
             payload = response.json()
         except httpx.HTTPStatusError as e:
-            raise EmbeddingsError(f"Embeddings request failed: {e.response.status_code} {e.response.text}") from e
+            raise EmbeddingsError(
+                f"Embeddings request failed ({len(texts)} texts, {chars} chars): "
+                f"{e.response.status_code} {e.response.text}"
+            ) from e
         except httpx.HTTPError as e:
-            raise EmbeddingsError(f"Embeddings request failed: {e}") from e
+            raise EmbeddingsError(f"Embeddings request failed ({len(texts)} texts, {chars} chars): {e}") from e
 
         try:
             items = sorted(payload["data"], key=lambda item: item["index"])

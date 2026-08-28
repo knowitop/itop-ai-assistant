@@ -56,25 +56,6 @@ from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 logger = logging.getLogger(__name__)
 
 _RECONCILE_BATCH = 200
-# An object producing this many chunks is almost always junk (a base64
-# attachment, a minified asset in the body) — it still gets indexed, but not
-# silently.
-_CHUNKS_PER_OBJECT_WARN = 200
-
-
-@contextmanager
-def _object_context(obj_class: str, obj_id: int) -> Iterator[None]:
-    """Name the object a failing pass died on: isolation is per class, so
-    without this the sweep only reports "class FAQ failed".
-
-    `error`, not `exception`: the traceback is printed by the class-level
-    catch in `_run`, only the id is missing there.
-    """
-    try:
-        yield
-    except Exception:
-        logger.error(f"vector sweep: {obj_class}:{obj_id} failed")
-        raise
 
 
 @dataclass
@@ -87,6 +68,51 @@ class SweepReport:
     chunks_metadata_updated: int = 0
     chunks_deleted: int = 0
     errors: list[str] = field(default_factory=list)
+
+
+# (record, chunks to embed [with their metadata built], metadata-only
+# rewrites, vanished chunk keys) — one page's worth of work per object.
+type _Pending = tuple[VectorRecord[Any], list[tuple[Chunk, ChunkMetadata]], list[ChunkMetadata], list[tuple[str, int]]]
+
+
+def _embed_breakdown(obj_class: str, pending: list[_Pending], limit: int = 5) -> str:
+    """Which objects a page's single embed call is paying for, heaviest first.
+
+    Embedding is batched per page, so neither the call nor a failure inside it
+    names an object; this is what turns "class FAQ failed" into an id to open
+    in iTop. `FAQ::42` is that object's iTop key — the `id` in its URL, not a
+    ticket ref and not an index-local number.
+    """
+    sizes = sorted(
+        (
+            (record.obj_id, len(changed), sum(len(chunk.text) for chunk, _ in changed))
+            for record, changed, _, _ in pending
+            if changed
+        ),
+        key=lambda item: item[2],
+        reverse=True,
+    )
+    head = ", ".join(f"{obj_class}::{obj_id} ({count} chunks, {chars} chars)" for obj_id, count, chars in sizes[:limit])
+    return head + (f" and {len(sizes) - limit} more" if len(sizes) > limit else "")
+
+
+@contextmanager
+def _isolate_object(obj_class: str, obj_id: int, report: SweepReport) -> Iterator[None]:
+    """Isolate one object: a failure on it is reported and the pass moves on
+    to the next record.
+
+    Without this the class-level catch in `_sweep_locked` returns before the
+    cursor is written, so the same page is re-read on every tick and one
+    object no pass can get past wedges its whole class indefinitely. The price
+    is that the cursor moves over the failed object, which is therefore not
+    retried until it changes again — a class that keeps working is worth more
+    than one object indexed late, and the report names the object either way.
+    """
+    try:
+        yield
+    except Exception as e:
+        logger.exception(f"vector sweep: {obj_class}:{obj_id} failed — skipping the object")
+        report.errors.append(f"{obj_class}:{obj_id}: {e}")
 
 
 SWEEP_TASK = "vector-sweep"
@@ -325,14 +351,11 @@ class VectorIndexer:
         page = 1
         while True:
             records = await source.find_modified_since(obj_class, since, page=page, page_size=cfg.sweep_page_size)
-            # (record, chunks to embed [with their metadata built], metadata-only
-            # rewrites, vanished chunk keys) — embedding is batched per page: one
-            # embed() call for every changed chunk
-            pending: list[
-                tuple[VectorRecord[Any], list[tuple[Chunk, ChunkMetadata]], list[ChunkMetadata], list[tuple[str, int]]]
-            ] = []
+            # Embedding is batched per page: one embed() call for every changed
+            # chunk of every object on it.
+            pending: list[_Pending] = []
             for record in records:
-                with _object_context(obj_class, record.obj_id):
+                with _isolate_object(obj_class, record.obj_id, report):
                     report.objects_seen += 1
                     if record.updated_at and (max_seen is None or record.updated_at > max_seen):
                         max_seen = record.updated_at
@@ -347,8 +370,23 @@ class VectorIndexer:
                         max_chunk_tokens=cfg.max_chunk_tokens,
                         log_entries_per_chunk=log_entries_per_chunk,
                     )
-                    if len(chunks) > _CHUNKS_PER_OBJECT_WARN:
-                        logger.warning(f"vector sweep: {obj_class}:{record.obj_id} produced {len(chunks)} chunks")
+                    size = sum(len(c.text) for c in chunks)
+                    logger.debug(f"vector sweep: {obj_class}:{record.obj_id} — {len(chunks)} chunks, {size} chars")
+                    if len(chunks) > cfg.max_chunks_per_object:
+                        # Before the embed call, not after: the endpoint bills
+                        # per text, and this object is junk. Whatever it has in
+                        # the index already stays there — dropping a working
+                        # article because its new revision is unusable would
+                        # cost recall for nothing.
+                        logger.error(
+                            f"vector sweep: {obj_class}:{record.obj_id} produced {len(chunks)} chunks "
+                            f"({size} chars), over max_chunks_per_object={cfg.max_chunks_per_object} "
+                            f"— skipped without embedding"
+                        )
+                        report.errors.append(
+                            f"{obj_class}:{record.obj_id}: {len(chunks)} chunks over max_chunks_per_object"
+                        )
+                        continue
                     stored = await store.get_chunk_digests(family, obj_class, record.obj_id)
                     # Object-level once, chunk-level per chunk — `stored` is read
                     # first because the creation date may have to be inherited
@@ -378,10 +416,30 @@ class VectorIndexer:
                         pending.append((record, changed, stale_meta, vanished))
 
             texts = [chunk.text for _, changed, _, _ in pending for chunk, _ in changed]
-            vectors = iter(await embedder.embed(texts) if texts else [])
+            if texts:
+                logger.info(
+                    f"vector sweep: {obj_class} page {page} — embedding {len(texts)} chunks "
+                    f"({sum(len(t) for t in texts)} chars) of {sum(1 for _, changed, _, _ in pending if changed)} "
+                    f"objects: {_embed_breakdown(obj_class, pending)}"
+                )
+            try:
+                vectors = iter(await embedder.embed(texts) if texts else [])
+            except Exception:
+                # One call carries the whole page, so the traceback names no
+                # object at all — without this the failure reads "class FAQ
+                # failed" and nothing else.
+                logger.error(
+                    f"vector sweep: embedding {obj_class} page {page} failed, "
+                    f"{len(texts)} chunks of {_embed_breakdown(obj_class, pending)}"
+                )
+                raise
             for record, changed, stale_meta, vanished in pending:
-                with _object_context(obj_class, record.obj_id):
-                    chunk_records = [ChunkRecord(meta=chunk_meta, embedding=next(vectors)) for _, chunk_meta in changed]
+                # Outside the isolation: the iterator is shared by every record
+                # of the page, so its vectors are taken even for a record whose
+                # write then fails — otherwise the next record would be handed
+                # this one's embeddings.
+                chunk_records = [ChunkRecord(meta=chunk_meta, embedding=next(vectors)) for _, chunk_meta in changed]
+                with _isolate_object(obj_class, record.obj_id, report):
                     report.chunks_embedded += await store.upsert_chunks(
                         chunk_records, family=family, model=meta.model, dim=meta.dim
                     )

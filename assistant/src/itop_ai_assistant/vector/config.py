@@ -123,4 +123,12 @@ class VectorConfig(BaseModel):
     sweep_throttle_seconds: float = Field(default=0.5, ge=0)
     reconcile_interval_days: int = Field(default=7, gt=0)
     max_chunk_tokens: int = Field(default=480, gt=0)
+    # An object chunking past this is skipped whole, before anything is
+    # embedded — the embeddings endpoint is billed per call, and an object
+    # this size is junk (a base64 attachment, a minified asset in the body),
+    # not a long article. The default is derived from `max_chunk_tokens`: at
+    # 480 tokens a chunk holds ~1440 characters (`chunker.CHARS_PER_TOKEN`),
+    # so 32 chunks is a ~46 000-character document — an order of magnitude
+    # past any real FAQ article, and two orders below an inlined screenshot.
+    max_chunks_per_object: int = Field(default=32, gt=0)
     log_entries_per_chunk: int = Field(default=5, gt=0)

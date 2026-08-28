@@ -140,6 +140,8 @@ class FakeChunkStore:
         self.list_object_ids_calls = 0
         self.list_object_ids_side_effect = None
         self.ensure_version_error: Exception | None = None
+        # Objects whose write blows up — one oversized object among healthy ones.
+        self.upsert_error_ids: set[int] = set()
         # Per-family override — lets a test fail one family's fingerprint
         # check without touching another's in the same pass.
         self.ensure_version_errors: dict[str, Exception] = {}
@@ -155,6 +157,8 @@ class FakeChunkStore:
         return IndexMeta(family=family, version=self._meta.version, model=self._meta.model, dim=self._meta.dim)
 
     async def upsert_chunks(self, chunks, *, family, model, dim) -> int:
+        if any(c.meta.obj_id in self.upsert_error_ids for c in chunks):
+            raise RuntimeError("request too large")
         self.upsert_calls.append(list(chunks))
         for c in chunks:
             key = (family, c.meta.obj_class, c.meta.obj_id)
@@ -525,6 +529,59 @@ class TestSweep(IndexerTestCase):
         entries = await deps.vector_journal.recent()
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["status"], "error")
+
+    async def test_an_object_over_the_chunk_limit_is_never_embedded(self):
+        # The endpoint bills per text, so the guard has to fire before embed(),
+        # not after a failed write.
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.max_chunks_per_object = 2
+        cfg.max_chunk_tokens = 1  # 3 chars a chunk — a short body is already over
+        store = FakeChunkStore()
+        embedder = _embedder_mock()
+        deps = _deps_mock(vector_cfg=cfg, store=store)
+        report = await self._run(deps, FakeTicketSource([_record(1, description="a much longer body")]), embedder)
+
+        self.assertEqual(report.status, "error")
+        self.assertIn("max_chunks_per_object", report.errors[0])
+        self.assertIn("UserRequest:1", report.errors[0])
+        embedder.embed.assert_not_awaited()
+        self.assertEqual(store.upsert_calls, [])
+
+    async def test_an_object_within_the_chunk_limit_is_indexed(self):
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.max_chunks_per_object = 2
+        store = FakeChunkStore()
+        report = await self._run(_deps_mock(vector_cfg=cfg, store=store), FakeTicketSource([_record(1)]))
+
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(report.chunks_embedded, 1)
+
+    async def test_a_failing_object_does_not_stop_the_class(self):
+        # Without per-object isolation the pass returns before the cursor is
+        # written, so the same page is re-read on every tick forever.
+        store = FakeChunkStore()
+        store.upsert_error_ids = {1}
+        newest = _NOW + timedelta(hours=2)
+        deps = _deps_mock(store=store)
+        report = await self._run(deps, FakeTicketSource([_record(1), _record(2, updated_at=newest)]))
+
+        self.assertEqual(report.status, "error")
+        self.assertIn("UserRequest:1", report.errors[0])
+        self.assertEqual([r.meta.obj_id for r in _flat(store.upsert_calls)], [2])
+        self.assertEqual(await deps.vector_sync.get_cursor("UserRequest"), newest)
+
+    async def test_a_failing_object_does_not_take_the_next_ones_embeddings(self):
+        # The page's embeddings are one shared iterator: the failed object's
+        # vectors must still be consumed, or object 2 gets object 1's.
+        store = FakeChunkStore()
+        store.upsert_error_ids = {1}
+        embedder = _embedder_mock()
+        embedder.embed = AsyncMock(return_value=[[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]])
+        await self._run(_deps_mock(store=store), FakeTicketSource([_record(1), _record(2)]), embedder)
+
+        written = _flat(store.upsert_calls)
+        self.assertEqual([r.meta.obj_id for r in written], [2])
+        self.assertEqual(written[0].embedding, [0.5, 0.6, 0.7, 0.8])
 
     async def test_fingerprint_mismatch_is_journaled_error(self):
         store = FakeChunkStore()

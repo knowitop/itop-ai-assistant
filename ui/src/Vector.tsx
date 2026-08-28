@@ -425,6 +425,7 @@ function VectorSettingsForm() {
   const [sweepThrottle, setSweepThrottle] = useState<number | string>('');
   const [reconcileDays, setReconcileDays] = useState<number | string>('');
   const [maxChunkTokens, setMaxChunkTokens] = useState<number | string>('');
+  const [maxChunksPerObject, setMaxChunksPerObject] = useState<number | string>('');
   const [logEntries, setLogEntries] = useState<number | string>('');
   // Per-family settings, one section per registered source (never guessed —
   // /vector/sources always lists every registered family, TASK-021).
@@ -445,6 +446,7 @@ function VectorSettingsForm() {
     setSweepThrottle((data.values.sweep_throttle_seconds as number) ?? '');
     setReconcileDays((data.values.reconcile_interval_days as number) ?? '');
     setMaxChunkTokens((data.values.max_chunk_tokens as number) ?? '');
+    setMaxChunksPerObject((data.values.max_chunks_per_object as number) ?? '');
     setLogEntries((data.values.log_entries_per_chunk as number) ?? '');
     const saved =
       (data.values.families as Record<
@@ -546,6 +548,7 @@ function VectorSettingsForm() {
     if (sweepThrottle !== '') b.sweep_throttle_seconds = Number(sweepThrottle);
     if (reconcileDays !== '') b.reconcile_interval_days = Number(reconcileDays);
     if (maxChunkTokens !== '') b.max_chunk_tokens = Number(maxChunkTokens);
+    if (maxChunksPerObject !== '') b.max_chunks_per_object = Number(maxChunksPerObject);
     if (logEntries !== '') b.log_entries_per_chunk = Number(logEntries);
     setBusy(true);
     setError(null);
@@ -625,6 +628,13 @@ function VectorSettingsForm() {
           min={1}
           value={logEntries}
           onChange={setLogEntries}
+        />
+        <NumberInput
+          label={t('vector.field_max_chunks_per_object')}
+          description={t('vector.field_max_chunks_per_object_hint')}
+          min={1}
+          value={maxChunksPerObject}
+          onChange={setMaxChunksPerObject}
         />
       </Group>
       <Divider />

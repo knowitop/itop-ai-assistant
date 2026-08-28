@@ -170,11 +170,15 @@ class TestHtmlToMarkdown(unittest.TestCase):
         self.assertIn("before", result)
         self.assertIn("after", result)
 
-    def test_plain_image_stripped(self):
-        result = html_to_markdown('<p>text</p><img src="diagram.png" alt="схема">')
+    def test_image_is_replaced_by_its_alt_text(self):
+        # The alt is often the only description of a diagram an article has.
+        result = html_to_markdown('<p>text</p><img src="diagram.png" alt="схема сети">')
         self.assertNotIn("diagram.png", result)
-        self.assertNotIn("схема", result)
+        self.assertIn("схема сети", result)
         self.assertIn("text", result)
+
+    def test_image_without_alt_leaves_nothing(self):
+        self.assertEqual(html_to_markdown('<p>text <img src="diagram.png"></p>'), "text")
 
     def test_base64_link_keeps_its_text_without_the_uri(self):
         self.assertEqual(
