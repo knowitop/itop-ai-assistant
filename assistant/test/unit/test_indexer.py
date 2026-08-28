@@ -543,7 +543,7 @@ class TestSweep(IndexerTestCase):
 
         self.assertEqual(report.status, "error")
         self.assertIn("max_chunks_per_object", report.errors[0])
-        self.assertIn("UserRequest:1", report.errors[0])
+        self.assertIn("UserRequest::1", report.errors[0])
         embedder.embed.assert_not_awaited()
         self.assertEqual(store.upsert_calls, [])
 
@@ -566,7 +566,7 @@ class TestSweep(IndexerTestCase):
         report = await self._run(deps, FakeTicketSource([_record(1), _record(2, updated_at=newest)]))
 
         self.assertEqual(report.status, "error")
-        self.assertIn("UserRequest:1", report.errors[0])
+        self.assertIn("UserRequest::1", report.errors[0])
         self.assertEqual([r.meta.obj_id for r in _flat(store.upsert_calls)], [2])
         self.assertEqual(await deps.vector_sync.get_cursor("UserRequest"), newest)
 

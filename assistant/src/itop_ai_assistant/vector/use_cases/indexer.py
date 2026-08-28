@@ -111,8 +111,8 @@ def _isolate_object(obj_class: str, obj_id: int, report: SweepReport) -> Iterato
     try:
         yield
     except Exception as e:
-        logger.exception(f"vector sweep: {obj_class}:{obj_id} failed — skipping the object")
-        report.errors.append(f"{obj_class}:{obj_id}: {e}")
+        logger.exception(f"vector sweep: {obj_class}::{obj_id} failed — skipping the object")
+        report.errors.append(f"{obj_class}::{obj_id}: {e}")
 
 
 SWEEP_TASK = "vector-sweep"
@@ -371,7 +371,7 @@ class VectorIndexer:
                         log_entries_per_chunk=log_entries_per_chunk,
                     )
                     size = sum(len(c.text) for c in chunks)
-                    logger.debug(f"vector sweep: {obj_class}:{record.obj_id} — {len(chunks)} chunks, {size} chars")
+                    logger.debug(f"vector sweep: {obj_class}::{record.obj_id} — {len(chunks)} chunks, {size} chars")
                     if len(chunks) > cfg.max_chunks_per_object:
                         # Before the embed call, not after: the endpoint bills
                         # per text, and this object is junk. Whatever it has in
@@ -379,12 +379,12 @@ class VectorIndexer:
                         # article because its new revision is unusable would
                         # cost recall for nothing.
                         logger.error(
-                            f"vector sweep: {obj_class}:{record.obj_id} produced {len(chunks)} chunks "
+                            f"vector sweep: {obj_class}::{record.obj_id} produced {len(chunks)} chunks "
                             f"({size} chars), over max_chunks_per_object={cfg.max_chunks_per_object} "
                             f"— skipped without embedding"
                         )
                         report.errors.append(
-                            f"{obj_class}:{record.obj_id}: {len(chunks)} chunks over max_chunks_per_object"
+                            f"{obj_class}::{record.obj_id}: {len(chunks)} chunks over max_chunks_per_object"
                         )
                         continue
                     stored = await store.get_chunk_digests(family, obj_class, record.obj_id)
