@@ -216,6 +216,14 @@ class SimilarSearch:
         under that name, the config keeps it on, and the index that answers
         was built by the model configured now. They split into different
         exceptions there and into the same False here.
+
+        The last of the three is the only one that has to ask the store, and a
+        store that does not answer reads as False rather than raising. This is
+        a gate a consumer calls *before* it does anything — intake calls it
+        while assembling a run — so an error escaping here would make an
+        unreachable Qdrant fail whole runs that would otherwise have gone on
+        without the search. `find()` is where a broken store is allowed to
+        say so.
         """
         vector_cfg = await self._config.get("vector", VectorConfig)
         embeddings_cfg = await self._config.get("embeddings", EmbeddingsConfig)
@@ -229,7 +237,11 @@ class SimilarSearch:
         # consumer offer a tool whose only outcome is that exception.
         if family not in self._sources_by_name(vector_cfg):
             return False
-        return await self._family_unavailable(vector_cfg, embeddings_cfg, family) is None
+        try:
+            return await self._family_unavailable(vector_cfg, embeddings_cfg, family) is None
+        except Exception as e:
+            logger.warning(f"vector search: family {family!r} treated as unavailable — the store did not answer: {e}")
+            return False
 
     async def find(self, query: SearchQuery, principal: Principal) -> SearchResult:
         """Objects most similar to `query.text` that `principal` may see.

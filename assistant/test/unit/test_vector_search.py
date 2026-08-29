@@ -411,6 +411,16 @@ class TestAvailability(_SearchTestCase):
 
         self.assertTrue(await search.available())
 
+    async def test_unavailable_when_the_store_does_not_answer(self):
+        """The fingerprint check is the one gate that needs a live store. A
+        consumer calls this while assembling a run, before it has done
+        anything, so an unreachable Qdrant has to close the gate rather than
+        fail the run that would have gone on without the search."""
+        search, store, _, _ = self._search([])
+        store.active_meta = AsyncMock(side_effect=ConnectionError("qdrant is down"))
+
+        self.assertFalse(await search.available(_FAMILY))
+
     async def test_the_deployment_gate_ignores_the_family(self):
         """Without a family the question is "can this deployment search at
         all" — telemetry asks it that way, and one corpus switched off is not
