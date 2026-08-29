@@ -232,6 +232,7 @@
     "badge_indexer_stopped": "indexer stopped",
     "fingerprint_mismatch": "The index was built with a different embeddings model or dimension, and the family it belongs to is not being indexed — switch it back on for the rebuild to start, or put the previous model back.",
     "rebuild_running": "The embeddings model changed, so the index is being rebuilt. A new version is being filled next to the live one and takes over when it is complete — nothing to do but wait. Searches over that family are refused meanwhile, since vectors from two models cannot be compared.",
+    "rebuild_pending": "The embeddings model changed. The next sweep pass starts filling a replacement version next to the live one — nothing to do but wait. Searches over that family are refused meanwhile, since vectors from two models cannot be compared.",
     "rebuild_hint": "Version being filled for the new embeddings model. It replaces the active one once a sweep pass has finished it.",
     "index_version": "Index version",
     "index_rows": "Rows",

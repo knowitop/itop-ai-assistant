@@ -308,16 +308,26 @@ function VectorStatusPanel() {
       )}
       {status.index && status.index.length > 0 ? (
         <>
-          {/* Two different situations behind one mismatched fingerprint. The
-              sweep normally picks the change up by itself, and then there is
-              nothing to do but wait; it cannot when the family is switched
-              off, and then the message has to name the way out. */}
+          {/* Three situations behind one mismatched fingerprint, and only the
+              last one asks the administrator for anything: the replacement
+              version is already being filled; the sweep has not reached the
+              family yet, and there is nothing to do but wait; or nothing will
+              ever reach it, because the family is switched off. The sweep
+              indexes a family only when the deployment, the family and its
+              source all say yes, so "wait" is only honest when all three do.
+              Global indexing off and a family nothing is registered for are
+              left out on purpose — the badge above and the row's own badge
+              already say those. */}
           {status.index.some((f) => f.building) && (
             <Alert color="blue">{t('vector.rebuild_running')}</Alert>
           )}
-          {status.index.some((f) => f.fingerprint_match === false && !f.building) && (
-            <Alert color="orange">{t('vector.fingerprint_mismatch')}</Alert>
-          )}
+          {status.enabled &&
+            status.index.some(
+              (f) => f.fingerprint_match === false && !f.building && f.configured && f.enabled,
+            ) && <Alert color="blue">{t('vector.rebuild_pending')}</Alert>}
+          {status.index.some(
+            (f) => f.fingerprint_match === false && !f.building && f.configured && !f.enabled,
+          ) && <Alert color="orange">{t('vector.fingerprint_mismatch')}</Alert>}
           <Table withTableBorder verticalSpacing={4}>
             <Table.Thead>
               <Table.Tr>
