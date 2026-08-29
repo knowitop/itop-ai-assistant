@@ -244,6 +244,7 @@
     "col_kind": "Rodzaj",
     "col_status": "Status",
     "col_objects": "Obiekty",
+    "col_skipped": "Pominięte",
     "col_embedded": "Zwektoryzowane",
     "col_metadata": "Metadane",
     "col_deleted": "Usunięte",
@@ -282,7 +283,9 @@
     "field_sweep_throttle": "Pauza między stronami (sekundy)",
     "field_reconcile_days": "Interwał uzgadniania (dni)",
     "field_max_chunk_tokens": "Maks. tokenów na chunk",
-    "field_log_entries": "Wpisy logu na chunk"
+    "field_log_entries": "Wpisy logu na chunk",
+    "field_max_chunks_per_object": "Maks. chunków na obiekt",
+    "field_max_chunks_per_object_hint": "Obiekt dzielący się na więcej chunków jest pomijany bez wektoryzacji i liczony osobno — to śmieć (załącznik osadzony w tekście), a nie długi artykuł."
   },
   "system": {
     "title": "System",

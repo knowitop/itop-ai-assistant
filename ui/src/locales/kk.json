@@ -244,6 +244,7 @@
     "col_kind": "Түрі",
     "col_status": "Күйі",
     "col_objects": "Объектілер",
+    "col_skipped": "Өткізілген",
     "col_embedded": "Векторланған",
     "col_metadata": "Метадеректер",
     "col_deleted": "Жойылған",
@@ -282,7 +283,9 @@
     "field_sweep_throttle": "Беттер арасындағы кідіріс (секунд)",
     "field_reconcile_days": "Салыстыру аралығы (күн)",
     "field_max_chunk_tokens": "Чанктағы макс. токендер",
-    "field_log_entries": "Бір чанкқа лог жазбалары"
+    "field_log_entries": "Бір чанкқа лог жазбалары",
+    "field_max_chunks_per_object": "Бір объектіге макс. чанк",
+    "field_max_chunks_per_object_hint": "Осыдан көп чанкқа бөлінетін объекті векторланбай өткізіледі және бөлек есептеледі — бұл ұзын мақала емес, қоқыс (мәтін ішіне енгізілген тіркеме)."
   },
   "system": {
     "title": "Жүйе",

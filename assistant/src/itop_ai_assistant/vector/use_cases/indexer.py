@@ -27,8 +27,7 @@ snapshot on every tick, so enabling the feature at runtime needs no restart.
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Iterator, Sequence
-from contextlib import contextmanager
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -56,6 +55,9 @@ from itop_ai_assistant.vector.state.sync_state import VectorSyncState
 logger = logging.getLogger(__name__)
 
 _RECONCILE_BATCH = 200
+# `warnings` is per-object, so a pass over a large class can produce one entry
+# per record; `errors` is per class and per family and bounds itself.
+_MAX_WARNINGS = 20
 
 
 @dataclass
@@ -64,10 +66,25 @@ class SweepReport:
     status: str  # ok / error / skipped
     skip_reason: str | None = None
     objects_seen: int = 0
+    objects_skipped: int = 0
     chunks_embedded: int = 0
     chunks_metadata_updated: int = 0
     chunks_deleted: int = 0
     errors: list[str] = field(default_factory=list)
+    # Not errors: the pass did what it should and the object is the problem.
+    # Only `errors` decides `status` and gates reconciliation, so a skipped
+    # object must never land here — see `_sweep_locked`.
+    warnings: list[str] = field(default_factory=list)
+
+    def warning_text(self) -> str | None:
+        """The warnings as one journal field, capped — an installation that
+        inlines attachments into every article would otherwise write the whole
+        class into one Redis value."""
+        if not self.warnings:
+            return None
+        head = "; ".join(self.warnings[:_MAX_WARNINGS])
+        rest = len(self.warnings) - _MAX_WARNINGS
+        return f"{head}; and {rest} more" if rest > 0 else head
 
 
 # (record, chunks to embed [with their metadata built], metadata-only
@@ -94,25 +111,6 @@ def _embed_breakdown(obj_class: str, pending: list[_Pending], limit: int = 5) ->
     )
     head = ", ".join(f"{obj_class}::{obj_id} ({count} chunks, {chars} chars)" for obj_id, count, chars in sizes[:limit])
     return head + (f" and {len(sizes) - limit} more" if len(sizes) > limit else "")
-
-
-@contextmanager
-def _isolate_object(obj_class: str, obj_id: int, report: SweepReport) -> Iterator[None]:
-    """Isolate one object: a failure on it is reported and the pass moves on
-    to the next record.
-
-    Without this the class-level catch in `_sweep_locked` returns before the
-    cursor is written, so the same page is re-read on every tick and one
-    object no pass can get past wedges its whole class indefinitely. The price
-    is that the cursor moves over the failed object, which is therefore not
-    retried until it changes again — a class that keeps working is worth more
-    than one object indexed late, and the report names the object either way.
-    """
-    try:
-        yield
-    except Exception as e:
-        logger.exception(f"vector sweep: {obj_class}::{obj_id} failed — skipping the object")
-        report.errors.append(f"{obj_class}::{obj_id}: {e}")
 
 
 SWEEP_TASK = "vector-sweep"
@@ -314,10 +312,12 @@ class VectorIndexer:
                 journal_id,
                 status=report.status,
                 objects_seen=report.objects_seen,
+                objects_skipped=report.objects_skipped,
                 chunks_embedded=report.chunks_embedded,
                 chunks_metadata_updated=report.chunks_metadata_updated,
                 chunks_deleted=report.chunks_deleted,
                 error="; ".join(report.errors) or None,
+                warning=report.warning_text(),
             )
             await embedder.aclose()
         return report
@@ -355,65 +355,65 @@ class VectorIndexer:
             # chunk of every object on it.
             pending: list[_Pending] = []
             for record in records:
-                with _isolate_object(obj_class, record.obj_id, report):
-                    report.objects_seen += 1
-                    if record.updated_at and (max_seen is None or record.updated_at > max_seen):
-                        max_seen = record.updated_at
-                    if left_indexable_scope(record.index_value, class_cfg.index_values):
-                        # Left the indexable scope (e.g. reopened) — drop its chunks
-                        report.chunks_deleted += await store.delete_object(family, obj_class, record.obj_id)
-                        continue
-                    chunks = await source.chunk(
-                        obj_class,
-                        record,
-                        plan,
-                        max_chunk_tokens=cfg.max_chunk_tokens,
-                        log_entries_per_chunk=log_entries_per_chunk,
+                report.objects_seen += 1
+                if record.updated_at and (max_seen is None or record.updated_at > max_seen):
+                    max_seen = record.updated_at
+                if left_indexable_scope(record.index_value, class_cfg.index_values):
+                    # Left the indexable scope (e.g. reopened) — drop its chunks
+                    report.chunks_deleted += await store.delete_object(family, obj_class, record.obj_id)
+                    continue
+                chunks = await source.chunk(
+                    obj_class,
+                    record,
+                    plan,
+                    max_chunk_tokens=cfg.max_chunk_tokens,
+                    log_entries_per_chunk=log_entries_per_chunk,
+                )
+                size = sum(len(c.text) for c in chunks)
+                logger.debug(f"vector sweep: {obj_class}::{record.obj_id} — {len(chunks)} chunks, {size} chars")
+                if len(chunks) > cfg.max_chunks_per_object:
+                    # Before the embed call, not after: the endpoint bills
+                    # per text, and this object is junk. Whatever it has in
+                    # the index already stays there — dropping a working
+                    # article because its new revision is unusable would
+                    # cost recall for nothing.
+                    logger.error(
+                        f"vector sweep: {obj_class}::{record.obj_id} produced {len(chunks)} chunks "
+                        f"({size} chars), over max_chunks_per_object={cfg.max_chunks_per_object} "
+                        f"— skipped without embedding"
                     )
-                    size = sum(len(c.text) for c in chunks)
-                    logger.debug(f"vector sweep: {obj_class}::{record.obj_id} — {len(chunks)} chunks, {size} chars")
-                    if len(chunks) > cfg.max_chunks_per_object:
-                        # Before the embed call, not after: the endpoint bills
-                        # per text, and this object is junk. Whatever it has in
-                        # the index already stays there — dropping a working
-                        # article because its new revision is unusable would
-                        # cost recall for nothing.
-                        logger.error(
-                            f"vector sweep: {obj_class}::{record.obj_id} produced {len(chunks)} chunks "
-                            f"({size} chars), over max_chunks_per_object={cfg.max_chunks_per_object} "
-                            f"— skipped without embedding"
-                        )
-                        report.errors.append(
-                            f"{obj_class}::{record.obj_id}: {len(chunks)} chunks over max_chunks_per_object"
-                        )
-                        continue
-                    stored = await store.get_chunk_digests(family, obj_class, record.obj_id)
-                    # Object-level once, chunk-level per chunk — `stored` is read
-                    # first because the creation date may have to be inherited
-                    # from it (`_creation_date`).
-                    object_meta = _object_metadata(obj_class, record, stored, started_at)
-                    # A chunk lands in exactly one bucket: content changed wins over
-                    # metadata-only, since upsert_chunks rewrites the whole payload
-                    # anyway (including a fresh meta_hash).
-                    changed: list[tuple[Chunk, ChunkMetadata]] = []
-                    stale_meta: list[ChunkMetadata] = []
-                    for chunk in chunks:
-                        chunk_meta = object_meta.for_chunk(chunk)
-                        digest = stored.get((chunk.kind, chunk.n))
-                        sync = classify_chunk(
-                            chunk.content_hash,
-                            chunk_meta.meta_hash,
-                            stored_content_hash=digest.content_hash if digest else None,
-                            stored_meta_hash=digest.meta_hash if digest else None,
-                        )
-                        if sync is ChunkSyncState.CHANGED:
-                            changed.append((chunk, chunk_meta))
-                        elif sync is ChunkSyncState.STALE_META:
-                            stale_meta.append(chunk_meta)
-                    current_keys = {(c.kind, c.n) for c in chunks}
-                    vanished = [key for key in stored if key not in current_keys]
-                    if changed or stale_meta or vanished:
-                        pending.append((record, changed, stale_meta, vanished))
+                    report.objects_skipped += 1
+                    report.warnings.append(
+                        f"{obj_class}::{record.obj_id}: {len(chunks)} chunks over max_chunks_per_object"
+                    )
+                    continue
+                stored = await store.get_chunk_digests(family, obj_class, record.obj_id)
+                # Object-level once, chunk-level per chunk — `stored` is read
+                # first because the creation date may have to be inherited
+                # from it (`_creation_date`).
+                object_meta = _object_metadata(obj_class, record, stored, started_at)
+                # A chunk lands in exactly one bucket: content changed wins over
+                # metadata-only, since upsert_chunks rewrites the whole payload
+                # anyway (including a fresh meta_hash).
+                changed: list[tuple[Chunk, ChunkMetadata]] = []
+                stale_meta: list[ChunkMetadata] = []
+                for chunk in chunks:
+                    chunk_meta = object_meta.for_chunk(chunk)
+                    digest = stored.get((chunk.kind, chunk.n))
+                    sync = classify_chunk(
+                        chunk.content_hash,
+                        chunk_meta.meta_hash,
+                        stored_content_hash=digest.content_hash if digest else None,
+                        stored_meta_hash=digest.meta_hash if digest else None,
+                    )
+                    if sync is ChunkSyncState.CHANGED:
+                        changed.append((chunk, chunk_meta))
+                    elif sync is ChunkSyncState.STALE_META:
+                        stale_meta.append(chunk_meta)
+                current_keys = {(c.kind, c.n) for c in chunks}
+                vanished = [key for key in stored if key not in current_keys]
+                if changed or stale_meta or vanished:
+                    pending.append((record, changed, stale_meta, vanished))
 
             texts = [chunk.text for _, changed, _, _ in pending for chunk, _ in changed]
             if texts:
@@ -434,17 +434,14 @@ class VectorIndexer:
                 )
                 raise
             for record, changed, stale_meta, vanished in pending:
-                # Outside the isolation: the iterator is shared by every record
-                # of the page, so its vectors are taken even for a record whose
-                # write then fails — otherwise the next record would be handed
-                # this one's embeddings.
+                # `vectors` is one iterator for the whole page: the records are
+                # walked in the order their texts were embedded in.
                 chunk_records = [ChunkRecord(meta=chunk_meta, embedding=next(vectors)) for _, chunk_meta in changed]
-                with _isolate_object(obj_class, record.obj_id, report):
-                    report.chunks_embedded += await store.upsert_chunks(
-                        chunk_records, family=family, model=meta.model, dim=meta.dim
-                    )
-                    report.chunks_metadata_updated += await store.update_chunk_metadata(stale_meta, family=family)
-                    report.chunks_deleted += await store.delete_chunks(family, obj_class, record.obj_id, vanished)
+                report.chunks_embedded += await store.upsert_chunks(
+                    chunk_records, family=family, model=meta.model, dim=meta.dim
+                )
+                report.chunks_metadata_updated += await store.update_chunk_metadata(stale_meta, family=family)
+                report.chunks_deleted += await store.delete_chunks(family, obj_class, record.obj_id, vanished)
 
             if len(records) < cfg.sweep_page_size:
                 break

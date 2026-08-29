@@ -541,11 +541,57 @@ class TestSweep(IndexerTestCase):
         deps = _deps_mock(vector_cfg=cfg, store=store)
         report = await self._run(deps, FakeTicketSource([_record(1, description="a much longer body")]), embedder)
 
-        self.assertEqual(report.status, "error")
-        self.assertIn("max_chunks_per_object", report.errors[0])
-        self.assertIn("UserRequest::1", report.errors[0])
+        # Skipping junk is what the pass is supposed to do, so it is not a
+        # failed run — but it still has to name the object an operator must
+        # go and fix in iTop.
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(report.errors, [])
+        self.assertEqual(report.objects_skipped, 1)
+        self.assertIn("max_chunks_per_object", report.warnings[0])
+        self.assertIn("UserRequest::1", report.warnings[0])
         embedder.embed.assert_not_awaited()
         self.assertEqual(store.upsert_calls, [])
+
+    async def test_a_skipped_object_is_journaled_without_failing_the_run(self):
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.max_chunks_per_object = 2
+        cfg.max_chunk_tokens = 1
+        deps = _deps_mock(vector_cfg=cfg)
+        await self._run(deps, FakeTicketSource([_record(1, description="a much longer body")]))
+
+        entry = next(e for e in await deps.vector_journal.recent() if e["kind"] == "sweep")
+        self.assertEqual(entry["status"], "ok")
+        self.assertIsNone(entry["error"])
+        self.assertEqual(entry["objects_skipped"], 1)
+        self.assertIn("UserRequest::1", entry["warning"])
+
+    async def test_a_skipped_object_does_not_disable_reconciliation(self):
+        # A FAQ article with an inlined attachment is skipped on every pass
+        # (an unmapped last_update means FAQ is re-scanned whole every time);
+        # counting that as a run error would switch reconciliation off for good.
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.max_chunks_per_object = 2
+        cfg.max_chunk_tokens = 1
+        store = FakeChunkStore()
+        store.list_object_ids_side_effect = lambda family, cls, after, limit: [7] if after == 0 else []
+        source = FakeTicketSource([_record(1, description="a much longer body")])
+        source.find_existing_ids_result = set()  # 7 is an orphan
+        deps = _deps_mock(vector_cfg=cfg, store=store)
+        await self._run(deps, source)
+
+        self.assertIsNotNone(await deps.vector_sync.get_reconcile())
+        self.assertEqual(store.delete_object_calls, [(_FAMILY, "UserRequest", 7)])
+
+    async def test_warnings_are_capped_in_the_journal(self):
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.max_chunks_per_object = 2
+        cfg.max_chunk_tokens = 1
+        deps = _deps_mock(vector_cfg=cfg)
+        records = [_record(i, description="a much longer body") for i in range(1, 26)]
+        report = await self._run(deps, FakeTicketSource(records))
+
+        self.assertEqual(report.objects_skipped, 25)
+        self.assertIn("and 5 more", report.warning_text())
 
     async def test_an_object_within_the_chunk_limit_is_indexed(self):
         cfg = _VECTOR_CFG.model_copy(deep=True)
@@ -556,32 +602,18 @@ class TestSweep(IndexerTestCase):
         self.assertEqual(report.status, "ok")
         self.assertEqual(report.chunks_embedded, 1)
 
-    async def test_a_failing_object_does_not_stop_the_class(self):
-        # Without per-object isolation the pass returns before the cursor is
-        # written, so the same page is re-read on every tick forever.
+    async def test_a_failed_write_keeps_the_cursor(self):
+        # The cursor may only pass an object the pass actually got through:
+        # a store outage mid-page would otherwise drop every object of that
+        # page out of the index until someone edits it in iTop.
         store = FakeChunkStore()
         store.upsert_error_ids = {1}
-        newest = _NOW + timedelta(hours=2)
         deps = _deps_mock(store=store)
-        report = await self._run(deps, FakeTicketSource([_record(1), _record(2, updated_at=newest)]))
+        report = await self._run(deps, FakeTicketSource([_record(1), _record(2, updated_at=_NOW + timedelta(hours=2))]))
 
         self.assertEqual(report.status, "error")
-        self.assertIn("UserRequest::1", report.errors[0])
-        self.assertEqual([r.meta.obj_id for r in _flat(store.upsert_calls)], [2])
-        self.assertEqual(await deps.vector_sync.get_cursor("UserRequest"), newest)
-
-    async def test_a_failing_object_does_not_take_the_next_ones_embeddings(self):
-        # The page's embeddings are one shared iterator: the failed object's
-        # vectors must still be consumed, or object 2 gets object 1's.
-        store = FakeChunkStore()
-        store.upsert_error_ids = {1}
-        embedder = _embedder_mock()
-        embedder.embed = AsyncMock(return_value=[[0.1, 0.2, 0.3, 0.4], [0.5, 0.6, 0.7, 0.8]])
-        await self._run(_deps_mock(store=store), FakeTicketSource([_record(1), _record(2)]), embedder)
-
-        written = _flat(store.upsert_calls)
-        self.assertEqual([r.meta.obj_id for r in written], [2])
-        self.assertEqual(written[0].embedding, [0.5, 0.6, 0.7, 0.8])
+        self.assertIn("request too large", report.errors[0])
+        self.assertEqual(await deps.vector_sync.list_cursors(), {})
 
     async def test_fingerprint_mismatch_is_journaled_error(self):
         store = FakeChunkStore()

@@ -21,7 +21,7 @@ from itop_ai_assistant.util.redis_keyspace import (
     VECTOR_RUN_INDEX_MAX_ENTRIES as MAX_ENTRIES,
 )
 
-_COUNTERS = ("objects_seen", "chunks_embedded", "chunks_metadata_updated", "chunks_deleted")
+_COUNTERS = ("objects_seen", "objects_skipped", "chunks_embedded", "chunks_metadata_updated", "chunks_deleted")
 
 
 class IndexJournal:
@@ -42,6 +42,9 @@ class IndexJournal:
             "started_at": now.isoformat(),
             "finished_at": None,
             "error": None,
+            # What the pass chose not to index, as opposed to what broke it:
+            # present whatever the status is, and never sets the status itself.
+            "warning": None,
             **{counter: 0 for counter in _COUNTERS},
         }
         async with self._redis.pipeline(transaction=True) as pipe:
@@ -56,10 +59,12 @@ class IndexJournal:
         *,
         status: str,
         objects_seen: int = 0,
+        objects_skipped: int = 0,
         chunks_embedded: int = 0,
         chunks_metadata_updated: int = 0,
         chunks_deleted: int = 0,
         error: str | None = None,
+        warning: str | None = None,
     ) -> None:
         raw = await self._redis.get(self._key(entry_id))
         if raw is None:  # evicted by the cap while the run was going
@@ -69,10 +74,12 @@ class IndexJournal:
             status=status,
             finished_at=datetime.now(UTC).isoformat(),
             objects_seen=objects_seen,
+            objects_skipped=objects_skipped,
             chunks_embedded=chunks_embedded,
             chunks_metadata_updated=chunks_metadata_updated,
             chunks_deleted=chunks_deleted,
             error=error,
+            warning=warning,
         )
         await self._redis.set(self._key(entry_id), json.dumps(entry))
 

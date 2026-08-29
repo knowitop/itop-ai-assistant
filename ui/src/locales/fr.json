@@ -244,6 +244,7 @@
     "col_kind": "Type",
     "col_status": "Statut",
     "col_objects": "Objets",
+    "col_skipped": "Ignorés",
     "col_embedded": "Vectorisés",
     "col_metadata": "Métadonnées",
     "col_deleted": "Supprimés",
@@ -282,7 +283,9 @@
     "field_sweep_throttle": "Pause entre les pages (secondes)",
     "field_reconcile_days": "Intervalle de réconciliation (jours)",
     "field_max_chunk_tokens": "Tokens max par chunk",
-    "field_log_entries": "Entrées de journal par chunk"
+    "field_log_entries": "Entrées de journal par chunk",
+    "field_max_chunks_per_object": "Chunks max. par objet",
+    "field_max_chunks_per_object_hint": "Un objet découpé en davantage de chunks est ignoré sans être vectorisé et compté à part — c'est un déchet (une pièce jointe incorporée au texte), pas un article long."
   },
   "system": {
     "title": "Système",

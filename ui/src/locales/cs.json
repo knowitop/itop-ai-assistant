@@ -244,6 +244,7 @@
     "col_kind": "Druh",
     "col_status": "Stav",
     "col_objects": "Objekty",
+    "col_skipped": "Přeskočeno",
     "col_embedded": "Vektorizováno",
     "col_metadata": "Metadata",
     "col_deleted": "Smazáno",
@@ -282,7 +283,9 @@
     "field_sweep_throttle": "Pauza mezi stránkami (sekundy)",
     "field_reconcile_days": "Interval rekonciliace (dny)",
     "field_max_chunk_tokens": "Max. tokenů na chunk",
-    "field_log_entries": "Záznamů logu na chunk"
+    "field_log_entries": "Záznamů logu na chunk",
+    "field_max_chunks_per_object": "Max. chunků na objekt",
+    "field_max_chunks_per_object_hint": "Objekt, který se rozpadne na více chunků, se přeskočí bez vektorizace a započítá se zvlášť — je to balast (příloha vložená do textu), ne dlouhý článek."
   },
   "system": {
     "title": "Systém",

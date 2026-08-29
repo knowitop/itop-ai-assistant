@@ -244,6 +244,7 @@
     "col_kind": "Тип",
     "col_status": "Статус",
     "col_objects": "Объекты",
+    "col_skipped": "Пропущено",
     "col_embedded": "Векторизовано",
     "col_metadata": "Метаданные",
     "col_deleted": "Удалено",
@@ -282,7 +283,9 @@
     "field_sweep_throttle": "Пауза между страницами (секунды)",
     "field_reconcile_days": "Интервал сверки (дни)",
     "field_max_chunk_tokens": "Макс. токенов в чанке",
-    "field_log_entries": "Записей лога на чанк"
+    "field_log_entries": "Записей лога на чанк",
+    "field_max_chunks_per_object": "Макс. чанков на объект",
+    "field_max_chunks_per_object_hint": "Объект, разбивающийся на большее число чанков, пропускается без векторизации и учитывается отдельным счётчиком — это мусор (вложение внутри текста), а не длинная статья."
   },
   "system": {
     "title": "Система",

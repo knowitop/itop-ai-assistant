@@ -244,6 +244,7 @@
     "col_kind": "Тип",
     "col_status": "Статус",
     "col_objects": "Об'єкти",
+    "col_skipped": "Пропущено",
     "col_embedded": "Векторизовано",
     "col_metadata": "Метадані",
     "col_deleted": "Видалено",
@@ -282,7 +283,9 @@
     "field_sweep_throttle": "Пауза між сторінками (секунди)",
     "field_reconcile_days": "Інтервал звірки (дні)",
     "field_max_chunk_tokens": "Макс. токенів у чанку",
-    "field_log_entries": "Записів логу на чанк"
+    "field_log_entries": "Записів логу на чанк",
+    "field_max_chunks_per_object": "Макс. чанків на об'єкт",
+    "field_max_chunks_per_object_hint": "Об'єкт, що розбивається на більшу кількість чанків, пропускається без векторизації та враховується окремим лічильником — це сміття (вкладення всередині тексту), а не довга стаття."
   },
   "system": {
     "title": "Система",

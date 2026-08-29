@@ -244,6 +244,7 @@
     "col_kind": "Art",
     "col_status": "Status",
     "col_objects": "Objekte",
+    "col_skipped": "Übersprungen",
     "col_embedded": "Eingebettet",
     "col_metadata": "Metadaten",
     "col_deleted": "Gelöscht",
@@ -282,7 +283,9 @@
     "field_sweep_throttle": "Pause zwischen Seiten (Sekunden)",
     "field_reconcile_days": "Abgleichintervall (Tage)",
     "field_max_chunk_tokens": "Max. Tokens pro Chunk",
-    "field_log_entries": "Logeinträge pro Chunk"
+    "field_log_entries": "Logeinträge pro Chunk",
+    "field_max_chunks_per_object": "Max. Chunks pro Objekt",
+    "field_max_chunks_per_object_hint": "Ein Objekt, das in mehr Chunks zerfällt, wird ohne Einbettung übersprungen und separat gezählt — es ist Ballast (ein im Text eingebetteter Anhang), kein langer Artikel."
   },
   "system": {
     "title": "System",

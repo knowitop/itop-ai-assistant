@@ -244,6 +244,7 @@
     "col_kind": "Kind",
     "col_status": "Status",
     "col_objects": "Objects",
+    "col_skipped": "Skipped",
     "col_embedded": "Embedded",
     "col_metadata": "Metadata",
     "col_deleted": "Deleted",
@@ -284,7 +285,7 @@
     "field_max_chunk_tokens": "Max tokens per chunk",
     "field_log_entries": "Log entries per chunk",
     "field_max_chunks_per_object": "Max chunks per object",
-    "field_max_chunks_per_object_hint": "An object chunking past this is skipped without being embedded and reported as an error — it is junk (an inlined attachment), not a long article."
+    "field_max_chunks_per_object_hint": "An object chunking past this is skipped without being embedded and counted separately — it is junk (an inlined attachment), not a long article."
   },
   "system": {
     "title": "System",

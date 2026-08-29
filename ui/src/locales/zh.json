@@ -244,6 +244,7 @@
     "col_kind": "类型",
     "col_status": "状态",
     "col_objects": "对象数",
+    "col_skipped": "已跳过",
     "col_embedded": "已向量化",
     "col_metadata": "元数据",
     "col_deleted": "已删除",
@@ -282,7 +283,9 @@
     "field_sweep_throttle": "分页间暂停（秒）",
     "field_reconcile_days": "核对间隔（天）",
     "field_max_chunk_tokens": "每个分块的最大 token 数",
-    "field_log_entries": "每个分块的日志条数"
+    "field_log_entries": "每个分块的日志条数",
+    "field_max_chunks_per_object": "每个对象最大分块数",
+    "field_max_chunks_per_object_hint": "分块数超过此值的对象将被跳过、不做向量化，并单独计数——它是垃圾（正文内嵌的附件），而不是长文章。"
   },
   "system": {
     "title": "系统",

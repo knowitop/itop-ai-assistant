@@ -49,8 +49,11 @@ interface JournalRun {
   chunks_embedded: number;
   // Absent on journal entries written before this counter existed.
   chunks_metadata_updated?: number;
+  objects_skipped?: number;
   chunks_deleted: number;
   error: string | null;
+  // What the run chose not to index — never a failure, so it comes with any status.
+  warning?: string | null;
 }
 
 interface VectorStatus {
@@ -365,6 +368,7 @@ function VectorStatusPanel() {
               <Table.Th>{t('vector.col_kind')}</Table.Th>
               <Table.Th>{t('vector.col_status')}</Table.Th>
               <Table.Th>{t('vector.col_objects')}</Table.Th>
+              <Table.Th>{t('vector.col_skipped')}</Table.Th>
               <Table.Th>{t('vector.col_embedded')}</Table.Th>
               <Table.Th>{t('vector.col_metadata')}</Table.Th>
               <Table.Th>{t('vector.col_deleted')}</Table.Th>
@@ -383,6 +387,7 @@ function VectorStatusPanel() {
                     </Badge>
                   </Table.Td>
                   <Table.Td>{run.objects_seen}</Table.Td>
+                  <Table.Td>{run.objects_skipped ?? 0}</Table.Td>
                   <Table.Td>{run.chunks_embedded}</Table.Td>
                   <Table.Td>{run.chunks_metadata_updated ?? 0}</Table.Td>
                   <Table.Td>{run.chunks_deleted}</Table.Td>
@@ -390,9 +395,18 @@ function VectorStatusPanel() {
                 </Table.Tr>
                 {run.error && (
                   <Table.Tr>
-                    <Table.Td colSpan={8}>
+                    <Table.Td colSpan={9}>
                       <Text size="xs" c="red" style={{ whiteSpace: 'pre-wrap' }}>
                         {run.error}
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
+                )}
+                {run.warning && (
+                  <Table.Tr>
+                    <Table.Td colSpan={9}>
+                      <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
+                        {run.warning}
                       </Text>
                     </Table.Td>
                   </Table.Tr>

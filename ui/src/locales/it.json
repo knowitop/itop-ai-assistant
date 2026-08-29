@@ -244,6 +244,7 @@
     "col_kind": "Tipo",
     "col_status": "Stato",
     "col_objects": "Oggetti",
+    "col_skipped": "Saltati",
     "col_embedded": "Vettorizzati",
     "col_metadata": "Metadati",
     "col_deleted": "Eliminati",
@@ -282,7 +283,9 @@
     "field_sweep_throttle": "Pausa tra le pagine (secondi)",
     "field_reconcile_days": "Intervallo di riconciliazione (giorni)",
     "field_max_chunk_tokens": "Token max per chunk",
-    "field_log_entries": "Voci di log per chunk"
+    "field_log_entries": "Voci di log per chunk",
+    "field_max_chunks_per_object": "Chunk max per oggetto",
+    "field_max_chunks_per_object_hint": "Un oggetto che si divide in più chunk viene saltato senza essere vettorizzato e conteggiato a parte: è spazzatura (un allegato incorporato nel testo), non un articolo lungo."
   },
   "system": {
     "title": "Sistema",
