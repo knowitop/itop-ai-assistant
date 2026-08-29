@@ -297,16 +297,16 @@ def _register_sweep(tasks, deps) -> None:
 
 
 class IndexerTestCase(unittest.IsolatedAsyncioTestCase):
-    async def _run(self, deps, source, embedder=None):
-        return await self._run_sources(deps, [source], embedder=embedder)
+    async def _run(self, deps, source, embedder=None, paced=False):
+        return await self._run_sources(deps, [source], embedder=embedder, paced=paced)
 
-    async def _run_sources(self, deps, sources, embedder=None):
+    async def _run_sources(self, deps, sources, embedder=None, paced=False):
         indexer = _indexer(deps, sources)
         self.indexer = indexer
         embedder = embedder or _embedder_mock()
         self.embedder = embedder
         with patch("itop_ai_assistant.vector.use_cases.indexer.EmbeddingsClient", return_value=embedder):
-            return await indexer.sweep_once()
+            return await indexer.sweep_once(paced=paced)
 
 
 class TestSkips(IndexerTestCase):
@@ -980,6 +980,53 @@ class TestFamilyPacing(IndexerTestCase):
         await self._run(deps, FakeTicketSource([_record(1)]))
 
         self.assertIsNone(await deps.vector_sync.get_family_swept("tickets"))
+
+
+class TestSweepPacing(IndexerTestCase):
+    """TASK-075: the system-wide interval is counted from the last pass, which
+    is a marker in Redis — a loop's own cadence lives in one process, so a
+    restart used to start a pass whatever the interval had left to run."""
+
+    async def test_a_timer_tick_inside_the_interval_is_skipped(self):
+        deps = _deps_mock()
+        await deps.vector_sync.set_family_reconcile(_FAMILY, datetime.now(UTC))  # isolate the sweep phase
+        source = FakeTicketSource([_record(1)])
+
+        first = await self._run(deps, source)  # stamps the marker
+        second = await self._run(deps, source, paced=True)
+
+        self.assertEqual(first.status, "ok")
+        self.assertIsNotNone(await deps.vector_sync.get_swept())
+        self.assertEqual(second.status, "skipped")
+        self.assertIn("sweep interval", second.skip_reason)
+        # The skipped pass reached neither the source nor the journal
+        self.assertEqual(source.prepare_calls, 1)
+        self.assertEqual(len(await deps.vector_journal.recent()), 1)
+
+    async def test_a_marker_ahead_of_the_clock_does_not_hold_the_sweep(self):
+        """The host's clock can step backwards under a marker that has no TTL.
+        Waiting the difference out would be an outage as long as the step."""
+        deps = _deps_mock()
+        await deps.vector_sync.set_family_reconcile(_FAMILY, datetime.now(UTC))
+        await deps.vector_sync.set_swept(datetime.now(UTC) + timedelta(hours=1))
+        source = FakeTicketSource([_record(1)])
+
+        report = await self._run(deps, source, paced=True)
+
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(report.objects_seen, 1)
+
+    async def test_a_pending_backfill_is_never_paced_out(self):
+        deps = _deps_mock()
+        await deps.vector_sync.set_family_reconcile(_FAMILY, datetime.now(UTC))
+        await deps.vector_sync.set_swept(datetime.now(UTC))
+        await deps.vector_sync.request_reindex()
+        source = FakeTicketSource([_record(1)])
+
+        report = await self._run(deps, source, paced=True)
+
+        self.assertEqual(report.kind, "backfill")
+        self.assertEqual(report.objects_seen, 1)
 
 
 class TestSweepIsCounted(IndexerTestCase):

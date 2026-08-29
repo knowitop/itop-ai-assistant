@@ -29,13 +29,15 @@ RUN_INDEX_KEY = "runs:index"
 RUN_INDEX_MAX_ENTRIES = 1000
 RUN_INDEX_SCAN_WINDOW = 500
 
-# vector/state/sync_state.py — sweep cursors, reconcile clock, reindex flag, sweep lock.
+# vector/state/sync_state.py — sweep cursors, last-pass and reconcile clocks,
+# reindex flag, sweep lock.
 # No TTL on cursors/flags: losing one is not an error but costs a full backfill
 # (ADR-006 measures it in hours), so it is not treated like ticket/run state.
 VECTOR_PREFIX = "vector:"
 VECTOR_CURSOR_PREFIX = f"{VECTOR_PREFIX}cursor:"
 VECTOR_FAMILY_SWEPT_PREFIX = f"{VECTOR_PREFIX}family-swept:"
 VECTOR_FAMILY_RECONCILE_PREFIX = f"{VECTOR_PREFIX}family-reconcile:"
+VECTOR_SWEPT_KEY = f"{VECTOR_PREFIX}swept"
 VECTOR_RECONCILE_KEY = f"{VECTOR_PREFIX}reconcile"
 VECTOR_REINDEX_KEY = f"{VECTOR_PREFIX}reindex"
 VECTOR_SWEEP_LOCK_KEY = f"{VECTOR_PREFIX}sweep:lock"

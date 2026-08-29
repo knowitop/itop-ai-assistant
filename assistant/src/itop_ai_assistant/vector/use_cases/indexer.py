@@ -9,6 +9,13 @@ may not guarantee ordering, so the cursor advances once per *completed class
 pass* (max last_update seen), never per page; a crashed pass simply
 re-reads, which the hash-guard makes cheap.
 
+The interval is counted from the last pass rather than from the start of the
+process: a loop's cadence lives in one process, and a service restarted before
+the interval was up used to sweep again immediately, however often it was
+restarted. The marker (`VectorSyncState.get_swept`) is what a timer tick is
+paced against; a requested backfill, "Index now" and the CLI go through
+regardless.
+
 Backfill is the same code path with cursors reset, requested by a flag in
 Redis (`vector/state/sync_state.py`) rather than by a flag in memory. A weekly
 reconciliation pass deletes chunks of objects that vanished from their
@@ -146,9 +153,17 @@ def register_vector_sweep(
     async def interval() -> float:
         return (await config_store.get("vector", VectorConfig)).sweep_interval_seconds
 
+    indexer = VectorIndexer(config_store, vector_sources, vector_store, vector_sync, vector_journal, counters)
+
+    async def tick() -> SweepReport:
+        # Which kind of tick this is, decided here and not by the scheduler:
+        # a tick that arrived because the wait ran out is subject to the
+        # interval, an "Index now" is precisely the request to ignore it.
+        return await indexer.tick(paced=not tasks.was_woken(SWEEP_TASK))
+
     tasks.add(
         SWEEP_TASK,
-        VectorIndexer(config_store, vector_sources, vector_store, vector_sync, vector_journal, counters).tick,
+        tick,
         interval=interval,
         default_interval=VectorConfig().sweep_interval_seconds,
     )
@@ -185,8 +200,8 @@ class VectorIndexer:
         self._counters = counters
         self._sources = list(sources) if sources is not None else None
 
-    async def tick(self) -> SweepReport:
-        report = await self.sweep_once()
+    async def tick(self, *, paced: bool = False) -> SweepReport:
+        report = await self.sweep_once(paced=paced)
         if report.status == "error":
             logger.warning(f"vector sweep finished with errors: {'; '.join(report.errors)}")
         return report
@@ -197,7 +212,11 @@ class VectorIndexer:
         thanks to the hash-guard, and reconciliation cleans orphans."""
         await self._vector_sync.request_reindex()
 
-    async def sweep_once(self) -> SweepReport:
+    async def sweep_once(self, *, paced: bool = False) -> SweepReport:
+        """`paced` subjects the pass to `sweep_interval_seconds` counted from
+        the last one, wherever it ran — the loop under the scheduler passes it,
+        every hand-driven caller (the CLI, "Index now") does not, because
+        calling this by hand *is* the request for a pass."""
         if not self._vector_store.configured:
             return SweepReport(kind="sweep", status="skipped", skip_reason="qdrant_url is not set")
         vector_cfg = await self._config_store.get("vector", VectorConfig)
@@ -207,6 +226,17 @@ class VectorIndexer:
         model = emb_cfg.model
         if not emb_cfg.base_url or not model:
             return SweepReport(kind="sweep", status="skipped", skip_reason="embeddings endpoint is not configured")
+        if paced and (skip_reason := await self._too_soon(vector_cfg)) is not None:
+            # Before the lock, so a paced-out tick leaves no `index_journal`
+            # entry (opened in `_sweep_locked`): a restart must not be able to
+            # push real passes out of the journal's capped window. Which is
+            # also why it is logged here and not off the returned status in
+            # `tick()`: the journal cannot say why the Vector page shows no
+            # new run, and the other skips ("not configured", "disabled") hold
+            # for every tick a deployment ever runs, so reporting those the
+            # same way would be a log line a minute.
+            logger.info(f"vector sweep skipped: {skip_reason}")
+            return SweepReport(kind="sweep", status="skipped", skip_reason=skip_reason)
 
         async with self._vector_sync.sweep_lock() as locked:
             if not locked:
@@ -223,10 +253,40 @@ class VectorIndexer:
         await self._counters.bump(Counter.VECTOR_CHUNKS_EMBEDDED, report.chunks_embedded)
         return report
 
+    async def _too_soon(self, cfg: VectorConfig) -> str | None:
+        """Why a timer tick should not sweep yet, or None if it should.
+
+        A requested backfill is never held back: the administrator asked for
+        it, and the flag outlives the process it was asked in, so the tick
+        that finds it standing is the one that has to honour it.
+        """
+        last = await self._vector_sync.get_swept()
+        if last is None or await self._vector_sync.reindex_pending():
+            return None
+        elapsed = datetime.now(UTC) - last
+        # A marker ahead of the clock sweeps now rather than waiting the
+        # difference out: the host's clock can step backwards (an NTP
+        # correction, a restored snapshot), and the marker has no TTL to
+        # expire on its own — held against a negative elapsed, the gate would
+        # close every tick until wall-clock time caught up with it.
+        if elapsed < timedelta(0) or elapsed >= timedelta(seconds=cfg.sweep_interval_seconds):
+            return None
+        return (
+            f"the last pass started {int(elapsed.total_seconds())}s ago, "
+            f"inside the {cfg.sweep_interval_seconds}s sweep interval"
+        )
+
     async def _sweep_locked(
         self, store: ChunkStore, cfg: VectorConfig, emb_cfg: EmbeddingsConfig, model: str
     ) -> SweepReport:
         started_at = datetime.now(UTC)
+        # Stamped at the start and not on completion, so that a pass killed
+        # halfway — a restart, a crash — still counts as one. Otherwise the
+        # defect this gate exists for survives in a narrower form: a container
+        # restarted mid-backfill would sweep again on every start. Nothing is
+        # lost by the delay, because the per-class cursors survive a restart on
+        # their own; the pass resumes at most one interval later.
+        await self._vector_sync.set_swept(started_at)
         full = await self._vector_sync.reindex_pending()
         report = SweepReport(kind="backfill" if full else "sweep", status="ok")
         journal_id = await self._journal_start(report.kind)
@@ -264,12 +324,13 @@ class VectorIndexer:
                 if not source.classes:
                     continue
                 # Only a family with its *own* interval gets paced against
-                # its last real pass — the scheduler's own tick cadence
-                # already enforces the system-wide interval, so gating an
-                # un-overridden family here too would double up on the same
-                # value and could skip an out-of-band tick ("Index now", or
-                # the scheduler firing a hair early) that arrives before a
-                # full system interval has elapsed since the last one.
+                # its last real pass — the system-wide interval is enforced
+                # before the pass ever starts (the scheduler's cadence, and
+                # `_too_soon` across restarts), so gating an un-overridden
+                # family here too would double up on the same value and could
+                # skip an out-of-band tick ("Index now", or the scheduler
+                # firing a hair early) that arrives before a full system
+                # interval has elapsed since the last one.
                 if not full and family_cfg.sweep_interval_seconds is not None:
                     last_swept = await self._vector_sync.get_family_swept(family)
                     if last_swept is not None and started_at - last_swept < timedelta(

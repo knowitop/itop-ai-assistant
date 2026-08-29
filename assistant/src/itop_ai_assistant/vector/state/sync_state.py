@@ -27,6 +27,7 @@ from itop_ai_assistant.util.redis_keyspace import (
     VECTOR_RECONCILE_KEY,
     VECTOR_REINDEX_KEY,
     VECTOR_SWEEP_LOCK_KEY,
+    VECTOR_SWEPT_KEY,
 )
 from itop_ai_assistant.util.redis_keyspace import (
     VECTOR_SWEEP_LOCK_RENEW_INTERVAL_SECONDS as RENEW_INTERVAL_SECONDS,
@@ -39,7 +40,8 @@ logger = logging.getLogger(__name__)
 
 
 class VectorSyncState:
-    """Sweep cursors, the reconciliation clock and the pending-backfill flag."""
+    """Sweep cursors, the pass and reconciliation clocks, and the
+    pending-backfill flag."""
 
     def __init__(self, redis: Redis) -> None:
         self._redis = redis
@@ -67,6 +69,21 @@ class VectorSyncState:
         if keys:
             await self._redis.delete(*keys)
         await self._redis.delete(VECTOR_REINDEX_KEY)
+
+    async def get_swept(self) -> datetime | None:
+        """When a sweep pass last *started*, anywhere in the deployment. This
+        is what paces the sweep across a restart: the loop's own cadence lives
+        in a process, so without this marker every start of the service ran a
+        pass whatever the interval had left to run.
+
+        Deployment-wide, unlike `get_family_swept`, which paces one family
+        against its own interval — the two answer different questions and both
+        are stamped by the same pass.
+        """
+        return _parse(await self._redis.get(VECTOR_SWEPT_KEY))
+
+    async def set_swept(self, when: datetime) -> None:
+        await self._redis.set(VECTOR_SWEPT_KEY, when.isoformat())
 
     def _family_swept_key(self, family: str) -> str:
         return f"{VECTOR_FAMILY_SWEPT_PREFIX}{family}"

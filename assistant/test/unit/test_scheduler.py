@@ -114,6 +114,46 @@ class TestControl(SchedulerTestCase):
         await ticker.wait_for(2)
         self.assertEqual(ticker.calls, 2)
 
+    async def test_a_tick_can_tell_a_wake_from_the_timer(self):
+        """What the vector sweep reads to let "Index now" through a pacing
+        gate a timer tick is subject to."""
+        ticker = Ticker()
+        seen: list[bool] = []
+
+        async def tick() -> None:
+            seen.append(self.tasks.was_woken("probe"))
+            await ticker.tick()
+
+        self.tasks.add("probe", tick, self._interval(3600), default_interval=3600)
+        self.tasks.start()
+        await ticker.wait_for(1)
+
+        self.tasks.wake("probe")
+        await ticker.wait_for(2)
+
+        self.assertEqual(seen, [False, True])
+
+    async def test_a_wake_delivered_to_a_stopped_loop_does_not_survive_the_restart(self):
+        """Otherwise the first tick after a start reads as requested and the
+        vector sweep runs unpaced — exactly what the pacing gate removes."""
+        ticker = Ticker()
+        seen: list[bool] = []
+
+        async def tick() -> None:
+            seen.append(self.tasks.was_woken("probe"))
+            await ticker.tick()
+
+        self.tasks.add("probe", tick, self._interval(3600), default_interval=3600)
+        self.tasks.start()
+        await ticker.wait_for(1)
+        await self.tasks.stop()
+
+        self.tasks.wake("probe")
+        self.tasks.start()
+        await ticker.wait_for(2)
+
+        self.assertEqual(seen, [False, False])
+
     async def test_wake_reports_an_unknown_task(self):
         self.assertFalse(self.tasks.wake("nope"))
 
