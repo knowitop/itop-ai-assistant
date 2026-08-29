@@ -49,6 +49,13 @@ _VECTOR_CFG = VectorConfig(
 _EMB_CFG = EmbeddingsConfig(base_url="http://emb/v1", model="test-model", dimension=4)
 
 
+def _switched_off() -> VectorConfig:
+    """`_VECTOR_CFG` with its families switched off — everything else about
+    them identical, so a test can only be reading `enabled`."""
+    families = {name: cfg.model_copy(update={"enabled": False}) for name, cfg in _VECTOR_CFG.families.items()}
+    return _VECTOR_CFG.model_copy(update={"families": families})
+
+
 def _flat(calls: list[list]) -> list:
     """The indexer calls a write op once per pending object, empty list
     included when that object had nothing for that particular bucket — flatten
@@ -139,6 +146,7 @@ class FakeChunkStore:
         self.delete_object_return = 3  # matches the previous mock's fixed return value
         self.list_object_ids_calls = 0
         self.list_object_ids_side_effect = None
+        self.ensure_version_calls: list[str] = []
         self.ensure_version_error: Exception | None = None
         # Objects whose write blows up — one oversized object among healthy ones.
         self.upsert_error_ids: set[int] = set()
@@ -147,6 +155,7 @@ class FakeChunkStore:
         self.ensure_version_errors: dict[str, Exception] = {}
 
     async def ensure_version(self, family, model, dim, *, filter_keys=()) -> IndexMeta:
+        self.ensure_version_calls.append(family)
         if family in self.ensure_version_errors:
             raise self.ensure_version_errors[family]
         if self.ensure_version_error:
@@ -323,6 +332,20 @@ class TestSkips(IndexerTestCase):
         self.assertEqual(report.objects_seen, 0)
         self.assertEqual(source.prepare_calls, 0)
 
+    async def test_a_switched_off_family_is_skipped_before_prepare(self):
+        # Not a half-pass: the family is left exactly as it was, so switching
+        # it back on resumes the increment instead of rebuilding it.
+        store = FakeChunkStore()
+        deps = _deps_mock(vector_cfg=_switched_off(), store=store)
+        source = FakeTicketSource([_record(1)])
+        report = await self._run(deps, source)
+
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(report.objects_seen, 0)
+        self.assertEqual(source.prepare_calls, 0)
+        self.assertEqual(store.ensure_version_calls, [])
+        self.assertIsNone(await deps.vector_sync.get_family_swept(_FAMILY))
+
     async def test_class_not_in_family_config_is_skipped_after_prepare(self):
         # Unlike a whole unrecognized family, a class the family's own config
         # does not list is only discovered after the family itself has
@@ -424,7 +447,7 @@ class TestMultiFamily(IndexerTestCase):
         store = FakeChunkStore()
         store.ensure_version_error = FingerprintMismatchError("dim changed")
         deps = _deps_mock(vector_cfg=cfg, store=store)
-        await deps.vector_sync.set_reconcile(datetime.now(UTC))
+        await deps.vector_sync.set_family_reconcile(_FAMILY, datetime.now(UTC))
         source = FakeTicketSource([_record(1)], classes=("UserRequest", "Incident"))
 
         report = await self._run(deps, source)
@@ -510,7 +533,7 @@ class TestSweep(IndexerTestCase):
         cursor = _NOW
         deps = _deps_mock()
         await deps.vector_sync.set_cursor("UserRequest", cursor)
-        await deps.vector_sync.set_reconcile(datetime.now(UTC))  # reconcile not due
+        await deps.vector_sync.set_family_reconcile(_FAMILY, datetime.now(UTC))  # reconcile not due
         source = FakeTicketSource([])
         await self._run(deps, source)
 
@@ -859,7 +882,7 @@ class TestFamilyPacing(IndexerTestCase):
         cfg = _VECTOR_CFG.model_copy(deep=True)
         cfg.families["tickets"].sweep_interval_seconds = 3600
         deps = _deps_mock(vector_cfg=cfg)
-        await deps.vector_sync.set_reconcile(datetime.now(UTC))  # isolate the sweep phase
+        await deps.vector_sync.set_family_reconcile(_FAMILY, datetime.now(UTC))  # isolate the sweep phase
         await deps.vector_sync.set_family_swept("tickets", datetime.now(UTC))
         source = FakeTicketSource([_record(1)])
 
@@ -873,7 +896,7 @@ class TestFamilyPacing(IndexerTestCase):
         cfg = _VECTOR_CFG.model_copy(deep=True)
         cfg.families["tickets"].sweep_interval_seconds = 60
         deps = _deps_mock(vector_cfg=cfg)
-        await deps.vector_sync.set_reconcile(datetime.now(UTC))
+        await deps.vector_sync.set_family_reconcile(_FAMILY, datetime.now(UTC))
         await deps.vector_sync.set_family_swept("tickets", datetime.now(UTC) - timedelta(hours=1))
         source = FakeTicketSource([_record(1)])
 
@@ -889,7 +912,7 @@ class TestFamilyPacing(IndexerTestCase):
         # scheduler firing a hair early) silently returns zero objects even
         # though nothing about this family was ever slowed down on purpose.
         deps = _deps_mock()
-        await deps.vector_sync.set_reconcile(datetime.now(UTC))
+        await deps.vector_sync.set_family_reconcile(_FAMILY, datetime.now(UTC))
         await deps.vector_sync.set_family_swept("tickets", datetime.now(UTC))
         source = FakeTicketSource([_record(1)])
 
@@ -902,7 +925,7 @@ class TestFamilyPacing(IndexerTestCase):
         cfg = _VECTOR_CFG.model_copy(deep=True)
         cfg.families["tickets"].sweep_interval_seconds = 3600
         deps = _deps_mock(vector_cfg=cfg)
-        await deps.vector_sync.set_reconcile(datetime.now(UTC))
+        await deps.vector_sync.set_family_reconcile(_FAMILY, datetime.now(UTC))
         source = FakeTicketSource([_record(1)])
 
         report = await self._run(deps, source)
@@ -913,7 +936,7 @@ class TestFamilyPacing(IndexerTestCase):
         cfg = _VECTOR_CFG.model_copy(deep=True)
         cfg.families["tickets"].sweep_interval_seconds = 3600
         deps = _deps_mock(vector_cfg=cfg)
-        await deps.vector_sync.set_reconcile(datetime.now(UTC))
+        await deps.vector_sync.set_family_reconcile(_FAMILY, datetime.now(UTC))
         await deps.vector_sync.set_family_swept("tickets", datetime.now(UTC))
         await deps.vector_sync.request_reindex()
         source = FakeTicketSource([_record(1)])
@@ -925,7 +948,7 @@ class TestFamilyPacing(IndexerTestCase):
 
     async def test_family_swept_timestamp_is_set_after_a_successful_pass(self):
         deps = _deps_mock()
-        await deps.vector_sync.set_reconcile(datetime.now(UTC))
+        await deps.vector_sync.set_family_reconcile(_FAMILY, datetime.now(UTC))
 
         await self._run(deps, FakeTicketSource([_record(1)]))
 
@@ -1065,10 +1088,44 @@ class TestReconciliation(IndexerTestCase):
         self.assertIn("reconcile", kinds)
         self.assertIsNotNone(await deps.vector_sync.get_reconcile())
 
+    async def test_a_switched_off_family_is_not_reconciled(self):
+        # The sweep no longer refreshes it, but the source still answers
+        # find_existing_ids — reconciling it would delete the very collection
+        # switching the family off is supposed to keep.
+        store = FakeChunkStore()
+        store.list_object_ids_side_effect = lambda family, cls, after, limit: [1, 2] if after == 0 else []
+        source = FakeTicketSource([])
+        source.find_existing_ids_result = {1}
+        deps = _deps_mock(vector_cfg=_switched_off(), store=store)
+        report = await self._run(deps, source)
+
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(store.delete_object_calls, [])
+
+    async def test_a_family_switched_back_on_is_due_at_once(self):
+        # The clock is per family, so passes over the families that kept
+        # running while this one was off do not count as reconciling it: the
+        # objects deleted in iTop meanwhile must not wait out another whole
+        # interval before they leave the collection.
+        store = FakeChunkStore()
+        store.list_object_ids_side_effect = lambda family, cls, after, limit: [1, 2] if after == 0 else []
+        source = FakeTicketSource([])
+        source.find_existing_ids_result = {1}
+        off = _deps_mock(vector_cfg=_switched_off(), store=store)
+        await self._run(off, source)
+        self.assertEqual(store.delete_object_calls, [])
+
+        back_on = _deps_mock(store=store)
+        back_on.vector_sync = off.vector_sync
+        report = await self._run(back_on, source)
+
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(store.delete_object_calls, [(_FAMILY, "UserRequest", 2)])
+
     async def test_not_due_when_recent(self):
         store = FakeChunkStore()
         deps = _deps_mock(store=store)
-        await deps.vector_sync.set_reconcile(datetime.now(UTC) - timedelta(days=1))
+        await deps.vector_sync.set_family_reconcile(_FAMILY, datetime.now(UTC) - timedelta(days=1))
         report = await self._run(deps, FakeTicketSource([]))
 
         self.assertEqual(report.status, "ok")

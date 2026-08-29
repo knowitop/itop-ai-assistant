@@ -79,6 +79,12 @@ class FamilyConfig(BaseModel):
     without slowing everything else down.
     """
 
+    # Off = the sweep skips this family whole (no prepare, no ensure_version,
+    # no cursor touched), reconciliation leaves it alone, and a search over it
+    # is refused instead of answering from a collection nothing refreshes.
+    # The collection itself stays: switching back on resumes the increment
+    # where it stopped, dropping it is a separate manual operation.
+    enabled: bool = True
     # Classes this family indexes, each with its own relevance values and
     # chunk fragment settings. The family key must match a registered
     # `VectorSource.name` (`content_sources/registry.py`) to do anything —

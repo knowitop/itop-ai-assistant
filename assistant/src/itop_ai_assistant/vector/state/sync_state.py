@@ -22,6 +22,7 @@ from redis.asyncio import Redis
 
 from itop_ai_assistant.util.redis_keyspace import (
     VECTOR_CURSOR_PREFIX,
+    VECTOR_FAMILY_RECONCILE_PREFIX,
     VECTOR_FAMILY_SWEPT_PREFIX,
     VECTOR_RECONCILE_KEY,
     VECTOR_REINDEX_KEY,
@@ -82,10 +83,27 @@ class VectorSyncState:
         await self._redis.set(self._family_swept_key(family), when.isoformat())
 
     async def get_reconcile(self) -> datetime | None:
+        """When the reconcile phase last ran, for `/status` to display. What
+        is *due* is decided per family — see `get_family_reconcile`."""
         return _parse(await self._redis.get(VECTOR_RECONCILE_KEY))
 
     async def set_reconcile(self, when: datetime) -> None:
         await self._redis.set(VECTOR_RECONCILE_KEY, when.isoformat())
+
+    def _family_reconcile_key(self, family: str) -> str:
+        return f"{VECTOR_FAMILY_RECONCILE_PREFIX}{family}"
+
+    async def get_family_reconcile(self, family: str) -> datetime | None:
+        """When this family's orphans were last swept out. Per family and not
+        one clock for the deployment, because a family can be switched off for
+        longer than `reconcile_interval_days`: a global marker would keep
+        being stamped by the families still running, and the one coming back
+        on would wait out another whole interval with objects deleted in iTop
+        meanwhile still in its collection."""
+        return _parse(await self._redis.get(self._family_reconcile_key(family)))
+
+    async def set_family_reconcile(self, family: str, when: datetime) -> None:
+        await self._redis.set(self._family_reconcile_key(family), when.isoformat())
 
     async def request_reindex(self) -> None:
         """Mark a full backfill as pending. Idempotent; cleared by reset_cursors."""

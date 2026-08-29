@@ -11,7 +11,7 @@ import fakeredis
 from itop_ai_assistant.config import EmbeddingsConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.state.counters import Counter, DailyCounters
-from itop_ai_assistant.vector.config import VectorConfig
+from itop_ai_assistant.vector.config import FamilyConfig, VectorConfig
 from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchQuery
 from itop_ai_assistant.vector.ports.store import DateRange, SearchHit
 from itop_ai_assistant.vector.use_cases.search import SearchUnavailable, SimilarSearch, UnknownFamily
@@ -19,6 +19,12 @@ from itop_ai_assistant.vector.use_cases.search import SearchUnavailable, Similar
 _NOW = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
 _FAMILY = "tickets"
 _ENGINEER = Principal.delegated("tok", login="ivanov", name="Ivan Ivanov")
+
+
+def _family_switched_off() -> VectorConfig:
+    """Indexing on for the deployment, off for `_FAMILY` — the shape the
+    per-family gate exists for."""
+    return VectorConfig(enabled=True, families={_FAMILY: FamilyConfig(enabled=False)})
 
 
 def _hit(obj_id: int, score: float, obj_class: str = "UserRequest") -> SearchHit:
@@ -280,12 +286,14 @@ class TestSimilarSearch(_SearchTestCase):
 
     async def test_the_family_travels_with_the_query(self):
         # TASK-031: the set is part of the scenario, not bound at construction
-        # — one `SimilarSearch` can serve queries against different families
-        search, store, _, _ = self._search([], families=(_FAMILY, "kb_articles"))
+        # — one `SimilarSearch` can serve queries against different families.
+        # Both are families the default config indexes: a search names a
+        # corpus the deployment actually keeps, or it is refused.
+        search, store, _, _ = self._search([], families=(_FAMILY, "faq"))
 
-        await search.find(_query(family="kb_articles"), _ENGINEER)
+        await search.find(_query(family="faq"), _ENGINEER)
 
-        self.assertEqual(store.search.await_args.kwargs["family"], "kb_articles")
+        self.assertEqual(store.search.await_args.kwargs["family"], "faq")
 
 
 class TestFindStats(_SearchTestCase):
@@ -358,6 +366,28 @@ class TestAvailability(_SearchTestCase):
 
         self.assertFalse(await search.available())
 
+    async def test_unavailable_for_a_switched_off_family(self):
+        search, _, _, _ = self._search([], vector_cfg=_family_switched_off())
+
+        self.assertFalse(await search.available(_FAMILY))
+
+    async def test_unavailable_for_a_family_nothing_is_registered_for(self):
+        """A config entry outliving its source (renamed in the code, written
+        past the UI) must close the gate, not open it onto `UnknownFamily`:
+        that exception is not a `ToolRejection`, so it would fail the whole
+        run of the consumer that offered the tool."""
+        search, _, _, _ = self._search([], families=("faq",))
+
+        self.assertFalse(await search.available(_FAMILY))
+
+    async def test_the_deployment_gate_ignores_the_family(self):
+        """Without a family the question is "can this deployment search at
+        all" — telemetry asks it that way, and one corpus switched off is not
+        an answer to it."""
+        search, _, _, _ = self._search([], vector_cfg=_family_switched_off())
+
+        self.assertTrue(await search.available())
+
 
 class TestSearchesAreCounted(_SearchTestCase):
     """Whether the vector layer earns its complexity is answered here or
@@ -423,6 +453,27 @@ class TestSearchUnavailable(_SearchTestCase):
             await search.find(_query(), _ENGINEER)
 
         self.assertIn("Embeddings", str(raised.exception))
+
+    async def test_raises_for_a_switched_off_family(self):
+        """Defence in depth: `available(family)` is the gate a consumer
+        checks, this is the answer to one that did not."""
+        search, _, _, _ = self._search([_hit(1, 0.9)], vector_cfg=_family_switched_off())
+
+        with self.assertRaises(SearchUnavailable) as raised:
+            await search.find(_query(), _ENGINEER)
+
+        self.assertIn(_FAMILY, str(raised.exception))
+        self.embedder_cls.assert_not_called()
+
+    async def test_raises_for_a_family_the_config_has_no_entry_for(self):
+        """A registered source the config says nothing about is one the sweep
+        skips too — the same frozen collection, reached the other way."""
+        search, _, _, _ = self._search([_hit(1, 0.9)], vector_cfg=VectorConfig(enabled=True, families={}))
+
+        with self.assertRaises(SearchUnavailable) as raised:
+            await search.find(_query(), _ENGINEER)
+
+        self.assertIn(_FAMILY, str(raised.exception))
 
     async def test_unavailable_before_a_client_is_created(self):
         search, _, _, _ = self._search([], store_configured=False)

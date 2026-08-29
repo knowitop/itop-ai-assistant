@@ -152,6 +152,11 @@ async def vector_status(
                 entry: dict = {
                     "family": family,
                     "configured": family in configured_families,
+                    # Both ways a family stops being indexed read the same
+                    # here: no entry in the config and `enabled: false` freeze
+                    # the collection identically (`SimilarSearch`'s own
+                    # family gate makes the same pair).
+                    "enabled": (family_cfg := vector_cfg.families.get(family)) is not None and family_cfg.enabled,
                     "active_version": None,
                     "model": None,
                     "dim": None,

@@ -31,6 +31,10 @@ interface FamilyIndexInfo {
   // false = a family Qdrant still has data for, but no source in the
   // current registry claims anymore — a decommission candidate.
   configured: boolean;
+  // false = switched off on the Indexed classes tab (or missing from the
+  // config entirely): the collection is kept but no longer swept, and
+  // searches over it are refused.
+  enabled: boolean;
   active_version: number | null;
   model: string | null;
   dim: number | null;
@@ -109,6 +113,7 @@ interface ClassCfg {
 // together because both are about the same collection (TASK-021).
 interface FamilyCfg {
   name: string;
+  enabled: boolean;
   sweepIntervalSeconds: number | string;
   logEntriesPerChunk: number | string;
   classes: ClassCfg[];
@@ -321,6 +326,14 @@ function VectorStatusPanel() {
                       {!f.configured && (
                         <Badge color="gray" variant="light" title={t('vector.family_not_configured_hint')}>
                           {t('vector.badge_family_not_configured')}
+                        </Badge>
+                      )}
+                      {/* Only for a family that is still registered — an
+                          unregistered one already says so above, and two
+                          grey badges in a row explain nothing twice. */}
+                      {f.configured && !f.enabled && (
+                        <Badge color="gray" variant="light" title={t('vector.family_disabled_hint')}>
+                          {t('vector.badge_family_disabled')}
                         </Badge>
                       )}
                     </Group>
@@ -571,6 +584,7 @@ function ClassesSettingsForm() {
       (data.values.families as Record<
         string,
         {
+          enabled?: boolean;
           classes?: Record<string, { index_values?: string[]; chunks?: Record<string, ChunkCfg> }>;
           sweep_interval_seconds?: number;
           log_entries_per_chunk?: number;
@@ -587,6 +601,9 @@ function ClassesSettingsForm() {
         const f = saved[name] ?? {};
         return {
           name,
+          // Absent means the model's default (on), not "switched off" — a
+          // family saved before this setting existed keeps indexing.
+          enabled: f.enabled ?? true,
           sweepIntervalSeconds: f.sweep_interval_seconds ?? '',
           logEntriesPerChunk: f.log_entries_per_chunk ?? '',
           classes: Object.entries(f.classes ?? {}).map(([cname, ccfg]) => ({
@@ -650,7 +667,9 @@ function ClassesSettingsForm() {
     for (const f of families) {
       const classes: Record<string, unknown> = {};
       for (const c of f.classes) classes[c.name] = { index_values: c.indexValues, chunks: c.chunks };
-      const entry: Record<string, unknown> = { classes };
+      // Always sent, unlike the two overrides below: a boolean has no
+      // "leave the stored value alone" state to express by omitting it.
+      const entry: Record<string, unknown> = { enabled: f.enabled, classes };
       if (f.sweepIntervalSeconds !== '') entry.sweep_interval_seconds = Number(f.sweepIntervalSeconds);
       if (f.logEntriesPerChunk !== '') entry.log_entries_per_chunk = Number(f.logEntriesPerChunk);
       familiesPayload[f.name] = entry;
@@ -750,6 +769,12 @@ function FamilyCard({
     <Fieldset legend={t(labelKey('source', family.name), { defaultValue: family.name })}>
       <Stack gap="sm">
         {source === null && <Alert color="orange">{t('vector.family_source_unknown')}</Alert>}
+        <Switch
+          label={t('vector.field_family_enabled')}
+          description={t('vector.field_family_enabled_desc')}
+          checked={family.enabled}
+          onChange={(e) => onFieldChange({ enabled: e.currentTarget.checked })}
+        />
         <Group grow>
           <NumberInput
             label={t('vector.field_family_sweep_interval')}

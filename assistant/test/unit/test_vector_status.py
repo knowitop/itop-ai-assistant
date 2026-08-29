@@ -272,6 +272,7 @@ class TestVectorStatus(VectorStatusTestCase):
         self.assertEqual(set(families), {"tickets", "faq"})
         for entry in families.values():
             self.assertTrue(entry["configured"])
+            self.assertTrue(entry["enabled"])
             self.assertIsNone(entry["active_version"])
             self.assertIsNone(entry["rows"])
 
@@ -756,7 +757,10 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
         _install(self.client, deps)
-        self.client.patch("/api/setup/vector", json={"enabled": True})
+        # The family needs an entry of its own, not just a registered source:
+        # one missing from `families` is one the sweep does not index, and the
+        # search refuses those the same way it refuses a switched-off one.
+        self.client.patch("/api/setup/vector", json={"enabled": True, "families": {"kb_articles": {"classes": {}}}})
 
         async def _seed() -> None:
             await deps.vector.vector_store.ensure_version("kb_articles", "bge-m3", 4)

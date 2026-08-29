@@ -130,6 +130,26 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   by someone else. `available()` is the availability gate a module checks
   before offering a tool; `find()` on an unavailable deployment raises
   `SearchUnavailable` instead of quietly returning nothing.
+  **The gate answers per family too** (TASK-070): `available()` without an
+  argument asks about the deployment (telemetry does), `available(family)`
+  also asks whether that corpus is indexed — one method with an optional
+  argument, because the three deployment checks have to answer in both cases.
+  A family switched off (`FamilyConfig.enabled`) or missing from
+  `vector.families` reads the same everywhere: the sweep and reconciliation
+  skip it, `find()` refuses it. The refusal comes **after** the source lookup,
+  so a family name nothing is registered for keeps answering `UnknownFamily`
+  (404) rather than "not indexed" (409) — and `available(family)` does that
+  same lookup, so the two halves `find()` splits into two exceptions collapse
+  into one False. A gate that only read `vector.families` would open on a
+  config entry outliving its source (renamed in the code, written past the
+  UI) and hand the consumer a tool whose only outcome is `UnknownFamily`,
+  which is not a `ToolRejection` and so fails the whole run.
+  Reconciliation's clock is **per family** too
+  (`VectorSyncState.get_family_reconcile`), for the same reason the sweep's
+  `family_swept` is: a single deployment-wide marker keeps being stamped by
+  the families still running while one is switched off, so the one coming
+  back on would wait out another `reconcile_interval_days` before its orphans
+  are swept. `get_reconcile` stays, as what `/status` displays.
 - **Neither `SimilarSearch` nor `VectorIndexer` imports
   `content_sources.registry` any more (TASK-034)** — `assembly.py::build()` is
   the only caller of `build_vector_sources()` left in the process (TASK-037;

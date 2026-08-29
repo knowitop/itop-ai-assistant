@@ -244,6 +244,15 @@ class VectorIndexer:
                 if family_cfg is None:
                     logger.warning(f"vector sweep: no config entry for family {family!r} — skipping")
                     continue
+                if not family_cfg.enabled:
+                    # Debug, unlike the warning above: a family with no config
+                    # entry is registry and config out of step, this one is
+                    # what the administrator asked for. Before `prepare()`,
+                    # `ensure_version` and `set_family_swept` alike — a
+                    # switched-off family keeps the cursors it had, so
+                    # switching it back on resumes instead of rebuilding.
+                    logger.debug(f"vector sweep: family {family!r} is switched off — skipping")
+                    continue
                 if not source.classes:
                     continue
                 # Only a family with its *own* interval gets paced against
@@ -300,8 +309,10 @@ class VectorIndexer:
                         logger.exception(f"vector sweep: class {obj_class} failed")
                         report.errors.append(f"{obj_class}: {e}")
                 await self._vector_sync.set_family_swept(family, started_at)
-            if not report.errors and await self._reconcile_due(cfg):
-                await self._reconcile(store, sources, cfg, report, ensure_prepared)
+            if not report.errors:
+                due = await self._families_to_reconcile(sources, cfg, datetime.now(UTC))
+                if due:
+                    await self._reconcile(store, sources, due, cfg, report, ensure_prepared)
         except Exception as e:
             logger.exception("vector sweep failed")
             report.errors.append(str(e))
@@ -451,14 +462,34 @@ class VectorIndexer:
         if max_seen is not None and max_seen != cursor:
             await self._vector_sync.set_cursor(obj_class, max_seen)
 
-    async def _reconcile_due(self, cfg: VectorConfig) -> bool:
-        last = await self._vector_sync.get_reconcile()
-        return last is None or datetime.now(UTC) - last >= timedelta(days=cfg.reconcile_interval_days)
+    async def _family_reconcile_due(self, family: str, cfg: VectorConfig, now: datetime) -> bool:
+        last = await self._vector_sync.get_family_reconcile(family)
+        return last is None or now - last >= timedelta(days=cfg.reconcile_interval_days)
+
+    async def _families_to_reconcile(
+        self, sources: Sequence[VectorSource[Any]], cfg: VectorConfig, now: datetime
+    ) -> set[str]:
+        """The families a reconcile pass would actually walk right now.
+
+        Asked before the phase starts so a tick where every family is either
+        switched off or not yet due skips it whole, journal entry included —
+        the same answer the single global clock used to give, minus the case
+        it got wrong.
+        """
+        due = set()
+        for source in sources:
+            family_cfg = cfg.families.get(source.name)
+            if family_cfg is None or not family_cfg.enabled or not source.classes:
+                continue
+            if await self._family_reconcile_due(source.name, cfg, now):
+                due.add(source.name)
+        return due
 
     async def _reconcile(
         self,
         store: ChunkStore,
         sources: Sequence[VectorSource[Any]],
+        due: set[str],
         cfg: VectorConfig,
         report: SweepReport,
         ensure_prepared: Callable[[VectorSource[Any]], Awaitable[None]],
@@ -466,9 +497,12 @@ class VectorIndexer:
         """Delete chunks of objects that no longer exist at their source
         (deleted or archived — invisible to the incremental sweep).
 
-        Runs on its own cadence (`reconcile_interval_days`), not the
-        per-family pacing the sweep above applies — every configured class of
-        every source is reconciled every time it is due."""
+        Walks the families `_families_to_reconcile` picked — a family the
+        sweep does not touch must not be reconciled either: nothing refreshes
+        its chunks, but the source still answers `find_existing_ids`, so a due
+        pass would delete the collection that family is supposed to keep. Each
+        family's clock is stamped as it finishes, so one that fails does not
+        cost the ones already walked their pass."""
         journal_id = await self._journal_start("reconcile")
         seen = deleted = 0
         status = "ok"
@@ -476,7 +510,7 @@ class VectorIndexer:
         try:
             for source in sources:
                 family = source.name
-                if family not in cfg.families or not source.classes:
+                if family not in due:
                     continue
                 await ensure_prepared(source)
                 for obj_class in source.classes:
@@ -491,6 +525,7 @@ class VectorIndexer:
                             deleted += await store.delete_object(family, obj_class, orphan)
                         after = ids[-1]
                         await asyncio.sleep(cfg.sweep_throttle_seconds)
+                await self._vector_sync.set_family_reconcile(family, datetime.now(UTC))
             await self._vector_sync.set_reconcile(datetime.now(UTC))
         except Exception as e:
             logger.exception("vector reconciliation failed")
