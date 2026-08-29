@@ -186,9 +186,13 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   (`_ObjectMetadata`, `vector/use_cases/indexer.py`). Rewrites are per-chunk, so an
   object-level value recomputed per chunk drifts apart between the chunks of
   one object — that is exactly how `created_at` broke. A source with no
-  creation date inherits the one already in the index (`ChunkDigest.created_at`);
-  the fallback to the sweep's clock fires once, at first indexing, and never
-  again.
+  creation date inherits the one already in the index (`ChunkDigest.created_at`),
+  and the fallback to the sweep's clock fires only where there is nothing to
+  inherit: at first indexing, and again for every object of a version being
+  rebuilt, since the digests read there are the new version's own and it
+  starts empty. For such a source `created_at` is a technical value — "when
+  this deployment indexed it", not the object's age — and a `created` filter
+  over that family means no more than that.
 - **A changed embeddings model rotates the index version; it does not wedge
   it** (TASK-074). `chunks_meta` carries a row per (family, version): the
   active one, plus — while the model is being changed — one `is_active=False`

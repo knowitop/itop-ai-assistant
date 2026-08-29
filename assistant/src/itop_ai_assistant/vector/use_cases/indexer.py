@@ -354,11 +354,11 @@ class VectorIndexer:
     ) -> None:
         """Switch the family over to the version this pass filled, or say why not.
 
-        Only a pass that walked every class of this family without an error
-        may switch: an error means some class is short of objects the active
-        version still has, and switching would delete them along with it. The
-        family keeps answering from the old version and the next pass fills
-        the same replacement further.
+        Only a pass that reported no error for this family may switch: an
+        error means some class is short of objects the active version still
+        has, and switching would delete them along with it. The family keeps
+        answering from the old version and the next pass fills the same
+        replacement further.
 
         "Without an error" is per family, not per pass — `tickets` failing
         must not hold back a replacement `kb_articles` has already finished,
@@ -366,6 +366,11 @@ class VectorIndexer:
         Objects the pass deliberately skipped (`objects_skipped`, TASK-073)
         are not errors and do not hold it back either: they are absent from
         the new version exactly as they would eventually be from the old one.
+        Neither does a class the config leaves out — no entry under this
+        family, or no chunk fragments chosen in it. Such a class is not walked
+        at all, and the version this pass filled holds nothing for it exactly
+        as a first indexing under the same config would hold nothing: the
+        switch is what finally drops the chunks an earlier config left behind.
         """
         if not clean:
             logger.warning(
