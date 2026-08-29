@@ -49,10 +49,12 @@ _SPARSE = "sparse"
 _SCROLL_PAGE = 256
 # Qdrant refuses a request larger than 32 MB (default service.max_request_size_mb),
 # and the sweep writes a whole object in one call — an object with a thousand
-# chunks would exceed it. A 4096-dimensional vector — the widest model in use
-# today — is ~85 KB of JSON, so this ceiling keeps a request around 11 MB, and
-# stays under 32 MB up to about 16384 dimensions.
-_UPSERT_BATCH = 128
+# chunks would exceed it. The batch is derived from the vector width rather
+# than fixed, because `EmbeddingsConfig.dimension` has no upper bound to keep
+# a constant in step with: it declares whatever the configured model returns.
+_UPSERT_REQUEST_BYTES = 8 * 1024 * 1024
+_BYTES_PER_DIMENSION = 21  # a float of this magnitude, as JSON
+_POINT_PAYLOAD_BYTES = 1024
 # The same ceiling for the calls that carry no vectors: a payload rewrite is
 # ~1 KB per point and a delete is a bare id, so they can go far wider.
 _PAYLOAD_BATCH = 1024
@@ -198,8 +200,8 @@ class QdrantChunkStore(ChunkStore):
     async def upsert_chunks(self, chunks: list[ChunkRecord], *, family: str, model: str, dim: int) -> int:
         """Idempotent insert-or-update by (obj_class, obj_id, chunk_kind, chunk_n).
 
-        Written in batches of `_UPSERT_BATCH` points: point ids are
-        deterministic, so a repeated batch overwrites itself and the split
+        Written in batches sized for `dim` (see `_upsert_batch`): point ids
+        are deterministic, so a repeated batch overwrites itself and the split
         costs nothing on the happy path. It does cost the all-or-nothing
         write an object used to get: if a later batch fails, the earlier ones
         stay committed and the object is searchable half-indexed until a
@@ -218,7 +220,7 @@ class QdrantChunkStore(ChunkStore):
             for c in chunks
         ]
         name = self.collection_name(family, meta.version)
-        for batch in _batches(points, _UPSERT_BATCH):
+        for batch in _batches(points, _upsert_batch(dim)):
             await self.client.upsert(collection_name=name, points=batch, wait=True)
         return len(points)
 
@@ -498,8 +500,18 @@ class QdrantChunkStore(ChunkStore):
             )
 
 
+def _upsert_batch(dim: int) -> int:
+    """How many points of this vector width fit in one request Qdrant accepts.
+
+    At the 1024 dimensions of a typical multilingual model this is a few
+    hundred points; a model an order of magnitude wider gets a proportionally
+    smaller batch instead of the same request growing past the 32 MB limit.
+    """
+    return max(1, _UPSERT_REQUEST_BYTES // (dim * _BYTES_PER_DIMENSION + _POINT_PAYLOAD_BYTES))
+
+
 def _batches[T](items: list[T], size: int) -> Iterator[list[T]]:
-    """Slice a write into requests Qdrant will accept — see `_UPSERT_BATCH`."""
+    """Slice a write into requests Qdrant will accept — see `_upsert_batch`."""
     for start in range(0, len(items), size):
         yield items[start : start + size]
 

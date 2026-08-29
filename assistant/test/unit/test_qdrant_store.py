@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from qdrant_client import models
 
+from itop_ai_assistant.vector.adapters import qdrant_store
 from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
 from itop_ai_assistant.vector.ports.store import (
     ChunkDigest,
@@ -221,8 +222,10 @@ class TestUpsert(QdrantStoreCase):
         # an object with a thousand chunks (a base64 attachment in the body).
         chunks = [_chunk(1, "body", n) for n in range(5)]
 
+        # A request budget that fits two of these points, whatever the width.
+        budget = 2 * (4 * qdrant_store._BYTES_PER_DIMENSION + qdrant_store._POINT_PAYLOAD_BYTES)
         with (
-            patch("itop_ai_assistant.vector.adapters.qdrant_store._UPSERT_BATCH", 2),
+            patch.object(qdrant_store, "_UPSERT_REQUEST_BYTES", budget),
             patch.object(self.store.client, "upsert", wraps=self.store.client.upsert) as upsert,
         ):
             written = await self.store.upsert_chunks(chunks, family=_FAMILY, model="test-model", dim=4)
@@ -230,6 +233,17 @@ class TestUpsert(QdrantStoreCase):
         self.assertEqual(upsert.call_count, 3)
         self.assertEqual(written, 5)
         self.assertEqual((await self.store.stats(_FAMILY)).rows, 5)
+
+    async def test_the_batch_shrinks_as_the_vector_widens(self):
+        # `EmbeddingsConfig.dimension` has no upper bound, so the batch has to
+        # come from the width rather than from a constant chosen for one model.
+        wide = qdrant_store._upsert_batch(16384)
+        self.assertLess(wide, qdrant_store._upsert_batch(1024))
+        self.assertGreaterEqual(wide, 1)
+        self.assertLessEqual(
+            wide * (16384 * qdrant_store._BYTES_PER_DIMENSION + qdrant_store._POINT_PAYLOAD_BYTES),
+            32 * 1024 * 1024,
+        )
 
     async def test_rewriting_the_same_chunk_updates_it(self):
         await self.store.upsert_chunks([_chunk(1, digest="old")], family=_FAMILY, model="test-model", dim=4)
