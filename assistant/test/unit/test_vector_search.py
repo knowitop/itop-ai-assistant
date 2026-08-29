@@ -13,7 +13,7 @@ from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.state.counters import Counter, DailyCounters
 from itop_ai_assistant.vector.config import FamilyConfig, VectorConfig
 from itop_ai_assistant.vector.ports.query import FindStats, ObjectHit, SearchQuery
-from itop_ai_assistant.vector.ports.store import DateRange, SearchHit
+from itop_ai_assistant.vector.ports.store import DateRange, IndexMeta, SearchHit
 from itop_ai_assistant.vector.use_cases.search import SearchUnavailable, SimilarSearch, UnknownFamily
 
 _NOW = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
@@ -25,6 +25,12 @@ def _family_switched_off() -> VectorConfig:
     """Indexing on for the deployment, off for `_FAMILY` — the shape the
     per-family gate exists for."""
     return VectorConfig(enabled=True, families={_FAMILY: FamilyConfig(enabled=False)})
+
+
+def _built_by(model: str, dim: int = 1024) -> IndexMeta:
+    """An index version with a fingerprint of its own — `bge-m3`/1024 is what
+    `_FakeConfigStore` configures, so anything else reads as a rebuild."""
+    return IndexMeta(family=_FAMILY, version=1, model=model, dim=dim)
 
 
 def _hit(obj_id: int, score: float, obj_class: str = "UserRequest") -> SearchHit:
@@ -98,10 +104,15 @@ class _SearchTestCase(unittest.IsolatedAsyncioTestCase):
         store_configured: bool = True,
         vector_cfg: VectorConfig | None = None,
         embeddings_cfg: EmbeddingsConfig | None = None,
+        active_meta: IndexMeta | None = None,
     ) -> tuple[SimilarSearch, MagicMock, MagicMock, _FakeSource]:
         store = MagicMock()
         store.configured = store_configured
         store.search = AsyncMock(return_value=hits)
+        # `None` — a family with no index version yet — is the shape that has
+        # no fingerprint to disagree with, so the model gate stays open and a
+        # test not about that gate needs to say nothing about it.
+        store.active_meta = AsyncMock(return_value=active_meta)
         embedder = MagicMock()
         embedder.embed = AsyncMock(return_value=[[1.0, 0.0]])
         embedder.aclose = AsyncMock()
@@ -380,6 +391,26 @@ class TestAvailability(_SearchTestCase):
 
         self.assertFalse(await search.available(_FAMILY))
 
+    async def test_unavailable_while_the_family_is_being_rebuilt(self):
+        """The index answering today was built by another model, so the sweep
+        is filling a replacement. Vectors of two models cannot be compared, so
+        the corpus is not searchable until it is."""
+        search, _, _, _ = self._search([], active_meta=_built_by("old-model"))
+
+        self.assertFalse(await search.available(_FAMILY))
+
+    async def test_available_when_the_index_was_built_by_the_configured_model(self):
+        search, _, _, _ = self._search([], active_meta=_built_by("bge-m3"))
+
+        self.assertTrue(await search.available(_FAMILY))
+
+    async def test_the_deployment_gate_ignores_a_rebuild(self):
+        """Same split as a switched-off family: "can this deployment search"
+        is not the question a rebuild of one corpus answers."""
+        search, _, _, _ = self._search([], active_meta=_built_by("old-model"))
+
+        self.assertTrue(await search.available())
+
     async def test_the_deployment_gate_ignores_the_family(self):
         """Without a family the question is "can this deployment search at
         all" — telemetry asks it that way, and one corpus switched off is not
@@ -463,6 +494,19 @@ class TestSearchUnavailable(_SearchTestCase):
             await search.find(_query(), _ENGINEER)
 
         self.assertIn(_FAMILY, str(raised.exception))
+        self.embedder_cls.assert_not_called()
+
+    async def test_raises_while_the_family_is_being_rebuilt(self):
+        """What the backend would answer here is a failure about vector
+        widths, somewhere inside a run. This is the same refusal a consumer
+        already knows how to take."""
+        search, _, _, _ = self._search([_hit(1, 0.9)], active_meta=_built_by("old-model", dim=2560))
+
+        with self.assertRaises(SearchUnavailable) as raised:
+            await search.find(_query(), _ENGINEER)
+
+        self.assertIn("rebuilt", str(raised.exception))
+        self.assertIn("dim=2560", str(raised.exception))
         self.embedder_cls.assert_not_called()
 
     async def test_raises_for_a_family_the_config_has_no_entry_for(self):

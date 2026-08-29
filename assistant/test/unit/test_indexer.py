@@ -153,6 +153,12 @@ class FakeChunkStore:
         # Per-family override — lets a test fail one family's fingerprint
         # check without touching another's in the same pass.
         self.ensure_version_errors: dict[str, Exception] = {}
+        # Families whose embeddings model changed: `ensure_version` hands back
+        # a version that is not the active one, which is the whole of how the
+        # sweep learns it is filling a replacement.
+        self.rebuilding: set[str] = set()
+        self.activate_calls: list[tuple[str, int]] = []
+        self.activate_error: Exception | None = None
 
     async def ensure_version(self, family, model, dim, *, filter_keys=()) -> IndexMeta:
         self.ensure_version_calls.append(family)
@@ -160,7 +166,19 @@ class FakeChunkStore:
             raise self.ensure_version_errors[family]
         if self.ensure_version_error:
             raise self.ensure_version_error
-        return IndexMeta(family=family, version=self._meta.version, model=self._meta.model, dim=self._meta.dim)
+        return IndexMeta(
+            family=family,
+            version=self._meta.version + 1 if family in self.rebuilding else self._meta.version,
+            model=self._meta.model,
+            dim=self._meta.dim,
+            is_active=family not in self.rebuilding,
+        )
+
+    async def activate_version(self, family, version) -> None:
+        self.activate_calls.append((family, version))
+        if self.activate_error:
+            raise self.activate_error
+        self.rebuilding.discard(family)
 
     async def active_meta(self, family) -> IndexMeta | None:
         return IndexMeta(family=family, version=self._meta.version, model=self._meta.model, dim=self._meta.dim)
@@ -1071,6 +1089,97 @@ class TestReindex(IndexerTestCase):
         self.assertEqual(report.status, "error")
         self.assertIsNone(await deps.vector_sync.get_cursor("UserRequest"))
         self.assertFalse(await deps.vector_sync.reindex_pending())
+
+
+class TestIndexRebuild(IndexerTestCase):
+    """The embeddings model changed, so `ensure_version` hands back a version
+    that is not the active one and this pass fills it from empty (TASK-074)."""
+
+    def _rebuilding(self, families=(_FAMILY,), **kwargs) -> FakeChunkStore:
+        store = FakeChunkStore()
+        store.rebuilding = set(families)
+        return store
+
+    async def test_the_class_is_read_whole_however_far_the_cursor_had_got(self):
+        # The replacement starts empty, so an incremental walk would fill it
+        # with whatever changed since the last pass and switch that on as if
+        # it were the corpus.
+        deps = _deps_mock(store=self._rebuilding())
+        await deps.vector_sync.set_cursor("UserRequest", _NOW)
+        source = FakeTicketSource([])
+
+        await self._run(deps, source)
+
+        self.assertIsNone(source.find_modified_since_calls[-1][1])
+
+    async def test_the_cursor_is_left_where_it_was(self):
+        # It describes the version still answering searches. Advancing it
+        # would strand everything modified during the rebuild if the
+        # administrator puts the previous model back and the replacement goes.
+        deps = _deps_mock(store=self._rebuilding())
+        await deps.vector_sync.set_cursor("UserRequest", _NOW)
+
+        await self._run(deps, FakeTicketSource([_record(1, updated_at=_NOW + timedelta(hours=2))]))
+
+        self.assertEqual(await deps.vector_sync.get_cursor("UserRequest"), _NOW)
+
+    async def test_a_clean_pass_switches_the_family_over(self):
+        store = self._rebuilding()
+        deps = _deps_mock(store=store)
+
+        report = await self._run(deps, FakeTicketSource([_record(1)]))
+
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(store.activate_calls, [(_FAMILY, _META.version + 1)])
+
+    async def test_a_pass_that_failed_keeps_the_live_version(self):
+        # Some class is short of objects the live version still has; switching
+        # would delete them along with it.
+        store = self._rebuilding()
+        deps = _deps_mock(store=store)
+        source = FakeTicketSource([])
+        source.find_modified_since_error = RuntimeError("itop down")
+
+        report = await self._run(deps, source)
+
+        self.assertEqual(report.status, "error")
+        self.assertEqual(store.activate_calls, [])
+
+    async def test_another_familys_failure_does_not_hold_the_switch_back(self):
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.families["kb_articles"] = FamilyConfig(
+            classes={
+                "KnowledgeBaseArticle": VectorClassConfig(chunks={"body": ChunkFragmentConfig(fields=["description"])})
+            }
+        )
+        store = self._rebuilding()
+        store.ensure_version_errors = {"kb_articles": RuntimeError("qdrant down")}
+        deps = _deps_mock(vector_cfg=cfg, store=store)
+        tickets = FakeTicketSource([_record(1)], classes=("UserRequest",), name=_FAMILY)
+        kb = FakeTicketSource([_record(2)], classes=("KnowledgeBaseArticle",), name="kb_articles")
+
+        report = await self._run_sources(deps, [tickets, kb])
+
+        self.assertEqual(report.status, "error")
+        self.assertEqual(store.activate_calls, [(_FAMILY, _META.version + 1)])
+
+    async def test_a_failed_switch_is_reported_and_not_raised(self):
+        store = self._rebuilding()
+        store.activate_error = RuntimeError("qdrant down")
+        deps = _deps_mock(store=store)
+
+        report = await self._run(deps, FakeTicketSource([_record(1)]))
+
+        self.assertEqual(report.status, "error")
+        self.assertIn("switching to v2 failed", "; ".join(report.errors))
+
+    async def test_a_family_that_is_not_rebuilding_is_never_switched(self):
+        store = FakeChunkStore()
+        deps = _deps_mock(store=store)
+
+        await self._run(deps, FakeTicketSource([_record(1)]))
+
+        self.assertEqual(store.activate_calls, [])
 
 
 class TestReconciliation(IndexerTestCase):

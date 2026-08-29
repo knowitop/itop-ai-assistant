@@ -14,6 +14,14 @@ Redis (`vector/state/sync_state.py`) rather than by a flag in memory. A weekly
 reconciliation pass deletes chunks of objects that vanished from their
 source. Cross-replica exclusion is `VectorSyncState.sweep_lock()`.
 
+A changed embeddings model is the same code path too. The store hands back
+the version it wants filled (`ensure_version`), and a version that is not the
+active one means the model changed and this pass is filling its replacement
+from empty: the class walk ignores its cursor, and the family is switched
+over once a pass has got through all of its classes with no errors. Nothing
+about that lives in Redis — abandoning a rebuild is a config edit and costs
+no cleanup.
+
 The sweep is **infrastructure, not a business module**: it claims no trigger
 route and writes no `RunJournal` entry — `register_vector_sweep` puts it under
 the process scheduler and that is the whole of its relationship with the core.
@@ -283,6 +291,12 @@ class VectorIndexer:
                     logger.exception(f"vector sweep: family {family!r} failed")
                     report.errors.append(f"{family}: {e}")
                     continue
+                # `meta` is the version the store wants filled. When it is not
+                # the active one, the embeddings model changed and this pass is
+                # filling its replacement from empty — which every class below
+                # reads off `meta` itself, no second flag and no state of its
+                # own (`_sweep_class`'s `since`).
+                errors_before = len(report.errors)
                 for obj_class in source.classes:
                     class_cfg = family_cfg.classes.get(obj_class)
                     if class_cfg is None:
@@ -308,6 +322,8 @@ class VectorIndexer:
                         # Class isolation: this class's cursor stays put, others proceed
                         logger.exception(f"vector sweep: class {obj_class} failed")
                         report.errors.append(f"{obj_class}: {e}")
+                if not meta.is_active:
+                    await self._finish_rebuild(store, family, meta, report, clean=len(report.errors) == errors_before)
                 await self._vector_sync.set_family_swept(family, started_at)
             if not report.errors:
                 due = await self._families_to_reconcile(sources, cfg, datetime.now(UTC))
@@ -333,6 +349,38 @@ class VectorIndexer:
             await embedder.aclose()
         return report
 
+    async def _finish_rebuild(
+        self, store: ChunkStore, family: str, meta: IndexMeta, report: SweepReport, *, clean: bool
+    ) -> None:
+        """Switch the family over to the version this pass filled, or say why not.
+
+        Only a pass that walked every class of this family without an error
+        may switch: an error means some class is short of objects the active
+        version still has, and switching would delete them along with it. The
+        family keeps answering from the old version and the next pass fills
+        the same replacement further.
+
+        "Without an error" is per family, not per pass — `tickets` failing
+        must not hold back a replacement `kb_articles` has already finished,
+        the same isolation the two catches above give the sweep itself.
+        Objects the pass deliberately skipped (`objects_skipped`, TASK-073)
+        are not errors and do not hold it back either: they are absent from
+        the new version exactly as they would eventually be from the old one.
+        """
+        if not clean:
+            logger.warning(
+                f"vector sweep: family {family!r} v{meta.version} is not complete — the pass reported errors, "
+                f"so the switch waits for a clean one; searches over {family!r} stay refused meanwhile"
+            )
+            return
+        try:
+            await store.activate_version(family, meta.version)
+        except Exception as e:
+            # Recorded rather than raised: the replacement is filled and
+            # correct, only the switch failed, and the next pass will retry it.
+            logger.exception(f"vector sweep: switching family {family!r} to v{meta.version} failed")
+            report.errors.append(f"{family}: switching to v{meta.version} failed: {e}")
+
     async def _sweep_class(
         self,
         obj_class: str,
@@ -355,9 +403,19 @@ class VectorIndexer:
         interval = family_cfg.sweep_interval_seconds or cfg.sweep_interval_seconds
         log_entries_per_chunk = family_cfg.log_entries_per_chunk or cfg.log_entries_per_chunk
         cursor = await self._vector_sync.get_cursor(obj_class)
-        # Overlap covers pages drifting while a previous pass ran; derived
-        # from the family's own interval instead of being one more config knob
-        since = cursor - timedelta(seconds=2 * interval) if cursor else None
+        if meta.is_active:
+            # Overlap covers pages drifting while a previous pass ran; derived
+            # from the family's own interval instead of being one more config knob
+            since = cursor - timedelta(seconds=2 * interval) if cursor else None
+        else:
+            # Filling a replacement version, which starts empty: the walk has
+            # to be the whole class however far the increment had got. Reading
+            # it off `meta` is what keeps the rebuild from needing a flag of
+            # its own saying whether the cursors have already been reset for
+            # it — a flag whose two writes could be interrupted halfway, and
+            # the half that leaves it set makes the next pass go incremental
+            # and switch a sparse version on as if it were complete.
+            since = None
         max_seen = cursor
         page = 1
         while True:
@@ -459,8 +517,17 @@ class VectorIndexer:
             page += 1
             await asyncio.sleep(cfg.sweep_throttle_seconds)
 
-        if max_seen is not None and max_seen != cursor:
+        if max_seen is not None and max_seen != cursor and meta.is_active:
             await self._vector_sync.set_cursor(obj_class, max_seen)
+        # A rebuild leaves the cursor exactly where it was, so it goes on
+        # describing the version that is still answering searches. Advancing
+        # it would strand every object modified while the replacement was
+        # being filled: the increment would resume past them, and they only
+        # ever reached the replacement — which an administrator putting the
+        # previous model back throws away. The cost of not advancing it is one
+        # over-wide increment after the switch, and the hash-guard makes that
+        # a re-read rather than a re-embed. It is also what leaves a rebuild
+        # entirely inside Qdrant: abandoning one costs nothing in Redis.
 
     async def _family_reconcile_due(self, family: str, cfg: VectorConfig, now: datetime) -> bool:
         last = await self._vector_sync.get_family_reconcile(family)

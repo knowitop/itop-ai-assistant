@@ -531,6 +531,10 @@ class TestSimilarTicketsWiring(IntakeAgentTestCase):
     def enable_vectors(self) -> MagicMock:
         self.deps.vector_store.configured = True
         self.deps.vector_store.search = AsyncMock(return_value=[SearchHit("UserRequest", 12, 0.9)])
+        # No index version yet: nothing for the configured model to disagree
+        # with, so the family gate turns on the two answers this test is about
+        # (registered source, indexing switched on) and not on a fingerprint.
+        self.deps.vector_store.active_meta = AsyncMock(return_value=None)
         self.repos.ticket_repo.find_existing_ids = AsyncMock(return_value={12})
         self.vector_cfg = VectorConfig(enabled=True)
         self.embeddings_cfg = EmbeddingsConfig(base_url="http://emb/v1", model="e5")

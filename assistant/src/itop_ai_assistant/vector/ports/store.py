@@ -11,6 +11,18 @@ see ADR-015) — it is never stored on `ChunkMetadata` or written to a chunk's
 payload, since it names *where* an object lives, not a property of the
 object itself.
 
+A family has one *version* search reads and, while its embeddings model is
+being changed, a second one being filled to replace it. Which of the two an
+operation lands on is the store's own decision and not a parameter here:
+everything that maintains the index (`upsert_chunks`, `get_chunk_digests`,
+`update_chunk_metadata`, `delete_chunks`, `delete_object`,
+`list_object_ids`) acts on the version being filled, `search` and `stats` on
+the active one. That leaves no way to write into the collection search is
+reading — and `get_chunk_digests` in particular has to follow the writes
+rather than the reads, or the hash-guard would compare fresh chunks against
+the version being replaced, find them unchanged and fill the new one with
+nothing.
+
 Two hashes travel with a chunk, not one. `content_hash` guards the chunk's
 text — it comes from the chunker and changes only when the source text does.
 `ChunkMetadata.meta_hash` guards everything else the payload carries that
@@ -41,12 +53,22 @@ from itop_ai_assistant.vector.domain import ChunkMetadata, DateRange
 
 @dataclass(frozen=True)
 class IndexMeta:
-    """The active index version and its model fingerprint (model, dim)."""
+    """One index version of a family and its model fingerprint (model, dim).
+
+    `is_active` is what tells the two versions of a family apart while the
+    embeddings model is being changed: the active one is what search reads,
+    and a version with `is_active=False` is the one being filled to replace
+    it. `ensure_version` hands back whichever the sweep should be filling, so
+    a caller learns it is rebuilding from this field and from nothing else —
+    which is also what decides how far back that pass reads (see
+    `use_cases/indexer.py`).
+    """
 
     family: str
     version: int
     model: str
     dim: int
+    is_active: bool = True
 
 
 @dataclass(frozen=True)
@@ -104,7 +126,13 @@ class SearchHit:
 
 
 class FingerprintMismatchError(Exception):
-    """The active index was built with a different model/dim — rebuild required."""
+    """A write named a version the store cannot write it into.
+
+    Not what a changed embeddings model raises any more — that rotates the
+    version instead (`ensure_version`). What is left is the case a rotation
+    cannot help with: writing under a version that has meanwhile been
+    switched away or dropped.
+    """
 
 
 @runtime_checkable
@@ -116,11 +144,37 @@ class ChunkStore(Protocol):
         """False when no connection is configured — the deployment runs without vectors."""
         ...
 
-    async def ensure_version(
-        self, family: str, model: str, dim: int, *, filter_keys: Sequence[str] = ()
-    ) -> IndexMeta: ...
+    async def ensure_version(self, family: str, model: str, dim: int, *, filter_keys: Sequence[str] = ()) -> IndexMeta:
+        """The version the sweep should be filling for this fingerprint.
 
-    async def active_meta(self, family: str) -> IndexMeta | None: ...
+        The active one when it was built with the same (model, dim). When it
+        was not, a *new* version under the new fingerprint, `is_active=False`,
+        created next to the live one rather than over it: vectors of two
+        models are incomparable, so the corpus has to be embedded again, and
+        the old index stays readable until the new one is complete (which is
+        also what makes putting the previous model back a config edit rather
+        than another rebuild).
+        """
+        ...
+
+    async def active_meta(self, family: str) -> IndexMeta | None:
+        """The version search reads. `None` until the family is first indexed."""
+        ...
+
+    async def pending_meta(self, family: str) -> IndexMeta | None:
+        """The version being filled to replace the active one, or `None` when
+        this family is not being rebuilt — what `/status` shows so a rebuild
+        under way can be told apart from an index that is stuck."""
+        ...
+
+    async def activate_version(self, family: str, version: int) -> None:
+        """Make a filled version the one search reads, and drop what it replaces.
+
+        Called once, after a pass has walked every class of the family with no
+        errors — a version switched on any earlier would be switched on
+        half-filled.
+        """
+        ...
 
     async def list_families(self) -> list[str]:
         """Every family that has ever had an active version, read from
@@ -172,6 +226,10 @@ class ChunkStore(Protocol):
         empty list is a caller error."""
         ...
 
-    async def stats(self, family: str) -> IndexStats | None: ...
+    async def stats(self, family: str, version: int | None = None) -> IndexStats | None:
+        """Row count of one version — the active one unless `version` names
+        another. `/status` asks for both while a rebuild is running: a growing
+        count is the difference between "in progress" and "wedged"."""
+        ...
 
     async def aclose(self) -> None: ...

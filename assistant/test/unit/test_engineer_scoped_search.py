@@ -66,6 +66,10 @@ class TestOrgPrefilterFeedsSearch(unittest.IsolatedAsyncioTestCase):
         engineer = Principal.delegated("tok", login="ivanov", name="Ivan Ivanov")
         store = MagicMock()
         store.configured = True
+        # No index version yet — nothing for the configured model to disagree
+        # with, so the read path's fingerprint gate stays out of a test about
+        # the two rights layers.
+        store.active_meta = AsyncMock(return_value=None)
         store.search = AsyncMock(
             return_value=[
                 SearchHit(obj_class="UserRequest", obj_id=1, score=0.9),

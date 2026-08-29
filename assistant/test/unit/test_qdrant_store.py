@@ -1,3 +1,4 @@
+import time
 import unittest
 from datetime import UTC, datetime
 from unittest.mock import patch
@@ -5,7 +6,7 @@ from unittest.mock import patch
 from qdrant_client import models
 
 from itop_ai_assistant.vector.adapters import qdrant_store
-from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
+from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore, _FamilyVersions
 from itop_ai_assistant.vector.ports.store import (
     ChunkDigest,
     ChunkMetadata,
@@ -111,13 +112,97 @@ class TestVersioning(QdrantStoreCase):
     async def test_same_fingerprint_reuses_the_version(self):
         self.assertEqual(await self.store.ensure_version(_FAMILY, "test-model", 4), self.meta)
 
-    async def test_a_different_model_refuses_to_write(self):
-        with self.assertRaises(FingerprintMismatchError):
-            await self.store.ensure_version(_FAMILY, "other-model", 4)
+    async def test_a_different_model_starts_a_new_version(self):
+        rotated = await self.store.ensure_version(_FAMILY, "other-model", 4)
 
-    async def test_a_different_dimension_refuses_to_write(self):
-        with self.assertRaises(FingerprintMismatchError):
-            await self.store.ensure_version(_FAMILY, "test-model", 8)
+        self.assertEqual((rotated.version, rotated.model, rotated.is_active), (2, "other-model", False))
+        # The live one is untouched and still the one search reads
+        self.assertEqual(await self.store.active_meta(_FAMILY), self.meta)
+        self.assertEqual(await self.store.pending_meta(_FAMILY), rotated)
+
+    async def test_a_different_dimension_starts_a_new_version(self):
+        rotated = await self.store.ensure_version(_FAMILY, "test-model", 8)
+
+        self.assertEqual((rotated.version, rotated.dim, rotated.is_active), (2, 8, False))
+        self.assertEqual(await self.store.active_meta(_FAMILY), self.meta)
+
+    async def test_the_version_being_filled_is_returned_again_next_pass(self):
+        rotated = await self.store.ensure_version(_FAMILY, "other-model", 4)
+
+        # A pass that did not finish must go on filling the same version, not
+        # start a third one on every tick
+        self.assertEqual(await self.store.ensure_version(_FAMILY, "other-model", 4), rotated)
+        self.assertEqual(await self.store.active_meta(_FAMILY), self.meta)
+
+    async def test_writes_land_in_the_version_being_filled_while_search_reads_the_live_one(self):
+        await self.store.upsert_chunks([_chunk(1), _chunk(2)], family=_FAMILY, model="test-model", dim=4)
+        rotated = await self.store.ensure_version(_FAMILY, "other-model", 4)
+
+        await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="other-model", dim=4)
+
+        self.assertEqual((await self.store.stats(_FAMILY, rotated.version)).rows, 1)
+        # `stats` with no version, like search, still answers for the live one
+        self.assertEqual((await self.store.stats(_FAMILY)).rows, 2)
+
+    async def test_the_hash_guard_reads_the_version_being_filled(self):
+        # The whole point of the rotation: against the live version these
+        # digests would come back matching, nothing would be embedded, and the
+        # replacement would be switched on empty.
+        await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
+        await self.store.ensure_version(_FAMILY, "other-model", 4)
+
+        self.assertEqual(await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1), {})
+
+    async def test_switching_over_replaces_the_live_version(self):
+        await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
+        rotated = await self.store.ensure_version(_FAMILY, "other-model", 4)
+        await self.store.upsert_chunks([_chunk(2)], family=_FAMILY, model="other-model", dim=4)
+
+        await self.store.activate_version(_FAMILY, rotated.version)
+
+        active = await self.store.active_meta(_FAMILY)
+        self.assertEqual((active.version, active.model, active.is_active), (2, "other-model", True))
+        self.assertIsNone(await self.store.pending_meta(_FAMILY))
+        # The retired collection is gone, not merely unreferenced
+        self.assertFalse(await self.store.client.collection_exists(QdrantChunkStore.collection_name(_FAMILY, 1)))
+        self.assertEqual((await self.store.stats(_FAMILY)).rows, 1)
+
+    async def test_switching_a_version_that_is_no_longer_being_filled_changes_nothing(self):
+        # Another replica finished the same rebuild first; this pass must not
+        # undo it
+        await self.store.activate_version(_FAMILY, 2)
+
+        self.assertEqual(await self.store.active_meta(_FAMILY), self.meta)
+
+    async def test_the_model_changing_again_rerolls_the_version_being_filled(self):
+        first = await self.store.ensure_version(_FAMILY, "other-model", 4)
+
+        second = await self.store.ensure_version(_FAMILY, "third-model", 4)
+
+        self.assertEqual((second.version, second.model), (3, "third-model"))
+        # v2 is not left behind as a collection nothing can reach
+        self.assertFalse(await self.store.client.collection_exists(QdrantChunkStore.collection_name(_FAMILY, 2)))
+        self.assertEqual(await self.store.pending_meta(_FAMILY), second)
+        self.assertNotEqual(first.version, second.version)
+
+    async def test_putting_the_previous_model_back_drops_the_unfinished_version(self):
+        rotated = await self.store.ensure_version(_FAMILY, "other-model", 4)
+
+        self.assertEqual(await self.store.ensure_version(_FAMILY, "test-model", 4), self.meta)
+
+        self.assertIsNone(await self.store.pending_meta(_FAMILY))
+        self.assertFalse(
+            await self.store.client.collection_exists(QdrantChunkStore.collection_name(_FAMILY, rotated.version))
+        )
+
+    async def test_a_stale_memo_does_not_outlive_its_ttl(self):
+        # A replica that did not perform the switch itself holds the retired
+        # version's name; without expiry it would hold it until restart.
+        rotated = await self.store.ensure_version(_FAMILY, "other-model", 4)
+        await self.store.activate_version(_FAMILY, rotated.version)
+        self.store._meta_cache[_FAMILY] = (time.monotonic() - 1, _FamilyVersions(active=self.meta, building=None))
+
+        self.assertEqual((await self.store.active_meta(_FAMILY)).version, rotated.version)
 
     async def test_two_families_coexist_as_different_collections(self):
         other = await self.store.ensure_version("kb_articles", "test-model", 4)
