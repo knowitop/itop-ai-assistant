@@ -41,6 +41,10 @@ interface FamilyIndexInfo {
   // null = no embeddings model configured to compare against — not a warning
   fingerprint_match: boolean | null;
   rows: number | null;
+  // Set while the embeddings model has changed and the sweep is filling a
+  // replacement version next to the live one. Its row count is what moves
+  // between two polls, which is how "still going" is told from "stuck".
+  building: { version: number; model: string; dim: number; rows: number } | null;
 }
 
 interface JournalRun {
@@ -304,7 +308,14 @@ function VectorStatusPanel() {
       )}
       {status.index && status.index.length > 0 ? (
         <>
-          {status.index.some((f) => f.fingerprint_match === false) && (
+          {/* Two different situations behind one mismatched fingerprint. The
+              sweep normally picks the change up by itself, and then there is
+              nothing to do but wait; it cannot when the family is switched
+              off, and then the message has to name the way out. */}
+          {status.index.some((f) => f.building) && (
+            <Alert color="blue">{t('vector.rebuild_running')}</Alert>
+          )}
+          {status.index.some((f) => f.fingerprint_match === false && !f.building) && (
             <Alert color="orange">{t('vector.fingerprint_mismatch')}</Alert>
           )}
           <Table withTableBorder verticalSpacing={4}>
@@ -338,10 +349,45 @@ function VectorStatusPanel() {
                       )}
                     </Group>
                   </Table.Td>
-                  <Table.Td>{f.active_version ?? '—'}</Table.Td>
-                  <Table.Td>{f.model ?? '—'}</Table.Td>
-                  <Table.Td>{f.dim ?? '—'}</Table.Td>
-                  <Table.Td>{f.rows ?? '—'}</Table.Td>
+                  {/* While a replacement is being filled, every cell shows
+                      both sides of the move: the version still answering
+                      searches and the one being built for the new model. */}
+                  <Table.Td>
+                    {f.active_version ?? '—'}
+                    {f.building && (
+                      <Text span c="blue" title={t('vector.rebuild_hint')}>
+                        {' '}
+                        → v{f.building.version}
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {f.model ?? '—'}
+                    {f.building && (
+                      <Text span c="blue">
+                        {' '}
+                        → {f.building.model}
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {f.dim ?? '—'}
+                    {f.building && (
+                      <Text span c="blue">
+                        {' '}
+                        → {f.building.dim}
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {f.rows ?? '—'}
+                    {f.building && (
+                      <Text span c="blue">
+                        {' '}
+                        → {f.building.rows}
+                      </Text>
+                    )}
+                  </Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
