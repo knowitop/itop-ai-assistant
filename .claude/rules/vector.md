@@ -189,8 +189,34 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   creation date inherits the one already in the index (`ChunkDigest.created_at`);
   the fallback to the sweep's clock fires once, at first indexing, and never
   again.
+- **A changed embeddings model rotates the index version; it does not wedge
+  it** (TASK-074). `chunks_meta` carries a row per (family, version): the
+  active one, plus — while the model is being changed — one `is_active=False`
+  row for the version being filled beside it. `ensure_version` returns
+  whichever the sweep should fill, and `IndexMeta.is_active` is the **only**
+  signal that a rebuild is running: the same field decides that writes go to
+  the new version, that the class walk ignores its cursor (`since=None`), and
+  that the family is switched over (`activate_version`) once a pass has
+  walked all of its classes with no errors. Nothing about a rebuild lives in
+  Redis — an abandoned one leaves no cleanup, and the cursor is deliberately
+  **not** advanced while filling, so it goes on describing the version still
+  answering searches. Which version an operation lands on is the store's
+  decision, never a parameter: index maintenance (including
+  `get_chunk_digests`, which reads) resolves `_write_meta`, search and
+  `stats` resolve `active_meta`. `get_chunk_digests` is the one that has to
+  be argued for — against the active version the hashes would match, nothing
+  would embed, and the replacement would switch on empty. On the read path
+  the fingerprint is a third family gate in `SimilarSearch`, next to "no
+  config entry" and "switched off": a query embedded by one model cannot be
+  compared with an index built by another, and a closed gate is an outcome
+  the consumer already handles — a vector-width failure from Qdrant is not.
+  `/vector/reindex` is unrelated to any of this and must stay so: it resets
+  cursors, and a rebuild happens on its own.
 - `QdrantChunkStore._meta_cache` is a cache, not the operational state the
-  rule above bans: every store call needs the active version to build a
-  collection name, and the sweep calls the store once per object. It dies
-  with the process and is rebuilt from `chunks_meta`; `ensure_version` is the
-  only writer and the only thing that invalidates it.
+  rule above bans: every store call needs a version to build a collection
+  name, and the sweep calls the store once per object. It dies with the
+  process and is rebuilt from `chunks_meta`. Entries expire
+  (`_META_CACHE_TTL_SECONDS`) — they did not have to while a family's active
+  version never moved, but a rotation moves it, and a replica that did not
+  perform the switch itself would hold the retired version's name until
+  restart.
