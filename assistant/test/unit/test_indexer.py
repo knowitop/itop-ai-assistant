@@ -181,7 +181,11 @@ class FakeChunkStore:
         self.rebuilding.discard(family)
 
     async def active_meta(self, family) -> IndexMeta | None:
-        return IndexMeta(family=family, version=self._meta.version, model=self._meta.model, dim=self._meta.dim)
+        # A family being rebuilt still answers searches from a version built
+        # under the *previous* fingerprint — that mismatch is what the real
+        # store rotates the version on.
+        model = "previous-model" if family in self.rebuilding else self._meta.model
+        return IndexMeta(family=family, version=self._meta.version, model=model, dim=self._meta.dim)
 
     async def upsert_chunks(self, chunks, *, family, model, dim) -> int:
         if any(c.meta.obj_id in self.upsert_error_ids for c in chunks):
@@ -894,7 +898,8 @@ class TestFamilyPacing(IndexerTestCase):
     """TASK-021: a family with its own `sweep_interval_seconds` compares
     against its own last-swept timestamp instead of running on every tick —
     distinct from the per-class cursor, which tracks progress within a pass
-    the family was already included in."""
+    the family was already included in. It paces timer ticks only, and only
+    for a family whose index the configured model still matches."""
 
     async def test_family_within_its_own_interval_is_skipped(self):
         cfg = _VECTOR_CFG.model_copy(deep=True)
@@ -904,11 +909,61 @@ class TestFamilyPacing(IndexerTestCase):
         await deps.vector_sync.set_family_swept("tickets", datetime.now(UTC))
         source = FakeTicketSource([_record(1)])
 
-        report = await self._run(deps, source)
+        report = await self._run(deps, source, paced=True)
 
         self.assertEqual(report.status, "ok")
         self.assertEqual(report.objects_seen, 0)
         self.assertEqual(source.prepare_calls, 0)
+
+    async def test_a_hand_driven_pass_ignores_family_pacing(self):
+        # "Index now" and the CLI ask for a pass; honouring a family's own
+        # interval there walks some families and silently skips others, which
+        # reads as a rebuild that only reached half the index.
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.families["tickets"].sweep_interval_seconds = 3600
+        deps = _deps_mock(vector_cfg=cfg)
+        await deps.vector_sync.set_family_reconcile(_FAMILY, datetime.now(UTC))
+        await deps.vector_sync.set_family_swept("tickets", datetime.now(UTC))
+        source = FakeTicketSource([_record(1)])
+
+        report = await self._run(deps, source)
+
+        self.assertEqual(report.objects_seen, 1)
+        self.assertEqual(source.prepare_calls, 1)
+
+    async def test_a_family_owed_a_rebuild_ignores_its_own_interval(self):
+        # Searches over the family are refused until the replacement version
+        # is complete, so pacing the rebuild paces an outage.
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.families["tickets"].sweep_interval_seconds = 3600
+        store = FakeChunkStore()
+        store.rebuilding.add(_FAMILY)
+        deps = _deps_mock(vector_cfg=cfg, store=store)
+        await deps.vector_sync.set_family_reconcile(_FAMILY, datetime.now(UTC))
+        await deps.vector_sync.set_family_swept("tickets", datetime.now(UTC))
+        source = FakeTicketSource([_record(1)])
+
+        report = await self._run(deps, source, paced=True)
+
+        self.assertEqual(report.objects_seen, 1)
+        self.assertEqual(store.activate_calls, [(_FAMILY, _META.version + 1)])
+
+    async def test_an_unreachable_store_does_not_pace_the_family_out(self):
+        # The pacing check reads the active fingerprint; a store that cannot
+        # answer must leave the error to `ensure_version`, which reports it
+        # per family, rather than skipping the family on its own.
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.families["tickets"].sweep_interval_seconds = 3600
+        store = FakeChunkStore()
+        store.active_meta = AsyncMock(side_effect=ConnectionError("qdrant is down"))
+        deps = _deps_mock(vector_cfg=cfg, store=store)
+        await deps.vector_sync.set_family_reconcile(_FAMILY, datetime.now(UTC))
+        await deps.vector_sync.set_family_swept("tickets", datetime.now(UTC))
+        source = FakeTicketSource([_record(1)])
+
+        report = await self._run(deps, source, paced=True)
+
+        self.assertEqual(report.objects_seen, 1)
 
     async def test_family_past_its_own_interval_runs(self):
         cfg = _VECTOR_CFG.model_copy(deep=True)
@@ -918,7 +973,7 @@ class TestFamilyPacing(IndexerTestCase):
         await deps.vector_sync.set_family_swept("tickets", datetime.now(UTC) - timedelta(hours=1))
         source = FakeTicketSource([_record(1)])
 
-        report = await self._run(deps, source)
+        report = await self._run(deps, source, paced=True)
 
         self.assertEqual(report.objects_seen, 1)
         self.assertEqual(source.prepare_calls, 1)
@@ -934,7 +989,7 @@ class TestFamilyPacing(IndexerTestCase):
         await deps.vector_sync.set_family_swept("tickets", datetime.now(UTC))
         source = FakeTicketSource([_record(1)])
 
-        report = await self._run(deps, source)
+        report = await self._run(deps, source, paced=True)
 
         self.assertEqual(report.objects_seen, 1)
         self.assertEqual(source.prepare_calls, 1)
@@ -946,7 +1001,7 @@ class TestFamilyPacing(IndexerTestCase):
         await deps.vector_sync.set_family_reconcile(_FAMILY, datetime.now(UTC))
         source = FakeTicketSource([_record(1)])
 
-        report = await self._run(deps, source)
+        report = await self._run(deps, source, paced=True)
 
         self.assertEqual(report.objects_seen, 1)
 

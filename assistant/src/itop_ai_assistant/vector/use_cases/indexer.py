@@ -27,7 +27,10 @@ active one means the model changed and this pass is filling its replacement
 from empty: the class walk ignores its cursor, and the family is switched
 over once a pass has got through all of its classes with no errors. Nothing
 about that lives in Redis — abandoning a rebuild is a config edit and costs
-no cleanup.
+no cleanup. A family owed a rebuild is also exempt from its own sweep
+interval (`_family_too_soon`): searches over it are refused until the
+replacement is complete, so a cadence chosen for a full-scan source would be
+pacing an outage.
 
 The sweep is **infrastructure, not a business module**: it claims no trigger
 route and writes no `RunJournal` entry — `register_vector_sweep` puts it under
@@ -216,7 +219,9 @@ class VectorIndexer:
         """`paced` subjects the pass to `sweep_interval_seconds` counted from
         the last one, wherever it ran — the loop under the scheduler passes it,
         every hand-driven caller (the CLI, "Index now") does not, because
-        calling this by hand *is* the request for a pass."""
+        calling this by hand *is* the request for a pass. It covers a family's
+        own interval override too (`_family_too_soon`): a hand-driven pass
+        that honoured one would walk some families and quietly skip others."""
         if not self._vector_store.configured:
             return SweepReport(kind="sweep", status="skipped", skip_reason="qdrant_url is not set")
         vector_cfg = await self._config_store.get("vector", VectorConfig)
@@ -241,7 +246,7 @@ class VectorIndexer:
         async with self._vector_sync.sweep_lock() as locked:
             if not locked:
                 return SweepReport(kind="sweep", status="skipped", skip_reason="another sweep holds the lock")
-            report = await self._sweep_locked(self._vector_store, vector_cfg, emb_cfg, model)
+            report = await self._sweep_locked(self._vector_store, vector_cfg, emb_cfg, model, paced=paced)
 
         # Counted here and not in `tick()`, because the timer is not the only
         # caller: the backfill CLI (`use_cases/reindex.py`) drives this method
@@ -276,8 +281,51 @@ class VectorIndexer:
             f"inside the {cfg.sweep_interval_seconds}s sweep interval"
         )
 
+    async def _family_too_soon(
+        self,
+        store: ChunkStore,
+        family: str,
+        family_cfg: FamilyConfig,
+        started_at: datetime,
+        emb_cfg: EmbeddingsConfig,
+    ) -> bool:
+        """Whether this family sits the pass out on its own interval.
+
+        Only a family with an override is paced here at all: the system-wide
+        interval is enforced before the pass ever starts (the scheduler's
+        cadence, and `_too_soon` across restarts), so gating an un-overridden
+        family here too would double up on the same value and could skip a
+        tick the scheduler fired a hair early.
+
+        Two kinds of pass are never held back, whatever the override says.
+        Hand-driven ones are excluded by the caller (`paced`) along with a
+        backfill: asking for a pass by hand *is* the request to ignore the
+        wait, exactly as it is for `_too_soon`. And a family whose active
+        version was built with a different model is waiting for a replacement
+        to be filled next to it — searches over it are refused meanwhile, so a
+        leisurely cadence chosen for a full-scan source would stretch an
+        outage rather than a staleness window.
+        """
+        if family_cfg.sweep_interval_seconds is None:
+            return False
+        last_swept = await self._vector_sync.get_family_swept(family)
+        if last_swept is None or started_at - last_swept >= timedelta(seconds=family_cfg.sweep_interval_seconds):
+            return False
+        try:
+            active = await store.active_meta(family)
+        except Exception:
+            # Fail open, so that a store that cannot answer is reported by
+            # `ensure_version` below — one error, per family, with the family
+            # isolation that goes with it — rather than by a pacing check that
+            # would take the whole pass down with it.
+            return False
+        # Nothing indexed yet reads like a mismatch: the family has no version
+        # to answer searches from either, and waiting out an interval before
+        # the first fill is the same outage.
+        return active is not None and (active.model, active.dim) == (emb_cfg.model, emb_cfg.dimension)
+
     async def _sweep_locked(
-        self, store: ChunkStore, cfg: VectorConfig, emb_cfg: EmbeddingsConfig, model: str
+        self, store: ChunkStore, cfg: VectorConfig, emb_cfg: EmbeddingsConfig, model: str, *, paced: bool
     ) -> SweepReport:
         started_at = datetime.now(UTC)
         # Stamped at the start and not on completion, so that a pass killed
@@ -323,20 +371,8 @@ class VectorIndexer:
                     continue
                 if not source.classes:
                     continue
-                # Only a family with its *own* interval gets paced against
-                # its last real pass — the system-wide interval is enforced
-                # before the pass ever starts (the scheduler's cadence, and
-                # `_too_soon` across restarts), so gating an un-overridden
-                # family here too would double up on the same value and could
-                # skip an out-of-band tick ("Index now", or the scheduler
-                # firing a hair early) that arrives before a full system
-                # interval has elapsed since the last one.
-                if not full and family_cfg.sweep_interval_seconds is not None:
-                    last_swept = await self._vector_sync.get_family_swept(family)
-                    if last_swept is not None and started_at - last_swept < timedelta(
-                        seconds=family_cfg.sweep_interval_seconds
-                    ):
-                        continue
+                if paced and not full and await self._family_too_soon(store, family, family_cfg, started_at, emb_cfg):
+                    continue
                 try:
                     await ensure_prepared(source)
                     meta = await store.ensure_version(
