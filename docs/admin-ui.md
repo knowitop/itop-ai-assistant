@@ -45,6 +45,8 @@ Only needed for the optional [vector index](#vector-index). Leave it empty and i
 - **Batch size** — texts per request (default `32`)
 - **Test embeddings** — embeds a probe text, reports the endpoint's real vector dimension and whether it matches the Dimension field
 
+Changing the **model** or the **Dimension** once something is indexed changes the index fingerprint, and the tab says so before you save: the sweep cannot mix vectors of two models, so it fills a replacement collection from scratch for every indexed family and refuses searches over a family until its replacement is complete. Nothing else is needed to start it — see [Vector index](#vector-index) for what the rebuild looks like while it runs, and how putting the previous values back cancels it.
+
 ### Security tab
 
 - **Webhook Token** and **Admin Token** — write-only fields with generate, copy and clear buttons

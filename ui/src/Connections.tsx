@@ -612,6 +612,13 @@ function LlmForm() {
   );
 }
 
+// GET /api/vector/status, cut down to what a fingerprint change costs: which
+// families hold an index that a different model or dimension would invalidate.
+interface IndexedFamilies {
+  enabled: boolean;
+  index: { family: string; enabled: boolean; active_version: number | null }[] | null;
+}
+
 // Deliberate clone of LlmForm for the embeddings endpoint (same section
 // shape: base_url/model/api_key plus numeric tuning fields).
 function EmbeddingsForm() {
@@ -628,6 +635,13 @@ function EmbeddingsForm() {
   const [batchSize, setBatchSize] = useState<number | string>('');
   const [timeout_, setTimeout_] = useState<number | string>('');
   const [secrets, setSecrets] = useState<Record<string, boolean>>({});
+  // The saved fingerprint, kept apart from the edited fields: what the
+  // rebuild warning compares against.
+  const [saved, setSaved] = useState<{ model: string; dimension: number | null }>({
+    model: '',
+    dimension: null,
+  });
+  const [indexed, setIndexed] = useState<string[]>([]);
 
   const load = async () => {
     const data = await apiGet<SectionData>('/setup/embeddings');
@@ -638,8 +652,31 @@ function EmbeddingsForm() {
     setBatchSize((data.values.batch_size as number) ?? '');
     setTimeout_((data.values.timeout as number) ?? '');
     setSecrets(data.secrets);
+    setSaved({
+      model: String(data.values.model ?? ''),
+      dimension: (data.values.dimension as number) ?? null,
+    });
+    // Nothing indexed, indexing off, or a store that cannot answer — the
+    // warning stays silent rather than guessing: changing the model then
+    // costs nothing to undo.
+    const vector = await apiGet<IndexedFamilies>('/vector/status').catch(() => null);
+    setIndexed(
+      vector?.enabled
+        ? (vector.index ?? [])
+            .filter((f) => f.enabled && f.active_version !== null)
+            .map((f) => f.family)
+        : [],
+    );
     setLoaded(true);
   };
+
+  // A changed model or dimension is a changed index fingerprint: the sweep
+  // cannot mix vectors of two models, so it fills a replacement collection
+  // from scratch and searches over the family are refused until it is done.
+  const rebuildFamilies =
+    model !== saved.model || (dimension !== '' && Number(dimension) !== saved.dimension)
+      ? indexed
+      : [];
 
   useEffect(() => {
     load().catch((e: Error) => setError(e.message));
@@ -689,6 +726,13 @@ function EmbeddingsForm() {
   };
 
   const save = async () => {
+    if (
+      rebuildFamilies.length > 0 &&
+      !window.confirm(
+        t('connections.embeddings_rebuild_confirm', { families: rebuildFamilies.join(', ') }),
+      )
+    )
+      return;
     setBusy(true);
     setError(null);
     setSuccess(null);
@@ -785,6 +829,11 @@ function EmbeddingsForm() {
           onChange={setTimeout_}
         />
       </Group>
+      {rebuildFamilies.length > 0 && (
+        <Alert color="orange" title={t('connections.embeddings_rebuild_title')}>
+          {t('connections.embeddings_rebuild_warning', { families: rebuildFamilies.join(', ') })}
+        </Alert>
+      )}
       <Group>
         <Button onClick={save} loading={busy}>
           {t('common.btn_save')}
