@@ -151,9 +151,10 @@ class TestRuntimeSections(unittest.TestCase):
         self.assertEqual(EmbeddingsConfig.SECRET_FIELDS, frozenset({"api_key"}))
         self.assertIsNone(EmbeddingsConfig(api_key="").api_key)
 
-    def test_embeddings_dimension_capped_as_a_sanity_check(self):
+    def test_embeddings_dimension_is_bounded_below_only(self):
+        self.assertEqual(EmbeddingsConfig(dimension=4096).dimension, 4096)
         with self.assertRaises(ValidationError):
-            EmbeddingsConfig(dimension=4097)
+            EmbeddingsConfig(dimension=0)
 
     def test_embeddings_unconfigured_by_default(self):
         s = self._settings()

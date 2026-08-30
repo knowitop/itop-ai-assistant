@@ -84,6 +84,12 @@ _BLANK = {
     "embeddings_model": None,
     "embeddings_api_key": None,
     "qdrant_url": None,
+    # The chunks these tests seed carry 4-float embeddings, so the configured
+    # dimension has to say 4 as a real deployment's would: the read path
+    # refuses a family whose index was built by a different (model, dim) than
+    # the one configured now, that being how a rebuild in progress is kept
+    # from answering with vectors nothing can be compared against.
+    "embeddings_dimension": 4,
 }
 
 
@@ -272,6 +278,7 @@ class TestVectorStatus(VectorStatusTestCase):
         self.assertEqual(set(families), {"tickets", "faq"})
         for entry in families.values():
             self.assertTrue(entry["configured"])
+            self.assertTrue(entry["enabled"])
             self.assertIsNone(entry["active_version"])
             self.assertIsNone(entry["rows"])
 
@@ -292,6 +299,36 @@ class TestVectorStatus(VectorStatusTestCase):
         self.assertEqual(families["kb_articles"]["active_version"], 1)
         self.assertEqual(families["kb_articles"]["model"], "bge-m3")
         self.assertEqual(families["kb_articles"]["rows"], 0)
+
+    def test_a_rebuild_in_progress_is_reported_next_to_the_live_version(self):
+        # Which version is answering, which one is being filled and how far it
+        # has got — without the row count there is no way to tell a rebuild
+        # under way from one that is stuck (TASK-074).
+        deps = _make_deps(self.redis, store_url=":memory:", embeddings_model="new-model")
+        store = deps.vector.vector_store
+
+        async def _seed() -> None:
+            await store.ensure_version("tickets", "bge-m3", 4)
+            await store.ensure_version("tickets", "new-model", 4)
+            await store.upsert_chunks([_chunk(1)], family="tickets", model="new-model", dim=4)
+
+        asyncio.run(_seed())
+        _install(self.client, deps)
+
+        body = self.client.get("/api/vector/status").json()
+
+        tickets = {entry["family"]: entry for entry in body["index"]}["tickets"]
+        self.assertEqual((tickets["active_version"], tickets["model"], tickets["rows"]), (1, "bge-m3", 0))
+        self.assertEqual(tickets["building"], {"version": 2, "model": "new-model", "dim": 4, "rows": 1})
+
+    def test_a_family_that_is_not_being_rebuilt_reports_no_second_version(self):
+        deps = _make_deps(self.redis, store_url=":memory:")
+        asyncio.run(deps.vector.vector_store.ensure_version("tickets", "bge-m3", 4))
+        _install(self.client, deps)
+
+        body = self.client.get("/api/vector/status").json()
+
+        self.assertIsNone({entry["family"]: entry for entry in body["index"]}["tickets"]["building"])
 
     def test_requires_admin_token_when_set(self):
         _install(self.client, _make_deps(self.redis, admin_token=SecretStr("s3cret")))
@@ -756,7 +793,10 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
         _install(self.client, deps)
-        self.client.patch("/api/setup/vector", json={"enabled": True})
+        # The family needs an entry of its own, not just a registered source:
+        # one missing from `families` is one the sweep does not index, and the
+        # search refuses those the same way it refuses a switched-off one.
+        self.client.patch("/api/setup/vector", json={"enabled": True, "families": {"kb_articles": {"classes": {}}}})
 
         async def _seed() -> None:
             await deps.vector.vector_store.ensure_version("kb_articles", "bge-m3", 4)

@@ -1,10 +1,12 @@
+import time
 import unittest
 from datetime import UTC, datetime
 from unittest.mock import patch
 
 from qdrant_client import models
 
-from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore
+from itop_ai_assistant.vector.adapters import qdrant_store
+from itop_ai_assistant.vector.adapters.qdrant_store import QdrantChunkStore, _FamilyVersions
 from itop_ai_assistant.vector.ports.store import (
     ChunkDigest,
     ChunkMetadata,
@@ -110,13 +112,97 @@ class TestVersioning(QdrantStoreCase):
     async def test_same_fingerprint_reuses_the_version(self):
         self.assertEqual(await self.store.ensure_version(_FAMILY, "test-model", 4), self.meta)
 
-    async def test_a_different_model_refuses_to_write(self):
-        with self.assertRaises(FingerprintMismatchError):
-            await self.store.ensure_version(_FAMILY, "other-model", 4)
+    async def test_a_different_model_starts_a_new_version(self):
+        rotated = await self.store.ensure_version(_FAMILY, "other-model", 4)
 
-    async def test_a_different_dimension_refuses_to_write(self):
-        with self.assertRaises(FingerprintMismatchError):
-            await self.store.ensure_version(_FAMILY, "test-model", 8)
+        self.assertEqual((rotated.version, rotated.model, rotated.is_active), (2, "other-model", False))
+        # The live one is untouched and still the one search reads
+        self.assertEqual(await self.store.active_meta(_FAMILY), self.meta)
+        self.assertEqual(await self.store.pending_meta(_FAMILY), rotated)
+
+    async def test_a_different_dimension_starts_a_new_version(self):
+        rotated = await self.store.ensure_version(_FAMILY, "test-model", 8)
+
+        self.assertEqual((rotated.version, rotated.dim, rotated.is_active), (2, 8, False))
+        self.assertEqual(await self.store.active_meta(_FAMILY), self.meta)
+
+    async def test_the_version_being_filled_is_returned_again_next_pass(self):
+        rotated = await self.store.ensure_version(_FAMILY, "other-model", 4)
+
+        # A pass that did not finish must go on filling the same version, not
+        # start a third one on every tick
+        self.assertEqual(await self.store.ensure_version(_FAMILY, "other-model", 4), rotated)
+        self.assertEqual(await self.store.active_meta(_FAMILY), self.meta)
+
+    async def test_writes_land_in_the_version_being_filled_while_search_reads_the_live_one(self):
+        await self.store.upsert_chunks([_chunk(1), _chunk(2)], family=_FAMILY, model="test-model", dim=4)
+        rotated = await self.store.ensure_version(_FAMILY, "other-model", 4)
+
+        await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="other-model", dim=4)
+
+        self.assertEqual((await self.store.stats(_FAMILY, rotated.version)).rows, 1)
+        # `stats` with no version, like search, still answers for the live one
+        self.assertEqual((await self.store.stats(_FAMILY)).rows, 2)
+
+    async def test_the_hash_guard_reads_the_version_being_filled(self):
+        # The whole point of the rotation: against the live version these
+        # digests would come back matching, nothing would be embedded, and the
+        # replacement would be switched on empty.
+        await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
+        await self.store.ensure_version(_FAMILY, "other-model", 4)
+
+        self.assertEqual(await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1), {})
+
+    async def test_switching_over_replaces_the_live_version(self):
+        await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
+        rotated = await self.store.ensure_version(_FAMILY, "other-model", 4)
+        await self.store.upsert_chunks([_chunk(2)], family=_FAMILY, model="other-model", dim=4)
+
+        await self.store.activate_version(_FAMILY, rotated.version)
+
+        active = await self.store.active_meta(_FAMILY)
+        self.assertEqual((active.version, active.model, active.is_active), (2, "other-model", True))
+        self.assertIsNone(await self.store.pending_meta(_FAMILY))
+        # The retired collection is gone, not merely unreferenced
+        self.assertFalse(await self.store.client.collection_exists(QdrantChunkStore.collection_name(_FAMILY, 1)))
+        self.assertEqual((await self.store.stats(_FAMILY)).rows, 1)
+
+    async def test_switching_a_version_that_is_no_longer_being_filled_changes_nothing(self):
+        # Another replica finished the same rebuild first; this pass must not
+        # undo it
+        await self.store.activate_version(_FAMILY, 2)
+
+        self.assertEqual(await self.store.active_meta(_FAMILY), self.meta)
+
+    async def test_the_model_changing_again_rerolls_the_version_being_filled(self):
+        first = await self.store.ensure_version(_FAMILY, "other-model", 4)
+
+        second = await self.store.ensure_version(_FAMILY, "third-model", 4)
+
+        self.assertEqual((second.version, second.model), (3, "third-model"))
+        # v2 is not left behind as a collection nothing can reach
+        self.assertFalse(await self.store.client.collection_exists(QdrantChunkStore.collection_name(_FAMILY, 2)))
+        self.assertEqual(await self.store.pending_meta(_FAMILY), second)
+        self.assertNotEqual(first.version, second.version)
+
+    async def test_putting_the_previous_model_back_drops_the_unfinished_version(self):
+        rotated = await self.store.ensure_version(_FAMILY, "other-model", 4)
+
+        self.assertEqual(await self.store.ensure_version(_FAMILY, "test-model", 4), self.meta)
+
+        self.assertIsNone(await self.store.pending_meta(_FAMILY))
+        self.assertFalse(
+            await self.store.client.collection_exists(QdrantChunkStore.collection_name(_FAMILY, rotated.version))
+        )
+
+    async def test_a_stale_memo_does_not_outlive_its_ttl(self):
+        # A replica that did not perform the switch itself holds the retired
+        # version's name; without expiry it would hold it until restart.
+        rotated = await self.store.ensure_version(_FAMILY, "other-model", 4)
+        await self.store.activate_version(_FAMILY, rotated.version)
+        self.store._meta_cache[_FAMILY] = (time.monotonic() - 1, _FamilyVersions(active=self.meta, building=None))
+
+        self.assertEqual((await self.store.active_meta(_FAMILY)).version, rotated.version)
 
     async def test_two_families_coexist_as_different_collections(self):
         other = await self.store.ensure_version("kb_articles", "test-model", 4)
@@ -215,6 +301,34 @@ class TestUpsert(QdrantStoreCase):
         self.assertEqual(written, 2)
         stats = await self.store.stats(_FAMILY)
         self.assertEqual(stats.rows, 2)
+
+    async def test_a_large_object_is_written_in_several_requests(self):
+        # One request per object would exceed Qdrant's 32 MB request limit for
+        # an object with a thousand chunks (a base64 attachment in the body).
+        chunks = [_chunk(1, "body", n) for n in range(5)]
+
+        # A request budget that fits two of these points, whatever the width.
+        budget = 2 * (4 * qdrant_store._BYTES_PER_DIMENSION + qdrant_store._POINT_PAYLOAD_BYTES)
+        with (
+            patch.object(qdrant_store, "_UPSERT_REQUEST_BYTES", budget),
+            patch.object(self.store.client, "upsert", wraps=self.store.client.upsert) as upsert,
+        ):
+            written = await self.store.upsert_chunks(chunks, family=_FAMILY, model="test-model", dim=4)
+
+        self.assertEqual(upsert.call_count, 3)
+        self.assertEqual(written, 5)
+        self.assertEqual((await self.store.stats(_FAMILY)).rows, 5)
+
+    async def test_the_batch_shrinks_as_the_vector_widens(self):
+        # `EmbeddingsConfig.dimension` has no upper bound, so the batch has to
+        # come from the width rather than from a constant chosen for one model.
+        wide = qdrant_store._upsert_batch(16384)
+        self.assertLess(wide, qdrant_store._upsert_batch(1024))
+        self.assertGreaterEqual(wide, 1)
+        self.assertLessEqual(
+            wide * (16384 * qdrant_store._BYTES_PER_DIMENSION + qdrant_store._POINT_PAYLOAD_BYTES),
+            32 * 1024 * 1024,
+        )
 
     async def test_rewriting_the_same_chunk_updates_it(self):
         await self.store.upsert_chunks([_chunk(1, digest="old")], family=_FAMILY, model="test-model", dim=4)
@@ -332,6 +446,20 @@ class TestDeletion(QdrantStoreCase):
         self.assertEqual(
             set(await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1)), {("body", 0), ("solution", 0)}
         )
+
+    async def test_a_long_key_list_is_deleted_in_several_requests(self):
+        chunks = [_chunk(1, "body", n) for n in range(5)]
+        await self.store.upsert_chunks(chunks, family=_FAMILY, model="test-model", dim=4)
+
+        with (
+            patch("itop_ai_assistant.vector.adapters.qdrant_store._PAYLOAD_BATCH", 2),
+            patch.object(self.store.client, "delete", wraps=self.store.client.delete) as delete,
+        ):
+            removed = await self.store.delete_chunks(_FAMILY, "UserRequest", 1, [("body", n) for n in range(5)])
+
+        self.assertEqual(delete.call_count, 3)
+        self.assertEqual(removed, 5)
+        self.assertEqual(await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1), {})
 
     async def test_deleting_an_empty_list_touches_nothing(self):
         await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
@@ -766,6 +894,29 @@ class TestMetadataUpdate(QdrantStoreCase):
             collection_name=self.store.collection_name(_FAMILY, 1), limit=10, with_payload=False, with_vectors=True
         )
         self.assertEqual(before[0].vector, after[0].vector)
+
+    async def test_a_large_object_is_rewritten_in_several_requests(self):
+        # A fragment's filters or visibility changing re-hashes every chunk of
+        # the object, so this list is as long as the upsert's.
+        chunks = [_chunk(1, "body", n) for n in range(5)]
+        await self.store.upsert_chunks(chunks, family=_FAMILY, model="test-model", dim=4)
+        metas = [_meta(1, "body", n, status="resolved-later") for n in range(5)]
+
+        with (
+            patch("itop_ai_assistant.vector.adapters.qdrant_store._PAYLOAD_BATCH", 2),
+            patch.object(
+                self.store.client, "batch_update_points", wraps=self.store.client.batch_update_points
+            ) as batch_update,
+        ):
+            updated = await self.store.update_chunk_metadata(metas, family=_FAMILY)
+
+        self.assertEqual(batch_update.call_count, 3)
+        self.assertEqual(updated, 5)
+        digests = await self.store.get_chunk_digests(_FAMILY, "UserRequest", 1)
+        self.assertEqual(
+            {key: d.meta_hash for key, d in digests.items()},
+            {(m.chunk_kind, m.chunk_n): m.meta_hash for m in metas},
+        )
 
     async def test_a_dropped_filter_key_is_removed_not_merged(self):
         # `_meta`'s `status`/`org_id` kwargs always land in `filters` now, so

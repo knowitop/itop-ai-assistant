@@ -7,6 +7,7 @@ sees a consistent snapshot; edits apply from the next run without restart.
 
 import json
 import logging
+from collections.abc import Sequence
 from typing import Protocol, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -26,7 +27,7 @@ class ConfigStore(Protocol):
 
     async def set(self, module: str, values: dict, model: type[TConfig]) -> TConfig: ...
 
-    async def reset(self, module: str) -> None: ...
+    async def reset(self, module: str, fields: Sequence[str] | None = None) -> None: ...
 
 
 class RedisConfigStore(ConfigStore):
@@ -81,5 +82,29 @@ class RedisConfigStore(ConfigStore):
         await self._redis.set(CONFIG_PREFIX + module, validated.model_dump_json())
         return validated
 
-    async def reset(self, module: str) -> None:
-        await self._redis.delete(CONFIG_PREFIX + module)
+    async def reset(self, module: str, fields: Sequence[str] | None = None) -> None:
+        """Drop the stored overrides — all of them, or only `fields`.
+
+        A partial reset rewrites what stays: `get` merges whatever is stored
+        over the defaults, so a key removed from the stored JSON is a key back
+        at its default value. This is what lets one form reset its own fields
+        without touching the rest of a section another form owns.
+        """
+        key = CONFIG_PREFIX + module
+        if fields is None:
+            await self._redis.delete(key)
+            return
+        raw = await self._redis.get(key)
+        if not raw:
+            return
+        try:
+            overrides = json.loads(raw)
+        except json.JSONDecodeError:
+            # Unreadable anyway — the whole thing is what `get` already ignores.
+            await self._redis.delete(key)
+            return
+        remaining = {k: v for k, v in overrides.items() if k not in set(fields)}
+        if remaining:
+            await self._redis.set(key, json.dumps(remaining))
+        else:
+            await self._redis.delete(key)

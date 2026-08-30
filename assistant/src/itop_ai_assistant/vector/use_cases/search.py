@@ -27,6 +27,15 @@ embeddings endpoint must not need a restart) and owns the embeddings client
 for the length of one `find()` (rule 9.4 — whoever creates a resource closes
 it).
 
+The door answers per family, not only per deployment: a deployment may index
+one corpus and not another, so `available(family)` is what a consumer asks
+before offering a tool over that corpus, and `find()` refuses a family this
+deployment does not index rather than answering from a collection the sweep
+stopped refreshing. A family whose index is being rebuilt under a new
+embeddings model reads the same way, for the same reason and one step
+further: there the collection is not merely stale, it holds vectors the query
+cannot be compared with at all.
+
 Source-agnostic like the rest of `vector/`: nothing here knows what a ticket
 is. `Principal` is the one name it borrows from the platform — see
 ADR-021 for why that is not the same as knowing a consumer's domain.
@@ -144,12 +153,95 @@ class SimilarSearch:
             return "Embeddings endpoint is not configured"
         return None
 
-    async def available(self) -> bool:
+    def _sources_by_name(self, vector_cfg: VectorConfig) -> dict[str, CandidateSource]:
+        """The registered sources, keyed by family. Built fresh on every call
+        — a family added to or removed from the saved config has to be live
+        without a restart, which a list collected once would break."""
+        return {
+            source.name: source
+            for source in (self._sources if self._sources is not None else self._build_sources(vector_cfg))
+        }
+
+    async def _family_unavailable(
+        self, vector_cfg: VectorConfig, embeddings_cfg: EmbeddingsConfig, family: str
+    ) -> str | None:
+        """Why this family is not searchable, or None when it is.
+
+        Separate from `_unavailable` because it answers a different question —
+        "is this corpus indexed" rather than "can this deployment search" — and
+        because it has to be asked *after* the source lookup, so a family name
+        nothing is registered for stays an `UnknownFamily` and not this.
+
+        A family with no entry at all reads the same as a switched-off one:
+        the sweep skips both (`use_cases/indexer.py`), so both leave a
+        collection nothing refreshes behind.
+
+        The third reason is the model itself. A query embedded by one model
+        cannot be compared with an index built by another, so while a family's
+        replacement version is being filled it has to read as unavailable
+        rather than be answered from the version still active — which the
+        backend would refuse anyway, but as a failure about vector widths
+        somewhere inside a run rather than as a closed gate the consumer
+        already knows how to handle. A family that has never been indexed is
+        not this case: it has no fingerprint to disagree with, and an empty
+        answer from an index still warming up is the honest one.
+        """
+        family_cfg = vector_cfg.families.get(family)
+        if family_cfg is None:
+            return f"Family {family!r} has no entry in the vector config (vector: families)"
+        if not family_cfg.enabled:
+            return f"Indexing is switched off for family {family!r} (vector: families.{family}.enabled)"
+        meta = await self._store.active_meta(family)
+        if meta is not None and (meta.model, meta.dim) != (embeddings_cfg.model, embeddings_cfg.dimension):
+            return (
+                f"Family {family!r} is being rebuilt: its index v{meta.version} was built with "
+                f"({meta.model!r}, dim={meta.dim}) and the configured model is "
+                f"({embeddings_cfg.model!r}, dim={embeddings_cfg.dimension}) — it answers again once the "
+                f"sweep has rebuilt it"
+            )
+        return None
+
+    async def available(self, family: str | None = None) -> bool:
         """Whether this deployment can search right now — the gate a module
-        checks before offering the tool that calls `find()`."""
+        checks before offering the tool that calls `find()`.
+
+        Without `family` the question is about the deployment: is there a
+        store, is indexing on, is there an endpoint to embed a query at. With
+        one it also asks whether that corpus is indexed at all — a deployment
+        that indexes FAQ and not tickets can search one and not the other, and
+        a module offering a tool over a family nobody indexes would be
+        answering from a frozen collection.
+
+        "Indexed" means every half `find()` checks: something is registered
+        under that name, the config keeps it on, and the index that answers
+        was built by the model configured now. They split into different
+        exceptions there and into the same False here.
+
+        The last of the three is the only one that has to ask the store, and a
+        store that does not answer reads as False rather than raising. This is
+        a gate a consumer calls *before* it does anything — intake calls it
+        while assembling a run — so an error escaping here would make an
+        unreachable Qdrant fail whole runs that would otherwise have gone on
+        without the search. `find()` is where a broken store is allowed to
+        say so.
+        """
         vector_cfg = await self._config.get("vector", VectorConfig)
         embeddings_cfg = await self._config.get("embeddings", EmbeddingsConfig)
-        return self._unavailable(vector_cfg, embeddings_cfg) is None
+        if self._unavailable(vector_cfg, embeddings_cfg) is not None:
+            return False
+        if family is None:
+            return True
+        # The source lookup first, exactly as `find()` orders it: a family with
+        # a config entry but nothing registered for it is what `find()` answers
+        # `UnknownFamily` to, and a gate that skipped the lookup would let the
+        # consumer offer a tool whose only outcome is that exception.
+        if family not in self._sources_by_name(vector_cfg):
+            return False
+        try:
+            return await self._family_unavailable(vector_cfg, embeddings_cfg, family) is None
+        except Exception as e:
+            logger.warning(f"vector search: family {family!r} treated as unavailable — the store did not answer: {e}")
+            return False
 
     async def find(self, query: SearchQuery, principal: Principal) -> SearchResult:
         """Objects most similar to `query.text` that `principal` may see.
@@ -160,10 +252,10 @@ class SimilarSearch:
         the run journal (TASK-014); every scenario parameter has already been
         validated by `SearchQuery` itself.
 
-        Raises `SearchUnavailable` when this deployment cannot search at all,
-        and `UnknownFamily` when nothing is registered for `query.family` —
-        both before an embeddings client is created, so a bad call costs no
-        connection and no embedding.
+        Raises `SearchUnavailable` when this deployment cannot search at all
+        or when `query.family` is not one it indexes, and `UnknownFamily`
+        when nothing is registered for that name — all before an embeddings
+        client is created, so a bad call costs no connection and no embedding.
 
         Also the one place a search is counted (REQ-009 R3): the vector layer
         justifies its complexity here or nowhere, and an installation with the
@@ -186,13 +278,16 @@ class SimilarSearch:
         unavailable = self._unavailable(vector_cfg, embeddings_cfg)
         if unavailable is not None:
             raise SearchUnavailable(unavailable)
-        sources = {
-            source.name: source
-            for source in (self._sources if self._sources is not None else self._build_sources(vector_cfg))
-        }
+        sources = self._sources_by_name(vector_cfg)
         source = sources.get(query.family)
         if source is None:
             raise UnknownFamily(query.family, list(sources))
+        # After the lookup above, not folded into `_unavailable`: a typo in a
+        # consumer's family setting has to keep answering "no such family, the
+        # known ones are …" rather than "that family is not indexed".
+        family_unavailable = await self._family_unavailable(vector_cfg, embeddings_cfg, query.family)
+        if family_unavailable is not None:
+            raise SearchUnavailable(family_unavailable)
         empty = SearchResult(hits=[], stats=FindStats(requested=query.candidates, found=0, dropped_by_resolve=0))
         if not query.text.strip():
             return empty

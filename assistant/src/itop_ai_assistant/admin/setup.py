@@ -14,7 +14,7 @@ import logging
 from dataclasses import asdict
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from langchain_core.tools import tool
 from pydantic import BaseModel, ValidationError
 from redis.exceptions import RedisError
@@ -162,6 +162,17 @@ async def llm_providers() -> dict:
     return {"providers": [asdict(provider) for provider in PROVIDERS.values()]}
 
 
+@router.get("/{section}/schema")
+async def get_section_schema(section: str) -> dict:
+    """The section's JSON Schema — the mapping form is built from it.
+
+    Same reason as `/config/{module}/schema` for modules: a form must not
+    carry its own list of fields, or a new field would need a UI change
+    (ADR-025). Values are not involved, so nothing here needs masking.
+    """
+    return _model_or_404(section).model_json_schema()
+
+
 @router.get("/{section}")
 async def get_section(section: str, config_store: Annotated[ConfigStore, Depends(get_config_store)]) -> dict:
     model = _model_or_404(section)
@@ -224,10 +235,23 @@ async def update_section(
 
 
 @router.delete("/{section}", status_code=204)
-async def reset_section(section: str, config_store: Annotated[ConfigStore, Depends(get_config_store)]) -> None:
-    _model_or_404(section)
-    await config_store.reset(section)
-    logger.info(f"Setup section {section!r} reset to env defaults via admin API")
+async def reset_section(
+    section: str,
+    config_store: Annotated[ConfigStore, Depends(get_config_store)],
+    fields: Annotated[list[str] | None, Query()] = None,
+) -> None:
+    """Reset the section to env defaults — the whole of it, or only `fields`.
+
+    A section split across several admin forms is reset by the form that owns
+    the fields, so resetting one does not silently revert another's.
+    """
+    model = _model_or_404(section)
+    if fields is not None:
+        unknown = [f for f in fields if f not in model.model_fields]
+        if unknown:
+            raise HTTPException(status_code=422, detail=f"Unknown fields for section {section!r}: {unknown}")
+    await config_store.reset(section, fields)
+    logger.info(f"Setup section {section!r} reset to env defaults via admin API (fields={fields or 'all'})")
 
 
 @router.post("/test-itop")

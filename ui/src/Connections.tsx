@@ -66,7 +66,7 @@ export default function Connections() {
           <Tabs.Tab value="llm">{t('connections.tab_llm')}</Tabs.Tab>
           <Tabs.Tab value="embeddings">{t('connections.tab_embeddings')}</Tabs.Tab>
           <Tabs.Tab value="security">{t('connections.tab_security')}</Tabs.Tab>
-          <Tabs.Tab value="ticket_mapping">{t('connections.tab_ticket_mapping')}</Tabs.Tab>
+          <Tabs.Tab value="mapping">{t('connections.tab_mapping')}</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="itop" pt="md">
           <ItopForm />
@@ -82,8 +82,10 @@ export default function Connections() {
         <Tabs.Panel value="security" pt="md">
           <SecurityForm />
         </Tabs.Panel>
-        <Tabs.Panel value="ticket_mapping" pt="md">
-          <TicketMappingForm />
+        <Tabs.Panel value="mapping" pt="md">
+          <MappingForm section="ticket_mapping" />
+          <Divider my="lg" maw={720} />
+          <MappingForm section="faq_mapping" />
         </Tabs.Panel>
       </Tabs>
     </Stack>
@@ -610,6 +612,13 @@ function LlmForm() {
   );
 }
 
+// GET /api/vector/status, cut down to what a fingerprint change costs: which
+// families hold an index that a different model or dimension would invalidate.
+interface IndexedFamilies {
+  enabled: boolean;
+  index: { family: string; enabled: boolean; active_version: number | null }[] | null;
+}
+
 // Deliberate clone of LlmForm for the embeddings endpoint (same section
 // shape: base_url/model/api_key plus numeric tuning fields).
 function EmbeddingsForm() {
@@ -626,6 +635,13 @@ function EmbeddingsForm() {
   const [batchSize, setBatchSize] = useState<number | string>('');
   const [timeout_, setTimeout_] = useState<number | string>('');
   const [secrets, setSecrets] = useState<Record<string, boolean>>({});
+  // The saved fingerprint, kept apart from the edited fields: what the
+  // rebuild warning compares against.
+  const [saved, setSaved] = useState<{ model: string; dimension: number | null }>({
+    model: '',
+    dimension: null,
+  });
+  const [indexed, setIndexed] = useState<string[]>([]);
 
   const load = async () => {
     const data = await apiGet<SectionData>('/setup/embeddings');
@@ -636,8 +652,31 @@ function EmbeddingsForm() {
     setBatchSize((data.values.batch_size as number) ?? '');
     setTimeout_((data.values.timeout as number) ?? '');
     setSecrets(data.secrets);
+    setSaved({
+      model: String(data.values.model ?? ''),
+      dimension: (data.values.dimension as number) ?? null,
+    });
+    // Nothing indexed, indexing off, or a store that cannot answer — the
+    // warning stays silent rather than guessing: changing the model then
+    // costs nothing to undo.
+    const vector = await apiGet<IndexedFamilies>('/vector/status').catch(() => null);
+    setIndexed(
+      vector?.enabled
+        ? (vector.index ?? [])
+            .filter((f) => f.enabled && f.active_version !== null)
+            .map((f) => f.family)
+        : [],
+    );
     setLoaded(true);
   };
+
+  // A changed model or dimension is a changed index fingerprint: the sweep
+  // cannot mix vectors of two models, so it fills a replacement collection
+  // from scratch and searches over the family are refused until it is done.
+  const rebuildFamilies =
+    model !== saved.model || (dimension !== '' && Number(dimension) !== saved.dimension)
+      ? indexed
+      : [];
 
   useEffect(() => {
     load().catch((e: Error) => setError(e.message));
@@ -687,6 +726,13 @@ function EmbeddingsForm() {
   };
 
   const save = async () => {
+    if (
+      rebuildFamilies.length > 0 &&
+      !window.confirm(
+        t('connections.embeddings_rebuild_confirm', { families: rebuildFamilies.join(', ') }),
+      )
+    )
+      return;
     setBusy(true);
     setError(null);
     setSuccess(null);
@@ -767,7 +813,6 @@ function EmbeddingsForm() {
         <NumberInput
           label={t('common.field_dimension')}
           min={1}
-          max={4000}
           value={dimension}
           onChange={setDimension}
         />
@@ -784,6 +829,11 @@ function EmbeddingsForm() {
           onChange={setTimeout_}
         />
       </Group>
+      {rebuildFamilies.length > 0 && (
+        <Alert color="orange" title={t('connections.embeddings_rebuild_title')}>
+          {t('connections.embeddings_rebuild_warning', { families: rebuildFamilies.join(', ') })}
+        </Alert>
+      )}
       <Group>
         <Button onClick={save} loading={busy}>
           {t('common.btn_save')}
@@ -940,38 +990,102 @@ function TokenField(props: {
   );
 }
 
-function TicketMappingForm() {
+type MappingSection = 'ticket_mapping' | 'faq_mapping';
+
+// One semantic field of a mapping model, as its JSON Schema describes it.
+interface MappingFieldProp {
+  description?: string;
+  default?: string | null;
+}
+
+// GET /api/setup/{section}/schema. A mapping section holds its semantic
+// fields in a nested model, which pydantic emits as a $ref into $defs.
+interface SectionSchema {
+  properties?: Record<string, { $ref?: string }>;
+  $defs?: Record<string, { properties?: Record<string, MappingFieldProp> }>;
+}
+
+// undefined when the schema is not shaped as expected. An empty field set must
+// never reach the form: saving it would PATCH `fields: {}`, and the top-level
+// merge would reset every semantic field to its model default.
+function mappingFieldProps(schema: SectionSchema): Record<string, MappingFieldProp> | undefined {
+  const ref = schema.properties?.fields?.$ref?.split('/').pop();
+  const found = ref ? schema.$defs?.[ref]?.properties : undefined;
+  return found && Object.keys(found).length > 0 ? found : undefined;
+}
+
+// Semantic field → iTop attribute code, one row per field. The fields come
+// from the section's schema, never from a list kept here: a field added to
+// TicketFieldMap/FaqFieldMap must render without touching this file
+// (ADR-025). Their names are identifiers on both sides — our semantics on
+// the left, an iTop attribute code on the right — so they are shown as they
+// are, and only the schema's own description is translated text.
+function MappingForm({ section }: { section: MappingSection }) {
   const { t } = useTranslation();
-  const [loaded, setLoaded] = useState(false);
+  const [props, setProps] = useState<Record<string, MappingFieldProp> | null>(null);
+  // null = the attribute does not exist in this datamodel, which is what the
+  // per-row switch sets and what reaches the API as JSON null.
+  const [fields, setFields] = useState<Record<string, string | null>>({});
+  const [overrides, setOverrides] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [text, setText] = useState('');
+
+  // Point differences between classes sharing one mapping — tickets only:
+  // FaqMappingConfig has a single class and no overrides.
+  const hasOverrides = section === 'ticket_mapping';
 
   const load = async () => {
-    const data = await apiGet<SectionData>('/setup/ticket_mapping');
-    setText(JSON.stringify(data.values, null, 2));
-    setLoaded(true);
+    const [schema, data] = await Promise.all([
+      apiGet<SectionSchema>(`/setup/${section}/schema`),
+      apiGet<SectionData>(`/setup/${section}`),
+    ]);
+    const fieldProps = mappingFieldProps(schema);
+    if (!fieldProps) throw new Error(`Unexpected schema for ${section}: no field definitions`);
+    const stored = (data.values.fields ?? {}) as Record<string, string | null>;
+    const initial: Record<string, string | null> = {};
+    for (const name of Object.keys(fieldProps)) initial[name] = stored[name] ?? null;
+    setProps(fieldProps);
+    setFields(initial);
+    if (hasOverrides) {
+      setOverrides(JSON.stringify(data.values.class_overrides ?? {}, null, 2));
+    }
   };
 
   useEffect(() => {
     load().catch((e: Error) => setError(e.message));
-  }, []);
+  }, [section]);
+
+  const setField = (name: string, value: string | null) => {
+    setSuccess(null);
+    setFields((current) => ({ ...current, [name]: value }));
+  };
 
   const save = async () => {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      setError(t('common.invalid_json'));
-      setSuccess(null);
-      return;
+    // `fields` goes as a whole object: the setup API merges a PATCH body over
+    // the current config field by field at the top level only, so a partial
+    // `fields` would reset every key it omits to the model default.
+    const mapped: Record<string, string | null> = {};
+    for (const [name, value] of Object.entries(fields)) {
+      // An empty input is no attribute code either, so it means the same as
+      // the switch — never an empty string, which no datamodel could match.
+      mapped[name] = value === null || value.trim() === '' ? null : value.trim();
+    }
+    const body: Record<string, unknown> = { fields: mapped };
+    if (hasOverrides) {
+      try {
+        body.class_overrides = JSON.parse(overrides);
+      } catch {
+        setError(t('common.invalid_json'));
+        setSuccess(null);
+        return;
+      }
     }
     setBusy(true);
     setError(null);
     setSuccess(null);
     try {
-      await apiSend<SectionData>('PATCH', '/setup/ticket_mapping', parsed);
+      await apiSend<SectionData>('PATCH', `/setup/${section}`, body);
       await load();
       setSuccess(t('common.saved'));
     } catch (e) {
@@ -985,13 +1099,7 @@ function TicketMappingForm() {
     setError(null);
     setSuccess(null);
     try {
-      if (
-        !(await resetSection(
-          'ticket_mapping',
-          t('connections.reset_confirm', { section: 'ticket_mapping' }),
-        ))
-      )
-        return;
+      if (!(await resetSection(section, t('connections.reset_confirm', { section })))) return;
       await load();
       setSuccess(t('common.section_reset'));
     } catch (e) {
@@ -999,22 +1107,80 @@ function TicketMappingForm() {
     }
   };
 
-  if (!loaded) return error ? <Alert color="red">{error}</Alert> : <Loader />;
+  if (!props) return error ? <Alert color="red">{error}</Alert> : <Loader />;
 
   return (
     <Stack maw={720}>
-      <StatusAlert error={error} success={success} />
+      <Title order={4}>{t(`connections.mapping_title_${section}`)}</Title>
       <Text c="dimmed" size="sm">
-        <Trans i18nKey="connections.ticket_mapping_desc" components={{ code: <code /> }} />
+        {t(`connections.mapping_desc_${section}`)}
       </Text>
-      <JsonInput
-        value={text}
-        onChange={setText}
-        autosize
-        minRows={12}
-        formatOnBlur
-        validationError={t('common.invalid_json')}
-      />
+      <StatusAlert error={error} success={success} />
+      <Table verticalSpacing="xs">
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>{t('connections.mapping_field')}</Table.Th>
+            <Table.Th>{t('connections.mapping_attribute')}</Table.Th>
+            <Table.Th>{t('connections.mapping_absent')}</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {Object.entries(props).map(([name, prop]) => (
+            <Table.Tr key={name}>
+              <Table.Td>
+                <code>{name}</code>
+                {prop.description && (
+                  <Text size="xs" c="dimmed">
+                    {prop.description}
+                  </Text>
+                )}
+              </Table.Td>
+              <Table.Td>
+                <TextInput
+                  value={fields[name] ?? ''}
+                  disabled={fields[name] === null}
+                  placeholder={typeof prop.default === 'string' ? prop.default : ''}
+                  aria-label={name}
+                  onChange={(e) => setField(name, e.currentTarget.value)}
+                />
+              </Table.Td>
+              <Table.Td>
+                <Switch
+                  checked={fields[name] === null}
+                  aria-label={`${name}: ${t('connections.mapping_absent')}`}
+                  // Turning it off seeds the value the placeholder was showing:
+                  // an empty input means the same as the switch, so leaving it
+                  // empty would undo the switch on save.
+                  onChange={(e) =>
+                    setField(name, e.currentTarget.checked ? null : (prop.default ?? ''))
+                  }
+                />
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+      {hasOverrides && (
+        <>
+          <Title order={5} mt="xs">
+            {t('connections.class_overrides')}
+          </Title>
+          <Text c="dimmed" size="sm">
+            <Trans i18nKey="connections.class_overrides_desc" components={{ code: <code /> }} />
+          </Text>
+          <JsonInput
+            value={overrides}
+            onChange={(value) => {
+              setSuccess(null);
+              setOverrides(value);
+            }}
+            autosize
+            minRows={4}
+            formatOnBlur
+            validationError={t('common.invalid_json')}
+          />
+        </>
+      )}
       <Group>
         <Button onClick={save} loading={busy}>
           {t('common.btn_save')}

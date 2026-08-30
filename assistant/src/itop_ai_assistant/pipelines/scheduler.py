@@ -13,7 +13,11 @@ this module's business, and that is the whole point:
 Semantics a tick can rely on: it fires immediately on start, the interval is
 re-read from config *before every wait* (so an edit in the admin UI applies
 without a restart), a failing tick is logged and the loop lives on, and the
-wait is interruptible — `wake(name)` runs the next tick now.
+wait is interruptible — `wake(name)` runs the next tick now. A tick that
+cares can ask `was_woken(name)` whether it started from a `wake()` or from
+the wait running out — still a fact about the loop, not about what the tick
+means: the vector sweep reads it to tell "Index now" from the timer, and
+every other loop is unaffected by its existence.
 
 A loop is **per process**. Cross-replica exclusion is the tick's own business
 (the vector sweep takes a Redis lock with renewal); there is no leader
@@ -43,6 +47,10 @@ class _Entry:
     default_interval: float
     wake: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task | None = None
+    #: Did the tick now running start from `wake()` rather than from the wait
+    #: running out? False at start, so the very first tick of a process reads
+    #: as a timer tick.
+    woken: bool = False
 
 
 class PeriodicTasks:
@@ -89,6 +97,7 @@ class PeriodicTasks:
         entry = self._entries.get(name)
         if entry is None:
             return False
+        entry.woken = True
         entry.wake.set()
         return True
 
@@ -96,7 +105,23 @@ class PeriodicTasks:
         entry = self._entries.get(name)
         return entry is not None and entry.task is not None and not entry.task.done()
 
+    def was_woken(self, name: str) -> bool:
+        """Whether the tick now running was asked for by `wake()`.
+
+        Read from inside the tick. It stays true for a `wake()` that arrived
+        while the previous tick was still running: such a request has not been
+        served yet, and the next tick is the one serving it.
+        """
+        entry = self._entries.get(name)
+        return entry is not None and entry.woken
+
     async def _run(self, entry: _Entry) -> None:
+        # A `wake()` that arrived while this loop was not running is not
+        # carried into it: only a wait that runs out clears the flag, so
+        # without this the first tick after a start would read as requested
+        # and sweep unpaced — the restart-immediate-sweep behaviour the
+        # pacing gate exists to remove.
+        entry.woken = False
         while True:
             entry.wake.clear()
             try:
@@ -105,8 +130,14 @@ class PeriodicTasks:
                 # A loop that dies on one bad tick is worse than a noisy log:
                 # nothing restarts it until the next deployment.
                 logger.exception(f"periodic task {entry.name!r}: tick failed")
-            with suppress(TimeoutError):
+            try:
                 await asyncio.wait_for(entry.wake.wait(), timeout=await self._delay(entry))
+            except TimeoutError:
+                # Only a wait that ran out clears the flag. A `wake()` during
+                # the tick above has already set it and left the event set, so
+                # this returns at once and the request survives into the next
+                # tick instead of being swallowed by the pass it interrupted.
+                entry.woken = False
 
     async def _delay(self, entry: _Entry) -> float:
         try:

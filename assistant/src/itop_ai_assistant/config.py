@@ -26,13 +26,15 @@ class TicketFieldMap(BaseModel):
     status: str | None = "status"
     service_id: str | None = "service_id"
     subcategory_id: str | None = "servicesubcategory_id"
-    service_name: str | None = "service_id_friendlyname"
-    subcategory_name: str | None = "servicesubcategory_id_friendlyname"
-    caller_name: str | None = "caller_id_friendlyname"
+    service_name: str | None = Field("service_id_friendlyname", description="Display name of the service, not its id")
+    subcategory_name: str | None = Field(
+        "servicesubcategory_id_friendlyname", description="Display name of the subcategory, not its id"
+    )
+    caller_name: str | None = Field("caller_id_friendlyname", description="Display name of the caller")
     org_id: str | None = "org_id"
-    request_type: str | None = "request_type"
-    public_log: str | None = "public_log"
-    private_log: str | None = "private_log"
+    request_type: str | None = Field("request_type", description="Service request or incident; absent on some classes")
+    public_log: str | None = Field("public_log", description="Conversation with the caller")
+    private_log: str | None = Field("private_log", description="Notes between engineers")
     solution: str | None = "solution"
     last_update: str | None = "last_update"
     start_date: str | None = "start_date"
@@ -70,10 +72,10 @@ class FaqFieldMap(BaseModel):
     """Semantic FAQ field → iTop attribute code. None = attribute absent."""
 
     title: str | None = "title"
-    summary: str | None = "summary"
-    category_name: str | None = "category_name"
-    error_code: str | None = "error_code"
-    key_words: str | None = "key_words"
+    summary: str | None = Field("summary", description="Short abstract of the article, if the class has one")
+    category_name: str | None = Field("category_name", description="Display name of the FAQ category")
+    error_code: str | None = Field("error_code", description="Error code the article is about")
+    key_words: str | None = Field("key_words", description="Search keywords of the article")
     description: str | None = "description"  # HTML
     # FAQ has no lifecycle status in stock iTop — unlike tickets, unmapped by
     # default; index_values is therefore [] for FAQ (see VectorConfig.classes),
@@ -210,9 +212,14 @@ class EmbeddingsConfig(RuntimeSectionConfig):
     base_url: str | None = None
     model: str | None = None
     api_key: str | None = None
-    # Qdrant has no hard ceiling here; the bound is a sanity check, and ADR-006
-    # points the default the other way — MRL truncation to 512 or 256.
-    dimension: int = Field(default=1024, gt=0, le=4096)
+    # No upper bound: this declares the model's native vector length rather than
+    # choosing one — the OpenAI `dimensions` truncation parameter is deliberately
+    # not sent (see vector.adapters.embedder), so changing the length means
+    # changing the model. Qdrant has no ceiling of its own either, and the real
+    # check is elsewhere: POST /api/setup/test-embeddings measures what the
+    # endpoint returns, and EmbeddingsClient re-checks every batch against this
+    # value. Any number here would only reject a legitimate config.
+    dimension: int = Field(default=1024, gt=0)
     batch_size: int = Field(default=32, gt=0)
     timeout: float = 30.0
 

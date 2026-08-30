@@ -4,7 +4,6 @@ import {
   Button,
   Card,
   CloseButton,
-  Divider,
   Fieldset,
   Group,
   Loader,
@@ -32,12 +31,20 @@ interface FamilyIndexInfo {
   // false = a family Qdrant still has data for, but no source in the
   // current registry claims anymore — a decommission candidate.
   configured: boolean;
+  // false = switched off on the Indexed classes tab (or missing from the
+  // config entirely): the collection is kept but no longer swept, and
+  // searches over it are refused.
+  enabled: boolean;
   active_version: number | null;
   model: string | null;
   dim: number | null;
   // null = no embeddings model configured to compare against — not a warning
   fingerprint_match: boolean | null;
   rows: number | null;
+  // Set while the embeddings model has changed and the sweep is filling a
+  // replacement version next to the live one. Its row count is what moves
+  // between two polls, which is how "still going" is told from "stuck".
+  building: { version: number; model: string; dim: number; rows: number } | null;
 }
 
 interface JournalRun {
@@ -50,8 +57,11 @@ interface JournalRun {
   chunks_embedded: number;
   // Absent on journal entries written before this counter existed.
   chunks_metadata_updated?: number;
+  objects_skipped?: number;
   chunks_deleted: number;
   error: string | null;
+  // What the run chose not to index — never a failure, so it comes with any status.
+  warning?: string | null;
 }
 
 interface VectorStatus {
@@ -107,6 +117,7 @@ interface ClassCfg {
 // together because both are about the same collection (TASK-021).
 interface FamilyCfg {
   name: string;
+  enabled: boolean;
   sweepIntervalSeconds: number | string;
   logEntriesPerChunk: number | string;
   classes: ClassCfg[];
@@ -140,9 +151,12 @@ function labelKey(prefix: string, name: string): string {
   return `vector.${prefix}.${name.replace(':', '_')}`;
 }
 
-async function resetSection(section: string, confirmMsg: string): Promise<boolean> {
+// `fields` scopes the reset to the ones this form owns — the vector section is
+// split across two forms, and resetting one must not revert the other's.
+async function resetSection(section: string, confirmMsg: string, fields?: string[]): Promise<boolean> {
   if (!window.confirm(confirmMsg)) return false;
-  await apiSend('DELETE', `/setup/${section}`);
+  const query = fields?.length ? `?${fields.map((f) => `fields=${encodeURIComponent(f)}`).join('&')}` : '';
+  await apiSend('DELETE', `/setup/${section}${query}`);
   return true;
 }
 
@@ -186,13 +200,17 @@ export default function Vector() {
       <Tabs defaultValue="status" keepMounted={false}>
         <Tabs.List>
           <Tabs.Tab value="status">{t('vector.tab_status')}</Tabs.Tab>
-          <Tabs.Tab value="settings">{t('vector.tab_settings')}</Tabs.Tab>
+          <Tabs.Tab value="indexer">{t('vector.section_indexer')}</Tabs.Tab>
+          <Tabs.Tab value="classes">{t('vector.section_classes')}</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="status" pt="md">
           <VectorStatusPanel />
         </Tabs.Panel>
-        <Tabs.Panel value="settings" pt="md">
-          <VectorSettingsForm />
+        <Tabs.Panel value="indexer" pt="md">
+          <IndexerSettingsForm />
+        </Tabs.Panel>
+        <Tabs.Panel value="classes" pt="md">
+          <ClassesSettingsForm />
         </Tabs.Panel>
       </Tabs>
     </Stack>
@@ -290,9 +308,26 @@ function VectorStatusPanel() {
       )}
       {status.index && status.index.length > 0 ? (
         <>
-          {status.index.some((f) => f.fingerprint_match === false) && (
-            <Alert color="orange">{t('vector.fingerprint_mismatch')}</Alert>
+          {/* Three situations behind one mismatched fingerprint, and only the
+              last one asks the administrator for anything: the replacement
+              version is already being filled; the sweep has not reached the
+              family yet, and there is nothing to do but wait; or nothing will
+              ever reach it, because the family is switched off. The sweep
+              indexes a family only when the deployment, the family and its
+              source all say yes, so "wait" is only honest when all three do.
+              Global indexing off and a family nothing is registered for are
+              left out on purpose — the badge above and the row's own badge
+              already say those. */}
+          {status.index.some((f) => f.building) && (
+            <Alert color="blue">{t('vector.rebuild_running')}</Alert>
           )}
+          {status.enabled &&
+            status.index.some(
+              (f) => f.fingerprint_match === false && !f.building && f.configured && f.enabled,
+            ) && <Alert color="blue">{t('vector.rebuild_pending')}</Alert>}
+          {status.index.some(
+            (f) => f.fingerprint_match === false && !f.building && f.configured && !f.enabled,
+          ) && <Alert color="orange">{t('vector.fingerprint_mismatch')}</Alert>}
           <Table withTableBorder verticalSpacing={4}>
             <Table.Thead>
               <Table.Tr>
@@ -314,12 +349,55 @@ function VectorStatusPanel() {
                           {t('vector.badge_family_not_configured')}
                         </Badge>
                       )}
+                      {/* Only for a family that is still registered — an
+                          unregistered one already says so above, and two
+                          grey badges in a row explain nothing twice. */}
+                      {f.configured && !f.enabled && (
+                        <Badge color="gray" variant="light" title={t('vector.family_disabled_hint')}>
+                          {t('vector.badge_family_disabled')}
+                        </Badge>
+                      )}
                     </Group>
                   </Table.Td>
-                  <Table.Td>{f.active_version ?? '—'}</Table.Td>
-                  <Table.Td>{f.model ?? '—'}</Table.Td>
-                  <Table.Td>{f.dim ?? '—'}</Table.Td>
-                  <Table.Td>{f.rows ?? '—'}</Table.Td>
+                  {/* While a replacement is being filled, every cell shows
+                      both sides of the move: the version still answering
+                      searches and the one being built for the new model. */}
+                  <Table.Td>
+                    {f.active_version ?? '—'}
+                    {f.building && (
+                      <Text span c="blue" title={t('vector.rebuild_hint')}>
+                        {' '}
+                        → v{f.building.version}
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {f.model ?? '—'}
+                    {f.building && (
+                      <Text span c="blue">
+                        {' '}
+                        → {f.building.model}
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {f.dim ?? '—'}
+                    {f.building && (
+                      <Text span c="blue">
+                        {' '}
+                        → {f.building.dim}
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    {f.rows ?? '—'}
+                    {f.building && (
+                      <Text span c="blue">
+                        {' '}
+                        → {f.building.rows}
+                      </Text>
+                    )}
+                  </Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
@@ -359,6 +437,7 @@ function VectorStatusPanel() {
               <Table.Th>{t('vector.col_kind')}</Table.Th>
               <Table.Th>{t('vector.col_status')}</Table.Th>
               <Table.Th>{t('vector.col_objects')}</Table.Th>
+              <Table.Th>{t('vector.col_skipped')}</Table.Th>
               <Table.Th>{t('vector.col_embedded')}</Table.Th>
               <Table.Th>{t('vector.col_metadata')}</Table.Th>
               <Table.Th>{t('vector.col_deleted')}</Table.Th>
@@ -377,6 +456,7 @@ function VectorStatusPanel() {
                     </Badge>
                   </Table.Td>
                   <Table.Td>{run.objects_seen}</Table.Td>
+                  <Table.Td>{run.objects_skipped ?? 0}</Table.Td>
                   <Table.Td>{run.chunks_embedded}</Table.Td>
                   <Table.Td>{run.chunks_metadata_updated ?? 0}</Table.Td>
                   <Table.Td>{run.chunks_deleted}</Table.Td>
@@ -384,9 +464,18 @@ function VectorStatusPanel() {
                 </Table.Tr>
                 {run.error && (
                   <Table.Tr>
-                    <Table.Td colSpan={8}>
+                    <Table.Td colSpan={9}>
                       <Text size="xs" c="red" style={{ whiteSpace: 'pre-wrap' }}>
                         {run.error}
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
+                )}
+                {run.warning && (
+                  <Table.Tr>
+                    <Table.Td colSpan={9}>
+                      <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
+                        {run.warning}
                       </Text>
                     </Table.Td>
                   </Table.Tr>
@@ -411,21 +500,129 @@ function VectorStatusPanel() {
   );
 }
 
-function VectorSettingsForm() {
+// The scalar half of the vector section — the fields the indexer tab owns,
+// declared once so the payload, the form and the scoped reset cannot drift
+// apart. `step` marks the only non-integer setting.
+const INDEXER_FIELDS: { key: string; label: string; description?: string; min: number; step?: number }[] = [
+  { key: 'sweep_interval_seconds', label: 'field_sweep_interval', min: 1 },
+  { key: 'sweep_page_size', label: 'field_sweep_page_size', min: 1 },
+  { key: 'sweep_throttle_seconds', label: 'field_sweep_throttle', min: 0, step: 0.1 },
+  { key: 'reconcile_interval_days', label: 'field_reconcile_days', min: 1 },
+  { key: 'max_chunk_tokens', label: 'field_max_chunk_tokens', min: 1 },
+  { key: 'log_entries_per_chunk', label: 'field_log_entries', min: 1 },
+  {
+    key: 'max_chunks_per_object',
+    label: 'field_max_chunks_per_object',
+    description: 'field_max_chunks_per_object_hint',
+    min: 1,
+  },
+];
+
+// Every key the indexer form writes — `enabled` plus the numbers above. What
+// its reset scopes itself to, so it never reverts the classes the other tab
+// owns (and the other way round).
+const INDEXER_KEYS = ['enabled', ...INDEXER_FIELDS.map((f) => f.key)];
+
+function IndexerSettingsForm() {
   const { t } = useTranslation();
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Indexer (shared) settings
   const [enabled, setEnabled] = useState(false);
-  const [sweepInterval, setSweepInterval] = useState<number | string>('');
-  const [sweepPageSize, setSweepPageSize] = useState<number | string>('');
-  const [sweepThrottle, setSweepThrottle] = useState<number | string>('');
-  const [reconcileDays, setReconcileDays] = useState<number | string>('');
-  const [maxChunkTokens, setMaxChunkTokens] = useState<number | string>('');
-  const [logEntries, setLogEntries] = useState<number | string>('');
+  // Empty string = "leave the stored value alone" on save, same as before.
+  const [numbers, setNumbers] = useState<Record<string, number | string>>({});
+
+  const load = async () => {
+    const data = await apiGet<SectionData>('/setup/vector');
+    setEnabled(Boolean(data.values.enabled));
+    setNumbers(
+      Object.fromEntries(INDEXER_FIELDS.map((f) => [f.key, (data.values[f.key] as number) ?? ''])),
+    );
+    setLoaded(true);
+  };
+
+  useEffect(() => {
+    load().catch((e: Error) => setError(e.message));
+  }, []);
+
+  const save = async () => {
+    const b: Record<string, unknown> = { enabled };
+    for (const f of INDEXER_FIELDS) {
+      const value = numbers[f.key];
+      if (value !== '' && value !== undefined) b[f.key] = Number(value);
+    }
+    setBusy(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await apiSend<SectionData>('PATCH', '/setup/vector', b);
+      await load();
+      setSuccess(t('common.saved'));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reset = async () => {
+    setError(null);
+    setSuccess(null);
+    try {
+      const confirmMsg = t('connections.reset_confirm', { section: t('vector.section_indexer') });
+      if (!(await resetSection('vector', confirmMsg, INDEXER_KEYS))) return;
+      await load();
+      setSuccess(t('common.section_reset'));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  if (!loaded) return error ? <Alert color="red">{error}</Alert> : <Loader />;
+
+  return (
+    // One field per row: the descriptions are long enough that side by side
+    // they wrap into unreadable columns.
+    <Stack maw={720}>
+      <StatusAlert error={error} success={success} />
+      <Switch
+        label={t('vector.field_enabled')}
+        description={t('vector.field_enabled_desc')}
+        checked={enabled}
+        onChange={(e) => setEnabled(e.currentTarget.checked)}
+      />
+      {INDEXER_FIELDS.map((f) => (
+        <NumberInput
+          key={f.key}
+          label={t(`vector.${f.label}`)}
+          description={f.description ? t(`vector.${f.description}`) : undefined}
+          min={f.min}
+          step={f.step}
+          value={numbers[f.key] ?? ''}
+          onChange={(value) => setNumbers((prev) => ({ ...prev, [f.key]: value }))}
+        />
+      ))}
+      <Group>
+        <Button onClick={save} loading={busy}>
+          {t('common.btn_save')}
+        </Button>
+        <Button variant="subtle" color="red" onClick={reset}>
+          {t('common.btn_reset_defaults')}
+        </Button>
+      </Group>
+    </Stack>
+  );
+}
+
+function ClassesSettingsForm() {
+  const { t } = useTranslation();
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
   // Per-family settings, one section per registered source (never guessed —
   // /vector/sources always lists every registered family, TASK-021).
   const [families, setFamilies] = useState<FamilyCfg[]>([]);
@@ -439,17 +636,11 @@ function VectorSettingsForm() {
       apiGet<{ sources: SourceInfo[] }>('/vector/sources'),
     ]);
     setSources(vocab.sources);
-    setEnabled(Boolean(data.values.enabled));
-    setSweepInterval((data.values.sweep_interval_seconds as number) ?? '');
-    setSweepPageSize((data.values.sweep_page_size as number) ?? '');
-    setSweepThrottle((data.values.sweep_throttle_seconds as number) ?? '');
-    setReconcileDays((data.values.reconcile_interval_days as number) ?? '');
-    setMaxChunkTokens((data.values.max_chunk_tokens as number) ?? '');
-    setLogEntries((data.values.log_entries_per_chunk as number) ?? '');
     const saved =
       (data.values.families as Record<
         string,
         {
+          enabled?: boolean;
           classes?: Record<string, { index_values?: string[]; chunks?: Record<string, ChunkCfg> }>;
           sweep_interval_seconds?: number;
           log_entries_per_chunk?: number;
@@ -466,6 +657,9 @@ function VectorSettingsForm() {
         const f = saved[name] ?? {};
         return {
           name,
+          // Absent means the model's default (on), not "switched off" — a
+          // family saved before this setting existed keeps indexing.
+          enabled: f.enabled ?? true,
           sweepIntervalSeconds: f.sweep_interval_seconds ?? '',
           logEntriesPerChunk: f.log_entries_per_chunk ?? '',
           classes: Object.entries(f.classes ?? {}).map(([cname, ccfg]) => ({
@@ -529,29 +723,20 @@ function VectorSettingsForm() {
     for (const f of families) {
       const classes: Record<string, unknown> = {};
       for (const c of f.classes) classes[c.name] = { index_values: c.indexValues, chunks: c.chunks };
-      const entry: Record<string, unknown> = { classes };
+      // Always sent, unlike the two overrides below: a boolean has no
+      // "leave the stored value alone" state to express by omitting it.
+      const entry: Record<string, unknown> = { enabled: f.enabled, classes };
       if (f.sweepIntervalSeconds !== '') entry.sweep_interval_seconds = Number(f.sweepIntervalSeconds);
       if (f.logEntriesPerChunk !== '') entry.log_entries_per_chunk = Number(f.logEntriesPerChunk);
       familiesPayload[f.name] = entry;
     }
-    // families is always sent in full — an empty dict is a meaningful value
-    // under PATCH-merge (removes every family); empty numbers keep the
-    // stored value.
-    const b: Record<string, unknown> = {
-      enabled,
-      families: familiesPayload,
-    };
-    if (sweepInterval !== '') b.sweep_interval_seconds = Number(sweepInterval);
-    if (sweepPageSize !== '') b.sweep_page_size = Number(sweepPageSize);
-    if (sweepThrottle !== '') b.sweep_throttle_seconds = Number(sweepThrottle);
-    if (reconcileDays !== '') b.reconcile_interval_days = Number(reconcileDays);
-    if (maxChunkTokens !== '') b.max_chunk_tokens = Number(maxChunkTokens);
-    if (logEntries !== '') b.log_entries_per_chunk = Number(logEntries);
     setBusy(true);
     setError(null);
     setSuccess(null);
     try {
-      await apiSend<SectionData>('PATCH', '/setup/vector', b);
+      // families is always sent in full — an empty dict is a meaningful value
+      // under PATCH-merge (removes every family).
+      await apiSend<SectionData>('PATCH', '/setup/vector', { families: familiesPayload });
       await load();
       setSuccess(t('common.saved'));
     } catch (e) {
@@ -565,8 +750,8 @@ function VectorSettingsForm() {
     setError(null);
     setSuccess(null);
     try {
-      if (!(await resetSection('vector', t('connections.reset_confirm', { section: 'vector' }))))
-        return;
+      const confirmMsg = t('connections.reset_confirm', { section: t('vector.section_classes') });
+      if (!(await resetSection('vector', confirmMsg, ['families']))) return;
       await load();
       setSuccess(t('common.section_reset'));
     } catch (e) {
@@ -579,56 +764,6 @@ function VectorSettingsForm() {
   return (
     <Stack maw={720}>
       <StatusAlert error={error} success={success} />
-      <Title order={4}>{t('vector.section_indexer')}</Title>
-      <Switch
-        label={t('vector.field_enabled')}
-        description={t('vector.field_enabled_desc')}
-        checked={enabled}
-        onChange={(e) => setEnabled(e.currentTarget.checked)}
-      />
-      <Group grow>
-        <NumberInput
-          label={t('vector.field_sweep_interval')}
-          min={1}
-          value={sweepInterval}
-          onChange={setSweepInterval}
-        />
-        <NumberInput
-          label={t('vector.field_sweep_page_size')}
-          min={1}
-          value={sweepPageSize}
-          onChange={setSweepPageSize}
-        />
-        <NumberInput
-          label={t('vector.field_sweep_throttle')}
-          min={0}
-          step={0.1}
-          value={sweepThrottle}
-          onChange={setSweepThrottle}
-        />
-      </Group>
-      <Group grow>
-        <NumberInput
-          label={t('vector.field_reconcile_days')}
-          min={1}
-          value={reconcileDays}
-          onChange={setReconcileDays}
-        />
-        <NumberInput
-          label={t('vector.field_max_chunk_tokens')}
-          min={1}
-          value={maxChunkTokens}
-          onChange={setMaxChunkTokens}
-        />
-        <NumberInput
-          label={t('vector.field_log_entries')}
-          min={1}
-          value={logEntries}
-          onChange={setLogEntries}
-        />
-      </Group>
-      <Divider />
-      <Title order={4}>{t('vector.section_classes')}</Title>
       <Text c="dimmed" size="sm">
         {t('vector.fragments_explainer')}
       </Text>
@@ -690,6 +825,12 @@ function FamilyCard({
     <Fieldset legend={t(labelKey('source', family.name), { defaultValue: family.name })}>
       <Stack gap="sm">
         {source === null && <Alert color="orange">{t('vector.family_source_unknown')}</Alert>}
+        <Switch
+          label={t('vector.field_family_enabled')}
+          description={t('vector.field_family_enabled_desc')}
+          checked={family.enabled}
+          onChange={(e) => onFieldChange({ enabled: e.currentTarget.checked })}
+        />
         <Group grow>
           <NumberInput
             label={t('vector.field_family_sweep_interval')}

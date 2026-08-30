@@ -229,6 +229,21 @@ class TestSetupSections(SetupApiTestCase):
         self.assertEqual(response.status_code, 204)
         self.assertEqual(self.client.get("/api/setup/llm").json()["values"]["model"], "env-model")
 
+    def test_delete_with_fields_resets_only_those(self):
+        # The vector section is edited by two forms; each resets its own fields.
+        self.client.patch("/api/setup/vector", json={"enabled": True, "sweep_page_size": 7})
+
+        response = self.client.delete("/api/setup/vector?fields=sweep_page_size")
+
+        self.assertEqual(response.status_code, 204)
+        values = self.client.get("/api/setup/vector").json()["values"]
+        self.assertTrue(values["enabled"])
+        self.assertEqual(values["sweep_page_size"], 100)
+
+    def test_delete_with_unknown_field_is_rejected(self):
+        response = self.client.delete("/api/setup/vector?fields=nope")
+        self.assertEqual(response.status_code, 422)
+
     def test_ticket_mapping_is_editable(self):
         response = self.client.patch(
             "/api/setup/ticket_mapping", json={"class_overrides": {"Incident": {"title": None}}}
@@ -236,6 +251,32 @@ class TestSetupSections(SetupApiTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["values"]["class_overrides"], {"Incident": {"title": None}})
+
+    def test_section_schema_describes_the_mapping_fields(self):
+        # The mapping form is built from this: no list of semantic fields lives in the SPA.
+        body = self.client.get("/api/setup/faq_mapping/schema").json()
+
+        fields = body["$defs"]["FaqFieldMap"]["properties"]
+        self.assertIn("error_code", fields)
+        self.assertIn("FaqFieldMap", body["properties"]["fields"]["$ref"])
+
+    def test_section_schema_unknown_section_is_404(self):
+        self.assertEqual(self.client.get("/api/setup/nope/schema").status_code, 404)
+
+    def test_faq_mapping_unmaps_an_attribute_the_datamodel_lacks(self):
+        # The form sends `fields` whole, which is what a section-level merge
+        # requires: a body of one key would reset the rest to model defaults.
+        response = self.client.patch(
+            "/api/setup/faq_mapping",
+            json={"fields": {"title": "name", "error_code": None, "key_words": "key_words"}},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        values = self.client.get("/api/setup/faq_mapping").json()["values"]
+        self.assertIsNone(values["fields"]["error_code"])
+        self.assertEqual(values["fields"]["title"], "name")
+        # Omitted from the body, so back to the model default rather than kept
+        self.assertEqual(values["fields"]["summary"], "summary")
 
     def test_embeddings_section_masks_api_key(self):
         self.client.patch("/api/setup/embeddings", json={"base_url": "http://emb/v1", "api_key": "sk-emb"})
@@ -259,7 +300,7 @@ class TestSetupSections(SetupApiTestCase):
         self.assertEqual(body["values"]["dimension"], 1024)
 
     def test_embeddings_invalid_dimension_rejected(self):
-        response = self.client.patch("/api/setup/embeddings", json={"dimension": 4097})
+        response = self.client.patch("/api/setup/embeddings", json={"dimension": 0})
         self.assertEqual(response.status_code, 422)
 
     def test_vector_section_is_editable(self):

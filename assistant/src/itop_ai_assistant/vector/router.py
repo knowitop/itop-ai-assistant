@@ -152,12 +152,30 @@ async def vector_status(
                 entry: dict = {
                     "family": family,
                     "configured": family in configured_families,
+                    # Both ways a family stops being indexed read the same
+                    # here: no entry in the config and `enabled: false` freeze
+                    # the collection identically (`SimilarSearch`'s own
+                    # family gate makes the same pair).
+                    "enabled": (family_cfg := vector_cfg.families.get(family)) is not None and family_cfg.enabled,
                     "active_version": None,
                     "model": None,
                     "dim": None,
                     "fingerprint_match": None,
                     "rows": None,
+                    # The version being filled to replace the active one after
+                    # an embeddings model change, with its row count — which is
+                    # what tells a rebuild in progress from one that is stuck,
+                    # the number being the only part of it that moves.
+                    "building": None,
                 }
+                if (pending := await vector_store.pending_meta(family)) is not None:
+                    pending_stats = await vector_store.stats(family, pending.version)
+                    entry["building"] = {
+                        "version": pending.version,
+                        "model": pending.model,
+                        "dim": pending.dim,
+                        "rows": pending_stats.rows if pending_stats else 0,
+                    }
                 if meta is not None:
                     stats = await vector_store.stats(family)
                     # None when no embeddings model is configured to compare against
@@ -237,6 +255,13 @@ async def vector_reindex(
     The request is a flag in Redis, not in this process — whichever replica
     wins the sweep lock acts on it; waking the local loop only makes it
     happen sooner here.
+
+    Not what rebuilds an index after the embeddings model changed: the sweep
+    does that by itself, on its next pass, because the collections cannot be
+    mixed and the store rotates the version rather than asking
+    (`adapters/qdrant_store.py`). Pressing this only brings that pass forward
+    — it is "now instead of at the end of the interval", never the thing that
+    makes a rebuild possible.
     """
     tasks: PeriodicTasks = request.app.state.tasks
     try:
