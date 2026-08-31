@@ -2,6 +2,7 @@ import {
   Alert,
   Badge,
   Button,
+  CloseButton,
   Divider,
   Group,
   JsonInput,
@@ -1014,6 +1015,54 @@ function mappingFieldProps(schema: SectionSchema): Record<string, MappingFieldPr
   return found && Object.keys(found).length > 0 ? found : undefined;
 }
 
+// One value a multi-valued semantic field is built from
+// (`repositories/valuemap.py::ValueSpec`). `idField` is read only for a link
+// set — the id-carrying attribute of the *link*, not of the linked object.
+interface MultiSpecRow {
+  semantic: string;
+  kind: 'attr' | 'linkset';
+  attr: string;
+  idField: string;
+}
+
+// The stored shape: semantic name → list of specs. Flattened into rows for
+// editing (a spec has a shape of its own, so the flat MappingForm table below
+// cannot hold one) and grouped back on save.
+function multiRows(stored: Record<string, MultiSpec[]>): MultiSpecRow[] {
+  return Object.entries(stored).flatMap(([semantic, specs]) =>
+    specs.map((spec) => ({
+      semantic,
+      kind: spec.kind,
+      attr: spec.attr ?? '',
+      idField: spec.id_field ?? '',
+    })),
+  );
+}
+
+interface MultiSpec {
+  kind: 'attr' | 'linkset';
+  attr?: string;
+  id_field?: string;
+}
+
+// Rows back to the stored shape. A row with no semantic name or no attribute
+// is dropped rather than saved as a half-spec: the API would refuse it, and a
+// blank row is what an admin leaves behind after clicking "add".
+function multiSpecs(rows: MultiSpecRow[]): Record<string, MultiSpec[]> {
+  const grouped: Record<string, MultiSpec[]> = {};
+  for (const row of rows) {
+    const semantic = row.semantic.trim();
+    const attr = row.attr.trim();
+    if (!semantic || !attr) continue;
+    const spec: MultiSpec =
+      row.kind === 'linkset'
+        ? { kind: 'linkset', attr, id_field: row.idField.trim() }
+        : { kind: 'attr', attr };
+    (grouped[semantic] ??= []).push(spec);
+  }
+  return grouped;
+}
+
 // Semantic field → iTop attribute code, one row per field. The fields come
 // from the section's schema, never from a list kept here: a field added to
 // TicketFieldMap/FaqFieldMap must render without touching this file
@@ -1027,6 +1076,8 @@ function MappingForm({ section }: { section: MappingSection }) {
   // per-row switch sets and what reaches the API as JSON null.
   const [fields, setFields] = useState<Record<string, string | null>>({});
   const [overrides, setOverrides] = useState('');
+  // Multi-valued fields, flattened one row per spec.
+  const [multi, setMulti] = useState<MultiSpecRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1047,6 +1098,7 @@ function MappingForm({ section }: { section: MappingSection }) {
     for (const name of Object.keys(fieldProps)) initial[name] = stored[name] ?? null;
     setProps(fieldProps);
     setFields(initial);
+    setMulti(multiRows((data.values.fields_multi ?? {}) as Record<string, MultiSpec[]>));
     if (hasOverrides) {
       setOverrides(JSON.stringify(data.values.class_overrides ?? {}, null, 2));
     }
@@ -1055,6 +1107,11 @@ function MappingForm({ section }: { section: MappingSection }) {
   useEffect(() => {
     load().catch((e: Error) => setError(e.message));
   }, [section]);
+
+  const setMultiRow = (i: number, patch: Partial<MultiSpecRow>) => {
+    setSuccess(null);
+    setMulti((current) => current.map((row, j) => (j === i ? { ...row, ...patch } : row)));
+  };
 
   const setField = (name: string, value: string | null) => {
     setSuccess(null);
@@ -1071,7 +1128,7 @@ function MappingForm({ section }: { section: MappingSection }) {
       // the switch — never an empty string, which no datamodel could match.
       mapped[name] = value === null || value.trim() === '' ? null : value.trim();
     }
-    const body: Record<string, unknown> = { fields: mapped };
+    const body: Record<string, unknown> = { fields: mapped, fields_multi: multiSpecs(multi) };
     if (hasOverrides) {
       try {
         body.class_overrides = JSON.parse(overrides);
@@ -1160,6 +1217,60 @@ function MappingForm({ section }: { section: MappingSection }) {
           ))}
         </Table.Tbody>
       </Table>
+      <Title order={5} mt="xs">
+        {t('connections.fields_multi')}
+      </Title>
+      <Text c="dimmed" size="sm">
+        {t('connections.fields_multi_desc')}
+      </Text>
+      <Stack gap="xs">
+        {multi.map((row, i) => (
+          <Group key={i} align="flex-end" wrap="nowrap">
+            <TextInput
+              label={t('connections.multi_semantic')}
+              value={row.semantic}
+              aria-label={`${t('connections.multi_semantic')} ${i + 1}`}
+              onChange={(e) => setMultiRow(i, { semantic: e.currentTarget.value })}
+            />
+            <Select
+              label={t('connections.multi_kind')}
+              data={[
+                { value: 'attr', label: t('connections.multi_kind_attr') },
+                { value: 'linkset', label: t('connections.multi_kind_linkset') },
+              ]}
+              value={row.kind}
+              allowDeselect={false}
+              maw={160}
+              onChange={(value) => setMultiRow(i, { kind: value === 'linkset' ? 'linkset' : 'attr' })}
+            />
+            <TextInput
+              label={t('connections.mapping_attribute')}
+              value={row.attr}
+              aria-label={`${t('connections.mapping_attribute')} ${i + 1}`}
+              onChange={(e) => setMultiRow(i, { attr: e.currentTarget.value })}
+            />
+            <TextInput
+              label={t('connections.multi_id_field')}
+              value={row.idField}
+              disabled={row.kind !== 'linkset'}
+              aria-label={`${t('connections.multi_id_field')} ${i + 1}`}
+              onChange={(e) => setMultiRow(i, { idField: e.currentTarget.value })}
+            />
+            <CloseButton mb={6} onClick={() => setMulti(multi.filter((_, j) => j !== i))} />
+          </Group>
+        ))}
+        <Group>
+          <Button
+            size="compact-sm"
+            variant="default"
+            onClick={() =>
+              setMulti([...multi, { semantic: '', kind: 'attr', attr: '', idField: '' }])
+            }
+          >
+            {t('connections.btn_add_multi')}
+          </Button>
+        </Group>
+      </Stack>
       {hasOverrides && (
         <>
           <Title order={5} mt="xs">

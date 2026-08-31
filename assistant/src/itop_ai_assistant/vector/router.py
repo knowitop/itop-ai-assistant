@@ -237,6 +237,10 @@ async def vector_sources(
                 # (`content_sources/registry.py::build_vector_sources`).
                 "classes": list(source.classes),
                 "fields": list(source.fields),
+                # Which of the source's fields may be named in a class's
+                # `acl_org_fields` — the same declaration the config save
+                # validates against (`admin/setup.py`).
+                "org_fields": list(source.org_fields),
                 "fragments": [asdict(fragment) for fragment in source.fragments],
             }
             for source in sources

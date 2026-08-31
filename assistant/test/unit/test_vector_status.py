@@ -176,6 +176,9 @@ class TestVectorSources(VectorStatusTestCase):
         by_kind = {f["kind"]: f for f in source["fragments"]}
         self.assertEqual(by_kind["body"], {"kind": "body", "visibility": "public", "optional": False})
         self.assertEqual(by_kind["log:private"], {"kind": "log:private", "visibility": "internal", "optional": True})
+        # What a class's `acl_org_fields` may name — the choice the editor
+        # offers, and what the config save validates against.
+        self.assertEqual(["org_id", "provider_id"], source["org_fields"])
 
     def test_declares_the_faq_source_vocabulary(self):
         body = self.client.get("/api/vector/sources").json()
@@ -189,6 +192,7 @@ class TestVectorSources(VectorStatusTestCase):
         by_kind = {f["kind"]: f for f in source["fragments"]}
         self.assertEqual(by_kind["body"], {"kind": "body", "visibility": "public", "optional": False})
         self.assertEqual(by_kind["profile"], {"kind": "profile", "visibility": "public", "optional": False})
+        self.assertEqual(["org_id", "customer_org_ids"], source["org_fields"])
 
     def test_classes_follow_the_saved_config(self):
         self.client.patch(

@@ -321,6 +321,36 @@ class TestSetupSections(SetupApiTestCase):
         # No secrets in this section
         self.assertEqual(response.json()["secrets"], {})
 
+    def test_acl_org_fields_the_source_does_not_declare_are_rejected(self):
+        # A name nothing resolves would not fail the sweep: the object's ACL
+        # comes out empty, an empty ACL is passed by the pre-filter, and the
+        # class silently stops being pre-filtered. The save is where it can
+        # still be named.
+        families = {"tickets": {"classes": {"UserRequest": {"acl_org_fields": ["orgid"]}}}}
+
+        response = self.client.patch("/api/setup/vector", json={"families": families})
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("provider_id", response.json()["detail"])
+
+    def test_acl_org_fields_the_source_declares_are_accepted(self):
+        families = {"faq": {"classes": {"FAQ": {"acl_org_fields": ["customer_org_ids"]}}}}
+
+        response = self.client.patch("/api/setup/vector", json={"families": families})
+
+        self.assertEqual(response.status_code, 200)
+        saved = response.json()["values"]["families"]["faq"]["classes"]["FAQ"]
+        self.assertEqual(["customer_org_ids"], saved["acl_org_fields"])
+
+    def test_a_family_no_source_is_registered_for_is_not_checked(self):
+        # The same tolerance the sweep gives it: nothing indexes the family,
+        # so nothing reads its ACL either.
+        families = {"kb_articles": {"classes": {"KB": {"acl_org_fields": ["whatever"]}}}}
+
+        response = self.client.patch("/api/setup/vector", json={"families": families})
+
+        self.assertEqual(response.status_code, 200)
+
     def test_vector_families_list_rejected(self):
         # families is a dict keyed by family name, not a plain list — must 422
         response = self.client.patch("/api/setup/vector", json={"families": ["tickets"]})

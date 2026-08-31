@@ -30,6 +30,7 @@ from itop_ai_assistant.config import (
     TicketMappingConfig,
     missing_setup,
 )
+from itop_ai_assistant.content_sources.registry import declared_org_fields
 from itop_ai_assistant.core.api_deps import get_config_store, get_install
 from itop_ai_assistant.core.deps import AppDeps, create_llm
 from itop_ai_assistant.core.llm_providers import PROVIDERS, get_provider
@@ -98,6 +99,41 @@ async def _merged_with_current(
     """
     current = await config_store.get(section, model)
     return {**current.model_dump(), **body}
+
+
+def _check_names_the_code_owns(section: str, values: dict[str, Any]) -> None:
+    """Cross-checks a config model cannot make on its own.
+
+    A section validates its own shape; whether a name in it exists in the
+    code is another matter, and for `acl_org_fields` it has to be answered
+    here. A name no source declares would not fail anything at sweep time —
+    it resolves to no organization, the object's ACL comes out empty, and an
+    empty ACL is *passed* by the pre-filter (ADR-033). The class would simply
+    stop being pre-filtered, and nothing but the sweep's empty-ACL warning
+    would say so.
+
+    A family no source is registered for is skipped rather than refused, the
+    same tolerance the sweep gives it: nothing indexes it, so nothing reads
+    its ACL either.
+    """
+    if section != "vector":
+        return
+    cfg = VectorConfig.model_validate(values)
+    declared = declared_org_fields()
+    for family, family_cfg in cfg.families.items():
+        known = declared.get(family)
+        if known is None:
+            continue
+        for obj_class, class_cfg in family_cfg.classes.items():
+            unknown = [name for name in class_cfg.acl_org_fields if name not in known]
+            if unknown:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"vector.families.{family}.classes.{obj_class}.acl_org_fields: "
+                        f"{sorted(unknown)} — the {family!r} source declares {sorted(known)}"
+                    ),
+                )
 
 
 async def _install_id_or_none(install: InstallIdentity) -> str | None:
@@ -217,6 +253,7 @@ async def update_section(
     was_incomplete = bool(await _setup_missing(config_store)) if gates_setup else False
     values = await _merged_with_current(config_store, section, model, body)
     try:
+        _check_names_the_code_owns(section, values)
         cfg = await config_store.set(section, values, model)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
