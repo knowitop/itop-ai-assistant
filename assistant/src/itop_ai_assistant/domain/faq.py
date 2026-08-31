@@ -25,6 +25,10 @@ class FaqArticle(BaseModel, ObjectIdentifiable):
     description: str = ""  # raw HTML as stored in iTop
     status: str = ""  # empty unless faq_mapping.fields.status is set — no such attribute in stock iTop
     org_id: str | None = None
+    # Customer organizations the article is published to, from a
+    # multi-valued mapping (`faq_mapping.fields_multi`). Empty unless the
+    # build has such a link set and it is mapped.
+    customer_org_ids: tuple[str, ...] = ()
     # iTop timestamps carry a nominal UTC tzinfo — see ticket_repository._parse_dt
     last_update: datetime | None = None
     start_date: datetime | None = None

@@ -11,6 +11,7 @@ from pydantic_settings import (
 )
 
 from itop_ai_assistant.core.llm_providers import DEFAULT_PROVIDER, PROVIDERS, get_provider
+from itop_ai_assistant.repositories.valuemap import ValueSpec
 
 _PACKAGE_DIR = Path(__file__).parent  # itop_ai_assistant/ — ships config.yaml
 
@@ -32,6 +33,10 @@ class TicketFieldMap(BaseModel):
     )
     caller_name: str | None = Field("caller_id_friendlyname", description="Display name of the caller")
     org_id: str | None = "org_id"
+    provider_id: str | None = Field(
+        None,
+        description="Organization of the party working the ticket, where the datamodel has one; unmapped in stock iTop",
+    )
     request_type: str | None = Field("request_type", description="Service request or incident; absent on some classes")
     public_log: str | None = Field("public_log", description="Conversation with the caller")
     private_log: str | None = Field("private_log", description="Notes between engineers")
@@ -44,6 +49,11 @@ class TicketMappingConfig(BaseModel):
     """How ticket semantics map onto the customer's iTop datamodel."""
 
     fields: TicketFieldMap = TicketFieldMap()
+    # Semantic fields whose value is a list rather than one attribute
+    # (`repositories/valuemap.py`). Separate from `fields` because the shape
+    # is: a name here binds to several specs, and one of them may be an n-n
+    # link set. Empty by default — stock iTop has no such ticket field.
+    fields_multi: dict[str, list[ValueSpec]] = {}
     # Per-class field overrides, e.g. a class without some attribute (None)
     # or with a renamed one. Merged over `fields` for that class.
     class_overrides: dict[str, dict[str, str | None]] = {
@@ -104,6 +114,10 @@ class FaqMappingConfig(BaseModel):
     """
 
     fields: FaqFieldMap = FaqFieldMap()
+    # Multi-valued semantic fields, same as `TicketMappingConfig.fields_multi`
+    # — this is where a build that publishes articles to a list of customer
+    # organizations maps `customer_org_ids` onto that link set.
+    fields_multi: dict[str, list[ValueSpec]] = {}
 
 
 class RuntimeSectionConfig(BaseModel):

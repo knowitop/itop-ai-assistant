@@ -1,11 +1,12 @@
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from datetime import datetime
 
 from itop_ai_assistant.config import TicketMappingConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.itop_client import Itop
+from itop_ai_assistant.repositories.valuemap import extract, projection
 from itop_ai_assistant.state.counters import Counter, DailyCounters
 from itop_ai_assistant.util.text import ITOP_DATETIME_FORMAT, parse_itop_dt
 
@@ -54,8 +55,7 @@ class TicketRepository:
     async def fetch(self, obj_class: str, ticket_id: str) -> Ticket | None:
         # Request only the attributes the mapping reads — fetching everything
         # ("*+") drags in link sets and the private log for no reason.
-        fields = self.mapping.for_class(obj_class)
-        attrs = [attr for semantic, attr in fields.items() if attr and semantic != "private_log"]
+        attrs = self._projection(obj_class, excluded={"private_log"})
         raw = await self._itop.schema(obj_class).find_one({"id": ticket_id}, projection=["id", *attrs])
         if raw is None:
             return None
@@ -84,13 +84,42 @@ class TicketRepository:
             subcategory_name=attr("subcategory_name") or "",
             caller_name=attr("caller_name") or "",
             org_id=attr("org_id"),
+            provider_id=_external_key(attr("provider_id")),
             request_type=attr("request_type"),
             public_log=entries,
             private_log=private_entries,
             solution=attr("solution") or "",
             last_update=parse_itop_dt(attr("last_update")),
             start_date=parse_itop_dt(attr("start_date")),
+            **self._multi_fields(raw),
         )
+
+    def _multi_fields(self, raw: dict) -> dict[str, tuple[str, ...]]:
+        """Multi-valued semantic fields of this ticket (`fields_multi`).
+
+        A key naming no field of `Ticket` is warned about and dropped — a
+        mapping the model has outgrown must not fail the read.
+        """
+        values: dict[str, tuple[str, ...]] = {}
+        for semantic, specs in self.mapping.fields_multi.items():
+            if semantic not in Ticket.model_fields:
+                logger.warning(f"ticket_mapping.fields_multi: {semantic!r} is not a Ticket field, ignoring")
+                continue
+            values[semantic] = extract(raw, specs)
+        return values
+
+    def _projection(self, obj_class: str, *, excluded: Collection[str] = ()) -> list[str]:
+        """Attributes a read of this class asks iTop for.
+
+        `fields_multi` joins the single-valued mapping here, so a link set
+        mapped for the sweep also reaches `fetch()` — one projection per
+        class, not one per call site.
+        """
+        fields = self.mapping.for_class(obj_class)
+        attrs = [attr for semantic, attr in fields.items() if attr and semantic not in excluded]
+        for specs in self.mapping.fields_multi.values():
+            attrs.extend(a for a in projection(specs) if a not in attrs)
+        return attrs
 
     async def find_modified_since(
         self,
@@ -116,8 +145,7 @@ class TicketRepository:
         if last_update_attr is None:
             raise ValueError(f"'last_update' is not mapped for class {obj_class}")
         query = {} if since is None else {last_update_attr: (">=", since.strftime(ITOP_DATETIME_FORMAT))}
-        excluded = set() if include_private_log else {"private_log"}
-        attrs = [attr for semantic, attr in fields.items() if attr and semantic not in excluded]
+        attrs = self._projection(obj_class, excluded=set() if include_private_log else {"private_log"})
         rows = await self._itop.schema(obj_class).find(
             query, projection=["id", *attrs], limit=str(page_size), page=str(page)
         )

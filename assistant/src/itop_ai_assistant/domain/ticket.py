@@ -31,6 +31,9 @@ class Ticket(BaseModel, ObjectIdentifiable):
     subcategory_name: str = ""
     caller_name: str = ""
     org_id: str | None = None
+    # Organization of the party working the ticket, where the datamodel
+    # has one — unmapped in stock iTop, so normally None.
+    provider_id: str | None = None
     request_type: str | None = None
     public_log: list[LogEntry] = []
     private_log: list[LogEntry] = []

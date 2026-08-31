@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from itop_ai_assistant.config import FaqFieldMap, FaqMappingConfig
 from itop_ai_assistant.domain.faq import FaqArticle
 from itop_ai_assistant.repositories.faq import FaqRepository
+from itop_ai_assistant.repositories.valuemap import LinksetValue
 
 _RAW_ARTICLE = {
     "id": "42",
@@ -86,6 +87,42 @@ class TestToArticle(unittest.TestCase):
         article = repo.to_article(_RAW_ARTICLE)
 
         self.assertIsNone(article.start_date)
+
+
+class TestMultiValuedFields(unittest.IsolatedAsyncioTestCase):
+    """`faq_mapping.fields_multi` — the customer-organizations link set."""
+
+    _MAPPING = FaqMappingConfig(
+        fields_multi={"customer_org_ids": [LinksetValue(attr="customers_list", id_field="customer_id")]}
+    )
+
+    def test_unmapped_by_default(self):
+        repo, _ = _make_repo()
+
+        self.assertEqual((), repo.to_article(_RAW_ARTICLE).customer_org_ids)
+
+    def test_reads_the_organizations_out_of_the_linkset(self):
+        repo, _ = _make_repo(self._MAPPING)
+        raw = {**_RAW_ARTICLE, "customers_list": [{"customer_id": "7"}, {"customer_id": "3"}]}
+
+        self.assertEqual(("3", "7"), repo.to_article(raw).customer_org_ids)
+
+    def test_a_key_the_model_does_not_know_is_ignored(self):
+        mapping = FaqMappingConfig(fields_multi={"nonesuch": [LinksetValue(attr="x", id_field="y")]})
+        repo, _ = _make_repo(mapping)
+
+        with self.assertLogs("itop_ai_assistant.repositories.faq", level="WARNING"):
+            article = repo.to_article(_RAW_ARTICLE)
+
+        self.assertEqual("42", article.id)
+
+    async def test_the_linkset_joins_the_projection(self):
+        repo, schema = _make_repo(self._MAPPING)
+        schema.find.return_value = []
+
+        await repo.find_modified_since(None, page=1, page_size=100)
+
+        self.assertIn("customers_list", schema.find.await_args.kwargs["projection"])
 
 
 class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
