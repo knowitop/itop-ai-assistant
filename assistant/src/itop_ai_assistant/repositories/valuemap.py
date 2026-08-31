@@ -1,89 +1,106 @@
-"""Multi-valued semantic field → iTop, as a value the config can hold.
+"""List-valued semantic fields: one mapping value, several iTop values.
 
-A semantic field mapped through `TicketFieldMap`/`FaqFieldMap` names exactly
-one attribute and yields one value. Some facts an installation needs are not
-shaped like that: the organizations an FAQ article is published to arrive as
-an n-n link set, and a class may carry more than one attribute that means the
-same thing. `fields_multi` in the mapping sections is that case — a semantic
-name bound to a *list* of `ValueSpec`, whose values are read together and
-merged into one tuple.
+Most semantic fields name one attribute and hold one value. A few are lists by
+nature — the organizations an FAQ article is published to arrive as an n-n link
+set — and those are declared as such in the domain model (a `tuple[str, ...]`
+field, e.g. `FaqArticle.customer_org_ids`). The **model's own type** is what
+says a field is a list; the mapping only says where the values come from.
 
-Two forms, and deliberately no third: `attr` for a plain attribute or an
-external key, `linkset` for an n-n link set whose links carry the id under
-`id_field`. A path through a related object (`ticket_id->org_id`) is not
-expressible — iTop's `output_fields` has no such syntax, so it would be a
-second request per page, not another spec.
+Two forms of mapping value, both plain strings in the same `fields` table as
+every other attribute code:
+
+- `org_id` — an ordinary attribute or external key. One value, wrapped into a
+  one-element tuple (or an empty one when unset).
+- `customers_list:customer_id` — an n-n link set and the attribute *of a link*
+  that carries the id of interest. Every link contributes a value.
+
+A path through a related object (`ticket_id->org_id`) is deliberately not
+expressible: iTop's `output_fields` has no such syntax, so it would be a second
+request per page rather than another form here.
 
 Normalization lives here rather than in each caller: what iTop returns for an
 unset external key ("0"), what an empty link set looks like, and the order of
-links are all the same question wherever a multi-valued field is read.
+links are the same question wherever such a field is read.
 """
 
-from collections.abc import Mapping, Sequence
-from typing import Annotated, Any, Literal
+import logging
+from collections.abc import Collection, Mapping, Sequence
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
+logger = logging.getLogger(__name__)
 
-class AttrValue(BaseModel):
-    """One iTop attribute read as-is — a scalar or an external key."""
+_LINKSET = ":"
 
-    kind: Literal["attr"] = "attr"
-    attr: str
-
-
-class LinksetValue(BaseModel):
-    """An n-n link set: `attr` is the link set on the class, `id_field` the
-    attribute of a *link* that carries the id of interest (for
-    `FAQ.customers_list` in a build that has it: `customer_id`)."""
-
-    kind: Literal["linkset"] = "linkset"
-    attr: str
-    id_field: str
+# What a list-valued semantic field is declared as in the domain model.
+_LIST_ANNOTATION = tuple[str, ...]
 
 
-type ValueSpec = Annotated[AttrValue | LinksetValue, Field(discriminator="kind")]
+def list_fields(model: type[BaseModel]) -> frozenset[str]:
+    """The semantic fields of a domain model that hold a list of values.
 
-
-def projection(specs: Sequence[ValueSpec]) -> list[str]:
-    """Attributes these specs need in `output_fields`, deduplicated.
-
-    A link set is requested by its own name — iTop returns the whole link with
-    its attributes, so `id_field` needs nothing added here.
+    Read off the model rather than named in the config: the model is where the
+    shape of a field belongs, and a mapping section that had to repeat it
+    could disagree with it.
     """
-    attrs: list[str] = []
-    for spec in specs:
-        if spec.attr not in attrs:
-            attrs.append(spec.attr)
-    return attrs
+    return frozenset(name for name, field in model.model_fields.items() if field.annotation == _LIST_ANNOTATION)
 
 
-def extract(raw: Mapping[str, Any], specs: Sequence[ValueSpec]) -> tuple[str, ...]:
-    """The union of every spec's values on one raw iTop row, sorted and unique.
+def read_lists(
+    raw: Mapping[str, Any], fields: Mapping[str, str | None], names: Collection[str]
+) -> dict[str, tuple[str, ...]]:
+    """Every mapped list-valued field of one raw row, keyed as the model names
+    them — ready to splat into the domain object. An unmapped field is absent
+    rather than empty, so the model's own default answers for it."""
+    return {name: extract(raw, spec) for name in names if (spec := fields.get(name))}
 
-    Sorted because the caller compares it: iTop returns links in no
-    particular order, and an order that moves between reads would make an
-    unchanged object look changed (`ChunkMetadata.meta_hash`).
+
+def attribute(spec: str) -> str:
+    """The attribute code to ask iTop for — a link set by its own name.
+
+    iTop returns a link set with the links' attributes included, so the part
+    after the colon needs nothing added to `output_fields`.
     """
-    values: set[str] = set()
-    for spec in specs:
-        if isinstance(spec, LinksetValue):
-            values.update(_linkset_values(raw.get(spec.attr), spec.id_field))
-        else:
-            value = normalize_value(raw.get(spec.attr))
-            if value is not None:
-                values.add(value)
-    return tuple(sorted(values))
+    return spec.split(_LINKSET, 1)[0]
 
 
-def _linkset_values(raw_links: Any, id_field: str) -> list[str]:
+def extract(raw: Mapping[str, Any], spec: str) -> tuple[str, ...]:
+    """The values this mapping spec resolves to on one raw iTop row, sorted
+    and unique.
+
+    Sorted because the caller compares it: iTop returns links in no particular
+    order, and an order that moves between reads would make an unchanged object
+    look changed (`vector/domain.py::ChunkMetadata.meta_hash`).
+    """
+    attr, _, id_field = spec.partition(_LINKSET)
+    value = raw.get(attr)
+    values = _linkset_values(value, id_field, attr) if id_field else _scalar_values(value, attr)
+    return tuple(sorted(set(values)))
+
+
+def _scalar_values(raw: Any, attr: str) -> list[str]:
+    if isinstance(raw, (Mapping, list, tuple)):
+        # A link set mapped without the `:<id attribute>` half. Nothing here
+        # can guess which attribute of a link was meant, and stringifying the
+        # links would fill the index with garbage.
+        logger.warning(f"mapping: {attr!r} came back as a link set — write it as '{attr}:<id attribute>'")
+        return []
+    value = normalize_value(raw)
+    return [] if value is None else [value]
+
+
+def _linkset_values(raw_links: Any, id_field: str, attr: str) -> list[str]:
     """Ids out of one link set. iTop renders it as a list of links; a build
     that keys them by id instead is read the same way."""
     if isinstance(raw_links, Mapping):
         links: Any = raw_links.values()
     elif isinstance(raw_links, Sequence) and not isinstance(raw_links, str):
         links = raw_links
+    elif raw_links is None:
+        return []
     else:
+        logger.warning(f"mapping: {attr!r} is mapped as a link set but iTop returned a plain value")
         return []
     found = []
     for link in links:

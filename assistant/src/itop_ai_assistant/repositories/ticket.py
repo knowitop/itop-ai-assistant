@@ -6,11 +6,14 @@ from itop_ai_assistant.config import TicketMappingConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.itop_client import Itop
-from itop_ai_assistant.repositories.valuemap import extract, projection
+from itop_ai_assistant.repositories.valuemap import attribute, list_fields, read_lists
 from itop_ai_assistant.state.counters import Counter, DailyCounters
 from itop_ai_assistant.util.text import ITOP_DATETIME_FORMAT, parse_itop_dt
 
 logger = logging.getLogger(__name__)
+
+# Semantic fields of a ticket that hold a list of values, per the model.
+_LIST_FIELDS = list_fields(Ticket)
 
 
 def _parse_log_entries(log_raw: dict | None) -> list[LogEntry]:
@@ -84,42 +87,30 @@ class TicketRepository:
             subcategory_name=attr("subcategory_name") or "",
             caller_name=attr("caller_name") or "",
             org_id=attr("org_id"),
-            provider_id=_external_key(attr("provider_id")),
             request_type=attr("request_type"),
             public_log=entries,
             private_log=private_entries,
             solution=attr("solution") or "",
             last_update=parse_itop_dt(attr("last_update")),
             start_date=parse_itop_dt(attr("start_date")),
-            **self._multi_fields(raw),
+            **read_lists(raw, fields, _LIST_FIELDS),
         )
 
-    def _multi_fields(self, raw: dict) -> dict[str, tuple[str, ...]]:
-        """Multi-valued semantic fields of this ticket (`fields_multi`).
-
-        A key naming no field of `Ticket` is warned about and dropped — a
-        mapping the model has outgrown must not fail the read.
-        """
-        values: dict[str, tuple[str, ...]] = {}
-        for semantic, specs in self.mapping.fields_multi.items():
-            if semantic not in Ticket.model_fields:
-                logger.warning(f"ticket_mapping.fields_multi: {semantic!r} is not a Ticket field, ignoring")
-                continue
-            values[semantic] = extract(raw, specs)
-        return values
-
     def _projection(self, obj_class: str, *, excluded: Collection[str] = ()) -> list[str]:
-        """Attributes a read of this class asks iTop for.
-
-        `fields_multi` joins the single-valued mapping here, so a link set
-        mapped for the sweep also reaches `fetch()` — one projection per
+        """Attributes a read of this class asks iTop for — one projection per
         class, not one per call site.
+
+        A list-valued field is mapped as `<link set>:<id attribute>`, and it is
+        the link set alone that iTop is asked for (`repositories/valuemap.py`).
         """
         fields = self.mapping.for_class(obj_class)
-        attrs = [attr for semantic, attr in fields.items() if attr and semantic not in excluded]
-        for specs in self.mapping.fields_multi.values():
-            attrs.extend(a for a in projection(specs) if a not in attrs)
-        return attrs
+        return list(
+            dict.fromkeys(
+                attribute(attr) if semantic in _LIST_FIELDS else attr
+                for semantic, attr in fields.items()
+                if attr and semantic not in excluded
+            )
+        )
 
     async def find_modified_since(
         self,

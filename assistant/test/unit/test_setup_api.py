@@ -331,7 +331,7 @@ class TestSetupSections(SetupApiTestCase):
         response = self.client.patch("/api/setup/vector", json={"families": families})
 
         self.assertEqual(response.status_code, 422)
-        self.assertIn("provider_id", response.json()["detail"])
+        self.assertIn("org_id", response.json()["detail"])
 
     def test_acl_org_fields_the_source_declares_are_accepted(self):
         families = {"faq": {"classes": {"FAQ": {"acl_org_fields": ["customer_org_ids"]}}}}

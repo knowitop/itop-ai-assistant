@@ -178,7 +178,7 @@ class TestVectorSources(VectorStatusTestCase):
         self.assertEqual(by_kind["log:private"], {"kind": "log:private", "visibility": "internal", "optional": True})
         # What a class's `acl_org_fields` may name — the choice the editor
         # offers, and what the config save validates against.
-        self.assertEqual(["org_id", "provider_id"], source["org_fields"])
+        self.assertEqual(["org_id"], source["org_fields"])
 
     def test_declares_the_faq_source_vocabulary(self):
         body = self.client.get("/api/vector/sources").json()

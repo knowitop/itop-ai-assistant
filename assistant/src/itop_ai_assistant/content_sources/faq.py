@@ -41,7 +41,7 @@ FIELDS = ("title", "summary", "category_name", "error_code", "key_words", "descr
 # access to it (`VectorClassConfig.acl_org_fields` picks from these). Both are
 # unmapped in stock iTop: `org_id` is the article's own organization,
 # `customer_org_ids` the list of customer organizations a build publishes it
-# to (`faq_mapping.fields_multi`).
+# to (mapped as `customers_list:customer_id`, see `repositories/valuemap.py`).
 ORG_FIELDS = ("org_id", "customer_org_ids")
 
 FRAGMENTS = (
@@ -66,8 +66,9 @@ class FaqVectorSource(VectorSource[FaqArticle]):
     org-scoped ACL — so `vector.families.faq.classes.FAQ.acl_org_fields` is
     empty and the R4 pre-filter (ADR-003) lets every article through to
     `confirm_visible`. A build that does publish articles to a list of
-    customer organizations maps that link set in `faq_mapping.fields_multi`
-    and names `customer_org_ids` here; no code change is needed for either.
+    customer organizations maps that link set onto `customer_org_ids` in
+    `faq_mapping` and names the field here; no code change is needed for
+    either.
     """
 
     name = FAMILY

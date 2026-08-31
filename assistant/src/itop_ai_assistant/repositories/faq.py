@@ -1,4 +1,3 @@
-import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 
@@ -6,10 +5,11 @@ from itop_ai_assistant.config import FaqMappingConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.faq import FaqArticle
 from itop_ai_assistant.itop_client import Itop
-from itop_ai_assistant.repositories.valuemap import extract, projection
+from itop_ai_assistant.repositories.valuemap import attribute, list_fields, read_lists
 from itop_ai_assistant.util.text import ITOP_DATETIME_FORMAT, parse_itop_dt
 
-logger = logging.getLogger(__name__)
+# Semantic fields of an article that hold a list of values, per the model.
+_LIST_FIELDS = list_fields(FaqArticle)
 
 
 class FaqRepository:
@@ -43,30 +43,22 @@ class FaqRepository:
             org_id=attr("org_id"),
             last_update=parse_itop_dt(attr("last_update")),
             start_date=parse_itop_dt(attr("start_date")),
-            **self._multi_fields(raw),
+            **read_lists(raw, fields, _LIST_FIELDS),
         )
 
-    def _multi_fields(self, raw: dict) -> dict[str, tuple[str, ...]]:
-        """Multi-valued semantic fields of this article (`fields_multi`).
-
-        A key naming no field of `FaqArticle` is warned about and dropped —
-        the same tolerance a stale `ChunkPlan` field name gets: a mapping the
-        model has outgrown must not fail the read.
-        """
-        values: dict[str, tuple[str, ...]] = {}
-        for semantic, specs in self.mapping.fields_multi.items():
-            if semantic not in FaqArticle.model_fields:
-                logger.warning(f"faq_mapping.fields_multi: {semantic!r} is not a FaqArticle field, ignoring")
-                continue
-            values[semantic] = extract(raw, specs)
-        return values
-
     def _projection(self) -> list[str]:
-        """Attributes every read of an article asks iTop for."""
-        attrs = [attr for attr in self.mapping.fields.model_dump().values() if attr]
-        for specs in self.mapping.fields_multi.values():
-            attrs.extend(a for a in projection(specs) if a not in attrs)
-        return attrs
+        """Attributes every read of an article asks iTop for.
+
+        A list-valued field is mapped as `<link set>:<id attribute>`, and it is
+        the link set alone that iTop is asked for — see
+        `repositories/valuemap.py`.
+        """
+        fields = self.mapping.fields.model_dump()
+        return list(
+            dict.fromkeys(
+                attribute(attr) if semantic in _LIST_FIELDS else attr for semantic, attr in fields.items() if attr
+            )
+        )
 
     async def find_modified_since(self, since: datetime | None, *, page: int, page_size: int) -> list[FaqArticle]:
         """One page of FAQ articles modified at/after `since` (None = full scan).

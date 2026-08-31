@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 from itop_ai_assistant.config import FaqFieldMap, FaqMappingConfig
 from itop_ai_assistant.domain.faq import FaqArticle
 from itop_ai_assistant.repositories.faq import FaqRepository
-from itop_ai_assistant.repositories.valuemap import LinksetValue
 
 _RAW_ARTICLE = {
     "id": "42",
@@ -89,12 +88,10 @@ class TestToArticle(unittest.TestCase):
         self.assertIsNone(article.start_date)
 
 
-class TestMultiValuedFields(unittest.IsolatedAsyncioTestCase):
-    """`faq_mapping.fields_multi` — the customer-organizations link set."""
+class TestListValuedFields(unittest.IsolatedAsyncioTestCase):
+    """`customer_org_ids` — one mapping row, several values (TASK-076)."""
 
-    _MAPPING = FaqMappingConfig(
-        fields_multi={"customer_org_ids": [LinksetValue(attr="customers_list", id_field="customer_id")]}
-    )
+    _MAPPING = FaqMappingConfig(fields=FaqFieldMap(customer_org_ids="customers_list:customer_id"))
 
     def test_unmapped_by_default(self):
         repo, _ = _make_repo()
@@ -107,22 +104,23 @@ class TestMultiValuedFields(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(("3", "7"), repo.to_article(raw).customer_org_ids)
 
-    def test_a_key_the_model_does_not_know_is_ignored(self):
-        mapping = FaqMappingConfig(fields_multi={"nonesuch": [LinksetValue(attr="x", id_field="y")]})
+    def test_a_plain_attribute_gives_a_one_element_tuple(self):
+        # The field is a list because the model says so; a build whose FAQ
+        # carries one organization on an ordinary attribute maps it as one.
+        mapping = FaqMappingConfig(fields=FaqFieldMap(customer_org_ids="my_org"))
         repo, _ = _make_repo(mapping)
 
-        with self.assertLogs("itop_ai_assistant.repositories.faq", level="WARNING"):
-            article = repo.to_article(_RAW_ARTICLE)
+        self.assertEqual(("7",), repo.to_article({**_RAW_ARTICLE, "my_org": "7"}).customer_org_ids)
 
-        self.assertEqual("42", article.id)
-
-    async def test_the_linkset_joins_the_projection(self):
+    async def test_only_the_linkset_joins_the_projection(self):
         repo, schema = _make_repo(self._MAPPING)
         schema.find.return_value = []
 
         await repo.find_modified_since(None, page=1, page_size=100)
 
-        self.assertIn("customers_list", schema.find.await_args.kwargs["projection"])
+        projection = schema.find.await_args.kwargs["projection"]
+        self.assertIn("customers_list", projection)
+        self.assertNotIn("customers_list:customer_id", projection)
 
 
 class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):

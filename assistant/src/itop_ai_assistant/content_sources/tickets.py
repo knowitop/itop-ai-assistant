@@ -44,11 +44,10 @@ FAMILY = "tickets"
 FIELDS = ("title", "description", "solution", "service", "subcategory")
 
 # The semantic fields of a ticket that can name an organization giving access
-# to it (`VectorClassConfig.acl_org_fields` picks from these). `provider_id` —
-# the organization working the ticket — is unmapped in stock iTop and stays
-# empty until a build maps it; a class configured with both grants access to
-# either side.
-ORG_FIELDS = ("org_id", "provider_id")
+# to it (`VectorClassConfig.acl_org_fields` picks from these). One today: a
+# build where the organization working the ticket also grants access declares
+# that as a semantic field of its own, and it joins this tuple.
+ORG_FIELDS = ("org_id",)
 
 # Every fragment this source can produce. The two log fragments are opt-in:
 # whether internal notes get embedded at all is the administrator's call,

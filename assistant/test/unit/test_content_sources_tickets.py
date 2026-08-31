@@ -84,13 +84,13 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
 
     async def test_acl_org_ids_come_from_the_configured_fields(self):
         get_ticket_repo, get_ticket_repo_as, ticket_repo, _ = _ticket_repo_factory()
-        ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket(provider_id="7")])
-        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family(["org_id", "provider_id"]))
+        ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket()])
+        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family(["org_id"]))
         await source.prepare()
 
         records = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
 
-        self.assertEqual(("org1", "7"), records[0].acl_org_ids)
+        self.assertEqual(("org1",), records[0].acl_org_ids)
 
     async def test_a_field_the_source_does_not_know_warns_and_yields_nothing(self):
         # Second line behind the 422 the config save answers with: a name the
