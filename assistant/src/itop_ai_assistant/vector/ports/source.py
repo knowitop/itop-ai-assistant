@@ -108,11 +108,16 @@ class VectorRecord(Generic[T]):
     updated_at: datetime | None
     created_at: datetime | None
     payload: T
-    org_id: str | None = None
-    # Source-defined pre-filter keys stored as-is in the chunk rows' `filters`
-    # column (e.g. {"service_id": "5"} for tickets) — short scalar values
-    # only, see vector/models.py.
-    filters: dict[str, str] | None = None
+    # Which organizations may see this object, as the source's own
+    # `acl_org_fields` resolve for it (ADR-003 layer 1). Empty means the
+    # source claims no restriction — the pre-filter then lets the object
+    # through and `confirm_visible` decides alone, because an index that was
+    # told nothing cannot honestly narrow anything.
+    acl_org_ids: Sequence[str] = ()
+    # Source-defined pre-filter keys stored as-is under the chunk payload's
+    # `fields` key (e.g. {"service_id": "5"} for tickets) — short values, one
+    # or a list of them, never a nested structure.
+    filters: dict[str, str | list[str]] | None = None
 
 
 class VectorSource(Protocol[T]):
@@ -132,6 +137,12 @@ class VectorSource(Protocol[T]):
     # Semantic field names an administrator may compose required fragments
     # from — the source's own vocabulary, not iTop attribute names.
     fields: Sequence[str] = ()
+    # Semantic fields that can carry an organization giving access to the
+    # object — the candidates `VectorClassConfig.acl_org_fields` picks from,
+    # declared here for the same reason `fields`/`fragments` are (ADR-018):
+    # the admin UI has to offer a choice, and a name outside this list is a
+    # config error the save can name.
+    org_fields: Sequence[str] = ()
     # Every fragment this source can produce. Served to the admin UI by
     # GET /api/vector/sources.
     fragments: Sequence[FragmentSpec] = ()

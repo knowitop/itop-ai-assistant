@@ -33,13 +33,35 @@ _SWEEP_COMMENT = "AI assistant · vector · sweep"
 _CONFIRM_COMMENT = "AI assistant · vector · confirming search candidates"
 
 
+def declared_org_fields() -> dict[str, tuple[str, ...]]:
+    """Per family, the semantic fields a source will accept in
+    `VectorClassConfig.acl_org_fields`.
+
+    Read off the classes rather than off built instances: the declaration is
+    static (as `GET /api/vector/sources` already says of the others), and the
+    caller — `admin/setup.py`, validating a saved `vector` section — has no
+    iTop repositories to build a source with and no business acquiring any.
+    """
+    from itop_ai_assistant.content_sources.faq import FAMILY as FAQ_FAMILY
+    from itop_ai_assistant.content_sources.faq import FaqVectorSource
+    from itop_ai_assistant.content_sources.tickets import FAMILY as TICKETS_FAMILY
+    from itop_ai_assistant.content_sources.tickets import TicketVectorSource
+
+    return {
+        TICKETS_FAMILY: tuple(TicketVectorSource.org_fields),
+        FAQ_FAMILY: tuple(FaqVectorSource.org_fields),
+    }
+
+
 def build_vector_sources(itop: ItopRepositories, cfg: "VectorConfig") -> list["VectorSource[Any]"]:
     """One instance per *registered* family, not per family the saved config
     happens to still mention.
 
-    Every known family is built unconditionally, with `classes` taken from
-    `cfg.families.get(name, FamilyConfig()).classes` — empty if the admin
-    cleared it or the key is missing entirely. That is what lets the admin UI
+    Every known family is built unconditionally, from
+    `cfg.families.get(name, FamilyConfig())` — an empty family config if the
+    admin cleared it or the key is missing entirely. The whole section, not
+    just its class list: a source reads its per-class settings (which fields
+    grant access, `VectorClassConfig.acl_org_fields`) out of it too. That is what lets the admin UI
     (`GET /api/vector/sources`) always show a family's full chunking
     vocabulary: a family absent from the saved config still gets a vocabulary
     to offer, so an admin can recover a class removed by mistake instead of
@@ -74,14 +96,13 @@ def build_vector_sources(itop: ItopRepositories, cfg: "VectorConfig") -> list["V
     async def faq_repo_as(principal: Principal) -> FaqRepository:
         return (await itop.for_principal(principal, comment=_CONFIRM_COMMENT)).faq_repo
 
-    builders: dict[str, Callable[[list[str]], "VectorSource[Any]"]] = {
-        TICKETS_FAMILY: lambda classes: TicketVectorSource(ticket_repo, ticket_repo_as, classes=classes),
-        FAQ_FAMILY: lambda classes: FaqVectorSource(faq_repo, faq_repo_as, classes=classes),
+    builders: dict[str, Callable[["FamilyConfig"], "VectorSource[Any]"]] = {
+        TICKETS_FAMILY: lambda family_cfg: TicketVectorSource(ticket_repo, ticket_repo_as, family_cfg=family_cfg),
+        FAQ_FAMILY: lambda family_cfg: FaqVectorSource(faq_repo, faq_repo_as, family_cfg=family_cfg),
     }
     sources: list["VectorSource[Any]"] = []
     for name, builder in builders.items():
-        family_cfg = cfg.families.get(name, FamilyConfig())
-        sources.append(builder(list(family_cfg.classes)))
+        sources.append(builder(cfg.families.get(name, FamilyConfig())))
     for name in cfg.families:
         if name not in builders:
             logger.warning(f"vector: family {name!r} in config matches no registered source — ignoring")

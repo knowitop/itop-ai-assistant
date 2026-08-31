@@ -10,12 +10,14 @@ import logging
 from collections.abc import Sequence
 from datetime import datetime
 
+from itop_ai_assistant.content_sources.acl import org_ids
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.faq import FaqArticle
 from itop_ai_assistant.repositories.faq import FaqRepository, FaqRepositoryForPrincipal, FaqRepositoryProvider
 from itop_ai_assistant.vector import (
     Chunk,
     ChunkPlan,
+    FamilyConfig,
     FragmentContent,
     FragmentSpec,
     TextContent,
@@ -35,6 +37,13 @@ FAMILY = "faq"
 # `FaqMappingConfig`'s job.
 FIELDS = ("title", "summary", "category_name", "error_code", "key_words", "description")
 
+# The semantic fields of an article that can name an organization giving
+# access to it (`VectorClassConfig.acl_org_fields` picks from these). Both are
+# unmapped in stock iTop: `org_id` is the article's own organization,
+# `customer_org_ids` the list of customer organizations a build publishes it
+# to (`faq_mapping.fields_multi`).
+ORG_FIELDS = ("org_id", "customer_org_ids")
+
 FRAGMENTS = (
     FragmentSpec(kind="profile", visibility="public"),
     FragmentSpec(kind="body", visibility="public"),
@@ -53,18 +62,17 @@ class FaqVectorSource(VectorSource[FaqArticle]):
     full scan (see its docstring) — a deployment whose `FAQ` does carry either
     can map it and set `index_values` explicitly.
 
-    `org_id` is unmapped by default too — stock `FAQ` has no org-scoped ACL —
-    so the R4 pre-filter by organization (ADR-003) is simply inactive for
-    every article until a deployment maps a real attribute in `faq_mapping`.
-    `indexed_filter_keys` still declares it: an unused payload index on an
-    always-empty key costs a little Qdrant bookkeeping, not an error, and a
-    deployment that does map `org_id` needs no further code change to make
-    the pre-filter work.
+    Neither of `ORG_FIELDS` is mapped by default — stock `FAQ` has no
+    org-scoped ACL — so `vector.families.faq.classes.FAQ.acl_org_fields` is
+    empty and the R4 pre-filter (ADR-003) lets every article through to
+    `confirm_visible`. A build that does publish articles to a list of
+    customer organizations maps that link set in `faq_mapping.fields_multi`
+    and names `customer_org_ids` here; no code change is needed for either.
     """
 
     name = FAMILY
-    indexed_filter_keys = ("org_id",)
     fields = FIELDS
+    org_fields = ORG_FIELDS
     fragments = FRAGMENTS
 
     def __init__(
@@ -72,11 +80,14 @@ class FaqVectorSource(VectorSource[FaqArticle]):
         get_faq_repo: FaqRepositoryProvider,
         get_faq_repo_as: FaqRepositoryForPrincipal,
         *,
-        classes: list[str],
+        family_cfg: FamilyConfig,
     ) -> None:
         self._get_faq_repo = get_faq_repo
         self._get_faq_repo_as = get_faq_repo_as
-        self.classes: Sequence[str] = classes
+        self.classes: Sequence[str] = list(family_cfg.classes)
+        # See `TicketVectorSource.__init__` — per class, which of `ORG_FIELDS`
+        # this deployment says grant access.
+        self._acl_org_fields = {name: cfg.acl_org_fields for name, cfg in family_cfg.classes.items()}
         self._faq_repo: FaqRepository | None = None
 
     async def prepare(self) -> None:
@@ -96,7 +107,7 @@ class FaqVectorSource(VectorSource[FaqArticle]):
                 index_value=article.status,
                 updated_at=article.last_update,
                 created_at=article.start_date,
-                org_id=article.org_id,
+                acl_org_ids=org_ids(article, self._acl_org_fields.get(obj_class, ()), source=FAMILY),
                 payload=article,
             )
             for article in articles

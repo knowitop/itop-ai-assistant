@@ -70,7 +70,7 @@ def extract(raw: Mapping[str, Any], specs: Sequence[ValueSpec]) -> tuple[str, ..
         if isinstance(spec, LinksetValue):
             values.update(_linkset_values(raw.get(spec.attr), spec.id_field))
         else:
-            value = _value(raw.get(spec.attr))
+            value = normalize_value(raw.get(spec.attr))
             if value is not None:
                 values.add(value)
     return tuple(sorted(values))
@@ -89,14 +89,18 @@ def _linkset_values(raw_links: Any, id_field: str) -> list[str]:
     for link in links:
         if not isinstance(link, Mapping):
             continue
-        value = _value(link.get(id_field))
+        value = normalize_value(link.get(id_field))
         if value is not None:
             found.append(value)
     return found
 
 
-def _value(raw: Any) -> str | None:
+def normalize_value(raw: Any) -> str | None:
     """One value as the index stores it, or None when there is none.
+
+    Public because the same reading applies wherever a value is bound for
+    filtering, not only when it is read off a raw iTop row
+    (`content_sources/acl.py`).
 
     "0" is iTop's unset external key (same reading as
     `repositories/ticket.py::_external_key`), and an empty string is an unset

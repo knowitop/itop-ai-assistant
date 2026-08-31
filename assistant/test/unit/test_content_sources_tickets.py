@@ -5,7 +5,13 @@ from unittest.mock import AsyncMock, MagicMock
 from itop_ai_assistant.content_sources.tickets import FIELDS, FRAGMENTS, TicketVectorSource, _conversation
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
-from itop_ai_assistant.vector import ChunkPlan
+from itop_ai_assistant.vector import ChunkPlan, FamilyConfig
+from itop_ai_assistant.vector.config import VectorClassConfig
+
+
+def _family(acl_org_fields: list[str] | None = None) -> FamilyConfig:
+    return FamilyConfig(classes={"UserRequest": VectorClassConfig(acl_org_fields=acl_org_fields or [])})
+
 
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 _ENGINEER = Principal.delegated("tok", login="ivanov", name="Ivan Ivanov")
@@ -63,7 +69,7 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
     async def test_maps_ticket_fields_onto_vector_record(self):
         get_ticket_repo, get_ticket_repo_as, ticket_repo, _ = _ticket_repo_factory()
         ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket()])
-        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, classes=["UserRequest"])
+        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family())
         await source.prepare()
 
         records = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
@@ -72,14 +78,37 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
         record = records[0]
         self.assertEqual(record.obj_id, 1)
         self.assertEqual(record.index_value, "resolved")
-        self.assertEqual(record.org_id, "org1")
+        self.assertEqual(record.acl_org_ids, ())  # no acl_org_fields configured for the class
         self.assertEqual(record.filters, {"service_id": "5"})
         self.assertEqual(record.payload.id, "1")
+
+    async def test_acl_org_ids_come_from_the_configured_fields(self):
+        get_ticket_repo, get_ticket_repo_as, ticket_repo, _ = _ticket_repo_factory()
+        ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket(provider_id="7")])
+        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family(["org_id", "provider_id"]))
+        await source.prepare()
+
+        records = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
+
+        self.assertEqual(("org1", "7"), records[0].acl_org_ids)
+
+    async def test_a_field_the_source_does_not_know_warns_and_yields_nothing(self):
+        # Second line behind the 422 the config save answers with: a name the
+        # model has outgrown must not fail the pass.
+        get_ticket_repo, get_ticket_repo_as, ticket_repo, _ = _ticket_repo_factory()
+        ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket()])
+        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family(["nonesuch"]))
+        await source.prepare()
+
+        with self.assertLogs("itop_ai_assistant.content_sources.acl", level="WARNING"):
+            records = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
+
+        self.assertEqual((), records[0].acl_org_ids)
 
     async def test_requests_private_log_from_the_repository(self):
         get_ticket_repo, get_ticket_repo_as, ticket_repo, _ = _ticket_repo_factory()
         ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket()])
-        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, classes=["UserRequest"])
+        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family())
         await source.prepare()
 
         await source.find_modified_since("UserRequest", None, page=1, page_size=100)
@@ -91,7 +120,7 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
     async def test_filters_none_when_no_service(self):
         get_ticket_repo, get_ticket_repo_as, ticket_repo, _ = _ticket_repo_factory()
         ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket(service_id=None)])
-        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, classes=["UserRequest"])
+        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family())
         await source.prepare()
 
         records = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
@@ -103,7 +132,7 @@ class TestFindExistingIds(unittest.IsolatedAsyncioTestCase):
     async def test_delegates_to_ticket_repo(self):
         get_ticket_repo, get_ticket_repo_as, ticket_repo, _ = _ticket_repo_factory()
         ticket_repo.find_existing_ids = AsyncMock(return_value={1, 2})
-        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, classes=["UserRequest"])
+        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family())
         await source.prepare()
 
         result = await source.find_existing_ids("UserRequest", [1, 2, 3])
@@ -120,7 +149,7 @@ class TestConfirmVisible(unittest.IsolatedAsyncioTestCase):
         get_ticket_repo, get_ticket_repo_as, ticket_repo, as_principal_repo = _ticket_repo_factory()
         as_principal_repo.find_existing_ids = AsyncMock(return_value={1})
         ticket_repo.find_existing_ids = AsyncMock(return_value={1, 2, 3})
-        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, classes=["UserRequest"])
+        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family())
 
         result = await source.confirm_visible(_ENGINEER, "UserRequest", [1, 2, 3])
 
@@ -135,7 +164,7 @@ class TestConfirmVisible(unittest.IsolatedAsyncioTestCase):
         # normal, not a programming error.
         get_ticket_repo, get_ticket_repo_as, _repo, as_principal_repo = _ticket_repo_factory()
         as_principal_repo.find_existing_ids = AsyncMock(return_value=set())
-        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, classes=["UserRequest"])
+        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family())
 
         self.assertEqual(await source.confirm_visible(_ENGINEER, "UserRequest", [1]), set())
         get_ticket_repo.assert_not_awaited()
@@ -145,7 +174,7 @@ class TestConfirmVisible(unittest.IsolatedAsyncioTestCase):
         # hand the second somebody else's tickets.
         get_ticket_repo, get_ticket_repo_as, _repo, as_principal_repo = _ticket_repo_factory()
         as_principal_repo.find_existing_ids = AsyncMock(return_value={1})
-        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, classes=["UserRequest"])
+        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family())
 
         await source.confirm_visible(_ENGINEER, "UserRequest", [1])
         await source.confirm_visible(Principal.service(), "UserRequest", [1])
@@ -159,7 +188,7 @@ class TestChunk(unittest.IsolatedAsyncioTestCase):
     async def test_builds_profile_and_body_chunks_with_service_names(self):
         get_ticket_repo, get_ticket_repo_as, ticket_repo, _ = _ticket_repo_factory()
         ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket()])
-        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, classes=["UserRequest"])
+        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family())
         await source.prepare()
         [record] = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
 
@@ -179,7 +208,7 @@ class TestChunk(unittest.IsolatedAsyncioTestCase):
             ]
         )
         ticket_repo.find_modified_since = AsyncMock(return_value=[ticket])
-        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, classes=["UserRequest"])
+        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family())
         await source.prepare()
         [record] = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
 
@@ -193,7 +222,7 @@ class TestChunk(unittest.IsolatedAsyncioTestCase):
         get_ticket_repo, get_ticket_repo_as, ticket_repo, _ = _ticket_repo_factory()
         ticket = _ticket(private_log=[LogEntry(user_login="Jane Agent", message="Ordered a replacement part")])
         ticket_repo.find_modified_since = AsyncMock(return_value=[ticket])
-        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, classes=["UserRequest"])
+        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family())
         await source.prepare()
         [record] = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
 
@@ -213,14 +242,14 @@ class TestDeclaration(unittest.IsolatedAsyncioTestCase):
     async def _chunk(self, plan: ChunkPlan, ticket: Ticket | None = None):
         get_ticket_repo, get_ticket_repo_as, ticket_repo, _ = _ticket_repo_factory()
         ticket_repo.find_modified_since = AsyncMock(return_value=[ticket or _ticket()])
-        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, classes=["UserRequest"])
+        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family())
         await source.prepare()
         [record] = await source.find_modified_since("UserRequest", None, page=1, page_size=100)
         return await source.chunk("UserRequest", record, plan, max_chunk_tokens=100, log_entries_per_chunk=5)
 
     async def test_declared_fields_are_exactly_the_chunkable_ones(self):
         get_ticket_repo, get_ticket_repo_as, _repo, _ = _ticket_repo_factory()
-        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, classes=["UserRequest"])
+        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family())
         await source.prepare()
 
         fields = source._semantic_fields(_ticket())
@@ -300,7 +329,7 @@ class TestPrepare(unittest.IsolatedAsyncioTestCase):
         is only ever given the service set's `ticket_repo` (`registry.py`), which
         never touches `for_principal`, so there is nothing else it could do."""
         get_ticket_repo, get_ticket_repo_as, ticket_repo, _ = _ticket_repo_factory()
-        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, classes=["UserRequest"])
+        source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family())
 
         await source.prepare()
 

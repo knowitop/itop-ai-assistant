@@ -93,9 +93,10 @@ class FaqFieldMap(BaseModel):
     # one (a custom attribute or an extension that does carry a status).
     status: str | None = None
     # No org-scoped ACL for FAQ in stock iTop either — unmapped by default,
-    # same reasoning as `status` above. `VectorRecord.org_id`/the `org_id`
-    # pre-filter (ADR-003, R4) simply stay unset for every article until a
-    # deployment maps a real attribute here.
+    # same reasoning as `status` above. A build that scopes articles by
+    # organization maps this (or the customer link set, in `fields_multi`)
+    # and names the field in `acl_org_fields`; until then the org pre-filter
+    # (ADR-003, R4) lets every article through to `confirm_visible`.
     org_id: str | None = None
     # Stock iTop's FAQ class carries no date attribute at all — neither this
     # nor `start_date` maps to anything by default. `FaqRepository` degrades

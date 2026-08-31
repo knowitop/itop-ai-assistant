@@ -10,6 +10,7 @@ import logging
 from collections.abc import Sequence
 from datetime import datetime
 
+from itop_ai_assistant.content_sources.acl import org_ids
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.repositories.ticket import (
@@ -20,6 +21,7 @@ from itop_ai_assistant.repositories.ticket import (
 from itop_ai_assistant.vector import (
     Chunk,
     ChunkPlan,
+    FamilyConfig,
     FragmentContent,
     FragmentSpec,
     SequenceContent,
@@ -40,6 +42,13 @@ FAMILY = "tickets"
 # `ticket_mapping`'s job, and `_semantic_fields` below is the one place these
 # names are bound to actual ticket content.
 FIELDS = ("title", "description", "solution", "service", "subcategory")
+
+# The semantic fields of a ticket that can name an organization giving access
+# to it (`VectorClassConfig.acl_org_fields` picks from these). `provider_id` —
+# the organization working the ticket — is unmapped in stock iTop and stays
+# empty until a build maps it; a class configured with both grants access to
+# either side.
+ORG_FIELDS = ("org_id", "provider_id")
 
 # Every fragment this source can produce. The two log fragments are opt-in:
 # whether internal notes get embedded at all is the administrator's call,
@@ -73,8 +82,9 @@ class TicketVectorSource(VectorSource[Ticket]):
     """
 
     name = FAMILY
-    indexed_filter_keys = ("status", "org_id")
+    indexed_filter_keys = ("status",)
     fields = FIELDS
+    org_fields = ORG_FIELDS
     fragments = FRAGMENTS
 
     def __init__(
@@ -82,11 +92,15 @@ class TicketVectorSource(VectorSource[Ticket]):
         get_ticket_repo: TicketRepositoryProvider,
         get_ticket_repo_as: TicketRepositoryForPrincipal,
         *,
-        classes: list[str],
+        family_cfg: FamilyConfig,
     ) -> None:
         self._get_ticket_repo = get_ticket_repo
         self._get_ticket_repo_as = get_ticket_repo_as
-        self.classes: Sequence[str] = classes
+        self.classes: Sequence[str] = list(family_cfg.classes)
+        # Per class, which of `ORG_FIELDS` this deployment says grant access.
+        # Read once here rather than per record: the source is rebuilt from a
+        # freshly read config on every pass (`vector/assembly.py`).
+        self._acl_org_fields = {name: cfg.acl_org_fields for name, cfg in family_cfg.classes.items()}
         self._ticket_repo: TicketRepository | None = None
 
     async def prepare(self) -> None:
@@ -113,7 +127,7 @@ class TicketVectorSource(VectorSource[Ticket]):
                 index_value=ticket.status,
                 updated_at=ticket.last_update,
                 created_at=ticket.start_date,
-                org_id=ticket.org_id,
+                acl_org_ids=org_ids(ticket, self._acl_org_fields.get(obj_class, ()), source=FAMILY),
                 filters={"service_id": ticket.service_id} if ticket.service_id is not None else None,
                 payload=ticket,
             )

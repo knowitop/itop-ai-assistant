@@ -94,7 +94,11 @@ _ID_NAMESPACE = uuid.UUID("6f0f5f8e-6a1d-5c2b-9a3e-0c1d2e3f4a5b")
 # `fields.*` key waits for a real filtering scenario (ADR-005). A source opts
 # its own generic keys (e.g. `status`, `org_id`) into indexing by declaring
 # them in `VectorSource.indexed_filter_keys`, passed here as `filter_keys`.
-_KEYWORD_FIELDS = ("obj_class", "chunk_kind", "visibility", "obj_key")
+# `acl_org_ids` is a system key like the rest and not a `fields.*` one — the
+# "no value means unrestricted" rule of the org pre-filter is its alone
+# (ADR-003, ADR-033), and a KEYWORD index over an array is built per element,
+# so a point listing several organizations matches on any of them.
+_KEYWORD_FIELDS = ("obj_class", "chunk_kind", "visibility", "obj_key", "acl_org_ids")
 
 
 class QdrantNotConfigured(RuntimeError):
@@ -787,6 +791,12 @@ def _payload(chunk: ChunkMetadata) -> dict:
     # the same name (D6, TASK-008). Not indexed automatically — a source opts
     # specific keys in via `indexed_filter_keys` (see `_KEYWORD_FIELDS`, ADR-005).
     payload["fields"] = chunk.filters or {}
+    # Written even when empty, unlike `updated_at`: `IsEmpty` reads an empty
+    # array and an absent key the same way, so the pre-filter behaves
+    # identically either way — an explicit `[]` is what tells "this source
+    # claimed no ACL" apart from "this point predates the key" when a dump is
+    # being read by a person.
+    payload["acl_org_ids"] = list(chunk.acl_org_ids)
     return payload
 
 

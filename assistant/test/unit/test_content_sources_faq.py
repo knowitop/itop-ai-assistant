@@ -5,7 +5,13 @@ from unittest.mock import AsyncMock, MagicMock
 from itop_ai_assistant.content_sources.faq import FIELDS, FRAGMENTS, FaqVectorSource
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.faq import FaqArticle
-from itop_ai_assistant.vector import ChunkPlan
+from itop_ai_assistant.vector import ChunkPlan, FamilyConfig
+from itop_ai_assistant.vector.config import VectorClassConfig
+
+
+def _family(acl_org_fields: list[str] | None = None) -> FamilyConfig:
+    return FamilyConfig(classes={"FAQ": VectorClassConfig(acl_org_fields=acl_org_fields or [])})
+
 
 _NOW = datetime(2026, 7, 10, 12, 0, tzinfo=UTC)
 _ENGINEER = Principal.delegated("tok", login="ivanov", name="Ivan Ivanov")
@@ -52,7 +58,7 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
     async def test_maps_article_fields_onto_vector_record(self):
         get_faq_repo, get_faq_repo_as, faq_repo, _ = _faq_repo_factory()
         faq_repo.find_modified_since = AsyncMock(return_value=[_article()])
-        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, classes=["FAQ"])
+        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, family_cfg=_family())
         await source.prepare()
 
         records = await source.find_modified_since("FAQ", None, page=1, page_size=100)
@@ -61,14 +67,14 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
         record = records[0]
         self.assertEqual(record.obj_id, 1)
         self.assertEqual(record.index_value, "published")
-        self.assertEqual(record.org_id, "org1")
+        self.assertEqual(record.acl_org_ids, ())  # no acl_org_fields configured for the class
         self.assertIsNone(record.filters)
         self.assertEqual(record.payload.id, "1")
 
     async def test_delegates_to_the_repository(self):
         get_faq_repo, get_faq_repo_as, faq_repo, _ = _faq_repo_factory()
         faq_repo.find_modified_since = AsyncMock(return_value=[_article()])
-        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, classes=["FAQ"])
+        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, family_cfg=_family())
         await source.prepare()
 
         await source.find_modified_since("FAQ", None, page=1, page_size=100)
@@ -76,11 +82,40 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
         faq_repo.find_modified_since.assert_awaited_once_with(None, page=1, page_size=100)
 
 
+class TestAclOrgIds(unittest.IsolatedAsyncioTestCase):
+    async def _records(self, article: FaqArticle, acl_org_fields: list[str]):
+        get_faq_repo, get_faq_repo_as, faq_repo, _ = _faq_repo_factory()
+        faq_repo.find_modified_since = AsyncMock(return_value=[article])
+        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, family_cfg=_family(acl_org_fields))
+        await source.prepare()
+        return await source.find_modified_since("FAQ", None, page=1, page_size=100)
+
+    async def test_the_customer_organizations_of_an_article_become_its_acl(self):
+        article = _article(customer_org_ids=("7", "3"))
+
+        records = await self._records(article, ["customer_org_ids"])
+
+        self.assertEqual(("7", "3"), records[0].acl_org_ids)
+
+    async def test_several_fields_are_merged(self):
+        article = _article(customer_org_ids=("7",))
+
+        records = await self._records(article, ["org_id", "customer_org_ids"])
+
+        self.assertEqual(("org1", "7"), records[0].acl_org_ids)
+
+    async def test_a_field_the_source_does_not_know_warns_and_yields_nothing(self):
+        with self.assertLogs("itop_ai_assistant.content_sources.acl", level="WARNING"):
+            records = await self._records(_article(), ["nonesuch"])
+
+        self.assertEqual((), records[0].acl_org_ids)
+
+
 class TestFindExistingIds(unittest.IsolatedAsyncioTestCase):
     async def test_delegates_to_the_repository(self):
         get_faq_repo, get_faq_repo_as, faq_repo, _ = _faq_repo_factory()
         faq_repo.find_existing_ids = AsyncMock(return_value={1, 2})
-        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, classes=["FAQ"])
+        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, family_cfg=_family())
         await source.prepare()
 
         result = await source.find_existing_ids("FAQ", [1, 2, 3])
@@ -98,7 +133,7 @@ class TestConfirmVisible(unittest.IsolatedAsyncioTestCase):
         get_faq_repo, get_faq_repo_as, faq_repo, as_principal_repo = _faq_repo_factory()
         as_principal_repo.find_existing_ids = AsyncMock(return_value={1})
         faq_repo.find_existing_ids = AsyncMock(return_value={1, 2, 3})
-        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, classes=["FAQ"])
+        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, family_cfg=_family())
 
         result = await source.confirm_visible(_ENGINEER, "FAQ", [1, 2, 3])
 
@@ -112,7 +147,7 @@ class TestChunk(unittest.IsolatedAsyncioTestCase):
     async def test_builds_profile_and_body_chunks(self):
         get_faq_repo, get_faq_repo_as, faq_repo, _ = _faq_repo_factory()
         faq_repo.find_modified_since = AsyncMock(return_value=[_article()])
-        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, classes=["FAQ"])
+        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, family_cfg=_family())
         await source.prepare()
         [record] = await source.find_modified_since("FAQ", None, page=1, page_size=100)
 
@@ -135,14 +170,14 @@ class TestDeclaration(unittest.IsolatedAsyncioTestCase):
     async def _chunk(self, plan: ChunkPlan, article: FaqArticle | None = None):
         get_faq_repo, get_faq_repo_as, faq_repo, _ = _faq_repo_factory()
         faq_repo.find_modified_since = AsyncMock(return_value=[article or _article()])
-        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, classes=["FAQ"])
+        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, family_cfg=_family())
         await source.prepare()
         [record] = await source.find_modified_since("FAQ", None, page=1, page_size=100)
         return await source.chunk("FAQ", record, plan, max_chunk_tokens=100, log_entries_per_chunk=5)
 
     async def test_declared_fields_are_exactly_the_chunkable_ones(self):
         get_faq_repo, get_faq_repo_as, faq_repo, _ = _faq_repo_factory()
-        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, classes=["FAQ"])
+        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, family_cfg=_family())
         await source.prepare()
 
         fields = source._semantic_fields(_article())
@@ -180,7 +215,7 @@ class TestPrepare(unittest.IsolatedAsyncioTestCase):
         is only ever given the service set's `faq_repo` (`registry.py`), which
         never touches `for_principal`, so there is nothing else it could do."""
         get_faq_repo, get_faq_repo_as, faq_repo, _ = _faq_repo_factory()
-        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, classes=["FAQ"])
+        source = FaqVectorSource(get_faq_repo, get_faq_repo_as, family_cfg=_family())
 
         await source.prepare()
 

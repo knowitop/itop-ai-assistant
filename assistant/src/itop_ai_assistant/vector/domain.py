@@ -40,7 +40,13 @@ class ChunkMetadata:
     # of its own — see `ports/store.py`'s module docstring and
     # `vector/use_cases/indexer.py`.
     created_at: datetime
-    filters: dict[str, str] | None = None
+    filters: dict[str, str | list[str]] | None = None
+    # Organizations that may see the object (ADR-003 layer 1). Empty means
+    # the source claims no restriction, and the pre-filter lets the object
+    # through — written to the payload as an explicit empty list, so a point
+    # that claims nothing is distinguishable from one indexed before the key
+    # existed.
+    acl_org_ids: tuple[str, ...] = ()
     # Last modification of the source object — the range filter behind "solved
     # within the last year". None when the source has no such date: such an
     # object is then invisible to every `updated` window, which is the honest
@@ -62,6 +68,7 @@ class ChunkMetadata:
     def meta_hash(self) -> str:
         canonical = json.dumps(
             {
+                "acl_org_ids": list(self.acl_org_ids),
                 "created_at": self.created_at.isoformat(),
                 "filters": self.filters,
                 "updated_at": self.updated_at.isoformat() if self.updated_at else None,
