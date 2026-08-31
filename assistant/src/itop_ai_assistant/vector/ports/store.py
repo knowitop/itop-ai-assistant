@@ -210,6 +210,7 @@ class ChunkStore(Protocol):
         visibilities: list[str],
         chunk_kinds: list[str] | None = None,
         filters: dict[str, list[str]] | None = None,
+        org_ids: list[str] | None = None,
         exclude: tuple[str, int] | None = None,
         created: DateRange | None = None,
         updated: DateRange | None = None,
@@ -223,7 +224,14 @@ class ChunkStore(Protocol):
         `score_threshold` drops a hit below that similarity score regardless
         of rank — top-N alone does not mean relevant (TASK-011); `None`
         applies no such floor. `chunk_kinds`: `None` matches any kind, an
-        empty list is a caller error."""
+        empty list is a caller error.
+
+        `org_ids` is the organization pre-filter (ADR-003 layer 1, ADR-033):
+        a chunk passes when its object names one of these organizations *or
+        names none at all*. Named rather than a key in `filters` because that
+        second half is true of this key and of no other — an object with no
+        `service_id` is not "any service". `None` applies no pre-filter, an
+        empty list is a caller error like everywhere else."""
         ...
 
     async def stats(self, family: str, version: int | None = None) -> IndexStats | None:

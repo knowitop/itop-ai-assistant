@@ -41,6 +41,12 @@ class TestSearchQuery(unittest.TestCase):
         with self.assertRaises(ValueError):
             _query(filters={"status": []})
 
+    def test_empty_org_ids_is_rejected(self):
+        # "no pre-filter" is an omitted argument, not an empty list — the same
+        # convention `AccessRepository.allowed_org_ids()` normalizes to.
+        with self.assertRaises(ValueError):
+            _query(org_ids=[])
+
     def test_min_score_outside_the_cosine_range_is_rejected(self):
         with self.assertRaises(ValueError):
             _query(min_score=1.5)

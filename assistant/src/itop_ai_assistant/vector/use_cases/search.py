@@ -300,6 +300,7 @@ class SimilarSearch:
                 classes=query.classes,
                 chunk_kinds=query.chunk_kinds,
                 filters=query.filters,
+                org_ids=query.org_ids,
                 visibilities=list(query.visibilities),
                 exclude=query.exclude,
                 created=query.created,

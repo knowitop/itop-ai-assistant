@@ -48,6 +48,12 @@ class SearchQuery:
     classes: list[str] | None = None
     chunk_kinds: list[str] | None = None
     filters: dict[str, list[str]] | None = None
+    # The asking principal's organizations (ADR-003 layer 1). None = no
+    # pre-filter, which is also what iTop's own "no restriction" normalizes
+    # to (`AccessRepository.allowed_org_ids`). Not a key in `filters`: an
+    # object that names no organization passes this one, and nothing else
+    # behaves that way.
+    org_ids: list[str] | None = None
     visibilities: Sequence[str] = ("public", "internal")
     exclude: tuple[str, int] | None = None
     created: DateRange | None = None
@@ -69,6 +75,8 @@ class SearchQuery:
                 raise ValueError(
                     f'SearchQuery.filters[{key!r}] got an empty value list — omit the key for "unrestricted", not []'
                 )
+        if self.org_ids is not None and not self.org_ids:
+            raise ValueError('SearchQuery.org_ids got an empty list — omit it for "no pre-filter", not []')
         if self.min_score is not None and not -1.0 <= self.min_score <= 1.0:
             raise ValueError(f"SearchQuery.min_score is a cosine score in [-1, 1], got {self.min_score}")
         if self.candidates < 1 or self.top < 1:

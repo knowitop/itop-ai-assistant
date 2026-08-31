@@ -911,6 +911,63 @@ class TestSearch(QdrantStoreCase):
         self.assertEqual({hit.obj_id for hit in hits}, {1, 2})
 
 
+class TestOrgPrefilter(QdrantStoreCase):
+    """ADR-003 layer 1 / ADR-033: intersect the object's organizations with
+    the asker's, and pass an object that named none."""
+
+    async def _seed(self) -> None:
+        await self.store.upsert_chunks(
+            [
+                _chunk(1, acl_org_ids=("3", "7")),  # shares one organization
+                _chunk(2, acl_org_ids=("9",)),  # somebody else's
+                _chunk(3),  # claims nothing
+            ],
+            family=_FAMILY,
+            model="test-model",
+            dim=4,
+        )
+
+    async def test_an_object_passes_on_any_shared_organization(self):
+        await self._seed()
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], org_ids=["3", "5"], **_ALL)
+
+        self.assertEqual({1, 3}, {hit.obj_id for hit in hits})
+
+    async def test_an_object_of_another_organization_is_cut(self):
+        await self._seed()
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], org_ids=["9"], **_ALL)
+
+        self.assertEqual({2, 3}, {hit.obj_id for hit in hits})
+
+    async def test_no_prefilter_returns_everything(self):
+        await self._seed()
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], **_ALL)
+
+        self.assertEqual({1, 2, 3}, {hit.obj_id for hit in hits})
+
+    async def test_a_scalar_value_from_an_older_payload_still_matches(self):
+        # A point written before the key held a list: Qdrant matches a scalar
+        # and an array under one condition, so no rebuild is needed to keep
+        # such a point findable.
+        await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
+        await self.store.client.set_payload(
+            collection_name=self.store.collection_name(_FAMILY, 1),
+            payload={"acl_org_ids": "3"},
+            points=models.Filter(must=[models.FieldCondition(key="obj_id", match=models.MatchValue(value=1))]),
+        )
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], org_ids=["3"], **_ALL)
+
+        self.assertEqual([1], [hit.obj_id for hit in hits])
+
+    async def test_an_empty_list_is_a_caller_error(self):
+        with self.assertRaises(ValueError):
+            await self.store.search([1.0, 0.0, 0.0, 0.0], org_ids=[], **_ALL)
+
+
 class TestMetadataUpdate(QdrantStoreCase):
     async def test_changes_status_without_touching_the_vector(self):
         await self.store.upsert_chunks([_chunk(1, status="new")], family=_FAMILY, model="test-model", dim=4)

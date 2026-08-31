@@ -403,7 +403,8 @@ class SearchRequest(BaseModel):
         "R4 org pre-filter from, instead of the service account — paste an engineer's own "
         "token to check what `AccessRepository.allowed_org_ids()` returns for them and whether the "
         "org pre-filter and the source's own resolve agree (`stats.dropped_by_resolve`). When given, "
-        "it also fills `filters['org_id']` unless the request already sets that key.",
+        "that principal's organizations become the pre-filter: a candidate passes it if the object "
+        "names one of them or names none at all. The request body cannot set or widen it.",
     )
 
     @model_validator(mode="after")
@@ -415,18 +416,20 @@ class SearchRequest(BaseModel):
         self.to_query()
         return self
 
-    def to_query(self, *, filters: dict[str, list[str]] | None = None) -> SearchQuery:
+    def to_query(self, *, org_ids: list[str] | None = None) -> SearchQuery:
         """The scenario this request describes.
 
-        `filters` overrides the body's own — the `principal_token` branch adds
-        the org pre-filter to them before searching.
+        `org_ids` is not a body field and cannot be one: it is read from the
+        principal's own iTop record, and a request that could name it would
+        be naming whose organizations to search as.
         """
         return SearchQuery(
             text=self.text,
             family=self.family,
             classes=self.classes,
             chunk_kinds=self.chunk_kinds,
-            filters=self.filters if filters is None else filters,
+            filters=self.filters,
+            org_ids=org_ids,
             visibilities=self.visibilities,
             exclude=self.exclude,
             created=self.created.to_domain() if self.created else None,
@@ -464,7 +467,8 @@ async def vector_search(
     source, so there is nothing here that could only work for tickets.
 
     What this handler still does by hand is R4's *layer 1*: reading the
-    principal's allowed organizations and turning them into a pre-filter.
+    principal's allowed organizations and handing them to the search as
+    `SearchQuery.org_ids`.
     That stays here deliberately — it shapes the walk before it starts, it is
     over-permissive by design (ADR-003), and computing it means knowing what
     an organization is, which is the caller's language, not the subsystem's.
@@ -472,18 +476,15 @@ async def vector_search(
     at all — nor are the door's own availability gates: `search.find()`
     raises `SearchUnavailable` for those.
     """
-    filters = body.filters
     principal = Principal.service()
     allowed_org_ids: list[str] | None = None
     if body.principal_token:
         principal = Principal.delegated(body.principal_token, login="debug", name="debug")
         repos = await itop.for_principal(principal, comment="vector debug search (TASK-015)")
         allowed_org_ids = await repos.access_repo.allowed_org_ids()
-        if allowed_org_ids is not None and (filters is None or "org_id" not in filters):
-            filters = {**(filters or {}), "org_id": allowed_org_ids}
 
     try:
-        result = await search.find(body.to_query(filters=filters), principal)
+        result = await search.find(body.to_query(org_ids=allowed_org_ids), principal)
     except SearchUnavailable as unavailable:
         raise HTTPException(status_code=409, detail=str(unavailable)) from unavailable
     except UnknownFamily as unknown:

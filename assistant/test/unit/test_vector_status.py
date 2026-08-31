@@ -718,7 +718,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         self.assertEqual([p.kind for p in source.confirmed_for], ["service"])
         deps.itop.for_principal.assert_not_awaited()
 
-    def test_allowed_org_ids_fill_the_org_filter_by_default(self):
+    def test_allowed_org_ids_become_the_org_prefilter(self):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
@@ -736,9 +736,9 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
                 json={"family": "tickets", "text": "printer", "principal_token": "engineer-token"},
             )
 
-        self.assertEqual(store_search.await_args.kwargs["filters"], {"org_id": ["3", "9"]})
+        self.assertEqual(store_search.await_args.kwargs["org_ids"], ["3", "9"])
 
-    def test_an_explicit_org_filter_is_not_overridden(self):
+    def test_the_body_cannot_stand_in_for_the_org_prefilter(self):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
@@ -761,9 +761,13 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
                 },
             )
 
+        # `org_id` in the body is an ordinary business filter now — it narrows
+        # the walk further and cannot widen the pre-filter, which comes from
+        # the principal's own iTop record and from nowhere else.
         self.assertEqual(store_search.await_args.kwargs["filters"], {"org_id": ["7"]})
+        self.assertEqual(store_search.await_args.kwargs["org_ids"], ["3"])
 
-    def test_unrestricted_principal_adds_no_org_filter(self):
+    def test_unrestricted_principal_adds_no_org_prefilter(self):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
@@ -781,7 +785,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
                 json={"family": "tickets", "text": "printer", "principal_token": "engineer-token"},
             )
 
-        self.assertIsNone(store_search.await_args.kwargs["filters"])
+        self.assertIsNone(store_search.await_args.kwargs["org_ids"])
         self.assertIsNone(response.json()["allowed_org_ids"])
 
     def test_any_registered_family_supports_principal_token(self):

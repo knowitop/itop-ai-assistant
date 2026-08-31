@@ -5,8 +5,9 @@ Layer 2 (confirm under the caller's own token) needed no new code — it is
 already covered by `test_itop_repositories.py` and `test_vector_search.py`. What is new is layer 1
 (`AccessRepository.allowed_org_ids()`); this test pins the one thing that is
 easy to get backwards when the two are wired together: `None` (unrestricted)
-must not become `filters={"org_id": []}` — under ADR-017's convention an empty
-list under a present key is a caller error, not "no organizations".
+must not become `org_ids=[]` — under ADR-017's convention an empty list where
+the argument should have been omitted is a caller error, not "no
+organizations".
 
 The asymmetry between the layers is deliberate and outlives TASK-032: layer 2
 is part of the subsystem's contract (a search cannot run without naming who is
@@ -38,25 +39,16 @@ def _org_repo(allowed: list[dict] | None) -> AccessRepository:
     return AccessRepository(itop)
 
 
-def _org_filter(org_ids: list[str] | None) -> dict[str, list[str]] | None:
-    """What a caller (the future console) does with the repository's answer."""
-    return {"org_id": org_ids} if org_ids is not None else None
-
-
 class TestOrgPrefilterFeedsSearch(unittest.IsolatedAsyncioTestCase):
-    async def test_an_unrestricted_principal_adds_no_org_filter(self):
+    async def test_an_unrestricted_principal_adds_no_org_prefilter(self):
         repo = _org_repo([])
 
-        filters = _org_filter(await repo.allowed_org_ids())
-
-        self.assertIsNone(filters)
+        self.assertIsNone(await repo.allowed_org_ids())
 
     async def test_a_scoped_principal_narrows_by_org(self):
         repo = _org_repo([{"allowed_org_id": "3"}, {"allowed_org_id": "9"}])
 
-        filters = _org_filter(await repo.allowed_org_ids())
-
-        self.assertEqual(filters, {"org_id": ["3", "9"]})
+        self.assertEqual(["3", "9"], await repo.allowed_org_ids())
 
     async def test_the_prefilter_composes_with_confirmation_under_the_same_principal(self):
         # Layer 1 (org guess) over-includes an org the engineer's own token
@@ -95,13 +87,13 @@ class TestOrgPrefilterFeedsSearch(unittest.IsolatedAsyncioTestCase):
         counters = DailyCounters(fakeredis.aioredis.FakeRedis(decode_responses=True))
         search = SimilarSearch(store, config, MagicMock(), counters, sources=[source])
 
-        filters = _org_filter(await repo.allowed_org_ids())
+        org_ids = await repo.allowed_org_ids()
         with patch("itop_ai_assistant.vector.use_cases.search.EmbeddingsClient", return_value=embedder):
             result = await search.find(
-                SearchQuery(text="printer", family="tickets", classes=["UserRequest"], filters=filters), engineer
+                SearchQuery(text="printer", family="tickets", classes=["UserRequest"], org_ids=org_ids), engineer
             )
 
-        self.assertEqual(store.search.await_args.kwargs["filters"], {"org_id": ["3"]})
+        self.assertEqual(store.search.await_args.kwargs["org_ids"], ["3"])
         self.assertEqual([hit.obj_id for hit in result.hits], [1])
         self.assertEqual(result.stats.dropped_by_resolve, 1)
         # Both layers under the same identity — the thing that used to depend
