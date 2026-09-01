@@ -13,6 +13,7 @@ from typing import Protocol
 
 from itop_ai_assistant.domain.identity import ObjectIdentity
 from itop_ai_assistant.domain.ticket import Ticket
+from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
 from itop_ai_assistant.pipelines.agent_run import AgentRun
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.ports import ObjectStatePort
@@ -30,6 +31,14 @@ logger = logging.getLogger(__name__)
 
 class IntakeRun(TicketRun):
     """Ticket created or user commented: classify, ask, hand off."""
+
+    # What intake reads by name, resolved through the schema so a field
+    # renamed there fails at import rather than at the first ticket. mypy
+    # checks that these names are used correctly; this checks they exist, and
+    # the shell checks the deployment maps them.
+    required_fields = TICKET_SCHEMA.resolve(
+        ("title", "description", "status", "caller_name", "public_log"), by="intake"
+    )
 
     async def stop_reason(self, ticket: Ticket, ai_name: str) -> str | None:
         """Read the AI state and config, then let `domain.stop_reason` decide."""

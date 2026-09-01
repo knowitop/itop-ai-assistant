@@ -1,9 +1,9 @@
 """The run shell: what every module's run goes through, whatever it does inside.
 
-lock → fetch → guard → body → release. A module supplies two things — why a run
-must stop (`stop_reason`) and what it actually does (`body`); the rest is the
-same for all of them, so a new module inherits the platform's invariants instead
-of remembering to re-implement them.
+lock → mapping → fetch → guard → body → release. A module supplies two things —
+why a run must stop (`stop_reason`) and what it actually does (`body`); the rest
+is the same for all of them, so a new module inherits the platform's invariants
+instead of remembering to re-implement them.
 
 The trigger is not part of that contract: the shell is handed an
 `ObjectIdentity`, so the same run serves a webhook event and a synchronous
@@ -49,6 +49,14 @@ class TicketRun(ABC):
     # Assigned by execute() before the guard and the body run — there is nothing
     # to read before that.
     repos: RepositorySet
+
+    #: Semantic fields this module reads as identifiers and cannot work
+    #: without. Checked against the deployment's mapping before the ticket is
+    #: fetched: an unmapped field reads as an empty string, and a module that
+    #: gets `""` where it expected a caller does not fail — it mislabels a
+    #: conversation and hands the engineer a wrong answer. Declaring nothing
+    #: means the module reads no field by name.
+    required_fields: tuple[str, ...] = ()
 
     def __init__(
         self,
@@ -103,6 +111,11 @@ class TicketRun(ABC):
             return await self.skip("lock", "ticket is already being processed")
         try:
             self.repos = await self.itop.for_principal(self.run.principal, comment=self.run.comment)
+            unmapped = self.repos.ticket_repo.unmapped(self.ref.obj_class, self.required_fields)
+            if unmapped:
+                missing = f"ticket_mapping does not map {list(unmapped)} for {self.ref.obj_class}"
+                logger.error(f"[{self.processing_id}] {self.ref}: {missing}")
+                return await self.skip("mapping", missing)
             ticket = await self.repos.ticket_repo.fetch(self.ref.obj_class, self.ref.obj_id)
             if ticket is None:
                 logger.warning(f"[{self.processing_id}] {self.ref} not found in iTop, skipping")

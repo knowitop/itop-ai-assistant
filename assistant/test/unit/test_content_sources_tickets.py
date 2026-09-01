@@ -4,7 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 from itop_ai_assistant.content_sources.tickets import FIELDS, FRAGMENTS, TicketVectorSource, _conversation
 from itop_ai_assistant.core.principal import Principal
-from itop_ai_assistant.domain.ticket import LogEntry, Ticket
+from itop_ai_assistant.domain.object_view import LogEntry, ObjectView
+from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
 from itop_ai_assistant.vector import ChunkPlan, FamilyConfig
 from itop_ai_assistant.vector.config import VectorClassConfig
 
@@ -30,10 +31,8 @@ _CFG = _plan(
 )
 
 
-def _ticket(**overrides) -> Ticket:
+def _ticket(**overrides) -> ObjectView:
     fields = {
-        "obj_class": "UserRequest",
-        "id": "1",
         "title": "Printer broken",
         "description": "Not printing.",
         "status": "resolved",
@@ -47,7 +46,7 @@ def _ticket(**overrides) -> Ticket:
         "start_date": _NOW,
     }
     fields.update(overrides)
-    return Ticket(**fields)
+    return ObjectView(schema=TICKET_SCHEMA, obj_class="UserRequest", id="1", values=fields)
 
 
 def _ticket_repo_factory() -> tuple[AsyncMock, AsyncMock, MagicMock, MagicMock]:
@@ -105,7 +104,9 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual((), records[0].acl_org_ids)
 
-    async def test_requests_private_log_from_the_repository(self):
+    async def test_excludes_nothing_so_the_private_log_is_read(self):
+        # The sweep is the one reader of the private log; whether it is
+        # embedded at all is decided per fragment, not by leaving it unread.
         get_ticket_repo, get_ticket_repo_as, ticket_repo, _ = _ticket_repo_factory()
         ticket_repo.find_modified_since = AsyncMock(return_value=[_ticket()])
         source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family())
@@ -113,9 +114,7 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
 
         await source.find_modified_since("UserRequest", None, page=1, page_size=100)
 
-        ticket_repo.find_modified_since.assert_awaited_once_with(
-            "UserRequest", None, page=1, page_size=100, include_private_log=True
-        )
+        ticket_repo.find_modified_since.assert_awaited_once_with("UserRequest", None, page=1, page_size=100)
 
     async def test_filters_none_when_no_service(self):
         get_ticket_repo, get_ticket_repo_as, ticket_repo, _ = _ticket_repo_factory()
@@ -239,7 +238,7 @@ class TestDeclaration(unittest.IsolatedAsyncioTestCase):
     source can actually do — a stale declaration would put fields and
     fragments in the editor that quietly produce nothing."""
 
-    async def _chunk(self, plan: ChunkPlan, ticket: Ticket | None = None):
+    async def _chunk(self, plan: ChunkPlan, ticket: ObjectView | None = None):
         get_ticket_repo, get_ticket_repo_as, ticket_repo, _ = _ticket_repo_factory()
         ticket_repo.find_modified_since = AsyncMock(return_value=[ticket or _ticket()])
         source = TicketVectorSource(get_ticket_repo, get_ticket_repo_as, family_cfg=_family())
@@ -334,7 +333,7 @@ class TestPrepare(unittest.IsolatedAsyncioTestCase):
         await source.prepare()
 
         get_ticket_repo.assert_awaited_once_with()
-        self.assertIs(source._ticket_repo, ticket_repo)
+        self.assertIs(source._repo, ticket_repo)
 
 
 if __name__ == "__main__":

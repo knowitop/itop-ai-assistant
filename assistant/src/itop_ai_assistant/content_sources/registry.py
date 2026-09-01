@@ -6,16 +6,15 @@ same pattern as `pipelines/registry.py` for webhook modules.
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.faq_schema import FAQ_SCHEMA
 from itop_ai_assistant.domain.schema import Role
 from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
-from itop_ai_assistant.repositories.faq import FaqRepository
+from itop_ai_assistant.repositories.object_repo import ObjectRepository
 from itop_ai_assistant.repositories.sets import ItopRepositories
-from itop_ai_assistant.repositories.ticket import TicketRepository
 
 if TYPE_CHECKING:
     # `vector/assembly.py` imports this module for real (`build_vector_sources`),
@@ -81,21 +80,25 @@ def build_vector_sources(itop: ItopRepositories, cfg: "VectorConfig") -> list["V
     # confirmation's can only ever be the caller's. `for_principal`
     # itself stays here — a source cannot reach it, so `prepare()` has no way
     # to start indexing as somebody.
-    async def ticket_repo() -> TicketRepository:
-        return (await itop.for_principal(Principal.service(), comment=_SWEEP_COMMENT)).ticket_repo
+    def sweeper(family: str) -> Callable[[], Awaitable[ObjectRepository]]:
+        async def repo() -> ObjectRepository:
+            return (await itop.for_principal(Principal.service(), comment=_SWEEP_COMMENT)).objects[family]
 
-    async def faq_repo() -> FaqRepository:
-        return (await itop.for_principal(Principal.service(), comment=_SWEEP_COMMENT)).faq_repo
+        return repo
 
-    async def ticket_repo_as(principal: Principal) -> TicketRepository:
-        return (await itop.for_principal(principal, comment=_CONFIRM_COMMENT)).ticket_repo
+    def confirmer(family: str) -> Callable[[Principal], Awaitable[ObjectRepository]]:
+        async def repo_as(principal: Principal) -> ObjectRepository:
+            return (await itop.for_principal(principal, comment=_CONFIRM_COMMENT)).objects[family]
 
-    async def faq_repo_as(principal: Principal) -> FaqRepository:
-        return (await itop.for_principal(principal, comment=_CONFIRM_COMMENT)).faq_repo
+        return repo_as
 
     builders: dict[str, Callable[["FamilyConfig"], "VectorSource[Any]"]] = {
-        TICKETS_FAMILY: lambda family_cfg: TicketVectorSource(ticket_repo, ticket_repo_as, family_cfg=family_cfg),
-        FAQ_FAMILY: lambda family_cfg: FaqVectorSource(faq_repo, faq_repo_as, family_cfg=family_cfg),
+        TICKETS_FAMILY: lambda family_cfg: TicketVectorSource(
+            sweeper(TICKETS_FAMILY), confirmer(TICKETS_FAMILY), family_cfg=family_cfg
+        ),
+        FAQ_FAMILY: lambda family_cfg: FaqVectorSource(
+            sweeper(FAQ_FAMILY), confirmer(FAQ_FAMILY), family_cfg=family_cfg
+        ),
     }
     sources: list["VectorSource[Any]"] = []
     for name, builder in builders.items():

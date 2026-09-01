@@ -45,6 +45,7 @@ def _mock_deps(security: SecurityConfig | None = None, configured: bool = True) 
     repos = MagicMock()
     # "not found" — a deterministic outcome that needs no LLM
     repos.ticket_repo.fetch = AsyncMock(return_value=None)
+    repos.ticket_repo.unmapped = MagicMock(return_value=())
     deps.itop.for_principal = AsyncMock(return_value=repos)
     return deps
 

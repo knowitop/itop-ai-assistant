@@ -535,7 +535,8 @@ class TestSimilarTicketsWiring(IntakeAgentTestCase):
         # with, so the family gate turns on the two answers this test is about
         # (registered source, indexing switched on) and not on a fingerprint.
         self.deps.vector_store.active_meta = AsyncMock(return_value=None)
-        self.repos.ticket_repo.find_existing_ids = AsyncMock(return_value={12})
+        self.repos.objects = {"tickets": MagicMock()}
+        self.repos.objects["tickets"].find_existing_ids = AsyncMock(return_value={12})
         self.vector_cfg = VectorConfig(enabled=True)
         self.embeddings_cfg = EmbeddingsConfig(base_url="http://emb/v1", model="e5")
         embedder = MagicMock()
@@ -587,7 +588,7 @@ class TestSimilarTicketsWiring(IntakeAgentTestCase):
         )
 
         self.deps.vector_store.search.assert_awaited_once()
-        self.repos.ticket_repo.find_existing_ids.assert_awaited_once_with("UserRequest", [12])
+        self.repos.objects["tickets"].find_existing_ids.assert_awaited_once_with("UserRequest", [12])
         self.repos.ticket_repo.append_private_log.assert_awaited_once_with(
             self.ticket, "Printer is dead.\n[[UserRequest:12]]"
         )

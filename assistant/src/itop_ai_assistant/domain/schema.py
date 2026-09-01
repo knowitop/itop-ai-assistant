@@ -136,6 +136,9 @@ class FieldSpec:
         if self.writable and self.kind is FieldKind.LOG:
             raise ValueError(f"field {self.name!r}: a case log is appended to, not set")
 
+    def has(self, role: Role) -> bool:
+        return role in self.roles
+
 
 @dataclass(frozen=True)
 class Schema:
@@ -173,6 +176,15 @@ class Schema:
     def names(self, role: Role) -> tuple[str, ...]:
         """Fields carrying `role`, in declaration order."""
         return tuple(spec.name for spec in self.fields if role in spec.roles)
+
+    def one(self, role: Role) -> FieldSpec | None:
+        """The single field carrying a singular role, or None if the family has
+        none — a legitimate answer, not an error: stock iTop's `FAQ` class has
+        no modification date at all."""
+        if role not in _SINGULAR_ROLES:
+            raise ValueError(f"role {role.value!r} may be carried by several fields — use names()")
+        found = self.names(role)
+        return self._by_name[found[0]] if found else None
 
     def multi_names(self) -> frozenset[str]:
         """Fields whose one mapping value yields several iTop values."""

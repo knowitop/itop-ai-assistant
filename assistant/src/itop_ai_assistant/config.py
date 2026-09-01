@@ -105,10 +105,15 @@ class FaqMappingConfig(BaseModel):
 
     A single class, unlike `TicketMappingConfig` — no `class_overrides`: that
     mechanism exists for point differences between several classes sharing
-    one mapping, and there is only one class here.
+    one mapping, and there is only one class here. `for_class` answers the
+    same table whatever it is asked, which is what lets one repository read
+    both families (`repositories/object_repo.py::ClassMapping`).
     """
 
     fields: FaqFieldMap = FaqFieldMap()
+
+    def for_class(self, obj_class: str) -> dict[str, str | None]:
+        return self.fields.model_dump()
 
 
 class RuntimeSectionConfig(BaseModel):

@@ -36,6 +36,7 @@ class TestHandleTicketEvent(unittest.IsolatedAsyncioTestCase):
         self.repos = MagicMock()
         self.fetch = AsyncMock(return_value=_ticket())
         self.repos.ticket_repo.fetch = self.fetch
+        self.repos.ticket_repo.unmapped = MagicMock(return_value=())
         self.deps.itop.for_principal = AsyncMock(return_value=self.repos)
         self.deps.ai_identity.ai_person_name = AsyncMock(return_value="ai-assistant")
         self.deps.journal = AsyncMock()
@@ -116,6 +117,7 @@ class TestGuard(unittest.IsolatedAsyncioTestCase):
 
         self.repos = MagicMock()
         self.repos.ticket_repo.fetch = AsyncMock(return_value=_ticket())
+        self.repos.ticket_repo.unmapped = MagicMock(return_value=())
         self.deps.itop.for_principal = AsyncMock(return_value=self.repos)
         self.deps.ai_identity.ai_person_name = AsyncMock(return_value="ai-assistant")
         self.deps.config_store.get = AsyncMock(return_value=IntakeConfig())

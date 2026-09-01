@@ -40,10 +40,10 @@ from typing import Generic, Protocol, TypeVar
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.vector.chunker import Chunk
 
-# The source's own payload type (e.g. `Ticket`, `FaqArticle`) — carried through
-# `VectorRecord`/`VectorSource` so each source's `chunk()` gets it back typed,
-# with the indexer itself (which only ever sees `VectorSource[Any]`) none the
-# wiser.
+# The source's own payload type — `ObjectView` for both of today's families —
+# carried through `VectorRecord`/`VectorSource` so each source's `chunk()` gets
+# it back typed, with the indexer itself (which only ever sees
+# `VectorSource[Any]`) none the wiser.
 T = TypeVar("T")
 
 
@@ -97,7 +97,7 @@ class VectorRecord(Generic[T]):
 
     `payload` is opaque to the indexer (which only ever handles
     `VectorRecord[Any]`) — whatever the source's own `chunk()` needs to build
-    the object's chunks (e.g. the domain `Ticket`), typed back for it via `T`.
+    the object's chunks (an `ObjectView` today), typed back for it via `T`.
     """
 
     obj_id: int
@@ -123,7 +123,7 @@ class VectorRecord(Generic[T]):
 class VectorSource(Protocol[T]):
     """One pluggable content source the vector indexer can sweep.
 
-    Generic over its own payload type `T` (e.g. `Ticket`, `FaqArticle`) so a
+    Generic over its own payload type `T` (`ObjectView` today) so a
     concrete source's `chunk()` gets `record.payload` back typed, with no
     cast — the indexer itself stores sources as `VectorSource[Any]`, since it
     never touches `payload`.

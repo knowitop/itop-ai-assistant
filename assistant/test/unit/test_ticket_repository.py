@@ -1,3 +1,6 @@
+"""The typed ticket over the generic repository — what `intake` reads by name,
+and what the installation counts when it writes."""
+
 import unittest
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -5,8 +8,11 @@ from unittest.mock import AsyncMock, MagicMock
 import fakeredis
 
 from itop_ai_assistant.config import TicketMappingConfig
+from itop_ai_assistant.domain.object_view import ObjectView
 from itop_ai_assistant.domain.ticket import Ticket
-from itop_ai_assistant.repositories.ticket import TicketRepository
+from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
+from itop_ai_assistant.repositories.object_repo import ObjectRepository
+from itop_ai_assistant.repositories.ticket import TicketRepository, to_ticket
 from itop_ai_assistant.state.counters import Counter, DailyCounters
 
 _RAW_TICKET = {
@@ -33,289 +39,115 @@ _RAW_TICKET = {
 def _make_repo(
     mapping: TicketMappingConfig | None = None, counters: DailyCounters | None = None
 ) -> tuple[TicketRepository, MagicMock]:
-    schema = MagicMock()
-    schema.find = AsyncMock()
-    schema.find_one = AsyncMock()
-    schema.update = AsyncMock()
+    itop_schema = MagicMock()
+    itop_schema.find_one = AsyncMock()
+    itop_schema.update = AsyncMock()
     itop = MagicMock()
-    itop.schema = MagicMock(return_value=schema)
+    itop.schema = MagicMock(return_value=itop_schema)
     counters = counters or DailyCounters(fakeredis.aioredis.FakeRedis(decode_responses=True))
-    return TicketRepository(itop, mapping or TicketMappingConfig(), counters), schema
+    objects = ObjectRepository(itop, TICKET_SCHEMA, mapping or TicketMappingConfig(), counters)
+    return TicketRepository(objects), itop_schema
+
+
+def _view(**values) -> ObjectView:
+    return ObjectView(schema=TICKET_SCHEMA, obj_class="UserRequest", id="42", values=values)
 
 
 class TestToTicket(unittest.TestCase):
-    def test_maps_default_attributes(self):
-        repo, _ = _make_repo()
+    """Every value arrives normalized, so there is nothing left to decide here
+    — and a field the view does not carry falls back to the model's default."""
 
-        ticket = repo.to_ticket("UserRequest", _RAW_TICKET)
+    def test_the_view_becomes_the_typed_ticket(self):
+        ticket = to_ticket(
+            _view(
+                title="Printer broken",
+                status="new",
+                service_id="5",
+                caller_name="John Doe",
+                last_update=datetime(2026, 7, 10, 12, 0, tzinfo=UTC),
+            )
+        )
 
-        self.assertEqual(str(ticket.identity), "UserRequest::42")
-        self.assertEqual(ticket.title, "Printer broken")
-        self.assertEqual(ticket.status, "new")
-        self.assertEqual(ticket.service_id, "5")
-        self.assertEqual(ticket.subcategory_id, "3")
-        self.assertEqual(ticket.service_name, "Printing")
-        self.assertEqual(ticket.subcategory_name, "Hardware")
-        self.assertEqual(ticket.caller_name, "John Doe")
-        self.assertEqual(ticket.request_type, "incident")
-        self.assertEqual(len(ticket.public_log), 1)
-        self.assertEqual(ticket.public_log[0].user_login, "John Doe")
-        self.assertEqual(len(ticket.private_log), 1)
-        self.assertEqual(ticket.private_log[0].user_login, "engineer")
+        self.assertIsInstance(ticket, Ticket)
+        self.assertEqual("UserRequest::42", str(ticket.identity))
+        self.assertEqual("Printer broken", ticket.title)
+        self.assertEqual("5", ticket.service_id)
+        self.assertEqual(datetime(2026, 7, 10, 12, 0, tzinfo=UTC), ticket.last_update)
 
-    def test_incident_has_no_request_type_by_default(self):
-        repo, _ = _make_repo()
-        raw = {k: v for k, v in _RAW_TICKET.items() if k != "request_type"}
+    def test_an_absent_field_falls_back_to_the_models_own_default(self):
+        ticket = to_ticket(_view(title="Printer broken"))
 
-        ticket = repo.to_ticket("Incident", raw)
-
+        self.assertEqual("", ticket.description)
         self.assertIsNone(ticket.request_type)
-
-    def test_custom_field_mapping(self):
-        mapping = TicketMappingConfig(fields={"title": "custom_title"})
-        repo, _ = _make_repo(mapping)
-        raw = {**_RAW_TICKET, "custom_title": "Custom!"}
-
-        ticket = repo.to_ticket("UserRequest", raw)
-
-        self.assertEqual(ticket.title, "Custom!")
-        # Non-overridden fields keep their defaults
-        self.assertEqual(ticket.caller_name, "John Doe")
-
-    def test_unset_service_id_normalized(self):
-        repo, _ = _make_repo()
-        raw = {**_RAW_TICKET, "service_id": "0", "servicesubcategory_id": "0"}
-
-        ticket = repo.to_ticket("UserRequest", raw)
-
-        self.assertIsNone(ticket.service_id)
-        self.assertIsNone(ticket.subcategory_id)
-
-    def test_malformed_service_id_treated_as_unset(self):
-        repo, _ = _make_repo()
-        raw = {**_RAW_TICKET, "service_id": "N/A"}
-
-        ticket = repo.to_ticket("UserRequest", raw)
-
-        self.assertIsNone(ticket.service_id)
-
-    def test_maps_solution_and_timestamps(self):
-        repo, _ = _make_repo()
-
-        ticket = repo.to_ticket("UserRequest", _RAW_TICKET)
-
-        self.assertEqual(ticket.solution, "<p>Replaced cartridge.</p>")
-        self.assertEqual(ticket.last_update, datetime(2026, 7, 10, 12, 0, tzinfo=UTC))
-        self.assertEqual(ticket.start_date, datetime(2026, 7, 1, 9, 30, tzinfo=UTC))
-
-    def test_missing_timestamps_are_none(self):
-        repo, _ = _make_repo()
-        raw = {k: v for k, v in _RAW_TICKET.items() if k not in ("last_update", "start_date", "solution")}
-
-        ticket = repo.to_ticket("UserRequest", raw)
-
         self.assertIsNone(ticket.last_update)
-        self.assertIsNone(ticket.start_date)
-        self.assertEqual(ticket.solution, "")
+        self.assertEqual([], ticket.public_log)
+
+    def test_every_ticket_field_is_a_field_of_the_family(self):
+        # The typed model is a view over the schema, not a second declaration:
+        # a name only one of them knows would read as a default forever.
+        declared = {spec.name for spec in TICKET_SCHEMA.fields}
+        self.assertEqual(set(), set(Ticket.model_fields) - declared - {"obj_class", "id"})
 
 
 class TestFetch(unittest.IsolatedAsyncioTestCase):
-    async def test_fetch_returns_ticket(self):
-        repo, schema = _make_repo()
-        schema.find_one.return_value = _RAW_TICKET
+    async def test_returns_the_typed_ticket(self):
+        repo, itop = _make_repo()
+        itop.find_one.return_value = _RAW_TICKET
 
         ticket = await repo.fetch("UserRequest", "42")
 
         self.assertIsInstance(ticket, Ticket)
-        self.assertEqual(ticket.id, "42")
+        self.assertEqual("42", ticket.id)
+        self.assertEqual("John Doe", ticket.caller_name)
 
-    async def test_fetch_returns_none_when_missing(self):
-        repo, schema = _make_repo()
-        schema.find_one.return_value = None
+    async def test_returns_none_when_missing(self):
+        repo, itop = _make_repo()
+        itop.find_one.return_value = None
 
         self.assertIsNone(await repo.fetch("UserRequest", "42"))
 
-    async def test_fetch_projects_only_mapped_attributes(self):
-        repo, schema = _make_repo()
-        schema.find_one.return_value = _RAW_TICKET
+    async def test_never_asks_itop_for_the_private_log(self):
+        repo, itop = _make_repo()
+        itop.find_one.return_value = _RAW_TICKET
 
         await repo.fetch("UserRequest", "42")
 
-        projection = schema.find_one.await_args.kwargs["projection"]
-        self.assertIn("id", projection)
-        self.assertIn("servicesubcategory_id", projection)
+        projection = itop.find_one.await_args.kwargs["projection"]
         self.assertIn("public_log", projection)
         self.assertNotIn("private_log", projection)
-
-    async def test_fetch_projection_respects_class_overrides(self):
-        repo, schema = _make_repo()
-        schema.find_one.return_value = _RAW_TICKET
-
-        await repo.fetch("Incident", "42")
-
-        projection = schema.find_one.await_args.kwargs["projection"]
-        self.assertNotIn("request_type", projection)
-
-
-class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
-    async def test_oql_quotes_timestamp_and_has_no_status_predicate(self):
-        repo, schema = _make_repo()
-        schema.find.return_value = [_RAW_TICKET]
-
-        tickets = await repo.find_modified_since(
-            "UserRequest", datetime(2026, 7, 10, 12, 0, tzinfo=UTC), page=2, page_size=50
-        )
-
-        query = schema.find.await_args.args[0]
-        self.assertEqual(query, {"last_update": (">=", "2026-07-10 12:00:00")})
-        self.assertNotIn("status", query)
-        self.assertEqual(schema.find.await_args.kwargs["limit"], "50")
-        self.assertEqual(schema.find.await_args.kwargs["page"], "2")
-        self.assertEqual(tickets[0].id, "42")
-
-    async def test_none_since_is_full_scan(self):
-        repo, schema = _make_repo()
-        schema.find.return_value = []
-
-        await repo.find_modified_since("UserRequest", None, page=1, page_size=100)
-
-        self.assertEqual(schema.find.await_args.args[0], {})
-
-    async def test_projection_excludes_private_log(self):
-        repo, schema = _make_repo()
-        schema.find.return_value = []
-
-        await repo.find_modified_since("UserRequest", None, page=1, page_size=100)
-
-        projection = schema.find.await_args.kwargs["projection"]
-        self.assertIn("id", projection)
-        self.assertIn("last_update", projection)
-        self.assertNotIn("private_log", projection)
-
-    async def test_projection_includes_private_log_when_flagged(self):
-        repo, schema = _make_repo()
-        schema.find.return_value = []
-
-        await repo.find_modified_since("UserRequest", None, page=1, page_size=100, include_private_log=True)
-
-        projection = schema.find.await_args.kwargs["projection"]
-        self.assertIn("private_log", projection)
-
-    async def test_unmapped_last_update_raises(self):
-        repo, _ = _make_repo(TicketMappingConfig(fields={"last_update": None}))
-
-        with self.assertRaises(ValueError):
-            await repo.find_modified_since("UserRequest", None, page=1, page_size=100)
-
-
-class TestFindExistingIds(unittest.IsolatedAsyncioTestCase):
-    async def test_queries_ids_and_returns_found(self):
-        repo, schema = _make_repo()
-        schema.find.return_value = [{"id": "1"}, {"id": "3"}]
-
-        existing = await repo.find_existing_ids("UserRequest", [1, 2, 3])
-
-        self.assertEqual(existing, {1, 3})
-        self.assertEqual(schema.find.await_args.args[0], "SELECT UserRequest WHERE id IN (1,2,3)")
-        self.assertEqual(schema.find.await_args.kwargs["projection"], ["id"])
-
-    async def test_empty_ids_no_call(self):
-        repo, schema = _make_repo()
-
-        self.assertEqual(await repo.find_existing_ids("UserRequest", []), set())
-        schema.find.assert_not_awaited()
-
-
-class TestSetFields(unittest.IsolatedAsyncioTestCase):
-    async def test_translates_semantic_names(self):
-        repo, schema = _make_repo()
-        ticket = Ticket(obj_class="UserRequest", id="42")
-
-        await repo.set_fields(ticket, {"service_id": "10", "subcategory_id": "101"})
-
-        schema.update.assert_awaited_once_with({"id": "42"}, {"service_id": "10", "servicesubcategory_id": "101"})
-
-    async def test_unmapped_field_skipped(self):
-        repo, schema = _make_repo()
-        ticket = Ticket(obj_class="Incident", id="42")
-
-        await repo.set_fields(ticket, {"request_type": "incident", "service_id": "10"})
-
-        schema.update.assert_awaited_once_with({"id": "42"}, {"service_id": "10"})
-
-    async def test_no_mapped_fields_no_update(self):
-        repo, schema = _make_repo()
-        ticket = Ticket(obj_class="Incident", id="42")
-
-        await repo.set_fields(ticket, {"request_type": "incident"})
-
-        schema.update.assert_not_called()
-
-
-class TestAppendLogs(unittest.IsolatedAsyncioTestCase):
-    async def test_public_log_payload_shape(self):
-        repo, schema = _make_repo()
-        ticket = Ticket(obj_class="UserRequest", id="42")
-
-        await repo.append_public_log(ticket, "A question")
-
-        schema.update.assert_awaited_once_with(
-            {"id": "42"},
-            {"public_log": {"add_item": {"message": "A question", "format": "text"}}},
-        )
-
-    async def test_private_log_payload_shape(self):
-        repo, schema = _make_repo()
-        ticket = Ticket(obj_class="UserRequest", id="42")
-
-        await repo.append_private_log(ticket, "A note")
-
-        schema.update.assert_awaited_once_with(
-            {"id": "42"},
-            {"private_log": {"add_item": {"message": "A note", "format": "text"}}},
-        )
-
-    async def test_custom_log_attribute(self):
-        mapping = TicketMappingConfig(fields={"public_log": "user_log"})
-        repo, schema = _make_repo(mapping)
-        ticket = Ticket(obj_class="UserRequest", id="42")
-
-        await repo.append_public_log(ticket, "Hi")
-
-        raw_fields = schema.update.await_args.args[1]
-        self.assertIn("user_log", raw_fields)
 
 
 class TestWritesAreCounted(unittest.IsolatedAsyncioTestCase):
     """Counted where the writes physically pass, not where they were meant:
     a rule every new module has to remember is one the first forgetful module
     breaks, and it breaks as "that customer somehow asks no questions"
-    (REQ-009 R3).
+    (REQ-009 R3). Which counter a log append belongs to is this class's word —
+    a question to the requester and a note between engineers are the ticket
+    family's distinction.
     """
 
     async def asyncSetUp(self):
         self.counters = DailyCounters(fakeredis.aioredis.FakeRedis(decode_responses=True))
-        self.repo, _ = _make_repo(counters=self.counters)
+        self.repo, self.itop = _make_repo(counters=self.counters)
         self.ticket = Ticket(obj_class="UserRequest", id="42")
-
-    async def _counted(self) -> dict:
-        return await self.counters.read(datetime.now(UTC).date())
 
     async def test_each_kind_of_write_has_its_own_counter(self):
         await self.repo.append_public_log(self.ticket, "A question")
         await self.repo.append_private_log(self.ticket, "A note")
         await self.repo.set_fields(self.ticket, {"service_id": "10"})
 
-        counted = await self._counted()
+        counted = await self.counters.read(datetime.now(UTC).date())
 
         self.assertEqual(1, counted[Counter.ITOP_PUBLIC_COMMENT])
         self.assertEqual(1, counted[Counter.ITOP_PRIVATE_NOTE])
         self.assertEqual(1, counted[Counter.ITOP_FIELD_UPDATE])
 
-    async def test_an_update_that_never_reached_itop_is_not_counted(self):
-        await self.repo.set_fields(Ticket(obj_class="Incident", id="42"), {"request_type": "incident"})
+    async def test_a_log_goes_to_the_attribute_the_deployment_maps(self):
+        repo, itop = _make_repo(TicketMappingConfig(fields={"public_log": "user_log"}))
 
-        self.assertEqual(0, (await self._counted())[Counter.ITOP_FIELD_UPDATE])
+        await repo.append_public_log(self.ticket, "Hi")
+
+        self.assertIn("user_log", itop.update.await_args.args[1])
 
 
 if __name__ == "__main__":

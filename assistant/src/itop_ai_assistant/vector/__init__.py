@@ -4,7 +4,7 @@ Internals (`ports/`, `adapters/`, `use_cases/`, `state/`, `router.py`,
 `assembly.py`, `chunker.py`) are free to reorganize; anything reached from
 outside this package must be re-exported here first (`test_package_layers.py`,
 `TestVectorFacade`). Content providers (`content_sources/` — `Ticket`,
-`FaqArticle`, iTop) are a consumer of this facade like any other business
+the family schemas, iTop) are a consumer of this facade like any other business
 module, not part of it — see `.claude/rules/content-sources.md`.
 
 One name assembles the whole subsystem for the composition root —

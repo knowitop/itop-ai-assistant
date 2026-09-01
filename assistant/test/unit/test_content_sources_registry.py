@@ -21,8 +21,10 @@ def _itop() -> MagicMock:
     """An `ItopRepositories` that answers every call through `for_principal`."""
     itop = MagicMock()
     repo_set = MagicMock(name="repo-set")
-    repo_set.ticket_repo.find_existing_ids = AsyncMock(return_value=set())
-    repo_set.faq_repo.find_existing_ids = AsyncMock(return_value=set())
+    repos = {family: MagicMock(name=f"{family}-repo") for family in ("tickets", "faq")}
+    for repo in repos.values():
+        repo.find_existing_ids = AsyncMock(return_value=set())
+    repo_set.objects = repos
     itop.for_principal = AsyncMock(return_value=repo_set)
     return itop
 

@@ -63,6 +63,9 @@ class ShellTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.repos = MagicMock()
         self.repos.ticket_repo.fetch = AsyncMock(return_value=self.ticket)
+        # Nothing the probe run needs is unmapped — the mapping check is
+        # exercised on its own below.
+        self.repos.ticket_repo.unmapped = MagicMock(return_value=())
         self.itop = MagicMock()
         self.itop.for_principal = AsyncMock(return_value=self.repos)
 
@@ -131,6 +134,30 @@ class TestSkips(ShellTestCase):
         self.deps.itop.get.assert_not_called()
         self.assertEqual(self.journalled(), ["lock"])
         self.deps.state_manager.release_lock.assert_not_called()
+
+    async def test_a_field_the_module_needs_and_nobody_maps_stops_the_run(self):
+        """An unmapped field reads as an empty string. A module that gets `""`
+        where it expected the caller does not fail — it mislabels the whole
+        conversation, so the run is refused instead, by name and before iTop
+        is read at all."""
+        self.run.required_fields = ("caller_name",)
+        self.repos.ticket_repo.unmapped.return_value = ("caller_name",)
+
+        outcome = await self.run.execute()
+
+        self.assertEqual(outcome.status, "skipped")
+        self.assertIn("caller_name", outcome.detail)
+        self.assertEqual(self.run.phases, [])
+        self.repos.ticket_repo.fetch.assert_not_awaited()
+        self.assertEqual(self.journalled(), ["mapping"])
+
+    async def test_a_module_that_names_no_field_is_never_stopped_by_the_mapping(self):
+        self.repos.ticket_repo.unmapped.return_value = ()
+
+        outcome = await self.run.execute()
+
+        self.assertEqual(outcome.status, "done")
+        self.repos.ticket_repo.unmapped.assert_called_once_with("Change", ())
 
     async def test_missing_object_stops_before_the_guard(self):
         self.repos.ticket_repo.fetch.return_value = None

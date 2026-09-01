@@ -4,7 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 from itop_ai_assistant.content_sources.faq import FIELDS, FRAGMENTS, FaqVectorSource
 from itop_ai_assistant.core.principal import Principal
-from itop_ai_assistant.domain.faq import FaqArticle
+from itop_ai_assistant.domain.faq_schema import FAQ_SCHEMA
+from itop_ai_assistant.domain.object_view import ObjectView
 from itop_ai_assistant.vector import ChunkPlan, FamilyConfig
 from itop_ai_assistant.vector.config import VectorClassConfig
 
@@ -26,9 +27,8 @@ _CFG = _plan(
 )
 
 
-def _article(**overrides) -> FaqArticle:
-    fields = {
-        "id": "1",
+def _article(obj_id: str = "1", **overrides) -> ObjectView:
+    values = {
         "title": "How to reset your password",
         "summary": "Quick steps to reset a forgotten password",
         "category_name": "Accounts",
@@ -40,8 +40,8 @@ def _article(**overrides) -> FaqArticle:
         "last_update": _NOW,
         "start_date": _NOW,
     }
-    fields.update(overrides)
-    return FaqArticle(**fields)
+    values.update(overrides)
+    return ObjectView(schema=FAQ_SCHEMA, obj_class="FAQ", id=obj_id, values=values)
 
 
 def _faq_repo_factory() -> tuple[AsyncMock, AsyncMock, MagicMock, MagicMock]:
@@ -79,11 +79,11 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
 
         await source.find_modified_since("FAQ", None, page=1, page_size=100)
 
-        faq_repo.find_modified_since.assert_awaited_once_with(None, page=1, page_size=100)
+        faq_repo.find_modified_since.assert_awaited_once_with("FAQ", None, page=1, page_size=100)
 
 
 class TestAclOrgIds(unittest.IsolatedAsyncioTestCase):
-    async def _records(self, article: FaqArticle, acl_org_fields: list[str]):
+    async def _records(self, article: ObjectView, acl_org_fields: list[str]):
         get_faq_repo, get_faq_repo_as, faq_repo, _ = _faq_repo_factory()
         faq_repo.find_modified_since = AsyncMock(return_value=[article])
         source = FaqVectorSource(get_faq_repo, get_faq_repo_as, family_cfg=_family(acl_org_fields))
@@ -121,15 +121,13 @@ class TestFindExistingIds(unittest.IsolatedAsyncioTestCase):
         result = await source.find_existing_ids("FAQ", [1, 2, 3])
 
         self.assertEqual(result, {1, 2})
-        faq_repo.find_existing_ids.assert_awaited_once_with([1, 2, 3])
+        faq_repo.find_existing_ids.assert_awaited_once_with("FAQ", [1, 2, 3])
 
 
 class TestConfirmVisible(unittest.IsolatedAsyncioTestCase):
-    async def test_asks_the_repository_of_the_given_principal_dropping_obj_class(self):
-        # TASK-032. `obj_class` goes nowhere here: this source owns one class,
-        # and `FaqRepository` queries `FAQ` by name — same adaptation as
-        # `find_existing_ids` above, under the caller's identity instead of
-        # the sweep's.
+    async def test_asks_the_repository_of_the_given_principal(self):
+        # TASK-032: the same probe as `find_existing_ids` above, under the
+        # caller's identity instead of the sweep's.
         get_faq_repo, get_faq_repo_as, faq_repo, as_principal_repo = _faq_repo_factory()
         as_principal_repo.find_existing_ids = AsyncMock(return_value={1})
         faq_repo.find_existing_ids = AsyncMock(return_value={1, 2, 3})
@@ -139,7 +137,7 @@ class TestConfirmVisible(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, {1})
         get_faq_repo_as.assert_awaited_once_with(_ENGINEER)
-        as_principal_repo.find_existing_ids.assert_awaited_once_with([1, 2, 3])
+        as_principal_repo.find_existing_ids.assert_awaited_once_with("FAQ", [1, 2, 3])
         faq_repo.find_existing_ids.assert_not_awaited()
 
 
@@ -167,7 +165,7 @@ class TestDeclaration(unittest.IsolatedAsyncioTestCase):
     source can actually do — a stale declaration would put fields and
     fragments in the editor that quietly produce nothing."""
 
-    async def _chunk(self, plan: ChunkPlan, article: FaqArticle | None = None):
+    async def _chunk(self, plan: ChunkPlan, article: ObjectView | None = None):
         get_faq_repo, get_faq_repo_as, faq_repo, _ = _faq_repo_factory()
         faq_repo.find_modified_since = AsyncMock(return_value=[article or _article()])
         source = FaqVectorSource(get_faq_repo, get_faq_repo_as, family_cfg=_family())
@@ -212,7 +210,7 @@ class TestPrepare(unittest.IsolatedAsyncioTestCase):
     async def test_resolves_the_repo_from_the_factory(self):
         """No run, no principal: the sweep is infrastructure, and the index it
         builds is global on purpose. Not tested here as behavior — this class
-        is only ever given the service set's `faq_repo` (`registry.py`), which
+        is only ever given the service set's FAQ repository (`registry.py`), which
         never touches `for_principal`, so there is nothing else it could do."""
         get_faq_repo, get_faq_repo_as, faq_repo, _ = _faq_repo_factory()
         source = FaqVectorSource(get_faq_repo, get_faq_repo_as, family_cfg=_family())
@@ -220,7 +218,7 @@ class TestPrepare(unittest.IsolatedAsyncioTestCase):
         await source.prepare()
 
         get_faq_repo.assert_awaited_once_with()
-        self.assertIs(source._faq_repo, faq_repo)
+        self.assertIs(source._repo, faq_repo)
 
 
 if __name__ == "__main__":

@@ -54,10 +54,10 @@ class TestRepositorySet(unittest.IsolatedAsyncioTestCase):
     async def test_every_repository_in_a_set_talks_as_the_same_principal(self):
         repos = await self.repositories.for_principal(_ENGINEER, comment="run 42")
 
-        client = repos.ticket_repo._itop
+        client = repos.objects["tickets"]._itop
         self.assertIs(repos.catalog_repo._itop, client)
         self.assertIs(repos.access_repo._itop, client)
-        self.assertIs(repos.faq_repo._itop, client)
+        self.assertIs(repos.objects["faq"]._itop, client)
         self.assertEqual(client.auth.token, "engineer-token")
         self.assertEqual(client.comment, "run 42")
 
@@ -82,16 +82,16 @@ class TestRepositorySet(unittest.IsolatedAsyncioTestCase):
 
         repos = await self.repositories.for_principal(Principal.service(), comment=_SWEEP)
 
-        self.assertIs(repos.ticket_repo._itop._http, base._http)
-        self.assertEqual(repos.ticket_repo._itop.auth.token, base.auth.token)
-        self.assertEqual(repos.ticket_repo._itop.comment, _SWEEP)
+        self.assertIs(repos.objects["tickets"]._itop._http, base._http)
+        self.assertEqual(repos.objects["tickets"]._itop.auth.token, base.auth.token)
+        self.assertEqual(repos.objects["tickets"]._itop.comment, _SWEEP)
 
     async def test_the_pool_is_shared_with_the_connection(self):
         base = await self.connection.client()
 
         repos = await self.repositories.for_principal(_ENGINEER, comment="run 42")
 
-        self.assertIs(repos.ticket_repo._itop._http, base._http)
+        self.assertIs(repos.objects["tickets"]._itop._http, base._http)
 
     async def test_the_mapping_of_the_moment_reaches_the_repositories(self):
         self.store.sections["ticket_mapping"] = TicketMappingConfig(fields=TicketFieldMap(title="short_desc"))
@@ -99,8 +99,8 @@ class TestRepositorySet(unittest.IsolatedAsyncioTestCase):
 
         repos = await self.repositories.for_principal(Principal.service(), comment=_SWEEP)
 
-        self.assertEqual(repos.ticket_repo.mapping.fields.title, "short_desc")
-        self.assertEqual(repos.faq_repo.mapping.fields.title, "headline")
+        self.assertEqual(repos.objects["tickets"].mapping.fields.title, "short_desc")
+        self.assertEqual(repos.objects["faq"].mapping.fields.title, "headline")
 
     async def test_a_mapping_edit_applies_to_the_next_set_without_a_reconnect(self):
         first = await self.repositories.for_principal(Principal.service(), comment=_SWEEP)
@@ -109,8 +109,8 @@ class TestRepositorySet(unittest.IsolatedAsyncioTestCase):
         self.store.sections["ticket_mapping"] = TicketMappingConfig(fields=TicketFieldMap(title="short_desc"))
         second = await self.repositories.for_principal(Principal.service(), comment=_SWEEP)
 
-        self.assertEqual(first.ticket_repo.mapping.fields.title, "title")
-        self.assertEqual(second.ticket_repo.mapping.fields.title, "short_desc")
+        self.assertEqual(first.objects["tickets"].mapping.fields.title, "title")
+        self.assertEqual(second.objects["tickets"].mapping.fields.title, "short_desc")
         self.assertIs(await self.connection.client(), client)
 
     async def test_the_set_is_a_record_not_a_factory(self):
@@ -119,8 +119,16 @@ class TestRepositorySet(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(repos, RepositorySet)
         self.assertEqual(
             {f for f in RepositorySet.__dataclass_fields__},
-            {"ticket_repo", "catalog_repo", "access_repo", "faq_repo"},
+            {"objects", "ticket_repo", "catalog_repo", "access_repo"},
         )
+
+    async def test_a_family_is_reached_by_name_not_by_a_field_of_its_own(self):
+        """What makes a new family an entry rather than a field: the generic
+        consumer — the vector sweep — asks for a name."""
+        repos = await self.repositories.for_principal(Principal.service(), comment=_SWEEP)
+
+        self.assertEqual({"tickets", "faq"}, set(repos.objects))
+        self.assertEqual("faq", repos.objects["faq"].schema.name)
 
 
 if __name__ == "__main__":
