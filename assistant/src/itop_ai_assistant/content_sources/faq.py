@@ -13,6 +13,8 @@ from datetime import datetime
 from itop_ai_assistant.content_sources.acl import org_ids
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.faq import FaqArticle
+from itop_ai_assistant.domain.faq_schema import FAQ_SCHEMA
+from itop_ai_assistant.domain.schema import Role
 from itop_ai_assistant.repositories.faq import FaqRepository, FaqRepositoryForPrincipal, FaqRepositoryProvider
 from itop_ai_assistant.vector import (
     Chunk,
@@ -30,19 +32,18 @@ from itop_ai_assistant.vector import (
 logger = logging.getLogger(__name__)
 
 # The collection family this source writes to (`FaqVectorSource.name`).
-FAMILY = "faq"
+FAMILY = FAQ_SCHEMA.name
 
 # The semantic fields an administrator composes the required fragments from
-# (ADR-018). Not iTop attribute names: the mapping to those is
-# `FaqMappingConfig`'s job.
-FIELDS = ("title", "summary", "category_name", "error_code", "key_words", "description")
-
-# The semantic fields of an article that can name an organization giving
-# access to it (`VectorClassConfig.acl_org_fields` picks from these). Both are
-# unmapped in stock iTop: `org_id` is the article's own organization,
-# `customer_org_ids` the list of customer organizations a build publishes it
-# to (mapped as `customers_list:customer_id`, see `repositories/valuemap.py`).
-ORG_FIELDS = ("org_id", "customer_org_ids")
+# (ADR-018), and those that can name an organization giving access to the
+# article (`VectorClassConfig.acl_org_fields` picks from these) — both read
+# off the family schema, see `content_sources/tickets.py` for why. Neither
+# organization field is mapped in stock iTop: `org_id` is the article's own
+# organization, `customer_org_ids` the list of customer organizations a build
+# publishes it to (mapped as `customers_list:customer_id`, see
+# `repositories/valuemap.py`).
+FIELDS = FAQ_SCHEMA.names(Role.CONTENT)
+ORG_FIELDS = FAQ_SCHEMA.names(Role.ORGANIZATION)
 
 FRAGMENTS = (
     FragmentSpec(kind="profile", visibility="public"),

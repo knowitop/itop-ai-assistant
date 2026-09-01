@@ -23,7 +23,7 @@ def _plan(*, fields: dict[str, list[str]] | None = None, enabled: set[str] | Non
 
 _CFG = _plan(
     fields={
-        "profile": ["title", "service", "subcategory"],
+        "profile": ["title", "service_name", "subcategory_name"],
         "body": ["description"],
     },
     enabled={"log:public"},

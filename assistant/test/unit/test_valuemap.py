@@ -2,24 +2,9 @@
 
 import unittest
 
-from pydantic import BaseModel
-
-from itop_ai_assistant.repositories.valuemap import attribute, extract, list_fields, read_lists
+from itop_ai_assistant.repositories.valuemap import attribute, extract, read_lists
 
 _LINKSET = "customers_list:customer_id"
-
-
-class TestListFields(unittest.TestCase):
-    """A field is a list because the model says so — not because the config
-    says so, which is what keeps the two from disagreeing."""
-
-    def test_only_tuple_typed_fields_count(self):
-        class Probe(BaseModel):
-            org_id: str | None = None
-            customer_org_ids: tuple[str, ...] = ()
-            tags: list[str] = []
-
-        self.assertEqual(frozenset({"customer_org_ids"}), list_fields(Probe))
 
 
 class TestAttribute(unittest.TestCase):

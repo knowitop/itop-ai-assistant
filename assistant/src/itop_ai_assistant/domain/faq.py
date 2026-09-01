@@ -25,10 +25,11 @@ class FaqArticle(BaseModel, ObjectIdentifiable):
     description: str = ""  # raw HTML as stored in iTop
     status: str = ""  # empty unless faq_mapping.fields.status is set — no such attribute in stock iTop
     org_id: str | None = None
-    # Customer organizations the article is published to. A list-valued
-    # field: the tuple here is what tells `FaqRepository` to read its mapping
-    # as one (`repositories/valuemap.py`), so a build maps it to a link set
-    # (`customers_list:customer_id`) and stock iTop leaves it empty.
+    # Customer organizations the article is published to. Declared
+    # list-valued in `domain/faq_schema.py` (`FieldSpec.multi`), which is what
+    # makes `FaqRepository` read its mapping as one
+    # (`repositories/valuemap.py`): a build maps it to a link set
+    # (`customers_list:customer_id`), stock iTop leaves it empty.
     customer_org_ids: tuple[str, ...] = ()
     # iTop timestamps carry a nominal UTC tzinfo — see ticket_repository._parse_dt
     last_update: datetime | None = None

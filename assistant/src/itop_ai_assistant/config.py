@@ -11,33 +11,53 @@ from pydantic_settings import (
 )
 
 from itop_ai_assistant.core.llm_providers import DEFAULT_PROVIDER, PROVIDERS, get_provider
+from itop_ai_assistant.domain.faq_schema import FAQ_SCHEMA
+from itop_ai_assistant.domain.schema import Schema
+from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
 
 _PACKAGE_DIR = Path(__file__).parent  # itop_ai_assistant/ — ships config.yaml
 
 TConfig = TypeVar("TConfig", bound=BaseModel)
 
 
+def _mapped(schema: Schema, name: str) -> Any:
+    """The mapping section's entry for one semantic field.
+
+    Both halves come from the family schema: the default attribute code and
+    the description the admin form shows as the row's caption
+    (ADR-025) — a section that repeated either could disagree with the
+    declaration it configures.
+    """
+    spec = schema.spec(name)
+    if spec is None:  # pragma: no cover — a typo here fails at import
+        raise ValueError(f"{schema.name!r} schema declares no field {name!r}")
+    return Field(spec.source, description=spec.description or None)
+
+
+# The fields are spelled out rather than generated from the family schema:
+# the admin form is built from this model's JSON Schema, and a model built with
+# `create_model` would be invisible to mypy at every read site. The docstrings
+# stay one line — they are what the section's JSON Schema shows as its
+# description.
 class TicketFieldMap(BaseModel):
     """Semantic ticket field → iTop attribute code. None = attribute absent."""
 
-    ref: str | None = "ref"
-    title: str | None = "title"
-    description: str | None = "description"
-    status: str | None = "status"
-    service_id: str | None = "service_id"
-    subcategory_id: str | None = "servicesubcategory_id"
-    service_name: str | None = Field("service_id_friendlyname", description="Display name of the service, not its id")
-    subcategory_name: str | None = Field(
-        "servicesubcategory_id_friendlyname", description="Display name of the subcategory, not its id"
-    )
-    caller_name: str | None = Field("caller_id_friendlyname", description="Display name of the caller")
-    org_id: str | None = "org_id"
-    request_type: str | None = Field("request_type", description="Service request or incident; absent on some classes")
-    public_log: str | None = Field("public_log", description="Conversation with the caller")
-    private_log: str | None = Field("private_log", description="Notes between engineers")
-    solution: str | None = "solution"
-    last_update: str | None = "last_update"
-    start_date: str | None = "start_date"
+    ref: str | None = _mapped(TICKET_SCHEMA, "ref")
+    title: str | None = _mapped(TICKET_SCHEMA, "title")
+    description: str | None = _mapped(TICKET_SCHEMA, "description")
+    status: str | None = _mapped(TICKET_SCHEMA, "status")
+    service_id: str | None = _mapped(TICKET_SCHEMA, "service_id")
+    subcategory_id: str | None = _mapped(TICKET_SCHEMA, "subcategory_id")
+    service_name: str | None = _mapped(TICKET_SCHEMA, "service_name")
+    subcategory_name: str | None = _mapped(TICKET_SCHEMA, "subcategory_name")
+    caller_name: str | None = _mapped(TICKET_SCHEMA, "caller_name")
+    org_id: str | None = _mapped(TICKET_SCHEMA, "org_id")
+    request_type: str | None = _mapped(TICKET_SCHEMA, "request_type")
+    public_log: str | None = _mapped(TICKET_SCHEMA, "public_log")
+    private_log: str | None = _mapped(TICKET_SCHEMA, "private_log")
+    solution: str | None = _mapped(TICKET_SCHEMA, "solution")
+    last_update: str | None = _mapped(TICKET_SCHEMA, "last_update")
+    start_date: str | None = _mapped(TICKET_SCHEMA, "start_date")
 
 
 class TicketMappingConfig(BaseModel):
@@ -57,49 +77,27 @@ class TicketMappingConfig(BaseModel):
 
     @model_validator(mode="after")
     def check_override_fields(self) -> "TicketMappingConfig":
-        known = set(TicketFieldMap.model_fields)
         for obj_class, overrides in self.class_overrides.items():
-            unknown = overrides.keys() - known
-            if unknown:
-                raise ValueError(
-                    f"ticket_mapping.class_overrides[{obj_class!r}]: unknown fields {sorted(unknown)}, "
-                    f"known: {sorted(known)}"
-                )
+            TICKET_SCHEMA.resolve(overrides, by=f"ticket_mapping.class_overrides[{obj_class!r}]")
         return self
 
 
+# Which of these are unmapped by default, and why, is declared in
+# `domain/faq_schema.py` along with everything else about the field.
 class FaqFieldMap(BaseModel):
     """Semantic FAQ field → iTop attribute code. None = attribute absent."""
 
-    title: str | None = "title"
-    summary: str | None = Field("summary", description="Short abstract of the article, if the class has one")
-    category_name: str | None = Field("category_name", description="Display name of the FAQ category")
-    error_code: str | None = Field("error_code", description="Error code the article is about")
-    key_words: str | None = Field("key_words", description="Search keywords of the article")
-    description: str | None = "description"  # HTML
-    # FAQ has no lifecycle status in stock iTop — unlike tickets, unmapped by
-    # default; index_values is therefore [] for FAQ (see VectorConfig.classes),
-    # not a list of status values to filter by. Set this if a deployment adds
-    # one (a custom attribute or an extension that does carry a status).
-    status: str | None = None
-    # No org-scoped ACL for FAQ in stock iTop either — unmapped by default,
-    # same reasoning as `status` above. A build that scopes articles by
-    # organization maps this or `customer_org_ids` below, and names the field
-    # in `acl_org_fields`; until then the org pre-filter (ADR-003, R4) lets
-    # every article through to `confirm_visible`.
-    org_id: str | None = None
-    customer_org_ids: str | None = Field(
-        None,
-        description="Customer organizations the article is published to, where the datamodel has such a "
-        "list. A list-valued field: write it as '<link set>:<id attribute of a link>', e.g. "
-        "'customers_list:customer_id'. A plain attribute code works too and yields the one value.",
-    )
-    # Stock iTop's FAQ class carries no date attribute at all — neither this
-    # nor `start_date` maps to anything by default. `FaqRepository` degrades
-    # to a full scan on every sweep pass when this is unmapped (cheap thanks
-    # to the hash-guard); set it if a deployment's FAQ does track one.
-    last_update: str | None = None
-    start_date: str | None = None
+    title: str | None = _mapped(FAQ_SCHEMA, "title")
+    summary: str | None = _mapped(FAQ_SCHEMA, "summary")
+    category_name: str | None = _mapped(FAQ_SCHEMA, "category_name")
+    error_code: str | None = _mapped(FAQ_SCHEMA, "error_code")
+    key_words: str | None = _mapped(FAQ_SCHEMA, "key_words")
+    description: str | None = _mapped(FAQ_SCHEMA, "description")  # HTML
+    status: str | None = _mapped(FAQ_SCHEMA, "status")
+    org_id: str | None = _mapped(FAQ_SCHEMA, "org_id")
+    customer_org_ids: str | None = _mapped(FAQ_SCHEMA, "customer_org_ids")
+    last_update: str | None = _mapped(FAQ_SCHEMA, "last_update")
+    start_date: str | None = _mapped(FAQ_SCHEMA, "start_date")
 
 
 class FaqMappingConfig(BaseModel):

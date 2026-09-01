@@ -12,7 +12,9 @@ from datetime import datetime
 
 from itop_ai_assistant.content_sources.acl import org_ids
 from itop_ai_assistant.core.principal import Principal
+from itop_ai_assistant.domain.schema import Role
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
+from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
 from itop_ai_assistant.repositories.ticket import (
     TicketRepository,
     TicketRepositoryForPrincipal,
@@ -35,19 +37,22 @@ from itop_ai_assistant.vector import (
 logger = logging.getLogger(__name__)
 
 # The collection family this source writes to (`TicketVectorSource.name`).
-FAMILY = "tickets"
+FAMILY = TICKET_SCHEMA.name
 
 # The semantic fields an administrator composes the required fragments from
 # (ADR-018). Not iTop attribute names: the mapping to those is
-# `ticket_mapping`'s job, and `_semantic_fields` below is the one place these
-# names are bound to actual ticket content.
-FIELDS = ("title", "description", "solution", "service", "subcategory")
+# `ticket_mapping`'s job. Derived, not listed: a field is offered here because
+# it carries what the ticket is about (`Role.CONTENT`), and a list written out
+# by hand is what let this vocabulary call a field `service` while the model
+# called it `service_name`.
+FIELDS = TICKET_SCHEMA.names(Role.CONTENT)
 
 # The semantic fields of a ticket that can name an organization giving access
 # to it (`VectorClassConfig.acl_org_fields` picks from these). One today: a
 # build where the organization working the ticket also grants access declares
-# that as a semantic field of its own, and it joins this tuple.
-ORG_FIELDS = ("org_id",)
+# that as a semantic field of its own, and it joins this tuple by declaring
+# `Role.ORGANIZATION`.
+ORG_FIELDS = TICKET_SCHEMA.names(Role.ORGANIZATION)
 
 # Every fragment this source can produce. The two log fragments are opt-in:
 # whether internal notes get embedded at all is the administrator's call,
@@ -81,6 +86,10 @@ class TicketVectorSource(VectorSource[Ticket]):
     """
 
     name = FAMILY
+    # Which payload keys this source asks Qdrant to index. A statement about
+    # its own index, not about the field, so it is declared here rather than
+    # read off the schema (ADR-034) — the same reasoning that keeps the
+    # `filters` keys below out of the schema.
     indexed_filter_keys = ("status",)
     fields = FIELDS
     org_fields = ORG_FIELDS
@@ -164,16 +173,16 @@ class TicketVectorSource(VectorSource[Ticket]):
     def _semantic_fields(self, ticket: Ticket) -> dict[str, str]:
         """`FIELDS` bound to this ticket's content, canonicalized.
 
-        The one place the two are tied together — `test_content_sources_tickets`
-        keeps the key set equal to `FIELDS`, so the vocabulary served to the
-        admin UI cannot drift away from what is actually chunkable.
+        Keyed as the schema names the fields, which is what the vocabulary
+        served to the admin UI is built from — the two cannot name the same
+        field differently any more.
         """
         return {
             "title": clean_text(ticket.title),
             "description": clean_text(ticket.description),
             "solution": clean_text(ticket.solution),
-            "service": clean_text(ticket.service_name),
-            "subcategory": clean_text(ticket.subcategory_name),
+            "service_name": clean_text(ticket.service_name),
+            "subcategory_name": clean_text(ticket.subcategory_name),
         }
 
     def _resolve(

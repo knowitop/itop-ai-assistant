@@ -10,6 +10,9 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from itop_ai_assistant.core.principal import Principal
+from itop_ai_assistant.domain.faq_schema import FAQ_SCHEMA
+from itop_ai_assistant.domain.schema import Role
+from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
 from itop_ai_assistant.repositories.faq import FaqRepository
 from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.repositories.ticket import TicketRepository
@@ -37,20 +40,14 @@ def declared_org_fields() -> dict[str, tuple[str, ...]]:
     """Per family, the semantic fields a source will accept in
     `VectorClassConfig.acl_org_fields`.
 
-    Read off the classes rather than off built instances: the declaration is
-    static (as `GET /api/vector/sources` already says of the others), and the
-    caller — `admin/setup.py`, validating a saved `vector` section — has no
-    iTop repositories to build a source with and no business acquiring any.
+    Read off the family schemas rather than off built instances: the
+    declaration is static (as `GET /api/vector/sources` already says of the
+    others), and the caller — `admin/setup.py`, validating a saved `vector`
+    section — has no iTop repositories to build a source with and no business
+    acquiring any. A source class is not needed to answer this at all: the
+    fields that can grant access are a property of the family.
     """
-    from itop_ai_assistant.content_sources.faq import FAMILY as FAQ_FAMILY
-    from itop_ai_assistant.content_sources.faq import FaqVectorSource
-    from itop_ai_assistant.content_sources.tickets import FAMILY as TICKETS_FAMILY
-    from itop_ai_assistant.content_sources.tickets import TicketVectorSource
-
-    return {
-        TICKETS_FAMILY: tuple(TicketVectorSource.org_fields),
-        FAQ_FAMILY: tuple(FaqVectorSource.org_fields),
-    }
+    return {schema.name: schema.names(Role.ORGANIZATION) for schema in (TICKET_SCHEMA, FAQ_SCHEMA)}
 
 
 def build_vector_sources(itop: ItopRepositories, cfg: "VectorConfig") -> list["VectorSource[Any]"]:

@@ -5,15 +5,16 @@ from datetime import datetime
 from itop_ai_assistant.config import TicketMappingConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import LogEntry, Ticket
+from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
 from itop_ai_assistant.itop_client import Itop
-from itop_ai_assistant.repositories.valuemap import attribute, list_fields, read_lists
+from itop_ai_assistant.repositories.valuemap import attribute, read_lists
 from itop_ai_assistant.state.counters import Counter, DailyCounters
 from itop_ai_assistant.util.text import ITOP_DATETIME_FORMAT, parse_itop_dt
 
 logger = logging.getLogger(__name__)
 
-# Semantic fields of a ticket that hold a list of values, per the model.
-_LIST_FIELDS = list_fields(Ticket)
+# Semantic fields of a ticket that hold a list of values, per the schema.
+_LIST_FIELDS = TICKET_SCHEMA.multi_names()
 
 
 def _parse_log_entries(log_raw: dict | None) -> list[LogEntry]:

@@ -12,6 +12,7 @@ class TestVectorConfig(unittest.TestCase):
         self.assertEqual(list(tickets), ["UserRequest"])
         self.assertEqual(tickets["UserRequest"].index_values, ["resolved", "closed"])
         self.assertEqual(tickets["UserRequest"].chunks["body"].fields, ["description"])
+        self.assertEqual(tickets["UserRequest"].chunks["profile"].fields, ["title", "service_name", "subcategory_name"])
         faq = cfg.families["faq"].classes
         self.assertEqual(faq["FAQ"].index_values, [])  # no status attribute in stock iTop
         self.assertEqual(faq["FAQ"].chunks["body"].fields, ["description"])

@@ -4,12 +4,13 @@ from datetime import datetime
 from itop_ai_assistant.config import FaqMappingConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.faq import FaqArticle
+from itop_ai_assistant.domain.faq_schema import FAQ_SCHEMA
 from itop_ai_assistant.itop_client import Itop
-from itop_ai_assistant.repositories.valuemap import attribute, list_fields, read_lists
+from itop_ai_assistant.repositories.valuemap import attribute, read_lists
 from itop_ai_assistant.util.text import ITOP_DATETIME_FORMAT, parse_itop_dt
 
-# Semantic fields of an article that hold a list of values, per the model.
-_LIST_FIELDS = list_fields(FaqArticle)
+# Semantic fields of an article that hold a list of values, per the schema.
+_LIST_FIELDS = FAQ_SCHEMA.multi_names()
 
 
 class FaqRepository:

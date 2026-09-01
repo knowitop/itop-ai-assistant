@@ -61,7 +61,7 @@ class VectorClassConfig(BaseModel):
 
 
 _TICKET_CHUNKS = {
-    "profile": ChunkFragmentConfig(fields=["title", "service", "subcategory"]),
+    "profile": ChunkFragmentConfig(fields=["title", "service_name", "subcategory_name"]),
     "body": ChunkFragmentConfig(fields=["description"]),
     "solution": ChunkFragmentConfig(fields=["solution"]),
     # The two log fragments are opt-in and deliberately absent: indexing

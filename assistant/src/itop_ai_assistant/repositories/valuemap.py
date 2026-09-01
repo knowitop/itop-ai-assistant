@@ -2,9 +2,9 @@
 
 Most semantic fields name one attribute and hold one value. A few are lists by
 nature — the organizations an FAQ article is published to arrive as an n-n link
-set — and those are declared as such in the domain model (a `tuple[str, ...]`
-field, e.g. `FaqArticle.customer_org_ids`). The **model's own type** is what
-says a field is a list; the mapping only says where the values come from.
+set — and those are declared as such in the family schema (`FieldSpec.multi`,
+`domain/schema.py`). The **declaration** is what says a field is a list; the
+mapping only says where the values come from.
 
 Two forms of mapping value, both plain strings in the same `fields` table as
 every other attribute code:
@@ -27,24 +27,9 @@ import logging
 from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
-from pydantic import BaseModel
-
 logger = logging.getLogger(__name__)
 
 _LINKSET = ":"
-
-# What a list-valued semantic field is declared as in the domain model.
-_LIST_ANNOTATION = tuple[str, ...]
-
-
-def list_fields(model: type[BaseModel]) -> frozenset[str]:
-    """The semantic fields of a domain model that hold a list of values.
-
-    Read off the model rather than named in the config: the model is where the
-    shape of a field belongs, and a mapping section that had to repeat it
-    could disagree with it.
-    """
-    return frozenset(name for name, field in model.model_fields.items() if field.annotation == _LIST_ANNOTATION)
 
 
 def read_lists(
