@@ -27,10 +27,17 @@ from itop_ai_assistant.domain.schema import FieldKind, Role, Schema
 
 
 class LogEntry(BaseModel):
-    """One entry of an iTop case log."""
+    """One entry of an iTop case log.
+
+    `is_requester` is set where the log is read, by the one party that knows
+    who the requester is (`Role.REQUESTER`, mapped next to the log itself).
+    Downstream — the chunker labelling a conversation — only ever sees the
+    flag, and needs to know nothing about tickets.
+    """
 
     user_login: str
     message: str
+    is_requester: bool = False
 
 
 @dataclass(frozen=True)

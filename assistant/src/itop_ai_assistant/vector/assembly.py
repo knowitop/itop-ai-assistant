@@ -33,7 +33,6 @@ from typing import Any
 from redis.asyncio import Redis
 
 from itop_ai_assistant.config import Settings
-from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.state.counters import DailyCounters
@@ -86,6 +85,13 @@ def build(
     """Assemble the subsystem once, at startup — the composition root's one
     call into `vector/`, mirroring `build_registry(settings)` for modules.
     """
+    # Imported here rather than at module level: `content_sources/` declares
+    # its families against this package's facade, and the facade imports this
+    # module — at import time that is a cycle, by the first call it is not.
+    # The deferral lives here, at the one point where the dependency actually
+    # runs backwards, instead of in every module `content_sources/` has.
+    from itop_ai_assistant.content_sources.registry import build_vector_sources
+
     vector_store = QdrantChunkStore(settings.qdrant_url)
 
     # Re-read `cfg.families` fresh on every call, not collected once here: a

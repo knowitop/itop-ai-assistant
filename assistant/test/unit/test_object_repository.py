@@ -81,6 +81,32 @@ class TestReadingByKind(unittest.TestCase):
         self.assertEqual(["John Doe"], [entry.user_login for entry in view.log("public_log")])
         self.assertEqual("UserRequest::42", str(view.identity))
 
+    def test_a_case_log_entry_is_marked_against_the_requester(self):
+        # Marked here because here is the only place that knows both the log
+        # and the field naming the requester — downstream a log entry is a
+        # line with a flag on it, and nothing has to know what a ticket is.
+        repo, _ = _tickets()
+        raw = {
+            **_RAW_TICKET,
+            "public_log": {
+                "entries": [
+                    {"user_login": "John Doe", "message": "Help!"},
+                    {"user_login": "Jane Agent", "message": "On it."},
+                ]
+            },
+        }
+
+        entries = repo.to_view("UserRequest", raw).log("public_log")
+
+        self.assertEqual([True, False], [entry.is_requester for entry in entries])
+
+    def test_with_no_requester_mapped_nobody_is_the_requester(self):
+        repo, _ = _tickets(TicketMappingConfig(fields={"caller_name": None}))
+
+        entries = repo.to_view("UserRequest", _RAW_TICKET).log("public_log")
+
+        self.assertEqual([False], [entry.is_requester for entry in entries])
+
     def test_itops_unset_external_key_reads_as_no_value(self):
         repo, _ = _tickets()
 

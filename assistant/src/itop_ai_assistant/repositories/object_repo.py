@@ -54,14 +54,30 @@ class ClassMapping(Protocol):
     def for_class(self, obj_class: str) -> dict[str, str | None]: ...
 
 
-def _parse_log(raw: Any) -> list[LogEntry]:
+def _parse_log(raw: Any, requester: str = "") -> list[LogEntry]:
+    """A case log's entries, each already marked as the requester's or not.
+
+    Marked here because here is the only place that knows both: the log and
+    the field naming the requester are attributes of the same object, read in
+    the same row. Downstream a log entry is a line with a flag on it, and
+    nothing has to know what a ticket is to label a conversation.
+    """
     entries = (raw or {}).get("entries") or [] if isinstance(raw, Mapping) else []
-    return [LogEntry(user_login=e["user_login"], message=e["message"]) for e in entries]
+    return [
+        LogEntry(
+            user_login=e["user_login"],
+            message=e["message"],
+            is_requester=bool(requester) and e["user_login"] == requester,
+        )
+        for e in entries
+    ]
 
 
 #: How each kind reads a raw iTop value. The whole of "what to do with what
-#: iTop returned" — a field gets no say beyond declaring what it is.
-_READERS = {
+#: iTop returned" — a field gets no say beyond declaring what it is. A case log
+#: is read through here too, but `to_view` calls it directly, with the
+#: requester to mark the entries against.
+_READERS: Mapping[FieldKind, Callable[[Any], Any]] = {
     FieldKind.TEXT: lambda raw: raw or "",
     FieldKind.ID: normalize_value,
     FieldKind.ENUM: lambda raw: raw or "",
@@ -114,6 +130,7 @@ class ObjectRepository:
         model built over it falls back to its own default.
         """
         attrs = self.attributes(obj_class)
+        requester = self._requester(attrs, raw)
         values: dict[str, Any] = {}
         for spec in self.schema.fields:
             attr_code = attrs.get(spec.name)
@@ -122,8 +139,24 @@ class ObjectRepository:
             source = attribute(attr_code) if spec.multi else attr_code
             if source not in raw:
                 continue
-            values[spec.name] = extract(raw, attr_code) if spec.multi else _READERS[spec.kind](raw[source])
+            if spec.multi:
+                values[spec.name] = extract(raw, attr_code)
+            elif spec.kind is FieldKind.LOG:
+                values[spec.name] = _parse_log(raw[source], requester)
+            else:
+                values[spec.name] = _READERS[spec.kind](raw[source])
         return ObjectView(schema=self.schema, obj_class=obj_class, id=str(raw["id"]), values=values)
+
+    def _requester(self, attrs: Mapping[str, str | None], raw: Mapping[str, Any]) -> str:
+        """Who this object was raised for, as the case log names its author.
+
+        Read before the fields, not as one of them: a log entry is marked
+        while it is parsed, and declaration order must not decide whether the
+        mark lands.
+        """
+        spec = self.schema.one(Role.REQUESTER)
+        attr_code = attrs.get(spec.name) if spec else None
+        return str(raw.get(attr_code) or "") if attr_code else ""
 
     def _projection(self, obj_class: str, *, exclude: Collection[str] = ()) -> list[str]:
         """Attributes a read of this class asks iTop for — one projection per

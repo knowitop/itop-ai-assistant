@@ -71,6 +71,11 @@ class Role(StrEnum):
     CREATED_AT = "created_at"
     #: Where the object stands in its lifecycle.
     LIFECYCLE_STATE = "lifecycle_state"
+    #: Names the person the object was raised for. What tells an entry of a
+    #: case log apart from an engineer's reply, which is why the repository
+    #: can mark the entries and nothing downstream needs to know what a
+    #: ticket is.
+    REQUESTER = "requester"
     #: Names an organization that can give access to the object. A candidate,
     #: not a verdict: whether it actually grants access is a deployment's
     #: statement about its own datamodel (`VectorClassConfig.acl_org_fields`).
@@ -86,13 +91,14 @@ _ROLE_KIND = {
     Role.MODIFIED_AT: FieldKind.DATETIME,
     Role.CREATED_AT: FieldKind.DATETIME,
     Role.LIFECYCLE_STATE: FieldKind.ENUM,
+    Role.REQUESTER: FieldKind.TEXT,
     Role.ORGANIZATION: FieldKind.ID,
 }
 
 #: Roles an object has at most one field for. `ORGANIZATION` is deliberately
 #: not among them — an object can be reachable through several organizations
 #: (ADR-033) — and neither is `CONTENT`.
-_SINGULAR_ROLES = frozenset({Role.MODIFIED_AT, Role.CREATED_AT, Role.LIFECYCLE_STATE})
+_SINGULAR_ROLES = frozenset({Role.MODIFIED_AT, Role.CREATED_AT, Role.LIFECYCLE_STATE, Role.REQUESTER})
 
 #: Kinds for which "several values" means nothing: a case log is already a
 #: sequence, and a link set of timestamps is not something iTop expresses.

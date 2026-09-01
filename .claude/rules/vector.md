@@ -54,8 +54,9 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   their last consumer outside `vector/` and it no longer needs them by name.
   `test_package_layers.py::TestOnlyTheContractIsImportedFromOutside` checks
   the (now single) allowlist. `build_vector_sources` itself is called from
-  inside `assembly.py`, imported directly from `content_sources.registry` —
-  `core/deps.py` does not import `content_sources.registry` at all any more.
+  inside `assembly.py::build()`, imported there rather than at module level
+  (see the cycle below) — `core/deps.py` does not import
+  `content_sources.registry` at all any more.
 - **Its own config section, not `config.py`'s** (TASK-036, rule 6.3).
   `VectorConfig`/`FamilyConfig`/`VectorClassConfig`/`ChunkFragmentConfig` live
   in `vector/config.py`. Only `VectorConfig`/`FamilyConfig` are re-exported by
@@ -152,7 +153,11 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   are swept. `get_reconcile` stays, as what `/status` displays.
 - **Neither `SimilarSearch` nor `VectorIndexer` imports
   `content_sources.registry` any more (TASK-034)** — `assembly.py::build()` is
-  the only caller of `build_vector_sources()` left in the process (TASK-037;
+  the only caller of `build_vector_sources()` left in the process, and imports
+  it *inside* `build()`: `content_sources/` declares its families against this
+  facade, so a module-level import here is a cycle at import time and nothing
+  by the first call. That one deferral is what lets every module in
+  `content_sources/` import the facade plainly (TASK-037/TASK-077;
   `core/deps.py` was the caller before, from TASK-035 to TASK-037, and does
   not import `content_sources.registry` at all any more). Both take a
   `VectorConfig -> Sequence[...]` builder instead: `SimilarSearch`'s

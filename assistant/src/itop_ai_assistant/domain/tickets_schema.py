@@ -31,11 +31,18 @@ TICKET_SCHEMA = Schema(
             roles=frozenset({Role.CONTENT}),
             description="Display name of the subcategory, not its id",
         ),
-        # Text, but not what the ticket is about: it names a person, and the
-        # log labelling compares it with an entry's author. Hence no
+        # Text, but not what the ticket is about: it names a person. Hence no
         # `CONTENT` — an administrator cannot compose the caller's name into
         # an embedded fragment, which is a privacy decision, not an oversight.
-        FieldSpec("caller_name", FieldKind.TEXT, "caller_id_friendlyname", description="Display name of the caller"),
+        # `REQUESTER` is what lets the repository mark a case-log entry as the
+        # requester's, so nothing downstream has to know what a ticket is.
+        FieldSpec(
+            "caller_name",
+            FieldKind.TEXT,
+            "caller_id_friendlyname",
+            roles=frozenset({Role.REQUESTER}),
+            description="Display name of the caller",
+        ),
         FieldSpec("org_id", FieldKind.ID, "org_id", writable=True, roles=frozenset({Role.ORGANIZATION})),
         FieldSpec(
             "request_type",
