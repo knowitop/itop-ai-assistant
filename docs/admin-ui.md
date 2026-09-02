@@ -54,12 +54,13 @@ Changing the **model** or the **Dimension** once something is indexed changes th
 
 ### Data model mapping tab
 
-How our semantics map onto your iTop datamodel — edit this instead of the code when iTop has been customized. Two sections, **Tickets** and **FAQ**, with the same form: one row per semantic field, the iTop attribute code on the right, and a **No such attribute** switch for what your datamodel does not have.
+How our semantics map onto your iTop datamodel — edit this instead of the code when iTop has been customized. One table per **object family** (`tickets`, `faq`), all in one section: one row per semantic field, the iTop attribute code on the right, and a **No such attribute** switch for what your datamodel does not have.
 
-- The row list comes from the model itself, so it always shows every field the assistant can use
-- The switch stores `null`. It matters: an attribute left mapped but missing from iTop makes the request fail — this is how indexing of the FAQ family breaks on a datamodel without `error_code`
-- Saving writes the whole section, so nothing you left alone is lost
-- **Per-class overrides** (tickets only) — point differences between the ticket classes, merged over the fields above, e.g. `{"Incident": {"request_type": null}}`. A JSON editor; an unknown semantic name is rejected with the server's message
+- The families and their rows come from the assistant's own declarations, so the form always shows every field it can use, and a new family appears here without a UI change
+- The placeholder on an empty row is what the declaration maps by default; a row you never touch keeps that, and the switch stores `null`
+- The switch matters: an attribute left mapped but missing from iTop makes the request fail — this is how indexing of the FAQ family breaks on a datamodel without `error_code`
+- Saving writes every family at once, so nothing you left alone is lost
+- **Per-class overrides** — point differences between classes that share one mapping, merged over the fields above, e.g. `{"Incident": {"request_type": null}}`. Only a family with several classes needs them; `faq` has one and stays `{}`. A JSON editor; an unknown semantic name is rejected with the server's message
 - A few semantic fields hold a **list** of values rather than one — today that is `customer_org_ids` on FAQ, the customer organizations an article is published to. Their row takes `<link set>:<id attribute of a link>` (e.g. `customers_list:customer_id`) instead of a plain attribute code; the row's own description says so. See [List-valued fields and who may see an object](configuration.md#list-valued-fields-and-who-may-see-an-object)
 - **Reset to defaults** puts the section back to what env/yaml say
 

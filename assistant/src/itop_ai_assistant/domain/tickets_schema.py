@@ -1,7 +1,7 @@
 """The ticket family declared as data — what a ticket's semantic fields are
 and which stock iTop attribute each reads by default.
 
-The mapping section `ticket_mapping` overrides the attribute codes for a
+The `mappings` section overrides the attribute codes for a
 customized datamodel; the field list, the kinds and the roles are code,
 because each of them has a reader that has to understand it.
 """

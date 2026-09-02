@@ -40,7 +40,7 @@ class VectorClassConfig(BaseModel):
     Every indexed class must expose a last-modification datetime and a
     "relevance" attribute — the VectorSource contract (`vector/ports/source.py`).
     Which attributes those are is the source's concern (tickets map them via
-    `ticket_mapping`); this config holds only the relevance *values*.
+    the `mappings` section); this config holds only the relevance *values*.
     """
 
     # Values of the class's relevance attribute that keep an object in the

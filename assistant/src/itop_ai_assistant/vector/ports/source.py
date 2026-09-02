@@ -14,7 +14,7 @@ datetime (`VectorRecord.updated_at` — drives the sweep cursor) and (b) a
 "relevance" attribute whose current value (`VectorRecord.index_value`) tells
 whether the object belongs in the index. Which attributes those are is the
 source's own mapping concern (for tickets: semantic `status`/`updated_at`
-via `ticket_mapping`); the per-class value lists live in
+via the `mappings` section); the per-class value lists live in
 `vector.families[<family>].classes[<class>].index_values`.
 
 A source also declares its own chunking vocabulary — `fields` and

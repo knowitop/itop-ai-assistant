@@ -113,7 +113,7 @@ class TicketRun(ABC):
             self.repos = await self.itop.for_principal(self.run.principal, comment=self.run.comment)
             unmapped = self.repos.ticket_repo.unmapped(self.ref.obj_class, self.required_fields)
             if unmapped:
-                missing = f"ticket_mapping does not map {list(unmapped)} for {self.ref.obj_class}"
+                missing = f"the mapping does not map {list(unmapped)} for {self.ref.obj_class}"
                 logger.error(f"[{self.processing_id}] {self.ref}: {missing}")
                 return await self.skip("mapping", missing)
             ticket = await self.repos.ticket_repo.fetch(self.ref.obj_class, self.ref.obj_id)

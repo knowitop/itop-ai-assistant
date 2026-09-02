@@ -1,3 +1,4 @@
+import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, ClassVar, TypeVar
@@ -11,109 +12,75 @@ from pydantic_settings import (
 )
 
 from itop_ai_assistant.core.llm_providers import DEFAULT_PROVIDER, PROVIDERS, get_provider
+from itop_ai_assistant.domain.families import SCHEMAS
 from itop_ai_assistant.domain.faq_schema import FAQ_SCHEMA
-from itop_ai_assistant.domain.schema import Schema
 from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
+
+logger = logging.getLogger(__name__)
 
 _PACKAGE_DIR = Path(__file__).parent  # itop_ai_assistant/ — ships config.yaml
 
 TConfig = TypeVar("TConfig", bound=BaseModel)
 
 
-def _mapped(schema: Schema, name: str) -> Any:
-    """The mapping section's entry for one semantic field.
+class MappingConfig(BaseModel):
+    """How one family's semantics map onto the customer's iTop datamodel.
 
-    Both halves come from the family schema: the default attribute code and
-    the description the admin form shows as the row's caption
-    (ADR-025) — a section that repeated either could disagree with the
-    declaration it configures.
+    Only what this deployment changed. The baseline is the family's own
+    declaration (`domain/schema.py::Schema.sources`), so a field added to a
+    schema needs no edit here, and a saved mapping does not go stale by being
+    a copy of the code it was copied from.
+
+    `class_overrides` are point differences between classes sharing one
+    mapping — a class without some attribute (`None`) or with a renamed one,
+    merged over `fields` for that class. Only families with several classes
+    ever need them.
     """
-    spec = schema.spec(name)
-    if spec is None:  # pragma: no cover — a typo here fails at import
-        raise ValueError(f"{schema.name!r} schema declares no field {name!r}")
-    return Field(spec.source, description=spec.description or None)
+
+    fields: dict[str, str | None] = {}
+    class_overrides: dict[str, dict[str, str | None]] = {}
 
 
-# The fields are spelled out rather than generated from the family schema:
-# the admin form is built from this model's JSON Schema, and a model built with
-# `create_model` would be invisible to mypy at every read site. The docstrings
-# stay one line — they are what the section's JSON Schema shows as its
-# description.
-class TicketFieldMap(BaseModel):
-    """Semantic ticket field → iTop attribute code. None = attribute absent."""
+class MappingsConfig(BaseModel):
+    """The datamodel mapping of every family — runtime-editable section
+    "mappings".
 
-    ref: str | None = _mapped(TICKET_SCHEMA, "ref")
-    title: str | None = _mapped(TICKET_SCHEMA, "title")
-    description: str | None = _mapped(TICKET_SCHEMA, "description")
-    status: str | None = _mapped(TICKET_SCHEMA, "status")
-    service_id: str | None = _mapped(TICKET_SCHEMA, "service_id")
-    subcategory_id: str | None = _mapped(TICKET_SCHEMA, "subcategory_id")
-    service_name: str | None = _mapped(TICKET_SCHEMA, "service_name")
-    subcategory_name: str | None = _mapped(TICKET_SCHEMA, "subcategory_name")
-    caller_name: str | None = _mapped(TICKET_SCHEMA, "caller_name")
-    org_id: str | None = _mapped(TICKET_SCHEMA, "org_id")
-    request_type: str | None = _mapped(TICKET_SCHEMA, "request_type")
-    public_log: str | None = _mapped(TICKET_SCHEMA, "public_log")
-    private_log: str | None = _mapped(TICKET_SCHEMA, "private_log")
-    solution: str | None = _mapped(TICKET_SCHEMA, "solution")
-    last_update: str | None = _mapped(TICKET_SCHEMA, "last_update")
-    start_date: str | None = _mapped(TICKET_SCHEMA, "start_date")
+    One section rather than one per family: a family is a declaration now
+    (ADR-034), and a section per family would be the one place a new family
+    still cost a pydantic class, a `SETUP_SECTIONS` entry and a UI form.
+    """
 
-
-class TicketMappingConfig(BaseModel):
-    """How ticket semantics map onto the customer's iTop datamodel."""
-
-    fields: TicketFieldMap = TicketFieldMap()
-    # Per-class field overrides, e.g. a class without some attribute (None)
-    # or with a renamed one. Merged over `fields` for that class.
-    class_overrides: dict[str, dict[str, str | None]] = {
-        "Incident": {"request_type": None},  # Incident has no request_type in stock iTop
+    families: dict[str, MappingConfig] = {
+        # Stock iTop's Incident has no request_type. A default rather than a
+        # fact of the schema: a deployment whose Incident does carry one says
+        # so by overriding this entry, and nothing in the code has to change.
+        TICKET_SCHEMA.name: MappingConfig(class_overrides={"Incident": {"request_type": None}}),
+        FAQ_SCHEMA.name: MappingConfig(),
     }
 
-    def for_class(self, obj_class: str) -> dict[str, str | None]:
-        resolved = self.fields.model_dump()
-        resolved.update(self.class_overrides.get(obj_class, {}))
-        return resolved
+    def for_family(self, family: str) -> MappingConfig:
+        """What this deployment says about one family — an empty mapping when
+        it says nothing, which means "the declaration as written"."""
+        return self.families.get(family, MappingConfig())
 
     @model_validator(mode="after")
-    def check_override_fields(self) -> "TicketMappingConfig":
-        for obj_class, overrides in self.class_overrides.items():
-            TICKET_SCHEMA.resolve(overrides, by=f"ticket_mapping.class_overrides[{obj_class!r}]")
+    def check_field_names(self) -> "MappingsConfig":
+        """Cross-check a section cannot make on its own: whether a name in it
+        is a field of the family it configures.
+
+        A family nothing declares is kept and warned about rather than
+        refused: it configures nothing, and rejecting it would take the whole
+        section down with it on start ([[ADR-026]]).
+        """
+        for family, cfg in self.families.items():
+            schema = SCHEMAS.get(family)
+            if schema is None:
+                logger.warning(f"mappings: family {family!r} is not declared anywhere — the section does nothing")
+                continue
+            schema.resolve(cfg.fields, by=f"mappings.{family}.fields")
+            for obj_class, overrides in cfg.class_overrides.items():
+                schema.resolve(overrides, by=f"mappings.{family}.class_overrides[{obj_class!r}]")
         return self
-
-
-# Which of these are unmapped by default, and why, is declared in
-# `domain/faq_schema.py` along with everything else about the field.
-class FaqFieldMap(BaseModel):
-    """Semantic FAQ field → iTop attribute code. None = attribute absent."""
-
-    title: str | None = _mapped(FAQ_SCHEMA, "title")
-    summary: str | None = _mapped(FAQ_SCHEMA, "summary")
-    category_name: str | None = _mapped(FAQ_SCHEMA, "category_name")
-    error_code: str | None = _mapped(FAQ_SCHEMA, "error_code")
-    key_words: str | None = _mapped(FAQ_SCHEMA, "key_words")
-    description: str | None = _mapped(FAQ_SCHEMA, "description")  # HTML
-    status: str | None = _mapped(FAQ_SCHEMA, "status")
-    org_id: str | None = _mapped(FAQ_SCHEMA, "org_id")
-    customer_org_ids: str | None = _mapped(FAQ_SCHEMA, "customer_org_ids")
-    last_update: str | None = _mapped(FAQ_SCHEMA, "last_update")
-    start_date: str | None = _mapped(FAQ_SCHEMA, "start_date")
-
-
-class FaqMappingConfig(BaseModel):
-    """How FAQ semantics map onto the customer's iTop datamodel.
-
-    A single class, unlike `TicketMappingConfig` — no `class_overrides`: that
-    mechanism exists for point differences between several classes sharing
-    one mapping, and there is only one class here. `for_class` answers the
-    same table whatever it is asked, which is what lets one repository read
-    both families (`repositories/object_repo.py::ClassMapping`).
-    """
-
-    fields: FaqFieldMap = FaqFieldMap()
-
-    def for_class(self, obj_class: str) -> dict[str, str | None]:
-        return self.fields.model_dump()
 
 
 class RuntimeSectionConfig(BaseModel):
@@ -425,9 +392,8 @@ class Settings(BaseSettings):
     tracing_endpoint: str = "http://localhost:6006/v1/traces"
     tracing_project_name: str = "itop-ai-assistant"
 
-    # iTop datamodel mapping
-    ticket_mapping: TicketMappingConfig = TicketMappingConfig()
-    faq_mapping: FaqMappingConfig = FaqMappingConfig()
+    # iTop datamodel mapping, one entry per object family
+    mappings: MappingsConfig = MappingsConfig()
 
     # Business modules — config.py does not know their field names, only
     # this raw bucket. A module resolves its own section via

@@ -122,7 +122,7 @@ def make_ctx(
             ObjectRepository(
                 itop,
                 TICKET_SCHEMA,
-                settings.ticket_mapping,
+                settings.mappings.for_family(TICKET_SCHEMA.name),
                 DailyCounters(fakeredis.aioredis.FakeRedis(decode_responses=True)),
             )
         ),

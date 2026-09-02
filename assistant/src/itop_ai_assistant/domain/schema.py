@@ -192,6 +192,13 @@ class Schema:
         found = self.names(role)
         return self._by_name[found[0]] if found else None
 
+    def sources(self) -> dict[str, str | None]:
+        """Default attribute code per field — what a deployment's mapping
+        section starts from and overrides only where its datamodel differs.
+        Kept here rather than copied into the config's defaults, so a saved
+        mapping is what a deployment changed, not a copy of the code."""
+        return {spec.name: spec.source for spec in self.fields}
+
     def multi_names(self) -> frozenset[str]:
         """Fields whose one mapping value yields several iTop values."""
         return frozenset(spec.name for spec in self.fields if spec.multi)

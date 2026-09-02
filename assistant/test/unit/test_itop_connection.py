@@ -9,11 +9,9 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from itop_ai_assistant.config import (
-    FaqFieldMap,
-    FaqMappingConfig,
     ItopConfig,
-    TicketFieldMap,
-    TicketMappingConfig,
+    MappingConfig,
+    MappingsConfig,
 )
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.itop.connection import ItopConnection
@@ -25,8 +23,7 @@ class FakeConfigStore:
     def __init__(self):
         self.sections = {
             "itop": ItopConfig(url="http://one/rest.php", token="tok"),
-            "ticket_mapping": TicketMappingConfig(),
-            "faq_mapping": FaqMappingConfig(),
+            "mappings": MappingsConfig(),
         }
 
     async def get(self, module, model):
@@ -56,13 +53,14 @@ class TestClientCache(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_mapping_edit_does_not_touch_the_client(self):
         """Before TASK-027 the fingerprint spanned three sections, so editing
-        `ticket_mapping` in the admin UI closed the HTTP pool — shared with
+        the mapping in the admin UI closed the HTTP pool — shared with
         every principal view — to rebuild a client nothing had changed about."""
         first = await self.connection.client()
 
         with patch.object(first, "aclose", new_callable=AsyncMock) as old_close:
-            self.store.sections["ticket_mapping"] = TicketMappingConfig(fields=TicketFieldMap(title="short_desc"))
-            self.store.sections["faq_mapping"] = FaqMappingConfig(fields=FaqFieldMap(title="headline"))
+            self.store.sections["mappings"] = MappingsConfig(
+                families={"tickets": MappingConfig(fields={"title": "short_desc"})}
+            )
             second = await self.connection.client()
 
         self.assertIs(first, second)

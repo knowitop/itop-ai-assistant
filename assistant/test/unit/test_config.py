@@ -8,8 +8,9 @@ from itop_ai_assistant.config import (
     EmbeddingsConfig,
     ItopConfig,
     LlmConfig,
+    MappingConfig,
+    MappingsConfig,
     Settings,
-    TicketMappingConfig,
     get_settings,
     missing_setup,
 )
@@ -267,31 +268,32 @@ class TestLlmSection(unittest.TestCase):
         self.assertFalse(LlmConfig(provider="openai", supports_forced_tool_choice=False).endpoint_forces_tool_choice)
 
 
-class TestTicketMapping(unittest.TestCase):
-    def test_default_mapping(self):
-        mapping = TicketMappingConfig()
-        resolved = mapping.for_class("UserRequest")
-        self.assertEqual(resolved["subcategory_id"], "servicesubcategory_id")
-        self.assertEqual(resolved["service_name"], "service_id_friendlyname")
-        self.assertEqual(resolved["subcategory_name"], "servicesubcategory_id_friendlyname")
-        self.assertEqual(resolved["caller_name"], "caller_id_friendlyname")
-        self.assertEqual(resolved["request_type"], "request_type")
+class TestMappings(unittest.TestCase):
+    """The section holds what a deployment changed; resolving it against the
+    family declaration is the repository's job (`test_object_repository.py`)."""
 
-    def test_incident_override_drops_request_type(self):
-        mapping = TicketMappingConfig()
-        resolved = mapping.for_class("Incident")
-        self.assertIsNone(resolved["request_type"])
-        self.assertEqual(resolved["title"], "title")
+    def test_a_stock_deployment_overrides_nothing_but_the_incident_class(self):
+        mappings = MappingsConfig()
 
-    def test_partial_fields_override_keeps_defaults(self):
-        mapping = TicketMappingConfig(fields={"title": "custom_title"})
-        resolved = mapping.for_class("UserRequest")
-        self.assertEqual(resolved["title"], "custom_title")
-        self.assertEqual(resolved["description"], "description")
+        self.assertEqual({}, mappings.for_family("tickets").fields)
+        self.assertEqual({"Incident": {"request_type": None}}, mappings.for_family("tickets").class_overrides)
 
-    def test_unknown_override_field_raises(self):
+    def test_a_family_the_section_says_nothing_about_maps_as_declared(self):
+        self.assertEqual({}, MappingsConfig(families={}).for_family("faq").fields)
+
+    def test_a_name_that_is_not_a_field_of_the_family_is_refused(self):
         with self.assertRaises(ValidationError):
-            TicketMappingConfig(class_overrides={"Incident": {"no_such_field": None}})
+            MappingsConfig(families={"tickets": MappingConfig(fields={"no_such_field": "x"})})
+        with self.assertRaises(ValidationError):
+            MappingsConfig(families={"tickets": MappingConfig(class_overrides={"Incident": {"nope": None}})})
+
+    def test_a_family_nothing_declares_is_inert_rather_than_fatal(self):
+        # Refusing would take the whole section down with it on start
+        # (ADR-026), and the entry configures nothing either way.
+        with self.assertLogs("itop_ai_assistant.config", level="WARNING"):
+            mappings = MappingsConfig(families={"kb_articles": MappingConfig()})
+
+        self.assertIn("kb_articles", mappings.families)
 
 
 class TestGetSettings(unittest.TestCase):

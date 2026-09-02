@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi.testclient import TestClient
 
-from itop_ai_assistant.config import ItopConfig, LlmConfig, SecurityConfig, TicketMappingConfig
+from itop_ai_assistant.config import ItopConfig, LlmConfig, MappingsConfig, SecurityConfig
 from itop_ai_assistant.main import app
 
 
@@ -14,7 +14,7 @@ def _mock_deps(security: SecurityConfig | None = None, configured: bool = True) 
         "security": security or SecurityConfig(),
         "itop": ItopConfig(url="http://itop/rest.php", token="tok") if configured else ItopConfig(),
         "llm": LlmConfig(base_url="http://llm/v1", model="test-model") if configured else LlmConfig(),
-        "ticket_mapping": TicketMappingConfig(),
+        "mappings": MappingsConfig(),
     }
 
     deps = MagicMock()

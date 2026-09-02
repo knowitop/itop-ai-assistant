@@ -244,39 +244,43 @@ class TestSetupSections(SetupApiTestCase):
         response = self.client.delete("/api/setup/vector?fields=nope")
         self.assertEqual(response.status_code, 422)
 
-    def test_ticket_mapping_is_editable(self):
+    def test_every_family_is_mapped_in_one_section(self):
         response = self.client.patch(
-            "/api/setup/ticket_mapping", json={"class_overrides": {"Incident": {"title": None}}}
+            "/api/setup/mappings",
+            json={
+                "families": {
+                    "tickets": {"class_overrides": {"Incident": {"title": None}}},
+                    "faq": {"fields": {"error_code": None}},
+                }
+            },
         )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["values"]["class_overrides"], {"Incident": {"title": None}})
+        self.assertEqual(200, response.status_code)
+        families = self.client.get("/api/setup/mappings").json()["values"]["families"]
+        self.assertEqual({"Incident": {"title": None}}, families["tickets"]["class_overrides"])
+        self.assertIsNone(families["faq"]["fields"]["error_code"])
 
-    def test_section_schema_describes_the_mapping_fields(self):
-        # The mapping form is built from this: no list of semantic fields lives in the SPA.
-        body = self.client.get("/api/setup/faq_mapping/schema").json()
+    def test_a_name_that_is_no_field_of_the_family_is_refused(self):
+        response = self.client.patch(
+            "/api/setup/mappings", json={"families": {"faq": {"fields": {"no_such_field": "x"}}}}
+        )
 
-        fields = body["$defs"]["FaqFieldMap"]["properties"]
-        self.assertIn("error_code", fields)
-        self.assertIn("FaqFieldMap", body["properties"]["fields"]["$ref"])
+        self.assertEqual(422, response.status_code)
+
+    def test_the_mapping_form_gets_its_rows_from_the_declarations(self):
+        # No list of semantic fields lives in the SPA (ADR-025); the section's
+        # own JSON Schema describes a dictionary, so the rows come from here.
+        body = self.client.get("/api/setup/mappings/fields").json()
+
+        by_name = {field["name"]: field for field in body["faq"]}
+        self.assertIn("error_code", by_name)
+        self.assertEqual("Error code the article is about", by_name["error_code"]["description"])
+        self.assertTrue(by_name["customer_org_ids"]["multi"])
+        self.assertEqual("title", by_name["title"]["default"])
+        self.assertIn("caller_name", {field["name"] for field in body["tickets"]})
 
     def test_section_schema_unknown_section_is_404(self):
         self.assertEqual(self.client.get("/api/setup/nope/schema").status_code, 404)
-
-    def test_faq_mapping_unmaps_an_attribute_the_datamodel_lacks(self):
-        # The form sends `fields` whole, which is what a section-level merge
-        # requires: a body of one key would reset the rest to model defaults.
-        response = self.client.patch(
-            "/api/setup/faq_mapping",
-            json={"fields": {"title": "name", "error_code": None, "key_words": "key_words"}},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        values = self.client.get("/api/setup/faq_mapping").json()["values"]
-        self.assertIsNone(values["fields"]["error_code"])
-        self.assertEqual(values["fields"]["title"], "name")
-        # Omitted from the body, so back to the model default rather than kept
-        self.assertEqual(values["fields"]["summary"], "summary")
 
     def test_embeddings_section_masks_api_key(self):
         self.client.patch("/api/setup/embeddings", json={"base_url": "http://emb/v1", "api_key": "sk-emb"})

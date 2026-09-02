@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import fakeredis
 
-from itop_ai_assistant.config import TicketMappingConfig
+from itop_ai_assistant.config import MappingsConfig
 from itop_ai_assistant.domain.object_view import ObjectView
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
@@ -36,16 +36,15 @@ _RAW_TICKET = {
 }
 
 
-def _make_repo(
-    mapping: TicketMappingConfig | None = None, counters: DailyCounters | None = None
-) -> tuple[TicketRepository, MagicMock]:
+def _make_repo(fields: dict | None = None, counters: DailyCounters | None = None) -> tuple[TicketRepository, MagicMock]:
     itop_schema = MagicMock()
     itop_schema.find_one = AsyncMock()
     itop_schema.update = AsyncMock()
     itop = MagicMock()
     itop.schema = MagicMock(return_value=itop_schema)
     counters = counters or DailyCounters(fakeredis.aioredis.FakeRedis(decode_responses=True))
-    objects = ObjectRepository(itop, TICKET_SCHEMA, mapping or TicketMappingConfig(), counters)
+    mapping = MappingsConfig().for_family(TICKET_SCHEMA.name).model_copy(update={"fields": fields or {}})
+    objects = ObjectRepository(itop, TICKET_SCHEMA, mapping, counters)
     return TicketRepository(objects), itop_schema
 
 
@@ -143,7 +142,7 @@ class TestWritesAreCounted(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(1, counted[Counter.ITOP_FIELD_UPDATE])
 
     async def test_a_log_goes_to_the_attribute_the_deployment_maps(self):
-        repo, itop = _make_repo(TicketMappingConfig(fields={"public_log": "user_log"}))
+        repo, itop = _make_repo({"public_log": "user_log"})
 
         await repo.append_public_log(self.ticket, "Hi")
 

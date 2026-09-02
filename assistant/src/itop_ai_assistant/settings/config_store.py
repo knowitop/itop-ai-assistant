@@ -34,7 +34,7 @@ class RedisConfigStore(ConfigStore):
     """Serves module config with Redis overrides on top of settings defaults.
 
     A settings attribute of the same name wins first — that's the
-    infrastructure sections (`itop`, `llm`, `ticket_mapping`, ...), which
+    infrastructure sections (`itop`, `llm`, `mappings`, ...), which
     `Settings` declares directly. Everything else falls back to
     `Settings.module_defaults(module, model)`, which validates
     `settings.module_config[module]` against the model the caller passes in —

@@ -83,9 +83,7 @@ export default function Connections() {
           <SecurityForm />
         </Tabs.Panel>
         <Tabs.Panel value="mapping" pt="md">
-          <MappingForm section="ticket_mapping" />
-          <Divider my="lg" maw={720} />
-          <MappingForm section="faq_mapping" />
+          <MappingForm />
         </Tabs.Panel>
       </Tabs>
     </Stack>
@@ -990,102 +988,113 @@ function TokenField(props: {
   );
 }
 
-type MappingSection = 'ticket_mapping' | 'faq_mapping';
-
-// One semantic field of a mapping model, as its JSON Schema describes it.
-interface MappingFieldProp {
-  description?: string;
-  default?: string | null;
+// One semantic field of one family, as GET /setup/mappings/fields describes
+// it. The families and their fields come from the backend declarations, never
+// from a list kept here: a field added to a schema must render without
+// touching this file (ADR-025).
+interface MappingField {
+  name: string;
+  description: string;
+  default: string | null;
+  multi: boolean;
 }
 
-// GET /api/setup/{section}/schema. A mapping section holds its semantic
-// fields in a nested model, which pydantic emits as a $ref into $defs.
-interface SectionSchema {
-  properties?: Record<string, { $ref?: string }>;
-  $defs?: Record<string, { properties?: Record<string, MappingFieldProp> }>;
+// What the form holds for one family: the attribute code per semantic field
+// (null = no such attribute in this datamodel) and the per-class overrides,
+// edited as raw JSON.
+interface FamilyMapping {
+  fields: Record<string, string | null>;
+  overrides: string;
 }
 
-// undefined when the schema is not shaped as expected. An empty field set must
-// never reach the form: saving it would PATCH `fields: {}`, and the top-level
-// merge would reset every semantic field to its model default.
-function mappingFieldProps(schema: SectionSchema): Record<string, MappingFieldProp> | undefined {
-  const ref = schema.properties?.fields?.$ref?.split('/').pop();
-  const found = ref ? schema.$defs?.[ref]?.properties : undefined;
-  return found && Object.keys(found).length > 0 ? found : undefined;
+interface StoredMapping {
+  fields?: Record<string, string | null>;
+  class_overrides?: Record<string, Record<string, string | null>>;
 }
 
-// Semantic field → iTop attribute code, one row per field. The fields come
-// from the section's schema, never from a list kept here: a field added to
-// TicketFieldMap/FaqFieldMap must render without touching this file
-// (ADR-025). Their names are identifiers on both sides — our semantics on
-// the left, an iTop attribute code on the right — so they are shown as they
-// are, and only the schema's own description is translated text.
-function MappingForm({ section }: { section: MappingSection }) {
+// Semantic field → iTop attribute code, one table per object family. One form
+// over one section: a family is a declaration on the backend, so adding one
+// adds a table here and nothing else. Field names are identifiers on both
+// sides — our semantics on the left, an iTop attribute code on the right — so
+// they are shown as they are, and only the declaration's own description is
+// translated text.
+function MappingForm() {
   const { t } = useTranslation();
-  const [props, setProps] = useState<Record<string, MappingFieldProp> | null>(null);
-  // null = the attribute does not exist in this datamodel, which is what the
-  // per-row switch sets and what reaches the API as JSON null.
-  const [fields, setFields] = useState<Record<string, string | null>>({});
-  const [overrides, setOverrides] = useState('');
+  const [declared, setDeclared] = useState<Record<string, MappingField[]> | null>(null);
+  const [mappings, setMappings] = useState<Record<string, FamilyMapping>>({});
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Point differences between classes sharing one mapping — tickets only:
-  // FaqMappingConfig has a single class and no overrides.
-  const hasOverrides = section === 'ticket_mapping';
-
   const load = async () => {
-    const [schema, data] = await Promise.all([
-      apiGet<SectionSchema>(`/setup/${section}/schema`),
-      apiGet<SectionData>(`/setup/${section}`),
+    const [fields, data] = await Promise.all([
+      apiGet<Record<string, MappingField[]>>('/setup/mappings/fields'),
+      apiGet<SectionData>('/setup/mappings'),
     ]);
-    const fieldProps = mappingFieldProps(schema);
-    if (!fieldProps) throw new Error(`Unexpected schema for ${section}: no field definitions`);
-    const stored = (data.values.fields ?? {}) as Record<string, string | null>;
-    const initial: Record<string, string | null> = {};
-    for (const name of Object.keys(fieldProps)) initial[name] = stored[name] ?? null;
-    setProps(fieldProps);
-    setFields(initial);
-    if (hasOverrides) {
-      setOverrides(JSON.stringify(data.values.class_overrides ?? {}, null, 2));
+    if (Object.keys(fields).length === 0) throw new Error('No object families are declared');
+    const stored = (data.values.families ?? {}) as Record<string, StoredMapping>;
+    const next: Record<string, FamilyMapping> = {};
+    for (const [family, list] of Object.entries(fields)) {
+      const saved = stored[family]?.fields ?? {};
+      const row: Record<string, string | null> = {};
+      // A field the section says nothing about is mapped as the declaration
+      // has it — seeding from `null` would show every unedited field as absent.
+      for (const field of list) {
+        row[field.name] = field.name in saved ? saved[field.name] : field.default;
+      }
+      next[family] = {
+        fields: row,
+        overrides: JSON.stringify(stored[family]?.class_overrides ?? {}, null, 2),
+      };
     }
+    setDeclared(fields);
+    setMappings(next);
   };
 
   useEffect(() => {
     load().catch((e: Error) => setError(e.message));
-  }, [section]);
+  }, []);
 
-  const setField = (name: string, value: string | null) => {
+  const setField = (family: string, name: string, value: string | null) => {
     setSuccess(null);
-    setFields((current) => ({ ...current, [name]: value }));
+    setMappings((current) => ({
+      ...current,
+      [family]: { ...current[family], fields: { ...current[family].fields, [name]: value } },
+    }));
+  };
+
+  const setOverrides = (family: string, value: string) => {
+    setSuccess(null);
+    setMappings((current) => ({ ...current, [family]: { ...current[family], overrides: value } }));
   };
 
   const save = async () => {
-    // `fields` goes as a whole object: the setup API merges a PATCH body over
-    // the current config field by field at the top level only, so a partial
-    // `fields` would reset every key it omits to the model default.
-    const mapped: Record<string, string | null> = {};
-    for (const [name, value] of Object.entries(fields)) {
-      // An empty input is no attribute code either, so it means the same as
-      // the switch — never an empty string, which no datamodel could match.
-      mapped[name] = value === null || value.trim() === '' ? null : value.trim();
-    }
-    const body: Record<string, unknown> = { fields: mapped };
-    if (hasOverrides) {
+    // `families` goes as a whole object: the setup API merges a PATCH body
+    // over the current config at the top level only, so a partial body would
+    // reset every family it omits.
+    const payload: Record<string, unknown> = {};
+    for (const [family, mapping] of Object.entries(mappings)) {
+      const mapped: Record<string, string | null> = {};
+      for (const [name, value] of Object.entries(mapping.fields)) {
+        // An empty input is no attribute code either, so it means the same as
+        // the switch — never an empty string, which no datamodel could match.
+        mapped[name] = value === null || value.trim() === '' ? null : value.trim();
+      }
+      let overrides: unknown;
       try {
-        body.class_overrides = JSON.parse(overrides);
+        overrides = JSON.parse(mapping.overrides);
       } catch {
-        setError(t('common.invalid_json'));
+        setError(`${family}: ${t('common.invalid_json')}`);
         setSuccess(null);
         return;
       }
+      payload[family] = { fields: mapped, class_overrides: overrides };
     }
     setBusy(true);
     setError(null);
     setSuccess(null);
     try {
-      await apiSend<SectionData>('PATCH', `/setup/${section}`, body);
+      await apiSend<SectionData>('PATCH', '/setup/mappings', { families: payload });
       await load();
       setSuccess(t('common.saved'));
     } catch (e) {
@@ -1099,7 +1108,7 @@ function MappingForm({ section }: { section: MappingSection }) {
     setError(null);
     setSuccess(null);
     try {
-      if (!(await resetSection(section, t('connections.reset_confirm', { section })))) return;
+      if (!(await resetSection('mappings', t('connections.reset_confirm', { section: 'mappings' })))) return;
       await load();
       setSuccess(t('common.section_reset'));
     } catch (e) {
@@ -1107,61 +1116,63 @@ function MappingForm({ section }: { section: MappingSection }) {
     }
   };
 
-  if (!props) return error ? <Alert color="red">{error}</Alert> : <Loader />;
+  if (!declared) return error ? <Alert color="red">{error}</Alert> : <Loader />;
 
   return (
     <Stack maw={720}>
-      <Title order={4}>{t(`connections.mapping_title_${section}`)}</Title>
       <Text c="dimmed" size="sm">
-        {t(`connections.mapping_desc_${section}`)}
+        {t('connections.mapping_desc')}
       </Text>
       <StatusAlert error={error} success={success} />
-      <Table verticalSpacing="xs">
-        <Table.Thead>
-          <Table.Tr>
-            <Table.Th>{t('connections.mapping_field')}</Table.Th>
-            <Table.Th>{t('connections.mapping_attribute')}</Table.Th>
-            <Table.Th>{t('connections.mapping_absent')}</Table.Th>
-          </Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
-          {Object.entries(props).map(([name, prop]) => (
-            <Table.Tr key={name}>
-              <Table.Td>
-                <code>{name}</code>
-                {prop.description && (
-                  <Text size="xs" c="dimmed">
-                    {prop.description}
-                  </Text>
-                )}
-              </Table.Td>
-              <Table.Td>
-                <TextInput
-                  value={fields[name] ?? ''}
-                  disabled={fields[name] === null}
-                  placeholder={typeof prop.default === 'string' ? prop.default : ''}
-                  aria-label={name}
-                  onChange={(e) => setField(name, e.currentTarget.value)}
-                />
-              </Table.Td>
-              <Table.Td>
-                <Switch
-                  checked={fields[name] === null}
-                  aria-label={`${name}: ${t('connections.mapping_absent')}`}
-                  // Turning it off seeds the value the placeholder was showing:
-                  // an empty input means the same as the switch, so leaving it
-                  // empty would undo the switch on save.
-                  onChange={(e) =>
-                    setField(name, e.currentTarget.checked ? null : (prop.default ?? ''))
-                  }
-                />
-              </Table.Td>
-            </Table.Tr>
-          ))}
-        </Table.Tbody>
-      </Table>
-      {hasOverrides && (
-        <>
+      {Object.entries(declared).map(([family, fields]) => (
+        <Stack key={family} gap="xs">
+          <Title order={4}>
+            <code>{family}</code>
+          </Title>
+          <Table verticalSpacing="xs">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>{t('connections.mapping_field')}</Table.Th>
+                <Table.Th>{t('connections.mapping_attribute')}</Table.Th>
+                <Table.Th>{t('connections.mapping_absent')}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {fields.map((field) => (
+                <Table.Tr key={field.name}>
+                  <Table.Td>
+                    <code>{field.name}</code>
+                    {field.description && (
+                      <Text size="xs" c="dimmed">
+                        {field.description}
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    <TextInput
+                      value={mappings[family]?.fields[field.name] ?? ''}
+                      disabled={mappings[family]?.fields[field.name] === null}
+                      placeholder={field.default ?? ''}
+                      aria-label={`${family}.${field.name}`}
+                      onChange={(e) => setField(family, field.name, e.currentTarget.value)}
+                    />
+                  </Table.Td>
+                  <Table.Td>
+                    <Switch
+                      checked={mappings[family]?.fields[field.name] === null}
+                      aria-label={`${family}.${field.name}: ${t('connections.mapping_absent')}`}
+                      // Turning it off seeds the value the placeholder was
+                      // showing: an empty input means the same as the switch,
+                      // so leaving it empty would undo the switch on save.
+                      onChange={(e) =>
+                        setField(family, field.name, e.currentTarget.checked ? null : (field.default ?? ''))
+                      }
+                    />
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
           <Title order={5} mt="xs">
             {t('connections.class_overrides')}
           </Title>
@@ -1169,18 +1180,17 @@ function MappingForm({ section }: { section: MappingSection }) {
             <Trans i18nKey="connections.class_overrides_desc" components={{ code: <code /> }} />
           </Text>
           <JsonInput
-            value={overrides}
-            onChange={(value) => {
-              setSuccess(null);
-              setOverrides(value);
-            }}
+            value={mappings[family]?.overrides ?? '{}'}
+            aria-label={`${family}: ${t('connections.class_overrides')}`}
+            onChange={(value) => setOverrides(family, value)}
             autosize
-            minRows={4}
+            minRows={3}
             formatOnBlur
             validationError={t('common.invalid_json')}
           />
-        </>
-      )}
+          <Divider my="sm" />
+        </Stack>
+      ))}
       <Group>
         <Button onClick={save} loading={busy}>
           {t('common.btn_save')}
@@ -1191,4 +1201,5 @@ function MappingForm({ section }: { section: MappingSection }) {
       </Group>
     </Stack>
   );
+
 }

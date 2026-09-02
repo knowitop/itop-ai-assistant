@@ -29,8 +29,9 @@ mode alongside the counters.
 import logging
 from collections.abc import Awaitable, Callable, Collection, Mapping
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any
 
+from itop_ai_assistant.config import MappingConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.identity import ObjectIdentity
 from itop_ai_assistant.domain.object_view import LogEntry, ObjectView
@@ -41,17 +42,6 @@ from itop_ai_assistant.state.counters import Counter, DailyCounters
 from itop_ai_assistant.util.text import ITOP_DATETIME_FORMAT, parse_itop_dt
 
 logger = logging.getLogger(__name__)
-
-
-class ClassMapping(Protocol):
-    """The mapping section of one family, as this repository reads it.
-
-    One method, because per-class overrides are all a repository ever asks a
-    mapping for — a family with a single class answers the same table for
-    every argument.
-    """
-
-    def for_class(self, obj_class: str) -> dict[str, str | None]: ...
 
 
 def _parse_log(raw: Any, requester: str = "") -> list[LogEntry]:
@@ -89,7 +79,7 @@ _READERS: Mapping[FieldKind, Callable[[Any], Any]] = {
 class ObjectRepository:
     """Translates between one family's semantic fields and raw iTop attributes."""
 
-    def __init__(self, itop: Itop, schema: Schema, mapping: ClassMapping, counters: DailyCounters):
+    def __init__(self, itop: Itop, schema: Schema, mapping: MappingConfig, counters: DailyCounters):
         self._itop = itop
         self.schema = schema
         self.mapping = mapping
@@ -97,8 +87,19 @@ class ObjectRepository:
 
     def attributes(self, obj_class: str) -> dict[str, str | None]:
         """Semantic field → iTop attribute code for this class, `None` where
-        the deployment says the attribute does not exist."""
-        return self.mapping.for_class(obj_class)
+        the attribute does not exist.
+
+        Three layers, each narrower than the last: what the family declares,
+        what this deployment says about the family, and what it says about
+        this one class. The declaration is the baseline rather than a copy
+        sitting in the config, so a field added to the schema is mapped from
+        the moment it is declared.
+        """
+        return {
+            **self.schema.sources(),
+            **self.mapping.fields,
+            **self.mapping.class_overrides.get(obj_class, {}),
+        }
 
     def unmapped(self, obj_class: str, names: Collection[str]) -> tuple[str, ...]:
         """Which of `names` this deployment does not map for this class.

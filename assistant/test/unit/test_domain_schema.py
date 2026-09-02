@@ -2,7 +2,6 @@
 
 import unittest
 
-from itop_ai_assistant.config import FaqFieldMap, TicketFieldMap
 from itop_ai_assistant.domain.faq_schema import FAQ_SCHEMA
 from itop_ai_assistant.domain.schema import FieldKind, FieldSpec, Role, Schema
 from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
@@ -72,12 +71,5 @@ class TestSchema(unittest.TestCase):
         self.assertIn("no_such_field", str(raised.exception))
 
 
-class TestMappingSectionsCoverTheirSchema(unittest.TestCase):
-    """The mapping section is what an administrator points at their own
-    datamodel, so a field the schema declares and the section omits is a
-    field nothing can ever map."""
-
-    def test_every_declared_field_has_a_row(self):
-        for schema, model in ((TICKET_SCHEMA, TicketFieldMap), (FAQ_SCHEMA, FaqFieldMap)):
-            with self.subTest(family=schema.name):
-                self.assertEqual({spec.name for spec in schema.fields}, set(model.model_fields))
+if __name__ == "__main__":
+    unittest.main()

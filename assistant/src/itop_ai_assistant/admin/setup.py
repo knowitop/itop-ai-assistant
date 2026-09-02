@@ -1,6 +1,6 @@
 """Setup API: runtime connection configuration — backend for the setup wizard.
 
-Connection sections (itop, llm, security, ticket_mapping, faq_mapping) are stored through
+Connection sections (itop, llm, security, mappings) are stored through
 the same ConfigStore as module config (Redis overrides > env defaults), but
 served by dedicated endpoints because secrets need special treatment:
 
@@ -21,19 +21,19 @@ from redis.exceptions import RedisError
 
 from itop_ai_assistant.config import (
     EmbeddingsConfig,
-    FaqMappingConfig,
     ItopConfig,
     LlmConfig,
+    MappingsConfig,
     PlatformConfig,
     SecurityConfig,
     TelemetryConfig,
-    TicketMappingConfig,
     missing_setup,
 )
 from itop_ai_assistant.content_sources.registry import declared_org_fields
 from itop_ai_assistant.core.api_deps import get_config_store, get_install
 from itop_ai_assistant.core.deps import AppDeps, create_llm
 from itop_ai_assistant.core.llm_providers import PROVIDERS, get_provider
+from itop_ai_assistant.domain.families import SCHEMAS
 from itop_ai_assistant.itop.connection import create_itop_client
 from itop_ai_assistant.itop.provisioning import provision_itop
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
@@ -55,8 +55,9 @@ SETUP_SECTIONS: dict[str, type[BaseModel]] = {
     "platform": PlatformConfig,
     # Anonymous usage telemetry — one switch, no secrets (REQ-009 R5)
     "telemetry": TelemetryConfig,
-    "ticket_mapping": TicketMappingConfig,
-    "faq_mapping": FaqMappingConfig,
+    # How every object family maps onto the customer's datamodel — one
+    # section, because a family is a declaration and not a class (ADR-034).
+    "mappings": MappingsConfig,
     # Vector store (optional infrastructure — not part of missing_setup)
     "embeddings": EmbeddingsConfig,
     "vector": VectorConfig,
@@ -198,6 +199,30 @@ async def llm_providers() -> dict:
     return {"providers": [asdict(provider) for provider in PROVIDERS.values()]}
 
 
+@router.get("/mappings/fields")
+async def get_mapping_fields() -> dict[str, list[dict[str, Any]]]:
+    """Per family, the semantic fields the mapping form has a row for.
+
+    A vocabulary endpoint rather than the section's JSON Schema: the section
+    holds a dictionary now, so its schema describes the shape and not the
+    fields, and the fields are what the form renders. Descriptions travel with
+    them (ADR-025) — the form carries no list of its own, and a field added to
+    a declaration appears without a UI change.
+    """
+    return {
+        name: [
+            {
+                "name": spec.name,
+                "description": spec.description,
+                "default": spec.source,
+                "multi": spec.multi,
+            }
+            for spec in schema.fields
+        ]
+        for name, schema in SCHEMAS.items()
+    }
+
+
 @router.get("/{section}/schema")
 async def get_section_schema(section: str) -> dict:
     """The section's JSON Schema — the mapping form is built from it.
@@ -287,6 +312,7 @@ async def reset_section(
         unknown = [f for f in fields if f not in model.model_fields]
         if unknown:
             raise HTTPException(status_code=422, detail=f"Unknown fields for section {section!r}: {unknown}")
+
     await config_store.reset(section, fields)
     logger.info(f"Setup section {section!r} reset to env defaults via admin API (fields={fields or 'all'})")
 

@@ -2,7 +2,7 @@
 
 Built over an `ObjectView` by `repositories/ticket.py::to_ticket`: what the
 fields are and how they read is `domain/tickets_schema.py`, where the values
-come from is the `ticket_mapping` config section, and neither is decided here.
+come from is the `mappings` config section, and neither is decided here.
 This class exists because `intake` reads these names as identifiers and wants
 mypy to check them — a family no module reads by name needs no such class.
 """

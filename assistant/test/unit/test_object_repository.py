@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import fakeredis
 
-from itop_ai_assistant.config import FaqFieldMap, FaqMappingConfig, TicketMappingConfig
+from itop_ai_assistant.config import MappingConfig, MappingsConfig
 from itop_ai_assistant.domain.faq_schema import FAQ_SCHEMA
 from itop_ai_assistant.domain.identity import ObjectIdentity
 from itop_ai_assistant.domain.schema import Role
@@ -46,12 +46,15 @@ _RAW_ARTICLE = {
 }
 
 
-def _tickets(mapping=None, counters=None) -> tuple[ObjectRepository, MagicMock]:
-    return _repo(TICKET_SCHEMA, mapping or TicketMappingConfig(), counters)
+def _tickets(fields: dict | None = None, counters=None) -> tuple[ObjectRepository, MagicMock]:
+    """The ticket family as a stock deployment has it, with `fields` on top —
+    `MappingsConfig` is what carries the class overrides stock iTop needs."""
+    mapping = MappingsConfig().for_family(TICKET_SCHEMA.name)
+    return _repo(TICKET_SCHEMA, mapping.model_copy(update={"fields": fields or {}}), counters)
 
 
-def _faq(mapping=None) -> tuple[ObjectRepository, MagicMock]:
-    return _repo(FAQ_SCHEMA, mapping or FaqMappingConfig(), None)
+def _faq(fields: dict | None = None) -> tuple[ObjectRepository, MagicMock]:
+    return _repo(FAQ_SCHEMA, MappingConfig(fields=fields or {}), None)
 
 
 def _repo(schema, mapping, counters) -> tuple[ObjectRepository, MagicMock]:
@@ -101,7 +104,7 @@ class TestReadingByKind(unittest.TestCase):
         self.assertEqual([True, False], [entry.is_requester for entry in entries])
 
     def test_with_no_requester_mapped_nobody_is_the_requester(self):
-        repo, _ = _tickets(TicketMappingConfig(fields={"caller_name": None}))
+        repo, _ = _tickets({"caller_name": None})
 
         entries = repo.to_view("UserRequest", _RAW_TICKET).log("public_log")
 
@@ -133,8 +136,22 @@ class TestReadingByKind(unittest.TestCase):
         self.assertNotIn("last_update", view.values)
         self.assertIsNone(view.moment("last_update"))
 
+    def test_the_narrower_layer_wins(self):
+        # What the family declares, what the deployment says about it, and
+        # what it says about one class — each narrower than the last.
+        mapping = MappingConfig(
+            fields={"title": "family_title", "status": "family_status"},
+            class_overrides={"Incident": {"status": "incident_status"}},
+        )
+        repo, _ = _repo(TICKET_SCHEMA, mapping, None)
+
+        self.assertEqual("ref", repo.attributes("Incident")["ref"])  # declared
+        self.assertEqual("family_title", repo.attributes("Incident")["title"])  # deployment-wide
+        self.assertEqual("incident_status", repo.attributes("Incident")["status"])  # this class
+        self.assertEqual("family_status", repo.attributes("UserRequest")["status"])
+
     def test_a_custom_attribute_code_is_read_from_where_it_says(self):
-        repo, _ = _tickets(TicketMappingConfig(fields={"title": "custom_title"}))
+        repo, _ = _tickets({"title": "custom_title"})
 
         view = repo.to_view("UserRequest", {**_RAW_TICKET, "custom_title": "Custom!"})
 
@@ -142,7 +159,7 @@ class TestReadingByKind(unittest.TestCase):
         self.assertEqual("John Doe", view.text("caller_name"))
 
     def test_a_link_set_yields_every_id_it_holds(self):
-        repo, _ = _faq(FaqMappingConfig(fields=FaqFieldMap(customer_org_ids="customers_list:customer_id")))
+        repo, _ = _faq({"customer_org_ids": "customers_list:customer_id"})
         raw = {**_RAW_ARTICLE, "customers_list": [{"customer_id": "7"}, {"customer_id": "3"}]}
 
         view = repo.to_view("FAQ", raw)
@@ -181,7 +198,7 @@ class TestProjection(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("request_type", itop.find_one.await_args.kwargs["projection"])
 
     async def test_a_link_set_is_asked_for_by_its_own_name(self):
-        repo, itop = _faq(FaqMappingConfig(fields=FaqFieldMap(customer_org_ids="customers_list:customer_id")))
+        repo, itop = _faq({"customer_org_ids": "customers_list:customer_id"})
         itop.find.return_value = []
 
         await repo.find_modified_since("FAQ", None, page=1, page_size=10)
@@ -222,7 +239,7 @@ class TestFindModifiedSince(unittest.IsolatedAsyncioTestCase):
     async def test_an_unmapped_cursor_is_a_full_scan_and_says_so_once(self):
         # Stock iTop's FAQ has no date attribute at all: refusing here would
         # make an optional field mandatory for every family.
-        repo, itop = _tickets(TicketMappingConfig(fields={"last_update": None}))
+        repo, itop = _tickets({"last_update": None})
         itop.find.return_value = []
 
         with self.assertLogs("itop_ai_assistant.repositories.object_repo", level="WARNING") as logs:
@@ -310,7 +327,7 @@ class TestWrites(unittest.IsolatedAsyncioTestCase):
 
 class TestUnmapped(unittest.TestCase):
     def test_names_what_this_deployment_does_not_map(self):
-        repo, _ = _tickets(TicketMappingConfig(fields={"caller_name": None}))
+        repo, _ = _tickets({"caller_name": None})
 
         self.assertEqual(("caller_name",), repo.unmapped("UserRequest", ("title", "caller_name")))
         self.assertEqual((), repo.unmapped("UserRequest", ("title",)))

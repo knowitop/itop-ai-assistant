@@ -10,14 +10,7 @@ import unittest
 
 import fakeredis
 
-from itop_ai_assistant.config import (
-    FaqFieldMap,
-    FaqMappingConfig,
-    ItopConfig,
-    PlatformConfig,
-    TicketFieldMap,
-    TicketMappingConfig,
-)
+from itop_ai_assistant.config import ItopConfig, MappingConfig, MappingsConfig, PlatformConfig
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.itop.connection import ItopConnection
 from itop_ai_assistant.itop.write_policy import WritePolicy
@@ -32,8 +25,7 @@ class FakeConfigStore:
     def __init__(self):
         self.sections = {
             "itop": ItopConfig(url="http://one/rest.php", token="tok"),
-            "ticket_mapping": TicketMappingConfig(),
-            "faq_mapping": FaqMappingConfig(),
+            "mappings": MappingsConfig(),
             "platform": PlatformConfig(),
         }
 
@@ -94,23 +86,29 @@ class TestRepositorySet(unittest.IsolatedAsyncioTestCase):
         self.assertIs(repos.objects["tickets"]._itop._http, base._http)
 
     async def test_the_mapping_of_the_moment_reaches_the_repositories(self):
-        self.store.sections["ticket_mapping"] = TicketMappingConfig(fields=TicketFieldMap(title="short_desc"))
-        self.store.sections["faq_mapping"] = FaqMappingConfig(fields=FaqFieldMap(title="headline"))
+        self.store.sections["mappings"] = MappingsConfig(
+            families={
+                "tickets": MappingConfig(fields={"title": "short_desc"}),
+                "faq": MappingConfig(fields={"title": "headline"}),
+            }
+        )
 
         repos = await self.repositories.for_principal(Principal.service(), comment=_SWEEP)
 
-        self.assertEqual(repos.objects["tickets"].mapping.fields.title, "short_desc")
-        self.assertEqual(repos.objects["faq"].mapping.fields.title, "headline")
+        self.assertEqual("short_desc", repos.objects["tickets"].attributes("UserRequest")["title"])
+        self.assertEqual("headline", repos.objects["faq"].attributes("FAQ")["title"])
 
     async def test_a_mapping_edit_applies_to_the_next_set_without_a_reconnect(self):
         first = await self.repositories.for_principal(Principal.service(), comment=_SWEEP)
         client = await self.connection.client()
 
-        self.store.sections["ticket_mapping"] = TicketMappingConfig(fields=TicketFieldMap(title="short_desc"))
+        self.store.sections["mappings"] = MappingsConfig(
+            families={"tickets": MappingConfig(fields={"title": "short_desc"})}
+        )
         second = await self.repositories.for_principal(Principal.service(), comment=_SWEEP)
 
-        self.assertEqual(first.objects["tickets"].mapping.fields.title, "title")
-        self.assertEqual(second.objects["tickets"].mapping.fields.title, "short_desc")
+        self.assertEqual("title", first.objects["tickets"].attributes("UserRequest")["title"])
+        self.assertEqual("short_desc", second.objects["tickets"].attributes("UserRequest")["title"])
         self.assertIs(await self.connection.client(), client)
 
     async def test_the_set_is_a_record_not_a_factory(self):

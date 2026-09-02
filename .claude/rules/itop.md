@@ -82,7 +82,7 @@ with raw dicts. Distinct iTop classes get distinct models
 ## Writing
 
 - Questions to the user → `public_log`; notes for engineers → `private_log`.
-- Act only while the ticket is in an `active_status` (see `ticket_mapping`); if
+- Act only while the ticket is in an `active_status` (see `intake` config); if
   an engineer has taken it, stop silently.
 - Every write carries the run's `comment` (module, run id, delegated engineer) —
   it lands in the object's History. Never post without it from a run.
