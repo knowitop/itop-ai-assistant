@@ -7,14 +7,14 @@ class to write and no builder to add — every family is swept by the same
 """
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from itop_ai_assistant.content_sources.faq import OBJECT_TYPE as FAQ
 from itop_ai_assistant.content_sources.generic import GenericVectorSource, ObjectType
 from itop_ai_assistant.content_sources.tickets import OBJECT_TYPE as TICKETS
 from itop_ai_assistant.core.principal import Principal
-from itop_ai_assistant.domain.schema import Role
+from itop_ai_assistant.domain.schema import Role, Schema
 from itop_ai_assistant.repositories.object_repo import ObjectRepository
 from itop_ai_assistant.repositories.sets import ItopRepositories
 
@@ -37,20 +37,22 @@ _SWEEP_COMMENT = "AI assistant · vector · sweep"
 _CONFIRM_COMMENT = "AI assistant · vector · confirming search candidates"
 
 
-def declared_org_fields() -> dict[str, tuple[str, ...]]:
+def declared_org_fields(schemas: Mapping[str, Schema]) -> dict[str, tuple[str, ...]]:
     """Per family, the semantic fields a source will accept in
     `VectorClassConfig.acl_org_fields`.
 
-    Read off the family schemas rather than off built instances: the
-    declaration is static (as `GET /api/vector/sources` already says of the
-    others), and the caller — `admin/setup.py`, validating a saved `vector`
-    section — has no iTop repositories to build a source with and no business
-    acquiring any.
+    Read off the family schemas rather than off built instances: the caller —
+    `admin/setup.py`, validating a saved `vector` section — has no iTop
+    repositories to build a source with and no business acquiring any. It
+    passes the schemas *this deployment* has, so a field an administrator
+    declared can grant access exactly like a built-in one.
     """
-    return {obj.name: obj.schema.names(Role.ORGANIZATION) for obj in OBJECT_TYPES}
+    return {obj.name: schemas.get(obj.name, obj.schema).names(Role.ORGANIZATION) for obj in OBJECT_TYPES}
 
 
-def build_vector_sources(itop: ItopRepositories, cfg: "VectorConfig") -> list["VectorSource[Any]"]:
+def build_vector_sources(
+    itop: ItopRepositories, cfg: "VectorConfig", schemas: Mapping[str, Schema]
+) -> list["VectorSource[Any]"]:
     """One instance per *registered* family, not per family the saved config
     happens to still mention.
 
@@ -63,6 +65,11 @@ def build_vector_sources(itop: ItopRepositories, cfg: "VectorConfig") -> list["V
     vocabulary: a family absent from the saved config still gets a vocabulary
     to offer, so an admin can recover a class removed by mistake instead of
     the family disappearing from the editor entirely.
+
+    `schemas` is the families as this deployment has them — the code's
+    declaration plus whatever the administrator added
+    (`config.py::MappingsConfig.schemas`), so a declared field is composable
+    into a fragment and can grant access like any other.
 
     A `cfg.families` key that matches no `ObjectType` is logged and skipped —
     the family name is not something the admin can invent from the UI, same
@@ -99,6 +106,7 @@ def build_vector_sources(itop: ItopRepositories, cfg: "VectorConfig") -> list["V
             sweeper(obj.name),
             confirmer(obj.name),
             family_cfg=cfg.families.get(obj.name, FamilyConfig()),
+            schema=schemas.get(obj.name),
         )
         for obj in OBJECT_TYPES
     ]

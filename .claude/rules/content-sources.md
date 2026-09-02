@@ -25,6 +25,12 @@ repository) to do its job at all.
   semantic name or by role and needs no `Ticket` — `is_requester` is already
   marked on each case-log entry by the repository, which is what lets the
   conversation be labelled with nothing here knowing what a ticket is.
+- **A source is built over the deployment's schema, not the code's.**
+  `build_vector_sources(itop, cfg, schemas)` takes them, and
+  `vector/assembly.py` reads the mapping section to produce them — so a field
+  an administrator declared is in the chunking vocabulary, may be named in
+  `acl_org_fields`, and rides into the payload. Only `id` and `enum` values
+  do: prose in the payload is the one thing the index must never store.
 - **The deferred import lives in `vector/assembly.py`, not here.**
   `content_sources/` declares against the vector facade, and the facade's
   `assembly` needs `build_vector_sources` — the one point where the

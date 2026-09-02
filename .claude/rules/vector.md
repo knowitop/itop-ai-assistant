@@ -162,12 +162,14 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   not import `content_sources.registry` at all any more). Both take a
   `VectorConfig -> Sequence[...]` builder instead: `SimilarSearch`'s
   constructor parameter `build_sources`, `VectorIndexer`'s via its
-  `vector_sources` constructor parameter, called as `vector_sources(cfg)`
+  `vector_sources` constructor parameter, called as `await vector_sources(cfg)`
   (a plain parameter, not a protocol member, since TASK-039).
-  The builder is called fresh on every `find()`/`sweep_once()`, never
-  memoized, which is what keeps a family added or removed from the saved
-  config live without a restart (TASK-021) — a list collected once at start
-  would have broken that guarantee silently. `vector/router.py`'s `/status`
+  The builder is **async** and is called fresh on every
+  `find()`/`sweep_once()`, never memoized: it re-reads the `vector` section —
+  which keeps a family added or removed from the saved config live without a
+  restart (TASK-021), where a list collected once at start would have broken
+  that guarantee silently — and the `mappings` one, which is what says what
+  fields a family has in this deployment (TASK-077, ADR-034). `vector/router.py`'s `/status`
   and `/sources` get the same list through a `Depends` provider that reads
   `request.app.state.vector.vector_sources`, the same way it reaches every
   other member of the assembled subsystem

@@ -23,6 +23,7 @@ from itop_ai_assistant.agents.intake.state import TicketState
 from itop_ai_assistant.config import EmbeddingsConfig, LlmConfig
 from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.domain.catalog import Service, ServiceSubcategory
+from itop_ai_assistant.domain.families import SCHEMAS
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.settings.prompt_store import PromptSet, read_prompt_dir
@@ -33,6 +34,16 @@ from itop_ai_assistant.vector.use_cases.search import SimilarSearch
 from itop_ai_assistant.webhook.models import WebhookPayload
 
 _PROMPT_FILES = read_prompt_dir(INTAKE_PROMPTS_DIR)
+
+
+def _sources_of(itop):
+    """The builder the subsystem is assembled with — async since it reads the
+    mapping section to learn what fields each family has."""
+
+    async def build(cfg):
+        return build_vector_sources(itop, cfg, SCHEMAS)
+
+    return build
 
 
 class FakeToolCallingModel(BaseChatModel):
@@ -145,7 +156,7 @@ class IntakeAgentTestCase(unittest.IsolatedAsyncioTestCase):
         self.deps.vector_search = SimilarSearch(
             self.deps.vector_store,
             self.deps.config_store,
-            lambda cfg: build_vector_sources(self.deps.itop, cfg),
+            _sources_of(self.deps.itop),
             DailyCounters(fakeredis.aioredis.FakeRedis(decode_responses=True)),
         )
 

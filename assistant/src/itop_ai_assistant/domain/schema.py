@@ -25,9 +25,12 @@ a stock datamodel, which a deployment overrides in its mapping config section.
 until a deployment maps it.
 """
 
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
+
+logger = logging.getLogger(__name__)
 
 
 class FieldKind(StrEnum):
@@ -129,6 +132,11 @@ class FieldSpec:
     #: datamodel. Empty when the name explains itself
     #: ([[ADR-025-ui-hints-travel-in-the-schema]]).
     description: str = ""
+    #: True when an administrator declared this field rather than the code.
+    #: The same `FieldSpec` either way — that is the point (ADR-034) — but a
+    #: consumer that has to tell them apart can: no code reads such a field by
+    #: name, so its value only reaches anyone by riding into the index.
+    from_config: bool = False
 
     def __post_init__(self) -> None:
         for role in sorted(self.roles):
@@ -202,6 +210,23 @@ class Schema:
     def multi_names(self) -> frozenset[str]:
         """Fields whose one mapping value yields several iTop values."""
         return frozenset(spec.name for spec in self.fields if spec.multi)
+
+    def extended(self, specs: Iterable[FieldSpec]) -> "Schema":
+        """This family plus the fields an administrator declared.
+
+        A declared name that collides with one of the family's own is dropped
+        with a warning rather than refused: saving such a name is answered
+        with a 422 (`config.py::MappingsConfig`), and this is the last line —
+        a section that reached here some other way must not take the whole
+        family down with it ([[ADR-026-install-edits-cannot-brick-startup]]).
+        """
+        extra = []
+        for spec in specs:
+            if spec.name in self._by_name:
+                logger.warning(f"schema {self.name!r}: {spec.name!r} is already a field of this family — ignoring")
+                continue
+            extra.append(spec)
+        return self if not extra else Schema(name=self.name, fields=(*self.fields, *extra))
 
     def resolve(self, names: Iterable[str], *, by: str) -> tuple[str, ...]:
         """`names`, checked to be fields of this family.

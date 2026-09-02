@@ -5,6 +5,7 @@ from itop_ai_assistant.content_sources.faq import FAMILY as FAQ_FAMILY
 from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.content_sources.tickets import FAMILY as TICKETS_FAMILY
 from itop_ai_assistant.core.principal import Principal
+from itop_ai_assistant.domain.families import SCHEMAS
 from itop_ai_assistant.vector import FamilyConfig, VectorConfig
 from itop_ai_assistant.vector.config import VectorClassConfig
 
@@ -36,14 +37,14 @@ class TestBuildVectorSources(unittest.TestCase):
     becomes unrecoverable from the UI."""
 
     def test_every_registered_family_is_built_by_default(self):
-        sources = build_vector_sources(_deps(), VectorConfig())
+        sources = build_vector_sources(_deps(), VectorConfig(), SCHEMAS)
 
         self.assertEqual({s.name for s in sources}, {TICKETS_FAMILY, FAQ_FAMILY})
 
     def test_a_family_missing_from_config_entirely_is_still_built_empty(self):
         cfg = VectorConfig(families={"tickets": FamilyConfig(classes={"UserRequest": VectorClassConfig()})})
 
-        sources = build_vector_sources(_deps(), cfg)
+        sources = build_vector_sources(_deps(), cfg, SCHEMAS)
 
         by_name = {s.name: s for s in sources}
         self.assertEqual(set(by_name), {TICKETS_FAMILY, FAQ_FAMILY})
@@ -57,7 +58,7 @@ class TestBuildVectorSources(unittest.TestCase):
             }
         )
 
-        sources = build_vector_sources(_deps(), cfg)
+        sources = build_vector_sources(_deps(), cfg, SCHEMAS)
 
         by_name = {s.name: s for s in sources}
         self.assertEqual(list(by_name[TICKETS_FAMILY].classes), ["Problem"])
@@ -68,7 +69,7 @@ class TestBuildVectorSources(unittest.TestCase):
             families={"kb_articles": FamilyConfig(classes={"KnowledgeBaseArticle": VectorClassConfig()})}
         )
 
-        sources = build_vector_sources(_deps(), cfg)
+        sources = build_vector_sources(_deps(), cfg, SCHEMAS)
 
         # Both known families are still built; the unrecognized one is
         # dropped with a warning, not a crash — same tolerance as an
@@ -82,7 +83,7 @@ class TestTheTwoIdentities(unittest.IsolatedAsyncioTestCase):
     search candidate is the asker's."""
 
     def _tickets(self, itop: MagicMock):
-        by_name = {s.name: s for s in build_vector_sources(itop, VectorConfig())}
+        by_name = {s.name: s for s in build_vector_sources(itop, VectorConfig(), SCHEMAS)}
         return by_name[TICKETS_FAMILY]
 
     async def test_the_sweep_reads_as_the_service_account(self):

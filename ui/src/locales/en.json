@@ -158,8 +158,11 @@
     "mapping_field": "Semantic field",
     "mapping_attribute": "iTop attribute code",
     "mapping_absent": "No such attribute",
+    "mapping_declared_here": "added here",
     "class_overrides": "Per-class overrides",
-    "class_overrides_desc": "Point differences between the ticket classes, merged over the fields above: <code>{\"Incident\": {\"request_type\": null}}</code>. Only the semantic names listed above are accepted."
+    "class_overrides_desc": "Point differences between the ticket classes, merged over the fields above: <code>{\"Incident\": {\"request_type\": null}}</code>. Only the semantic names listed above are accepted.",
+    "declared_fields": "Fields you added",
+    "declared_fields_desc": "Semantic fields this family does not have in the code, declared here and then mapped in the table above like any other: <code>{\"vendor_id\": {\"kind\": \"id\", \"roles\": [\"organization\"], \"description\": \"Vendor the article came from\"}}</code>. <code>kind</code> is <code>text</code>, <code>id</code> or <code>enum</code>; add <code>\"multi\": true</code> for a link set. An <code>id</code> or <code>enum</code> value is stored alongside the object in the index — which is the only way a field nothing in the code reads is of any use — and takes effect for objects already indexed after a full pass. A name the family already has is rejected."
   },
   "modules": {
     "title": "Modules",

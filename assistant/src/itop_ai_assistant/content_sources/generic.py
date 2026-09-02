@@ -43,6 +43,15 @@ from itop_ai_assistant.vector import (
 
 logger = logging.getLogger(__name__)
 
+#: Kinds whose value is short enough — and comparable enough — to ride in the
+#: chunk payload. Prose does not: the index stores embeddings, ids and filter
+#: metadata, never the object's text (`.claude/rules/vector.md`).
+_PAYLOAD_KINDS = (FieldKind.ID, FieldKind.ENUM)
+
+
+def _some(value: str) -> tuple[str, ...]:
+    return (value,) if value else ()
+
 
 @dataclass(frozen=True)
 class Fragment:
@@ -98,8 +107,8 @@ class ObjectType:
     def __post_init__(self) -> None:
         for name in self.schema.resolve(self.filters, by=f"{self.schema.name} source: filters"):
             spec = self.schema.spec(name)
-            if spec is None or spec.kind is not FieldKind.ID:
-                raise ValueError(f"{self.schema.name} source: {name!r} is not an identifier and cannot pre-filter")
+            if spec is None or spec.kind not in _PAYLOAD_KINDS:
+                raise ValueError(f"{self.schema.name} source: {name!r} is prose and cannot ride in the payload")
         for fragment in self.fragments:
             if fragment.log_field is None:
                 continue
@@ -113,12 +122,6 @@ class ObjectType:
     @property
     def name(self) -> str:
         return self.schema.name
-
-    @property
-    def content_fields(self) -> tuple[str, ...]:
-        """The vocabulary an administrator composes required fragments from —
-        the fields carrying what the object is about."""
-        return self.schema.names(Role.CONTENT)
 
 
 class GenericVectorSource(VectorSource[ObjectView]):
@@ -151,13 +154,19 @@ class GenericVectorSource(VectorSource[ObjectView]):
         get_repo_as: ObjectRepositoryForPrincipal,
         *,
         family_cfg: FamilyConfig,
+        schema: Schema | None = None,
     ) -> None:
+        # The family as this deployment has it — what the code declares plus
+        # the fields an administrator added (`config.py::MappingsConfig`).
+        # Defaults to the declaration alone, which is what a family with no
+        # deployment additions amounts to.
+        self._schema = schema or object_type.schema
         self._type = object_type
         self._get_repo = get_repo
         self._get_repo_as = get_repo_as
         self.name = object_type.name
-        self.fields = object_type.content_fields
-        self.org_fields = object_type.schema.names(Role.ORGANIZATION)
+        self.fields = self._schema.names(Role.CONTENT)
+        self.org_fields = self._schema.names(Role.ORGANIZATION)
         self.fragments = tuple(fragment.spec for fragment in object_type.fragments)
         self.indexed_filter_keys = object_type.indexed_filter_keys
         self.classes: Sequence[str] = list(family_cfg.classes)
@@ -165,6 +174,8 @@ class GenericVectorSource(VectorSource[ObjectView]):
         # Read once here rather than per record: the source is rebuilt from a
         # freshly read config on every pass (`vector/assembly.py`).
         self._acl_org_fields = {name: cfg.acl_org_fields for name, cfg in family_cfg.classes.items()}
+        declared = tuple(spec.name for spec in self._schema.fields if spec.from_config and spec.kind in _PAYLOAD_KINDS)
+        self._payload_fields = (*object_type.filters, *declared)
         self._repo: ObjectRepository | None = None
 
     async def prepare(self) -> None:
@@ -192,12 +203,21 @@ class GenericVectorSource(VectorSource[ObjectView]):
         ]
 
     def _filters(self, obj: ObjectView) -> dict[str, str | list[str]] | None:
-        """The pre-filter values this object carries into the payload, or None
-        when it carries none — an absent key and an empty one are not the same
-        thing to a filter."""
+        """The values this object carries into the chunk payload, or None when
+        it carries none — an absent key and an empty one are not the same
+        thing to a filter.
+
+        Two sources, one channel: the fields the family names, and every field
+        an administrator declared. The second is the only way a declared field
+        is of any use — no code reads it by name, so if it does not ride into
+        the index it goes nowhere. Text is left out on purpose: an identifier
+        or an enum value is short and is what a filter could ever compare,
+        while prose in the payload is the thing the index must never store.
+        """
         found: dict[str, str | list[str]] = {}
-        for name in self._type.filters:
-            values = obj.identifiers(name)
+        for name in self._payload_fields:
+            spec = self._schema.spec(name)
+            values = obj.identifiers(name) if spec and spec.kind is FieldKind.ID else _some(obj.state(name))
             if values:
                 found[name] = values[0] if len(values) == 1 else list(values)
         return found or None

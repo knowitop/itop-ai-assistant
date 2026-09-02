@@ -31,7 +31,10 @@ Tools and agents never see the raw client or an iTop attribute name. All access
 goes through `repositories/` — **one** `ObjectRepository` translates semantic
 fields to attributes for every object family, driven by the family's `Schema`
 (`domain/schema.py`, ADR-034) and its mapping section (`fields`,
-`class_overrides`). How a raw value reads is the field's `kind`, not a decision
+`class_overrides`, `declared`). The schema a repository gets is the
+deployment's, not the code's: `MappingsConfig.schemas()` merges the code
+declaration with the fields an administrator added, and that is the one place
+the two are joined. How a raw value reads is the field's `kind`, not a decision
 written per field; a field the deployment does not map is **absent** from the
 `ObjectView`, so a typed model over it falls back to its own default rather
 than to `""`. `TicketRepository` is a thin typed view over it — `Ticket` exists

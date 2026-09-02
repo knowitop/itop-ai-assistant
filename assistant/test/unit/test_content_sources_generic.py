@@ -16,7 +16,7 @@ from itop_ai_assistant.content_sources.tickets import OBJECT_TYPE as TICKETS
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.faq_schema import FAQ_SCHEMA
 from itop_ai_assistant.domain.object_view import LogEntry, ObjectView
-from itop_ai_assistant.domain.schema import Role
+from itop_ai_assistant.domain.schema import FieldKind, FieldSpec, Role
 from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
 from itop_ai_assistant.vector import ChunkPlan, FamilyConfig
 from itop_ai_assistant.vector.config import VectorClassConfig
@@ -274,7 +274,7 @@ class TestChunk(unittest.IsolatedAsyncioTestCase):
             private_log=[LogEntry(user_login="Jane Agent", message="ordered a part")],
         )
         plan = _plan(
-            fields={f.kind: list(TICKETS.content_fields) for f in TICKETS.fragments if not f.optional},
+            fields={f.kind: list(TICKETS.schema.names(Role.CONTENT)) for f in TICKETS.fragments if not f.optional},
             enabled={f.kind for f in TICKETS.fragments if f.optional},
         )
 
@@ -304,6 +304,69 @@ class TestChunk(unittest.IsolatedAsyncioTestCase):
         plan = _plan(fields={"no_such_fragment": ["description"]})
 
         self.assertEqual([], await self._chunk(TICKETS, _ticket(), plan))
+
+
+class TestDeclaredFields(unittest.IsolatedAsyncioTestCase):
+    """A field an administrator added is a field of the family — composable
+    into a fragment, able to grant access, and carried into the payload,
+    which is the only way its value reaches anyone at all."""
+
+    def _family_with(self, name: str, kind: FieldKind, roles: frozenset[Role] = frozenset()):
+        """The FAQ family as a deployment that declared one extra field has it."""
+        return FAQ_SCHEMA.extended([FieldSpec(name, kind, None, roles=roles, from_config=True)])
+
+    async def _swept_with(self, schema, values: dict, acl_org_fields: list[str] | None = None):
+        get_repo, get_repo_as, repo, _ = _repos()
+        view = ObjectView(schema=schema, obj_class="FAQ", id="1", values=values)
+        repo.find_modified_since = AsyncMock(return_value=[view])
+        source = GenericVectorSource(
+            FAQ, get_repo, get_repo_as, family_cfg=_family("FAQ", acl_org_fields), schema=schema
+        )
+        await source.prepare()
+        return source, await source.find_modified_since("FAQ", None, page=1, page_size=100)
+
+    async def test_an_identifier_rides_into_the_payload(self):
+        schema = self._family_with("vendor_id", FieldKind.ID)
+
+        _source, records = await self._swept_with(schema, {"vendor_id": "42"})
+
+        self.assertEqual({"vendor_id": "42"}, records[0].filters)
+
+    async def test_prose_does_not(self):
+        # The index stores embeddings, ids and filter metadata — never text.
+        schema = self._family_with("vendor_note", FieldKind.TEXT)
+
+        _source, records = await self._swept_with(schema, {"vendor_note": "a long note"})
+
+        self.assertIsNone(records[0].filters)
+
+    async def test_it_can_grant_access_like_a_built_in_one(self):
+        schema = self._family_with("vendor_id", FieldKind.ID, frozenset({Role.ORGANIZATION}))
+
+        source, records = await self._swept_with(schema, {"vendor_id": "42"}, acl_org_fields=["vendor_id"])
+
+        self.assertEqual(("42",), records[0].acl_org_ids)
+        self.assertIn("vendor_id", source.org_fields)
+
+    async def test_it_can_feed_a_fragment(self):
+        schema = self._family_with("vendor_note", FieldKind.TEXT, frozenset({Role.CONTENT}))
+
+        source, [record] = await self._swept_with(schema, {"vendor_note": "Acme said so"})
+        chunks = await source.chunk(
+            "FAQ",
+            record,
+            _plan(fields={"body": ["vendor_note"]}),
+            max_chunk_tokens=100,
+            log_entries_per_chunk=5,
+        )
+
+        self.assertIn("vendor_note", source.fields)
+        self.assertEqual(["Acme said so"], [c.text for c in chunks])
+
+    async def test_a_family_with_nothing_declared_carries_what_it_always_did(self):
+        _source, records, _repo = await _swept(TICKETS, _ticket())
+
+        self.assertEqual({"service_id": "5"}, records[0].filters)
 
 
 class TestConversation(unittest.TestCase):

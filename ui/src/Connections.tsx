@@ -997,6 +997,8 @@ interface MappingField {
   description: string;
   default: string | null;
   multi: boolean;
+  // True when this deployment declared the field rather than the code.
+  declared: boolean;
 }
 
 // What the form holds for one family: the attribute code per semantic field
@@ -1005,11 +1007,16 @@ interface MappingField {
 interface FamilyMapping {
   fields: Record<string, string | null>;
   overrides: string;
+  // Fields this deployment added to the family, edited as raw JSON: what a
+  // field *is* (kind, roles) is a shape the backend validates, and a form for
+  // it would be a second place to keep that shape in step.
+  declared: string;
 }
 
 interface StoredMapping {
   fields?: Record<string, string | null>;
   class_overrides?: Record<string, Record<string, string | null>>;
+  declared?: Record<string, unknown>;
 }
 
 // Semantic field → iTop attribute code, one table per object family. One form
@@ -1045,6 +1052,7 @@ function MappingForm() {
       next[family] = {
         fields: row,
         overrides: JSON.stringify(stored[family]?.class_overrides ?? {}, null, 2),
+        declared: JSON.stringify(stored[family]?.declared ?? {}, null, 2),
       };
     }
     setDeclared(fields);
@@ -1063,9 +1071,9 @@ function MappingForm() {
     }));
   };
 
-  const setOverrides = (family: string, value: string) => {
+  const setPart = (family: string, part: 'overrides' | 'declared', value: string) => {
     setSuccess(null);
-    setMappings((current) => ({ ...current, [family]: { ...current[family], overrides: value } }));
+    setMappings((current) => ({ ...current, [family]: { ...current[family], [part]: value } }));
   };
 
   const save = async () => {
@@ -1081,14 +1089,16 @@ function MappingForm() {
         mapped[name] = value === null || value.trim() === '' ? null : value.trim();
       }
       let overrides: unknown;
+      let declared: unknown;
       try {
         overrides = JSON.parse(mapping.overrides);
+        declared = JSON.parse(mapping.declared);
       } catch {
         setError(`${family}: ${t('common.invalid_json')}`);
         setSuccess(null);
         return;
       }
-      payload[family] = { fields: mapped, class_overrides: overrides };
+      payload[family] = { fields: mapped, class_overrides: overrides, declared };
     }
     setBusy(true);
     setError(null);
@@ -1142,6 +1152,12 @@ function MappingForm() {
                 <Table.Tr key={field.name}>
                   <Table.Td>
                     <code>{field.name}</code>
+                    {field.declared && (
+                      <Text span size="xs" c="dimmed">
+                        {' '}
+                        ({t('connections.mapping_declared_here')})
+                      </Text>
+                    )}
                     {field.description && (
                       <Text size="xs" c="dimmed">
                         {field.description}
@@ -1182,7 +1198,22 @@ function MappingForm() {
           <JsonInput
             value={mappings[family]?.overrides ?? '{}'}
             aria-label={`${family}: ${t('connections.class_overrides')}`}
-            onChange={(value) => setOverrides(family, value)}
+            onChange={(value) => setPart(family, 'overrides', value)}
+            autosize
+            minRows={3}
+            formatOnBlur
+            validationError={t('common.invalid_json')}
+          />
+          <Title order={5} mt="xs">
+            {t('connections.declared_fields')}
+          </Title>
+          <Text c="dimmed" size="sm">
+            <Trans i18nKey="connections.declared_fields_desc" components={{ code: <code /> }} />
+          </Text>
+          <JsonInput
+            value={mappings[family]?.declared ?? '{}'}
+            aria-label={`${family}: ${t('connections.declared_fields')}`}
+            onChange={(value) => setPart(family, 'declared', value)}
             autosize
             minRows={3}
             formatOnBlur
@@ -1201,5 +1232,4 @@ function MappingForm() {
       </Group>
     </Stack>
   );
-
 }

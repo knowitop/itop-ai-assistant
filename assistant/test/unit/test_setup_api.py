@@ -17,6 +17,7 @@ from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.core.tracing import NullRunTracer
+from itop_ai_assistant.domain.families import SCHEMAS
 from itop_ai_assistant.itop.write_policy import WritePolicy
 from itop_ai_assistant.itop_client import Itop
 from itop_ai_assistant.main import app
@@ -80,8 +81,8 @@ def _make_deps(redis, **settings_overrides) -> AppDeps:
     itop = MagicMock()
     vector_store = QdrantChunkStore(None)
 
-    def vector_sources(cfg):
-        return build_vector_sources(itop, cfg)
+    async def vector_sources(cfg):
+        return build_vector_sources(itop, cfg, SCHEMAS)
 
     counters = DailyCounters(redis)
     install = InstallIdentity(redis)

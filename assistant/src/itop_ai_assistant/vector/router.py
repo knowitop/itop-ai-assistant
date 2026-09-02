@@ -73,7 +73,7 @@ async def get_vector_config(config_store: Annotated[ConfigStore, Depends(get_con
     return await config_store.get("vector", VectorConfig)
 
 
-def get_vector_sources(
+async def get_vector_sources(
     request: Request, vector_cfg: Annotated[VectorConfig, Depends(get_vector_config)]
 ) -> Sequence[VectorSource[Any]]:
     """The registered sources for the freshly-read config. `vector_sources`
@@ -81,7 +81,7 @@ def get_vector_sources(
     here, per request, is what keeps a family added or removed from the
     saved config visible without a restart.
     """
-    return _subsystem(request).vector_sources(vector_cfg)
+    return await _subsystem(request).vector_sources(vector_cfg)
 
 
 async def get_embeddings_config(

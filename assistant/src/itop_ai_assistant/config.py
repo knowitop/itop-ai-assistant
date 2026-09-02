@@ -14,6 +14,7 @@ from pydantic_settings import (
 from itop_ai_assistant.core.llm_providers import DEFAULT_PROVIDER, PROVIDERS, get_provider
 from itop_ai_assistant.domain.families import SCHEMAS
 from itop_ai_assistant.domain.faq_schema import FAQ_SCHEMA
+from itop_ai_assistant.domain.schema import FieldKind, FieldSpec, Role, Schema
 from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,33 @@ logger = logging.getLogger(__name__)
 _PACKAGE_DIR = Path(__file__).parent  # itop_ai_assistant/ — ships config.yaml
 
 TConfig = TypeVar("TConfig", bound=BaseModel)
+
+
+class DeclaredField(BaseModel):
+    """A semantic field an administrator added to a family.
+
+    The same thing a `FieldSpec` in code is (ADR-034), minus the attribute
+    code: that lives in `fields` beside every other field's, so there is one
+    table of attribute codes and not two. What such a field is *for* is its
+    roles — an organization that grants access, a piece of what the object is
+    about — and a field with none is carried into the index and nothing else.
+
+    No `datetime` and no `log`: both are read by a mechanism that has to be
+    wired to them (the sweep cursor, a chunk fragment), and a second one of
+    either is not something a declaration can hook up.
+    """
+
+    kind: FieldKind
+    multi: bool = False
+    roles: list[Role] = []
+    description: str = ""
+
+    @field_validator("kind")
+    @classmethod
+    def readable_by_a_declaration(cls, kind: FieldKind) -> FieldKind:
+        if kind in (FieldKind.DATETIME, FieldKind.LOG):
+            raise ValueError(f"a declared field cannot be a {kind.value!r} — only text, id or enum")
+        return kind
 
 
 class MappingConfig(BaseModel):
@@ -39,6 +67,26 @@ class MappingConfig(BaseModel):
 
     fields: dict[str, str | None] = {}
     class_overrides: dict[str, dict[str, str | None]] = {}
+    #: Fields this deployment added to the family, by name. Their attribute
+    #: codes are in `fields` like everyone else's.
+    declared: dict[str, DeclaredField] = {}
+
+    def declared_specs(self) -> tuple[FieldSpec, ...]:
+        """What this deployment added, as the same declaration the code
+        writes. `source` is None because a declared field has no default —
+        where its value comes from is entirely `fields`."""
+        return tuple(
+            FieldSpec(
+                name=name,
+                kind=field.kind,
+                source=None,
+                multi=field.multi,
+                roles=frozenset(field.roles),
+                description=field.description,
+                from_config=True,
+            )
+            for name, field in self.declared.items()
+        )
 
 
 class MappingsConfig(BaseModel):
@@ -63,6 +111,16 @@ class MappingsConfig(BaseModel):
         it says nothing, which means "the declaration as written"."""
         return self.families.get(family, MappingConfig())
 
+    def schemas(self) -> dict[str, Schema]:
+        """Every family as this deployment has it: what the code declares plus
+        what the administrator added.
+
+        The one place the two are merged. Everything that reads a field —
+        the repository, the vector source, the admin forms — asks here, so a
+        declared field is a field in exactly the sense a built-in one is.
+        """
+        return {name: schema.extended(self.for_family(name).declared_specs()) for name, schema in SCHEMAS.items()}
+
     @model_validator(mode="after")
     def check_field_names(self) -> "MappingsConfig":
         """Cross-check a section cannot make on its own: whether a name in it
@@ -77,9 +135,15 @@ class MappingsConfig(BaseModel):
             if schema is None:
                 logger.warning(f"mappings: family {family!r} is not declared anywhere — the section does nothing")
                 continue
-            schema.resolve(cfg.fields, by=f"mappings.{family}.fields")
+            taken = sorted(name for name in cfg.declared if schema.spec(name) is not None)
+            if taken:
+                raise ValueError(
+                    f"mappings.{family}.declared: {taken} — the {family!r} family already has fields by those names"
+                )
+            extended = schema.extended(cfg.declared_specs())
+            extended.resolve(cfg.fields, by=f"mappings.{family}.fields")
             for obj_class, overrides in cfg.class_overrides.items():
-                schema.resolve(overrides, by=f"mappings.{family}.class_overrides[{obj_class!r}]")
+                extended.resolve(overrides, by=f"mappings.{family}.class_overrides[{obj_class!r}]")
         return self
 
 

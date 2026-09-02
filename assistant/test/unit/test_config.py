@@ -5,6 +5,7 @@ from unittest.mock import patch
 from pydantic import BaseModel, ValidationError
 
 from itop_ai_assistant.config import (
+    DeclaredField,
     EmbeddingsConfig,
     ItopConfig,
     LlmConfig,
@@ -14,6 +15,7 @@ from itop_ai_assistant.config import (
     get_settings,
     missing_setup,
 )
+from itop_ai_assistant.domain.schema import FieldKind, Role
 
 _REQUIRED = {
     "LLM_BASE_URL": "http://localhost/v1",
@@ -286,6 +288,50 @@ class TestMappings(unittest.TestCase):
             MappingsConfig(families={"tickets": MappingConfig(fields={"no_such_field": "x"})})
         with self.assertRaises(ValidationError):
             MappingsConfig(families={"tickets": MappingConfig(class_overrides={"Incident": {"nope": None}})})
+
+    def test_a_declared_field_becomes_a_field_of_the_family(self):
+        mappings = MappingsConfig(
+            families={
+                "faq": MappingConfig(
+                    fields={"vendor_id": "vendor_id"},
+                    declared={"vendor_id": DeclaredField(kind=FieldKind.ID, roles=[Role.ORGANIZATION])},
+                )
+            }
+        )
+
+        schema = mappings.schemas()["faq"]
+
+        self.assertTrue(schema.spec("vendor_id").from_config)
+        self.assertIn("vendor_id", schema.names(Role.ORGANIZATION))
+        # The declaration says what the field is; where its value comes from
+        # is `fields`, the same table as every other field's.
+        self.assertIsNone(schema.spec("vendor_id").source)
+
+    def test_a_declared_name_cannot_shadow_one_the_family_already_has(self):
+        with self.assertRaises(ValidationError) as raised:
+            MappingsConfig(families={"faq": MappingConfig(declared={"title": DeclaredField(kind=FieldKind.TEXT)})})
+
+        self.assertIn("already has fields by those names", str(raised.exception))
+
+    def test_a_declaration_cannot_ask_for_a_mechanism_it_cannot_wire_up(self):
+        # A second modification date or a second case log needs a reader, and
+        # a declaration has no way to hook one up.
+        with self.assertRaises(ValidationError):
+            MappingsConfig(
+                families={"faq": MappingConfig(declared={"seen_at": DeclaredField(kind=FieldKind.DATETIME)})}
+            )
+
+    def test_a_declared_field_is_mapped_like_any_other(self):
+        mappings = MappingsConfig(
+            families={
+                "faq": MappingConfig(
+                    fields={"vendor_id": "vendor_ext_id"},
+                    declared={"vendor_id": DeclaredField(kind=FieldKind.ID)},
+                )
+            }
+        )
+
+        self.assertEqual("vendor_ext_id", mappings.for_family("faq").fields["vendor_id"])
 
     def test_a_family_nothing_declares_is_inert_rather_than_fatal(self):
         # Refusing would take the whole section down with it on start

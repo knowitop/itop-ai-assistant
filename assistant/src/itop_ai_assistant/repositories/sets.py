@@ -19,7 +19,6 @@ from dataclasses import dataclass
 
 from itop_ai_assistant.config import MappingsConfig
 from itop_ai_assistant.core.principal import Principal
-from itop_ai_assistant.domain.families import SCHEMAS
 from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
 from itop_ai_assistant.itop.connection import ItopConnection
 from itop_ai_assistant.itop.write_policy import WritePolicy
@@ -92,9 +91,11 @@ class ItopRepositories:
 
     async def _build(self, client: Itop) -> RepositorySet:
         mappings = await self._config_store.get("mappings", MappingsConfig)
+        # The schemas this deployment has, not the ones the code declares: a
+        # field an administrator added is a field of the family from here on.
         objects = {
             name: ObjectRepository(client, schema, mappings.for_family(name), self._counters)
-            for name, schema in SCHEMAS.items()
+            for name, schema in mappings.schemas().items()
         }
         return RepositorySet(
             objects=objects,

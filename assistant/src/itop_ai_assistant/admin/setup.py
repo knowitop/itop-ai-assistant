@@ -33,7 +33,6 @@ from itop_ai_assistant.content_sources.registry import declared_org_fields
 from itop_ai_assistant.core.api_deps import get_config_store, get_install
 from itop_ai_assistant.core.deps import AppDeps, create_llm
 from itop_ai_assistant.core.llm_providers import PROVIDERS, get_provider
-from itop_ai_assistant.domain.families import SCHEMAS
 from itop_ai_assistant.itop.connection import create_itop_client
 from itop_ai_assistant.itop.provisioning import provision_itop
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
@@ -102,12 +101,13 @@ async def _merged_with_current(
     return {**current.model_dump(), **body}
 
 
-def _check_names_the_code_owns(section: str, values: dict[str, Any]) -> None:
+async def _check_names_the_code_owns(config_store: ConfigStore, section: str, values: dict[str, Any]) -> None:
     """Cross-checks a config model cannot make on its own.
 
-    A section validates its own shape; whether a name in it exists in the
-    code is another matter, and for `acl_org_fields` it has to be answered
-    here. A name no source declares would not fail anything at sweep time —
+    A section validates its own shape; whether a name in it is a field of the
+    family is another matter, and for `acl_org_fields` it has to be answered
+    here — against the schemas *this deployment* has, so a field an
+    administrator declared grants access exactly like a built-in one. A name no source declares would not fail anything at sweep time —
     it resolves to no organization, the object's ACL comes out empty, and an
     empty ACL is *passed* by the pre-filter (ADR-033). The class would simply
     stop being pre-filtered, and nothing but the sweep's empty-ACL warning
@@ -120,7 +120,8 @@ def _check_names_the_code_owns(section: str, values: dict[str, Any]) -> None:
     if section != "vector":
         return
     cfg = VectorConfig.model_validate(values)
-    declared = declared_org_fields()
+    mappings = await config_store.get("mappings", MappingsConfig)
+    declared = declared_org_fields(mappings.schemas())
     for family, family_cfg in cfg.families.items():
         known = declared.get(family)
         if known is None:
@@ -132,7 +133,7 @@ def _check_names_the_code_owns(section: str, values: dict[str, Any]) -> None:
                     status_code=422,
                     detail=(
                         f"vector.families.{family}.classes.{obj_class}.acl_org_fields: "
-                        f"{sorted(unknown)} — the {family!r} source declares {sorted(known)}"
+                        f"{sorted(unknown)} — the {family!r} family has {sorted(known)}"
                     ),
                 )
 
@@ -200,7 +201,7 @@ async def llm_providers() -> dict:
 
 
 @router.get("/mappings/fields")
-async def get_mapping_fields() -> dict[str, list[dict[str, Any]]]:
+async def get_mapping_fields(config_store: Annotated[ConfigStore, Depends(get_config_store)]) -> dict[str, list[dict]]:
     """Per family, the semantic fields the mapping form has a row for.
 
     A vocabulary endpoint rather than the section's JSON Schema: the section
@@ -208,7 +209,11 @@ async def get_mapping_fields() -> dict[str, list[dict[str, Any]]]:
     fields, and the fields are what the form renders. Descriptions travel with
     them (ADR-025) — the form carries no list of its own, and a field added to
     a declaration appears without a UI change.
+
+    The families as this deployment has them, so a field an administrator
+    declared gets a row like any other, marked as theirs.
     """
+    mappings = await config_store.get("mappings", MappingsConfig)
     return {
         name: [
             {
@@ -216,10 +221,11 @@ async def get_mapping_fields() -> dict[str, list[dict[str, Any]]]:
                 "description": spec.description,
                 "default": spec.source,
                 "multi": spec.multi,
+                "declared": spec.from_config,
             }
             for spec in schema.fields
         ]
-        for name, schema in SCHEMAS.items()
+        for name, schema in mappings.schemas().items()
     }
 
 
@@ -278,7 +284,7 @@ async def update_section(
     was_incomplete = bool(await _setup_missing(config_store)) if gates_setup else False
     values = await _merged_with_current(config_store, section, model, body)
     try:
-        _check_names_the_code_owns(section, values)
+        await _check_names_the_code_owns(config_store, section, values)
         cfg = await config_store.set(section, values, model)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e

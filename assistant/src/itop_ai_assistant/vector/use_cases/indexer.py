@@ -147,7 +147,7 @@ SWEEP_TASK = "vector-sweep"
 def register_vector_sweep(
     tasks: PeriodicTasks,
     config_store: ConfigStore,
-    vector_sources: Callable[[VectorConfig], Sequence[VectorSource[Any]]],
+    vector_sources: Callable[[VectorConfig], Awaitable[Sequence[VectorSource[Any]]]],
     vector_store: ChunkStore,
     vector_sync: VectorSyncState,
     vector_journal: IndexJournal,
@@ -198,7 +198,7 @@ class VectorIndexer:
     def __init__(
         self,
         config_store: ConfigStore,
-        vector_sources: Callable[[VectorConfig], Sequence[VectorSource[Any]]],
+        vector_sources: Callable[[VectorConfig], Awaitable[Sequence[VectorSource[Any]]]],
         vector_store: ChunkStore,
         vector_sync: VectorSyncState,
         vector_journal: IndexJournal,
@@ -354,7 +354,7 @@ class VectorIndexer:
                 # Drops the pending-reindex flag along with the cursors — an
                 # attempt that fails earlier leaves the request standing
                 await self._vector_sync.reset_cursors()
-            sources = self._sources if self._sources is not None else self._vector_sources(cfg)
+            sources = self._sources if self._sources is not None else await self._vector_sources(cfg)
             # A source may be prepared once here and again by reconcile below,
             # in the same pass — `prepared` keeps that to one call per source.
             prepared: set[int] = set()
