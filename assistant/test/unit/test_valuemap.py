@@ -67,13 +67,13 @@ class TestExtract(unittest.TestCase):
 class TestReadLists(unittest.TestCase):
     def test_an_unmapped_field_is_absent_rather_than_empty(self):
         # Absent, so the model's own default answers for it.
-        values = read_lists({"org_id": "3"}, {"customer_org_ids": None}, ["customer_org_ids"])
+        values = read_lists({"org_id": "3"}, {"customer_orgs": None}, ["customer_orgs"])
 
         self.assertEqual({}, values)
 
     def test_a_mapped_field_is_keyed_as_the_model_names_it(self):
         raw = {"customers_list": [{"customer_id": "3"}]}
 
-        values = read_lists(raw, {"customer_org_ids": _LINKSET}, ["customer_org_ids"])
+        values = read_lists(raw, {"customer_orgs": _LINKSET}, ["customer_orgs"])
 
-        self.assertEqual({"customer_org_ids": ("3",)}, values)
+        self.assertEqual({"customer_orgs": ("3",)}, values)

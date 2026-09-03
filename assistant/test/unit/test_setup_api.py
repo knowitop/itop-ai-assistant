@@ -309,11 +309,27 @@ class TestSetupSections(SetupApiTestCase):
         by_name = {field["name"]: field for field in body["faq"]}
         self.assertIn("error_code", by_name)
         self.assertEqual("Error code the article is about", by_name["error_code"]["description"])
-        self.assertTrue(by_name["customer_org_ids"]["multi"])
         self.assertEqual("title", by_name["title"]["default"])
-        self.assertEqual("id", by_name["customer_org_ids"]["kind"])
-        self.assertEqual(["organization"], by_name["customer_org_ids"]["roles"])
+        self.assertEqual("id", by_name["org_id"]["kind"])
+        self.assertEqual(["organization"], by_name["org_id"]["roles"])
+        self.assertFalse(by_name["org_id"]["multi"])
+        self.assertFalse(by_name["org_id"]["declared"])
         self.assertIn("caller_name", {field["name"] for field in body["tickets"]})
+
+    def test_a_field_the_administrator_added_gets_a_row_like_any_other(self):
+        self.client.patch(
+            "/api/setup/mappings/families/faq",
+            json={
+                "fields": {"customer_orgs": "customers_list:customer_id"},
+                "declared": {"customer_orgs": {"kind": "id", "multi": True, "roles": ["organization"]}},
+            },
+        )
+
+        by_name = {field["name"]: field for field in self.client.get("/api/setup/mappings/fields").json()["faq"]}
+
+        self.assertTrue(by_name["customer_orgs"]["declared"])
+        self.assertTrue(by_name["customer_orgs"]["multi"])
+        self.assertIsNone(by_name["customer_orgs"]["default"])
 
     def test_the_form_learns_what_a_declaration_may_say_from_the_vocabulary(self):
         # What is valid comes from here, so the form that builds a declaration
@@ -389,13 +405,13 @@ class TestSetupSections(SetupApiTestCase):
         self.assertIn("org_id", response.json()["detail"])
 
     def test_acl_org_fields_the_source_declares_are_accepted(self):
-        families = {"faq": {"classes": {"FAQ": {"acl_org_fields": ["customer_org_ids"]}}}}
+        families = {"faq": {"classes": {"FAQ": {"acl_org_fields": ["org_id"]}}}}
 
         response = self.client.patch("/api/setup/vector", json={"families": families})
 
         self.assertEqual(response.status_code, 200)
         saved = response.json()["values"]["families"]["faq"]["classes"]["FAQ"]
-        self.assertEqual(["customer_org_ids"], saved["acl_org_fields"])
+        self.assertEqual(["org_id"], saved["acl_org_fields"])
 
     def test_a_family_no_source_is_registered_for_is_not_checked(self):
         # The same tolerance the sweep gives it: nothing indexes the family,

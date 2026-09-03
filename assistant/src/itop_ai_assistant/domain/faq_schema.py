@@ -46,23 +46,12 @@ FAQ_SCHEMA = Schema(
         # `vector.families.faq.classes.FAQ.index_values` is [] — every article
         # stays in the index — rather than a list of statuses to filter by.
         FieldSpec("status", FieldKind.ENUM, None, roles=frozenset({Role.LIFECYCLE_STATE})),
-        # Neither of the two organization fields is mapped in stock iTop
-        # either, so the R4 pre-filter lets every article through to
-        # `confirm_visible` (ADR-033). A build that scopes articles by
-        # organization maps one of them and names it in `acl_org_fields`.
+        # Unmapped in stock iTop as well, so the R4 pre-filter lets every
+        # article through to `confirm_visible` (ADR-033). A build that scopes
+        # articles by organization maps it and names it in `acl_org_fields`;
+        # one that publishes an article to a *list* of customer organizations
+        # declares a list-valued field of its own for that link set (ADR-034).
         FieldSpec("org_id", FieldKind.ID, None, roles=frozenset({Role.ORGANIZATION})),
-        FieldSpec(
-            "customer_org_ids",
-            FieldKind.ID,
-            None,
-            multi=True,
-            roles=frozenset({Role.ORGANIZATION}),
-            description=(
-                "Customer organizations the article is published to, where the datamodel has such a "
-                "list. A list-valued field: write it as '<link set>:<id attribute of a link>', e.g. "
-                "'customers_list:customer_id'. A plain attribute code works too and yields the one value."
-            ),
-        ),
         # Stock iTop's FAQ class carries no date attribute at all. With
         # `last_update` unmapped every sweep pass re-reads every article
         # (cheap thanks to the hash-guard, `vector/use_cases/indexer.py`).

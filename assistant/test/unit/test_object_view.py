@@ -5,8 +5,14 @@ from datetime import UTC, datetime
 
 from itop_ai_assistant.domain.faq_schema import FAQ_SCHEMA
 from itop_ai_assistant.domain.object_view import LogEntry, ObjectView
-from itop_ai_assistant.domain.schema import Role
+from itop_ai_assistant.domain.schema import FieldKind, FieldSpec, Role
 from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
+
+#: A list-valued field is one an administrator declared — nothing the code
+#: declares holds several values.
+_FAQ_WITH_ORGS = FAQ_SCHEMA.extended(
+    [FieldSpec("customer_orgs", FieldKind.ID, None, multi=True, roles=frozenset({Role.ORGANIZATION}), from_config=True)]
+)
 
 
 def _ticket(**values) -> ObjectView:
@@ -34,10 +40,10 @@ class TestReadingAField(unittest.TestCase):
 
     def test_one_organization_and_a_list_of_them_read_the_same_way(self):
         one = _ticket(org_id="7")
-        many = ObjectView(schema=FAQ_SCHEMA, obj_class="FAQ", id="1", values={"customer_org_ids": ("3", "7")})
+        many = ObjectView(schema=_FAQ_WITH_ORGS, obj_class="FAQ", id="1", values={"customer_orgs": ("3", "7")})
 
         self.assertEqual(("7",), one.identifiers("org_id"))
-        self.assertEqual(("3", "7"), many.identifiers("customer_org_ids"))
+        self.assertEqual(("3", "7"), many.identifiers("customer_orgs"))
 
 
 class TestReadingByRole(unittest.TestCase):

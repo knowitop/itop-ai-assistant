@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import fakeredis
 
-from itop_ai_assistant.config import MappingConfig, MappingsConfig
+from itop_ai_assistant.config import DeclaredField, MappingConfig, MappingsConfig
 from itop_ai_assistant.domain.faq_schema import FAQ_SCHEMA
 from itop_ai_assistant.domain.identity import ObjectIdentity
-from itop_ai_assistant.domain.schema import Role
+from itop_ai_assistant.domain.schema import FieldKind, Role
 from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
 from itop_ai_assistant.repositories.object_repo import ObjectRepository
 from itop_ai_assistant.state.counters import Counter, DailyCounters
@@ -55,6 +55,21 @@ def _tickets(fields: dict | None = None, counters=None) -> tuple[ObjectRepositor
 
 def _faq(fields: dict | None = None) -> tuple[ObjectRepository, MagicMock]:
     return _repo(FAQ_SCHEMA, MappingConfig(fields=fields or {}), None)
+
+
+def _faq_with_a_list() -> tuple[ObjectRepository, MagicMock]:
+    """The FAQ family as a deployment that publishes articles to a list of
+    customer organizations has it. Nothing the code declares holds several
+    values, so the schema a repository gets is the merged one."""
+    mappings = MappingsConfig(
+        families={
+            FAQ_SCHEMA.name: MappingConfig(
+                fields={"customer_orgs": "customers_list:customer_id"},
+                declared={"customer_orgs": DeclaredField(kind=FieldKind.ID, multi=True, roles=[Role.ORGANIZATION])},
+            )
+        }
+    )
+    return _repo(mappings.schemas()[FAQ_SCHEMA.name], mappings.for_family(FAQ_SCHEMA.name), None)
 
 
 def _repo(schema, mapping, counters) -> tuple[ObjectRepository, MagicMock]:
@@ -159,12 +174,12 @@ class TestReadingByKind(unittest.TestCase):
         self.assertEqual("John Doe", view.text("caller_name"))
 
     def test_a_link_set_yields_every_id_it_holds(self):
-        repo, _ = _faq({"customer_org_ids": "customers_list:customer_id"})
+        repo, _ = _faq_with_a_list()
         raw = {**_RAW_ARTICLE, "customers_list": [{"customer_id": "7"}, {"customer_id": "3"}]}
 
         view = repo.to_view("FAQ", raw)
 
-        self.assertEqual(("3", "7"), view.identifiers("customer_org_ids"))
+        self.assertEqual(("3", "7"), view.identifiers("customer_orgs"))
 
     def test_stock_faq_declares_no_status_no_organization_and_no_dates(self):
         repo, _ = _faq()
@@ -198,7 +213,7 @@ class TestProjection(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("request_type", itop.find_one.await_args.kwargs["projection"])
 
     async def test_a_link_set_is_asked_for_by_its_own_name(self):
-        repo, itop = _faq({"customer_org_ids": "customers_list:customer_id"})
+        repo, itop = _faq_with_a_list()
         itop.find.return_value = []
 
         await repo.find_modified_since("FAQ", None, page=1, page_size=10)

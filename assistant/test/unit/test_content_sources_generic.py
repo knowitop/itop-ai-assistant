@@ -2,8 +2,8 @@
 
 What used to be two nearly identical classes is one, so the behaviour is
 tested once — through tickets, the family with logs and a pre-filter — and the
-FAQ appears where it proves the generality: a second family, a link set of
-organizations, no conversation to index.
+FAQ appears where it proves the generality: a second family, nothing declared
+in code beyond its own fields, no conversation to index.
 """
 
 import unittest
@@ -147,13 +147,6 @@ class TestAclOrgIds(unittest.IsolatedAsyncioTestCase):
         _source, records, _repo = await _swept(TICKETS, _ticket(), acl_org_fields=["org_id"])
 
         self.assertEqual(("org1",), records[0].acl_org_ids)
-
-    async def test_a_link_set_of_organizations_reads_the_same_way_as_one(self):
-        _source, records, _repo = await _swept(
-            FAQ, _article(customer_org_ids=("7", "3")), acl_org_fields=["org_id", "customer_org_ids"]
-        )
-
-        self.assertEqual(("org1", "7", "3"), records[0].acl_org_ids)
 
     async def test_a_field_that_grants_no_access_warns_and_yields_nothing(self):
         # Second line behind the 422 the config save answers with: a name the
@@ -311,9 +304,9 @@ class TestDeclaredFields(unittest.IsolatedAsyncioTestCase):
     into a fragment, able to grant access, and carried into the payload,
     which is the only way its value reaches anyone at all."""
 
-    def _family_with(self, name: str, kind: FieldKind, roles: frozenset[Role] = frozenset()):
+    def _family_with(self, name: str, kind: FieldKind, roles: frozenset[Role] = frozenset(), multi: bool = False):
         """The FAQ family as a deployment that declared one extra field has it."""
-        return FAQ_SCHEMA.extended([FieldSpec(name, kind, None, roles=roles, from_config=True)])
+        return FAQ_SCHEMA.extended([FieldSpec(name, kind, None, multi=multi, roles=roles, from_config=True)])
 
     async def _swept_with(self, schema, values: dict, acl_org_fields: list[str] | None = None):
         get_repo, get_repo_as, repo, _ = _repos()
@@ -347,6 +340,17 @@ class TestDeclaredFields(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(("42",), records[0].acl_org_ids)
         self.assertIn("vendor_id", source.org_fields)
+
+    async def test_a_list_valued_one_grants_access_through_every_value_it_holds(self):
+        # A link set of customer organizations and a single `org_id` mean the
+        # same thing here, and nothing the code declares holds several values.
+        schema = self._family_with("customer_orgs", FieldKind.ID, frozenset({Role.ORGANIZATION}), multi=True)
+
+        _source, records = await self._swept_with(
+            schema, {"org_id": "org1", "customer_orgs": ("7", "3")}, acl_org_fields=["org_id", "customer_orgs"]
+        )
+
+        self.assertEqual(("org1", "7", "3"), records[0].acl_org_ids)
 
     async def test_it_can_feed_a_fragment(self):
         schema = self._family_with("vendor_note", FieldKind.TEXT, frozenset({Role.CONTENT}))

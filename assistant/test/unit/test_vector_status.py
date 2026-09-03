@@ -193,7 +193,7 @@ class TestVectorSources(VectorStatusTestCase):
         by_kind = {f["kind"]: f for f in source["fragments"]}
         self.assertEqual(by_kind["body"], {"kind": "body", "visibility": "public", "optional": False})
         self.assertEqual(by_kind["profile"], {"kind": "profile", "visibility": "public", "optional": False})
-        self.assertEqual(["org_id", "customer_org_ids"], source["org_fields"])
+        self.assertEqual(["org_id"], source["org_fields"])
 
     def test_classes_follow_the_saved_config(self):
         self.client.patch(

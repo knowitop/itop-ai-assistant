@@ -1,10 +1,11 @@
 """List-valued semantic fields: one mapping value, several iTop values.
 
-Most semantic fields name one attribute and hold one value. A few are lists by
-nature — the organizations an FAQ article is published to arrive as an n-n link
-set — and those are declared as such in the family schema (`FieldSpec.multi`,
-`domain/schema.py`). The **declaration** is what says a field is a list; the
-mapping only says where the values come from.
+Most semantic fields name one attribute and hold one value. Some are lists by
+nature — the organizations an article is published to arrive as an n-n link set
+— and those are declared as such (`FieldSpec.multi`, `domain/schema.py`), by
+the family in code or by an administrator adding a field of their own. The
+**declaration** is what says a field is a list; the mapping only says where the
+values come from.
 
 Two forms of mapping value, both plain strings in the same `fields` table as
 every other attribute code:

@@ -25,10 +25,11 @@ logger = logging.getLogger(__name__)
 def org_ids(obj: ObjectView, fields: Sequence[str], *, source: str) -> tuple[str, ...]:
     """The values of `fields` on `obj`, as one tuple.
 
-    A field may hold one value or several: a ticket's `org_id` is a scalar,
-    an article's `customer_org_ids` a link set, and both mean the same thing
-    here. A field this deployment does not map contributes nothing, which is
-    not an error — stock iTop scopes no FAQ article by organization.
+    A field may hold one value or several: `org_id` is a scalar, a declared
+    field mapped onto a link set of customer organizations holds a list, and
+    both mean the same thing here. A field this deployment does not map
+    contributes nothing, which is not an error — stock iTop scopes no FAQ
+    article by organization.
     """
     values: list[str] = []
     for name in fields:
