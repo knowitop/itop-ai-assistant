@@ -103,8 +103,13 @@ class VectorRecord(Generic[T]):
     obj_id: int
     # Current value of the class's relevance attribute (status for tickets) —
     # compared against `vector.families[<family>].classes[<class>].index_values`
-    # by the indexer
-    index_value: str
+    # by the indexer. `None` where the source cannot read it at all (the
+    # family declares no such field, or the deployment does not map it): an
+    # unknown value is not an empty one, and a class configured with
+    # `index_values` it cannot be compared against is refused rather than
+    # swept, which is what keeps a lost mapping from reading as "every object
+    # of this class left the index".
+    index_value: str | None
     updated_at: datetime | None
     created_at: datetime | None
     payload: T

@@ -21,6 +21,11 @@ class TestLeftIndexableScope(unittest.TestCase):
     def test_empty_list_means_index_everything(self):
         self.assertFalse(left_indexable_scope("new", []))
 
+    def test_an_unknown_value_leaves_nothing(self):
+        # A deployment that maps no lifecycle state reads every object the
+        # same way; taking that for "outside the list" empties the class.
+        self.assertFalse(left_indexable_scope(None, ["resolved", "closed"]))
+
 
 class TestClassifyChunk(unittest.TestCase):
     def test_no_stored_digest_is_changed(self):

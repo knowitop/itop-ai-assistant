@@ -541,6 +541,20 @@ class VectorIndexer:
                 report.objects_seen += 1
                 if record.updated_at and (max_seen is None or record.updated_at > max_seen):
                     max_seen = record.updated_at
+                if class_cfg.index_values and record.index_value is None:
+                    # The config says which values keep an object in the index
+                    # and the deployment maps no field to compare against, so
+                    # every object of the class reads as irrelevant and the
+                    # class's whole index would go. Refused before the first
+                    # delete: the pass cannot tell a class that genuinely
+                    # emptied from a mapping that went missing, and only one of
+                    # those is recoverable without re-embedding.
+                    raise ValueError(
+                        f"vector.families.{family}.classes.{obj_class}.index_values is "
+                        f"{class_cfg.index_values}, but this deployment maps no field carrying the "
+                        f"lifecycle state of {obj_class} — map it in the `mappings` section, or clear "
+                        f"index_values to index every object of the class. Nothing was deleted."
+                    )
                 if left_indexable_scope(record.index_value, class_cfg.index_values):
                     # Left the indexable scope (e.g. reopened) — drop its chunks
                     report.chunks_deleted += await store.delete_object(family, obj_class, record.obj_id)
@@ -571,6 +585,23 @@ class VectorIndexer:
                     )
                     continue
                 stored = await store.get_chunk_digests(family, obj_class, record.obj_id)
+                if not chunks and stored:
+                    # An object that is in the index and produced no text at
+                    # all this pass. Left alone rather than emptied, for the
+                    # reason an oversized one is: what the index holds is
+                    # worth more than its freshness, and "produced nothing" is
+                    # a mapping or a chunking plan that stopped resolving far
+                    # more often than it is an article somebody blanked. An
+                    # object that really is gone is deleted by reconciliation,
+                    # which asks iTop instead of guessing.
+                    logger.error(
+                        f"vector sweep: {obj_class}::{record.obj_id} produced no chunks while {len(stored)} "
+                        f"are indexed — keeping them. Check the family's mapping and the fragments "
+                        f"configured for {obj_class}: both read empty for this object"
+                    )
+                    report.objects_skipped += 1
+                    report.warnings.append(f"{obj_class}::{record.obj_id}: no chunks produced, index kept")
+                    continue
                 # Object-level once, chunk-level per chunk — `stored` is read
                 # first because the creation date may have to be inherited
                 # from it (`_creation_date`).
@@ -814,7 +845,11 @@ def _object_metadata(
         key: list(_sorted_unique(value)) if isinstance(value, list) else value
         for key, value in (record.filters or {}).items()
     }
-    filters["status"] = record.index_value
+    if record.index_value is not None:
+        # Absent, not empty, where the deployment maps no lifecycle state: a
+        # payload key that is there says the object holds that value, and "no
+        # such field here" is not a value (`ports/source.py::VectorRecord`).
+        filters["status"] = record.index_value
     return _ObjectMetadata(
         obj_class=obj_class,
         obj_id=record.obj_id,

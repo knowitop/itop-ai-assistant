@@ -49,6 +49,11 @@ class TestReadingByRole(unittest.TestCase):
         self.assertEqual("resolved", view.state_of(Role.LIFECYCLE_STATE))
         self.assertEqual(datetime(2026, 7, 10, tzinfo=UTC), view.moment_of(Role.MODIFIED_AT))
 
+    def test_a_role_no_field_carries_here_is_unknown_not_empty(self):
+        # `""` would be a state the object is in; there is no such state.
+        self.assertIsNone(_ticket().state_of(Role.LIFECYCLE_STATE))
+        self.assertEqual("resolved", _ticket(status="resolved").state_of(Role.LIFECYCLE_STATE))
+
     def test_a_log_keeps_its_entries(self):
         view = _ticket(public_log=[LogEntry(user_login="John Doe", message="Help!")])
 

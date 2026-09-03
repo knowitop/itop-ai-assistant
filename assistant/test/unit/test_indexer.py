@@ -66,7 +66,7 @@ def _flat(calls: list[list]) -> list:
 def _record(
     obj_id: int,
     *,
-    index_value: str = "resolved",
+    index_value: str | None = "resolved",
     description: str = "Broken.",
     updated_at: datetime = _NOW,
     created_at: datetime | None = _NOW - timedelta(days=1),
@@ -533,6 +533,29 @@ class TestSweep(IndexerTestCase):
         self.assertEqual(store.delete_object_calls, [(_FAMILY, "UserRequest", 1)])
         self.assertEqual(report.chunks_deleted, 3)
         self.assertEqual(store.upsert_calls, [])
+
+    async def test_a_relevance_value_nothing_can_read_refuses_the_class(self):
+        # `index_values` configured and no field to compare against: every
+        # object of the class reads the same way, and reading that as "left
+        # the index" is the class's whole index gone in one pass.
+        store = FakeChunkStore()
+        store.digests[(_FAMILY, "UserRequest", 1)] = {("body", 0): ChunkDigest(content_hash="h", meta_hash=None)}
+        report = await self._run(_deps_mock(store=store), FakeTicketSource([_record(1, index_value=None)]))
+
+        self.assertEqual(report.status, "error")
+        self.assertIn("index_values", report.errors[0])
+        self.assertEqual(store.delete_object_calls, [])
+        self.assertEqual(store.delete_chunks_calls, [])
+
+    async def test_an_object_that_produced_no_chunks_keeps_what_is_indexed(self):
+        store = FakeChunkStore()
+        store.digests[(_FAMILY, "UserRequest", 1)] = {("body", 0): ChunkDigest(content_hash="h", meta_hash=None)}
+        report = await self._run(_deps_mock(store=store), FakeTicketSource([_record(1, payload={})]))
+
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(report.objects_skipped, 1)
+        self.assertEqual(store.delete_chunks_calls, [])
+        self.assertEqual(store.delete_object_calls, [])
 
     async def test_empty_index_values_indexes_everything(self):
         cfg = _VECTOR_CFG.model_copy(deep=True)

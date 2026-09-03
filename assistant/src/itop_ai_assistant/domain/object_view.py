@@ -77,12 +77,22 @@ class ObjectView(ObjectIdentifiable):
         value = self._value(name, FieldKind.ENUM)
         return "" if value is None else str(value)
 
-    def state_of(self, role: Role) -> str:
-        """The value of the field carrying a singular role, `""` if the family
-        declares none — how generic code asks for a meaning instead of a name.
+    def state_of(self, role: Role) -> str | None:
+        """The value of the field carrying a singular role — how generic code
+        asks for a meaning instead of a name.
+
+        `None` where the value is not knowable rather than empty: the family
+        declares no such field, or this deployment does not map it. The two
+        answers are worlds apart for a consumer that decides something by the
+        value — "this object is in no state" is a fact about the object, while
+        "this deployment cannot say" is a fact about its mapping, and reading
+        the second as the first is how every object of a class comes out
+        looking irrelevant at once (`vector/use_cases/indexer.py`).
         """
         spec = self.schema.one(role)
-        return self.state(spec.name) if spec else ""
+        if spec is None or spec.name not in self.values:
+            return None
+        return self.state(spec.name)
 
     def moment_of(self, role: Role) -> datetime | None:
         """The same for a timestamp — `None` where the family has no such

@@ -171,7 +171,7 @@ class TestReadingByKind(unittest.TestCase):
 
         view = repo.to_view("FAQ", _RAW_ARTICLE)
 
-        self.assertEqual("", view.state_of(Role.LIFECYCLE_STATE))
+        self.assertIsNone(view.state_of(Role.LIFECYCLE_STATE))
         self.assertIsNone(view.moment_of(Role.MODIFIED_AT))
         self.assertEqual((), view.identifiers("org_id"))
         self.assertEqual("Accounts", view.text("category_name"))

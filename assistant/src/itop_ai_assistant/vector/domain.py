@@ -117,11 +117,18 @@ class DateRange:
             )
 
 
-def left_indexable_scope(index_value: str, index_values: list[str]) -> bool:
+def left_indexable_scope(index_value: str | None, index_values: list[str]) -> bool:
     """True when the object's current relevance value falls outside the
     configured indexable set. An empty `index_values` means "index
-    everything" — there is no scope to leave."""
-    return bool(index_values) and index_value not in index_values
+    everything" — there is no scope to leave.
+
+    An unknown value (`None`, see `ports/source.py::VectorRecord`) leaves
+    nothing: the object may or may not belong in the index, and the only
+    honest answer to "may or may not" is to keep what is already there. The
+    caller refuses such a class outright; this is the same answer said where
+    the rule lives.
+    """
+    return bool(index_values) and index_value is not None and index_value not in index_values
 
 
 class ChunkSyncState(Enum):
