@@ -261,6 +261,39 @@ class TestSetupSections(SetupApiTestCase):
         self.assertEqual({"Incident": {"title": None}}, families["tickets"]["class_overrides"])
         self.assertIsNone(families["faq"]["fields"]["error_code"])
 
+    def test_a_family_is_saved_without_carrying_the_others_along(self):
+        # The form edits one family and sends that one: `families` is a single
+        # field of a single section, so a form sending all of them would write
+        # what nobody edited — and overwrite a family another open form owns.
+        self.client.patch("/api/setup/mappings/families/faq", json={"fields": {"error_code": None}})
+
+        response = self.client.patch(
+            "/api/setup/mappings/families/tickets", json={"class_overrides": {"Incident": {"title": None}}}
+        )
+
+        self.assertEqual(200, response.status_code)
+        families = self.client.get("/api/setup/mappings").json()["values"]["families"]
+        self.assertIsNone(families["faq"]["fields"]["error_code"])
+        self.assertEqual({"Incident": {"title": None}}, families["tickets"]["class_overrides"])
+
+    def test_a_family_is_reset_without_resetting_the_others(self):
+        self.client.patch("/api/setup/mappings/families/faq", json={"fields": {"error_code": None}})
+        self.client.patch("/api/setup/mappings/families/tickets", json={"fields": {"title": "custom_title"}})
+
+        response = self.client.delete("/api/setup/mappings/families/tickets")
+
+        self.assertEqual(204, response.status_code)
+        families = self.client.get("/api/setup/mappings").json()["values"]["families"]
+        self.assertNotIn("title", families["tickets"]["fields"])
+        # Stock Incident has no request_type — the default entry is back, not
+        # an empty one, and faq is untouched by a reset it did not ask for.
+        self.assertEqual({"Incident": {"request_type": None}}, families["tickets"]["class_overrides"])
+        self.assertIsNone(families["faq"]["fields"]["error_code"])
+
+    def test_a_family_nothing_declares_is_404(self):
+        self.assertEqual(404, self.client.patch("/api/setup/mappings/families/nope", json={}).status_code)
+        self.assertEqual(404, self.client.delete("/api/setup/mappings/families/nope").status_code)
+
     def test_a_name_that_is_no_field_of_the_family_is_refused(self):
         response = self.client.patch(
             "/api/setup/mappings", json={"families": {"faq": {"fields": {"no_such_field": "x"}}}}

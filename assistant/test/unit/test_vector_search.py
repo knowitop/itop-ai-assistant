@@ -82,6 +82,9 @@ class _FakeConfigStore:
             return self.embeddings
         raise AssertionError(f"unexpected config section {module!r}")
 
+    def defaults(self, module: str, model: type) -> Any:
+        raise NotImplementedError
+
     async def set(self, module: str, values: dict, model: type) -> Any:
         raise NotImplementedError
 

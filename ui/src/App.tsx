@@ -6,6 +6,7 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { setToken, setUnauthorizedHandler } from './api';
 import Connections from './Connections';
 import Layout from './Layout';
+import Mapping from './Mapping';
 import Modules from './Modules';
 import Prompts from './Prompts';
 import Runs from './Runs';
@@ -38,6 +39,7 @@ export default function App() {
             <Route index element={<Navigate to="/setup" replace />} />
             <Route path="/setup" element={<SetupWizard />} />
             <Route path="/connections" element={<Connections />} />
+            <Route path="/mapping" element={<Mapping />} />
             <Route path="/modules" element={<Modules />} />
             <Route path="/prompts" element={<Prompts />} />
             <Route path="/runs" element={<Runs />} />

@@ -255,6 +255,66 @@ async def get_mapping_vocabulary() -> dict:
     }
 
 
+def _family_or_404(mappings: MappingsConfig, family: str) -> None:
+    """A family is a declaration, so one the path names and nothing declares is
+    a 404 — not a section entry that would sit there configuring nothing."""
+    known = mappings.schemas()
+    if family not in known:
+        raise HTTPException(status_code=404, detail=f"Unknown object family: {family}. Known: {sorted(known)}")
+
+
+@router.patch("/mappings/families/{family}")
+async def update_family_mapping(
+    family: str,
+    body: dict[str, Any],
+    config_store: Annotated[ConfigStore, Depends(get_config_store)],
+) -> dict:
+    """One family's mapping — merged into the section here, not in the browser.
+
+    `families` is a single field of a single section and PATCH merges a body
+    over the current config at the top level, so a body naming one family
+    would take every other back to its defaults. A form sending them all to
+    keep them writes what nobody edited: two mapping forms open on two
+    families would each save the other as it stood when the page loaded.
+    Here the rest come from the config as it stands now.
+    """
+    mappings = await config_store.get("mappings", MappingsConfig)
+    _family_or_404(mappings, family)
+    families = mappings.model_dump()["families"]
+    families[family] = body
+    try:
+        cfg = await config_store.set("mappings", {"families": families}, MappingsConfig)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    logger.info(f"Mapping of family {family!r} updated via admin API")
+    return _masked(cfg)
+
+
+@router.delete("/mappings/families/{family}", status_code=204)
+async def reset_family_mapping(
+    family: str,
+    config_store: Annotated[ConfigStore, Depends(get_config_store)],
+) -> None:
+    """One family back to what the code and env/yaml say, the others untouched.
+
+    A route rather than `DELETE /mappings?fields=families`: that resets whole
+    fields, and `families` is one field over every family — the granularity
+    an administrator resets at is inside it.
+    """
+    mappings = await config_store.get("mappings", MappingsConfig)
+    _family_or_404(mappings, family)
+    families = mappings.model_dump()["families"]
+    default = config_store.defaults("mappings", MappingsConfig).families.get(family)
+    # No default entry means the declaration alone, which is what an absent
+    # key says — the two are not the same thing to store.
+    if default is None:
+        families.pop(family, None)
+    else:
+        families[family] = default.model_dump()
+    await config_store.set("mappings", {"families": families}, MappingsConfig)
+    logger.info(f"Mapping of family {family!r} reset to env defaults via admin API")
+
+
 @router.get("/{section}/schema")
 async def get_section_schema(section: str) -> dict:
     """The section's JSON Schema — the mapping form is built from it.

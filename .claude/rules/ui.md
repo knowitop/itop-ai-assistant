@@ -15,8 +15,8 @@ instinct to reach for a library is exactly what they forbid:
   TanStack Query, no axios, no CSS-in-JS. State is `useState`; HTTP is the single
   fetch wrapper in `api.ts`.
 - **Flat structure**: one file per screen (`SetupWizard.tsx`, `Connections.tsx`,
-  `Modules.tsx`, `Prompts.tsx`, `Runs.tsx`, `Vector.tsx`) plus `api.ts` and
-  `Layout.tsx`. No hook factories, barrel files or clever abstractions.
+  `Mapping.tsx`, `Modules.tsx`, `Prompts.tsx`, `Runs.tsx`, `Vector.tsx`) plus
+  `api.ts` and `Layout.tsx`. No hook factories, barrel files or clever abstractions.
 - **Pin exact versions** in `package.json` (no `^`/`~`), commit the lock file;
   upgrade only when something requires it.
 - The prompt editor is a plain Mantine `Textarea`. CodeMirror only if syntax
@@ -32,11 +32,15 @@ instinct to reach for a library is exactly what they forbid:
   backend applies it (ADR-030), so the request carries `?lang=${i18n.language}`
   and the screen refetches when the language changes. A module's field is never
   translated in `ui/src/locales/*.json` — nothing reads such a key.
-- The data model mapping form (Connections) is generated the same way, from
-  `GET /api/setup/{section}/schema` — the semantic fields of
-  `TicketFieldMap`/`FaqFieldMap` are never listed in TypeScript either. Their
-  names are identifiers on both sides of the row, so they are shown as they
-  are and get no locale keys; only a field's schema `description` is prose.
+- The data model mapping screen (`Mapping.tsx`) is generated the same way, from
+  `GET /api/setup/mappings/fields` and `/mappings/vocabulary` — the semantic
+  fields of `TicketFieldMap`/`FaqFieldMap` are never listed in TypeScript
+  either, and neither are the families: each is a tab of its own, saved and
+  reset through `/api/setup/mappings/families/{family}` — one family per
+  request, the merge with the rest of the section being the server's. Field
+  and family names are identifiers on both sides of the row, and so are the
+  kind and roles the row shows: all of them are displayed as they are and get
+  no locale keys; only a field's schema `description` is prose.
 - Builds into `assistant/src/itop_ai_assistant/ui_dist` — the SPA is part of the
   Python package (ADR-032), which is what lets a `pip install` serve the setup
   wizard. Served by FastAPI at `/ui` (API stays under `/api`). In dev use the
