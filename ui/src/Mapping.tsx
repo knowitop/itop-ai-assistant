@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Alert,
   Badge,
   Button,
@@ -15,8 +16,9 @@ import {
   Text,
   TextInput,
   Title,
+  Tooltip,
 } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 
 import { apiGet, apiSend } from './api';
@@ -155,6 +157,50 @@ function rowsOf(fields: MappingField[], mapping: FamilyMapping | undefined): Map
   return rows;
 }
 
+// Row actions are icons: their labels are as long as the language makes them,
+// and a column wide enough for the longest pair of words in twelve languages
+// is a column taken from the badges next to it. Inline SVG keeps the "minimal
+// dependencies" rule — Tabler's "pencil", "trash" and "rotate" (MIT), drawn
+// like the icons in `Layout.tsx`.
+const RowIcon = (props: { children: ReactNode }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width={16}
+    height={16}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    {props.children}
+  </svg>
+);
+
+const EditIcon = () => (
+  <RowIcon>
+    <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+    <path d="M13.5 6.5l4 4" />
+  </RowIcon>
+);
+
+const RemoveIcon = () => (
+  <RowIcon>
+    <path d="M4 7h16" />
+    <path d="M10 11v6" />
+    <path d="M14 11v6" />
+    <path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" />
+    <path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" />
+  </RowIcon>
+);
+
+const RevertIcon = () => (
+  <RowIcon>
+    <path d="M19.95 11a8 8 0 1 0 -.5 4m.5 5v-5h-5" />
+  </RowIcon>
+);
+
 // One half of a family's fields. Two call sites — what the assistant declares
 // and what this deployment added — so the two halves cannot drift into looking
 // like two different forms. Every row says what the field is (kind, several
@@ -174,106 +220,129 @@ function FieldTable(props: {
     // Fixed geometry, and the same in both tables of a family: a column that
     // takes its width from its content lets one long field name squeeze the
     // input next to it down to unreadable, and lets the two tables line up
-    // differently from each other. The last column carries what can be done
-    // to the row — Edit and Remove for a field added here, the revert for a
-    // declared one moved off its declaration — and is in both to align them.
-    <Table verticalSpacing="xs" layout="fixed">
-      <Table.Thead>
-        <Table.Tr>
-          <Table.Th w="33%">{t('mapping.field')}</Table.Th>
-          <Table.Th w="36%">{t('mapping.attribute')}</Table.Th>
-          <Table.Th w={110}>{t('mapping.absent')}</Table.Th>
-          <Table.Th w={140} />
-        </Table.Tr>
-      </Table.Thead>
-      <Table.Tbody>
-        {rows.map((field) => {
-          const value = values[field.name] ?? { text: '', absent: false };
-          // A field this deployment declared has no declaration to differ
-          // from: it is its own baseline, so nothing about it is a change.
-          const changed = !field.declared && attributeOf(value) !== field.default;
-          return (
-            <Table.Tr key={field.name}>
-              <Table.Td>
-                <code>{field.name}</code>
-                <Group gap={4} mt={4}>
-                  {/* Identifiers of the domain, shown as they are — the same
+    // differently from each other. What is given a width is what has a size
+    // of its own — a switch and a pair of icons — plus the names and badges,
+    // which need the room a translated label would otherwise take. The input
+    // takes what is left, and below `minWidth` the table scrolls rather than
+    // squeezing any of them.
+    <Table.ScrollContainer minWidth={760} type="native">
+      <Table verticalSpacing="xs" layout="fixed">
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th w="38%">{t('mapping.field')}</Table.Th>
+            <Table.Th>{t('mapping.attribute')}</Table.Th>
+            <Table.Th w={110}>{t('mapping.absent')}</Table.Th>
+            <Table.Th w={80} />
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {rows.map((field) => {
+            const value = values[field.name] ?? { text: '', absent: false };
+            // A field this deployment declared has no declaration to differ
+            // from: it is its own baseline, so nothing about it is a change.
+            const changed = !field.declared && attributeOf(value) !== field.default;
+            return (
+              <Table.Tr key={field.name}>
+                <Table.Td>
+                  <code>{field.name}</code>
+                  <Group gap={4} mt={4}>
+                    {/* Identifiers of the domain, shown as they are — the same
                       words the declaration and the vocabulary endpoint use. */}
-                  <Badge size="xs" variant="light" color="gray">
-                    {field.kind}
-                  </Badge>
-                  {field.multi && (
                     <Badge size="xs" variant="light" color="gray">
-                      {t('mapping.multi_short')}
+                      {field.kind}
                     </Badge>
-                  )}
-                  {field.roles.map((role) => (
-                    <Badge key={role} size="xs" variant="light" color="blue">
-                      {role}
-                    </Badge>
-                  ))}
-                </Group>
-                {field.description && (
-                  <Text size="xs" c="dimmed" mt={4}>
-                    {field.description}
-                  </Text>
-                )}
-              </Table.Td>
-              <Table.Td>
-                <TextInput
-                  value={value.text}
-                  disabled={value.absent}
-                  placeholder={field.default ?? ''}
-                  aria-label={`${family}.${field.name}`}
-                  onChange={(e) => props.onChange(field.name, { ...value, text: e.currentTarget.value })}
-                />
-              </Table.Td>
-              <Table.Td>
-                <Switch
-                  checked={value.absent}
-                  aria-label={`${family}.${field.name}: ${t('mapping.absent')}`}
-                  // The switch decides what the row means, not what it holds:
-                  // the text stays where it was, greyed out, and is there
-                  // again the moment the switch goes off.
-                  onChange={(e) => props.onChange(field.name, { ...value, absent: e.currentTarget.checked })}
-                />
-              </Table.Td>
-              <Table.Td>
-                {field.declared ? (
-                  <Group gap="xs" wrap="nowrap">
-                    <Button size="compact-xs" variant="subtle" onClick={() => props.onEdit(field)}>
-                      {t('common.btn_edit')}
-                    </Button>
-                    <Button size="compact-xs" variant="subtle" color="red" onClick={() => props.onRemove(field.name)}>
-                      {t('common.btn_remove')}
-                    </Button>
+                    {field.multi && (
+                      <Badge size="xs" variant="light" color="gray">
+                        {t('mapping.multi_short')}
+                      </Badge>
+                    )}
+                    {field.roles.map((role) => (
+                      <Badge key={role} size="xs" variant="light" color="blue">
+                        {role}
+                      </Badge>
+                    ))}
                   </Group>
-                ) : (
-                  // One control for both halves of the same fact: it is here
-                  // only while the row differs from the declaration, and what
-                  // it does is put the row back. Staged like every other edit
-                  // of the form — the section changes when the family is saved.
-                  changed && (
-                    <Button
-                      size="compact-xs"
-                      variant="subtle"
-                      onClick={() =>
-                        props.onChange(field.name, {
-                          text: field.default ?? '',
-                          absent: field.default === null,
-                        })
-                      }
-                    >
-                      {t('mapping.revert')}
-                    </Button>
-                  )
-                )}
-              </Table.Td>
-            </Table.Tr>
-          );
-        })}
-      </Table.Tbody>
-    </Table>
+                  {field.description && (
+                    <Text size="xs" c="dimmed" mt={4}>
+                      {field.description}
+                    </Text>
+                  )}
+                </Table.Td>
+                <Table.Td>
+                  <TextInput
+                    value={value.text}
+                    disabled={value.absent}
+                    placeholder={field.default ?? ''}
+                    aria-label={`${family}.${field.name}`}
+                    onChange={(e) => props.onChange(field.name, { ...value, text: e.currentTarget.value })}
+                  />
+                </Table.Td>
+                <Table.Td>
+                  <Switch
+                    checked={value.absent}
+                    aria-label={`${family}.${field.name}: ${t('mapping.absent')}`}
+                    // The switch decides what the row means, not what it holds:
+                    // the text stays where it was, greyed out, and is there
+                    // again the moment the switch goes off.
+                    onChange={(e) => props.onChange(field.name, { ...value, absent: e.currentTarget.checked })}
+                  />
+                </Table.Td>
+                <Table.Td>
+                  {field.declared ? (
+                    <Group gap={2} wrap="nowrap">
+                      <Tooltip label={t('common.btn_edit')} withArrow>
+                        <ActionIcon
+                          variant="subtle"
+                          size="sm"
+                          aria-label={`${field.name}: ${t('common.btn_edit')}`}
+                          onClick={() => props.onEdit(field)}
+                        >
+                          <EditIcon />
+                        </ActionIcon>
+                      </Tooltip>
+                      <Tooltip label={t('common.btn_remove')} withArrow>
+                        <ActionIcon
+                          variant="subtle"
+                          color="red"
+                          size="sm"
+                          aria-label={`${field.name}: ${t('common.btn_remove')}`}
+                          onClick={() => props.onRemove(field.name)}
+                        >
+                          <RemoveIcon />
+                        </ActionIcon>
+                      </Tooltip>
+                    </Group>
+                  ) : (
+                    // One control for both halves of the same fact: it is here
+                    // only while the row differs from the declaration, and what
+                    // it does is put the row back. Staged like every other edit
+                    // of the form — the section changes when the family is saved.
+                    changed && (
+                      <Tooltip label={t('mapping.revert')} withArrow>
+                        <ActionIcon
+                          variant="subtle"
+                          color="yellow"
+                          size="sm"
+                          aria-label={`${field.name}: ${t('mapping.revert')}`}
+                          onClick={() =>
+                            props.onChange(field.name, {
+                              text: field.default ?? '',
+                              absent: field.default === null,
+                            })
+                          }
+                        >
+                          <RevertIcon />
+                        </ActionIcon>
+                      </Tooltip>
+                    )
+                  )}
+                </Table.Td>
+              </Table.Tr>
+            );
+          })}
+        </Table.Tbody>
+      </Table>
+    </Table.ScrollContainer>
   );
 }
 
@@ -706,6 +775,7 @@ export default function Mapping() {
             <Group justify="flex-end">
               <Button
                 variant="subtle"
+                color="red"
                 onClick={() => {
                   setDraft(null);
                   setDraftError(null);
