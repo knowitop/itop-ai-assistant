@@ -2,10 +2,12 @@ import {
   Alert,
   Badge,
   Button,
+  Checkbox,
   Divider,
   Group,
   JsonInput,
   Loader,
+  Modal,
   NumberInput,
   PasswordInput,
   SegmentedControl,
@@ -996,27 +998,92 @@ interface MappingField {
   name: string;
   description: string;
   default: string | null;
+  kind: string;
   multi: boolean;
+  roles: string[];
   // True when this deployment declared the field rather than the code.
   declared: boolean;
 }
 
+// GET /setup/mappings/vocabulary — what a field declared here may be, and the
+// rules joining the two halves of that. Kept out of TypeScript for the same
+// reason the fields are: a role added to the domain has to reach the form
+// without an edit here, and a rule copied into it would drift from the one
+// the server enforces.
+interface Vocabulary {
+  kinds: { name: string; declarable: boolean }[];
+  roles: { name: string; requires_kind: string; singular: boolean }[];
+}
+
+// A field this deployment added, as the section stores it. No attribute code:
+// that lives in `fields` beside every other field's, which is the whole of
+// "a field an administrator declares is a field like any other" (ADR-034).
+interface DeclaredSpec {
+  kind: string;
+  multi: boolean;
+  roles: string[];
+  description: string;
+}
+
 // What the form holds for one family: the attribute code per semantic field
-// (null = no such attribute in this datamodel) and the per-class overrides,
-// edited as raw JSON.
+// (null = no such attribute in this datamodel), the fields this deployment
+// declared, and the per-class overrides, still edited as raw JSON.
 interface FamilyMapping {
   fields: Record<string, string | null>;
+  declared: Record<string, DeclaredSpec>;
   overrides: string;
-  // Fields this deployment added to the family, edited as raw JSON: what a
-  // field *is* (kind, roles) is a shape the backend validates, and a form for
-  // it would be a second place to keep that shape in step.
-  declared: string;
 }
 
 interface StoredMapping {
   fields?: Record<string, string | null>;
   class_overrides?: Record<string, Record<string, string | null>>;
-  declared?: Record<string, unknown>;
+  declared?: Record<string, DeclaredSpec>;
+}
+
+// The field the modal is editing. `original` is the name it is stored under,
+// null while it is new — a rename is a delete and an add, so the entry it
+// replaces has to be found again on apply. `source` is its attribute code,
+// asked here so that adding a field is one step rather than "add it, then
+// find your own row in the table", and required: a field of one's own has no
+// default to fall back on, so one naming no attribute reads nothing at all.
+// Unmapping it later is still possible from its row, where it is a deliberate
+// act rather than an unfinished declaration.
+interface FieldDraft {
+  family: string;
+  original: string | null;
+  name: string;
+  spec: DeclaredSpec;
+  source: string;
+}
+
+// A class override may only name a field of the family, so one left behind on
+// a removed field makes the whole section refuse to save. Text that is not
+// valid JSON is returned untouched: the save reports that on its own.
+function withoutField(overrides: string, name: string): string {
+  try {
+    const parsed = JSON.parse(overrides) as Record<string, Record<string, unknown>>;
+    const stripped = Object.entries(parsed).map(([klass, fields]) => [
+      klass,
+      Object.fromEntries(Object.entries(fields).filter(([field]) => field !== name)),
+    ]);
+    return JSON.stringify(Object.fromEntries(stripped), null, 2);
+  } catch {
+    return overrides;
+  }
+}
+
+// The rows of one family: what the backend declares, with what this form has
+// staged on top. A field added here has no declaration of its own until the
+// section is saved and the fields are read again, so until then the form is
+// the one that knows about it.
+function rowsOf(fields: MappingField[], mapping: FamilyMapping | undefined): MappingField[] {
+  const local = mapping?.declared ?? {};
+  const rows = fields.map((field) => (field.name in local ? { ...field, ...local[field.name] } : field));
+  const known = new Set(fields.map((field) => field.name));
+  for (const [name, spec] of Object.entries(local)) {
+    if (!known.has(name)) rows.push({ name, default: null, declared: true, ...spec });
+  }
+  return rows;
 }
 
 // Semantic field → iTop attribute code, one table per object family. One form
@@ -1027,15 +1094,19 @@ interface StoredMapping {
 // translated text.
 function MappingForm() {
   const { t } = useTranslation();
-  const [declared, setDeclared] = useState<Record<string, MappingField[]> | null>(null);
+  const [families, setFamilies] = useState<Record<string, MappingField[]> | null>(null);
+  const [vocab, setVocab] = useState<Vocabulary | null>(null);
   const [mappings, setMappings] = useState<Record<string, FamilyMapping>>({});
+  const [draft, setDraft] = useState<FieldDraft | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
-    const [fields, data] = await Promise.all([
+    const [fields, vocabulary, data] = await Promise.all([
       apiGet<Record<string, MappingField[]>>('/setup/mappings/fields'),
+      apiGet<Vocabulary>('/setup/mappings/vocabulary'),
       apiGet<SectionData>('/setup/mappings'),
     ]);
     if (Object.keys(fields).length === 0) throw new Error('No object families are declared');
@@ -1051,11 +1122,12 @@ function MappingForm() {
       }
       next[family] = {
         fields: row,
+        declared: stored[family]?.declared ?? {},
         overrides: JSON.stringify(stored[family]?.class_overrides ?? {}, null, 2),
-        declared: JSON.stringify(stored[family]?.declared ?? {}, null, 2),
       };
     }
-    setDeclared(fields);
+    setFamilies(fields);
+    setVocab(vocabulary);
     setMappings(next);
   };
 
@@ -1071,9 +1143,113 @@ function MappingForm() {
     }));
   };
 
-  const setPart = (family: string, part: 'overrides' | 'declared', value: string) => {
+  const setOverrides = (family: string, value: string) => {
     setSuccess(null);
-    setMappings((current) => ({ ...current, [family]: { ...current[family], [part]: value } }));
+    setMappings((current) => ({ ...current, [family]: { ...current[family], overrides: value } }));
+  };
+
+  const addField = (family: string) => {
+    setDraftError(null);
+    setDraft({
+      family,
+      original: null,
+      name: '',
+      spec: {
+        kind: vocab?.kinds.find((kind) => kind.declarable)?.name ?? '',
+        multi: false,
+        roles: [],
+        description: '',
+      },
+      source: '',
+    });
+  };
+
+  const editField = (family: string, field: MappingField) => {
+    const code = mappings[family]?.fields[field.name];
+    setDraftError(null);
+    setDraft({
+      family,
+      original: field.name,
+      name: field.name,
+      spec: { kind: field.kind, multi: field.multi, roles: field.roles, description: field.description },
+      source: code ?? '',
+    });
+  };
+
+  const removeField = (family: string, name: string) => {
+    if (!window.confirm(t('connections.mapping_remove_confirm', { name }))) return;
+    setSuccess(null);
+    setMappings((current) => {
+      const mapping = current[family];
+      const declared = { ...mapping.declared };
+      const fields = { ...mapping.fields };
+      delete declared[name];
+      delete fields[name];
+      return { ...current, [family]: { declared, fields, overrides: withoutField(mapping.overrides, name) } };
+    });
+  };
+
+  // What the draft may say it is, given the rest of the family. A kind that
+  // cannot be declared is not offered, a role that kind cannot carry is
+  // disabled with its reason, and so is a role the family already has a field
+  // for — the same three rules the server enforces, shown before the 422.
+  const kinds = (vocab?.kinds ?? []).filter((kind) => kind.declarable);
+  const roles = (vocab?.roles ?? []).filter((role) => kinds.some((kind) => kind.name === role.requires_kind));
+  const roleBlocker = (role: Vocabulary['roles'][number]): string | null => {
+    if (!draft) return null;
+    if (role.requires_kind !== draft.spec.kind) {
+      return t('connections.mapping_role_needs_kind', { kind: role.requires_kind });
+    }
+    if (!role.singular) return null;
+    const carrier = rowsOf(families?.[draft.family] ?? [], mappings[draft.family]).find(
+      (row) => row.name !== draft.original && row.roles.includes(role.name),
+    );
+    return carrier ? t('connections.mapping_role_taken', { field: carrier.name }) : null;
+  };
+
+  const setKind = (kind: string) => {
+    if (!draft) return;
+    // A role states what the value is, so it cannot survive a change of what
+    // the value is read as — the ones that no longer fit go with it.
+    const fits = roles.filter((role) => role.requires_kind === kind).map((role) => role.name);
+    const kept = draft.spec.roles.filter((role) => fits.includes(role));
+    setDraft({ ...draft, spec: { ...draft.spec, kind, roles: kept } });
+  };
+
+  const applyDraft = () => {
+    if (!draft) return;
+    const name = draft.name.trim();
+    if (!name) {
+      setDraftError(t('connections.mapping_name_required'));
+      return;
+    }
+    const rows = rowsOf(families?.[draft.family] ?? [], mappings[draft.family]);
+    if (rows.some((row) => row.name === name && row.name !== draft.original)) {
+      setDraftError(t('connections.mapping_name_taken'));
+      return;
+    }
+    const source = draft.source.trim();
+    if (!source) {
+      setDraftError(t('connections.mapping_attribute_required'));
+      return;
+    }
+    setSuccess(null);
+    setMappings((current) => {
+      const mapping = current[draft.family];
+      const declared = { ...mapping.declared };
+      const fields = { ...mapping.fields };
+      let overrides = mapping.overrides;
+      if (draft.original && draft.original !== name) {
+        delete declared[draft.original];
+        delete fields[draft.original];
+        overrides = withoutField(overrides, draft.original);
+      }
+      declared[name] = { ...draft.spec, description: draft.spec.description.trim() };
+      fields[name] = source;
+      return { ...current, [draft.family]: { declared, fields, overrides } };
+    });
+    setDraft(null);
+    setDraftError(null);
   };
 
   const save = async () => {
@@ -1089,16 +1265,14 @@ function MappingForm() {
         mapped[name] = value === null || value.trim() === '' ? null : value.trim();
       }
       let overrides: unknown;
-      let declared: unknown;
       try {
         overrides = JSON.parse(mapping.overrides);
-        declared = JSON.parse(mapping.declared);
       } catch {
         setError(`${family}: ${t('common.invalid_json')}`);
         setSuccess(null);
         return;
       }
-      payload[family] = { fields: mapped, class_overrides: overrides, declared };
+      payload[family] = { fields: mapped, class_overrides: overrides, declared: mapping.declared };
     }
     setBusy(true);
     setError(null);
@@ -1126,15 +1300,17 @@ function MappingForm() {
     }
   };
 
-  if (!declared) return error ? <Alert color="red">{error}</Alert> : <Loader />;
+  if (!families || !vocab) return error ? <Alert color="red">{error}</Alert> : <Loader />;
+
+  const multiLabel = t('connections.mapping_multi_short');
 
   return (
-    <Stack maw={720}>
+    <Stack maw={780}>
       <Text c="dimmed" size="sm">
         {t('connections.mapping_desc')}
       </Text>
       <StatusAlert error={error} success={success} />
-      {Object.entries(declared).map(([family, fields]) => (
+      {Object.entries(families).map(([family, fields]) => (
         <Stack key={family} gap="xs">
           <Title order={4}>
             <code>{family}</code>
@@ -1145,10 +1321,11 @@ function MappingForm() {
                 <Table.Th>{t('connections.mapping_field')}</Table.Th>
                 <Table.Th>{t('connections.mapping_attribute')}</Table.Th>
                 <Table.Th>{t('connections.mapping_absent')}</Table.Th>
+                <Table.Th />
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {fields.map((field) => (
+              {rowsOf(fields, mappings[family]).map((field) => (
                 <Table.Tr key={field.name}>
                   <Table.Td>
                     <code>{field.name}</code>
@@ -1161,6 +1338,11 @@ function MappingForm() {
                     {field.description && (
                       <Text size="xs" c="dimmed">
                         {field.description}
+                      </Text>
+                    )}
+                    {field.declared && (
+                      <Text size="xs" c="dimmed">
+                        {[field.kind, ...(field.multi ? [multiLabel] : []), ...field.roles].join(' · ')}
                       </Text>
                     )}
                   </Table.Td>
@@ -1185,10 +1367,35 @@ function MappingForm() {
                       }
                     />
                   </Table.Td>
+                  <Table.Td>
+                    {field.declared && (
+                      <Group gap="xs" wrap="nowrap">
+                        <Button size="compact-xs" variant="subtle" onClick={() => editField(family, field)}>
+                          {t('common.btn_edit')}
+                        </Button>
+                        <Button
+                          size="compact-xs"
+                          variant="subtle"
+                          color="red"
+                          onClick={() => removeField(family, field.name)}
+                        >
+                          {t('common.btn_remove')}
+                        </Button>
+                      </Group>
+                    )}
+                  </Table.Td>
                 </Table.Tr>
               ))}
             </Table.Tbody>
           </Table>
+          <Group>
+            <Button size="compact-sm" variant="light" onClick={() => addField(family)}>
+              {t('connections.mapping_add_field')}
+            </Button>
+          </Group>
+          <Text c="dimmed" size="sm">
+            {t('connections.mapping_added_desc')}
+          </Text>
           <Title order={5} mt="xs">
             {t('connections.class_overrides')}
           </Title>
@@ -1198,22 +1405,7 @@ function MappingForm() {
           <JsonInput
             value={mappings[family]?.overrides ?? '{}'}
             aria-label={`${family}: ${t('connections.class_overrides')}`}
-            onChange={(value) => setPart(family, 'overrides', value)}
-            autosize
-            minRows={3}
-            formatOnBlur
-            validationError={t('common.invalid_json')}
-          />
-          <Title order={5} mt="xs">
-            {t('connections.declared_fields')}
-          </Title>
-          <Text c="dimmed" size="sm">
-            <Trans i18nKey="connections.declared_fields_desc" components={{ code: <code /> }} />
-          </Text>
-          <JsonInput
-            value={mappings[family]?.declared ?? '{}'}
-            aria-label={`${family}: ${t('connections.declared_fields')}`}
-            onChange={(value) => setPart(family, 'declared', value)}
+            onChange={(value) => setOverrides(family, value)}
             autosize
             minRows={3}
             formatOnBlur
@@ -1230,6 +1422,97 @@ function MappingForm() {
           {t('common.btn_reset_defaults')}
         </Button>
       </Group>
+      <Modal
+        opened={draft !== null}
+        onClose={() => {
+          setDraft(null);
+          setDraftError(null);
+        }}
+        title={
+          draft?.original
+            ? t('connections.mapping_edit_title', { name: draft.original })
+            : t('connections.mapping_new_title', { family: draft?.family })
+        }
+      >
+        {draft && (
+          <Stack>
+            {draftError && <Alert color="red">{draftError}</Alert>}
+            <TextInput
+              label={t('connections.mapping_name')}
+              description={t('connections.mapping_name_desc')}
+              value={draft.name}
+              onChange={(e) => setDraft({ ...draft, name: e.currentTarget.value })}
+            />
+            <Select
+              label={t('connections.mapping_kind')}
+              data={kinds.map((kind) => ({
+                value: kind.name,
+                label: t(`connections.mapping_kind_${kind.name}`, { defaultValue: kind.name }),
+              }))}
+              value={draft.spec.kind}
+              allowDeselect={false}
+              onChange={(value) => value && setKind(value)}
+            />
+            <Switch
+              label={t('connections.mapping_multi')}
+              description={<Trans i18nKey="connections.mapping_multi_desc" components={{ code: <code /> }} />}
+              checked={draft.spec.multi}
+              onChange={(e) => setDraft({ ...draft, spec: { ...draft.spec, multi: e.currentTarget.checked } })}
+            />
+            <Checkbox.Group
+              label={t('connections.mapping_roles')}
+              description={t('connections.mapping_roles_desc')}
+              value={draft.spec.roles}
+              onChange={(value) => setDraft({ ...draft, spec: { ...draft.spec, roles: value } })}
+            >
+              <Stack gap={4} mt="xs">
+                {roles.map((role) => {
+                  const blocker = roleBlocker(role);
+                  return (
+                    <Checkbox
+                      key={role.name}
+                      value={role.name}
+                      disabled={blocker !== null}
+                      label={
+                        <>
+                          <code>{role.name}</code>{' '}
+                          <Text span size="xs" c="dimmed">
+                            {blocker ?? t(`connections.mapping_role_${role.name}`, { defaultValue: '' })}
+                          </Text>
+                        </>
+                      }
+                    />
+                  );
+                })}
+              </Stack>
+            </Checkbox.Group>
+            <TextInput
+              label={t('connections.mapping_description')}
+              description={t('connections.mapping_description_desc')}
+              value={draft.spec.description}
+              onChange={(e) => setDraft({ ...draft, spec: { ...draft.spec, description: e.currentTarget.value } })}
+            />
+            <TextInput
+              label={t('connections.mapping_attribute')}
+              description={t('connections.mapping_attribute_desc')}
+              value={draft.source}
+              onChange={(e) => setDraft({ ...draft, source: e.currentTarget.value })}
+            />
+            <Group justify="flex-end">
+              <Button
+                variant="subtle"
+                onClick={() => {
+                  setDraft(null);
+                  setDraftError(null);
+                }}
+              >
+                {t('common.btn_cancel')}
+              </Button>
+              <Button onClick={applyDraft}>{t('common.btn_apply')}</Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
     </Stack>
   );
 }

@@ -333,6 +333,18 @@ class TestMappings(unittest.TestCase):
 
         self.assertEqual("vendor_ext_id", mappings.for_family("faq").fields["vendor_id"])
 
+    def test_a_declared_field_naming_no_attribute_is_inert_rather_than_fatal(self):
+        # It has no `source` to fall back on, so it reads nothing — an
+        # unfinished declaration, and refusing it would take every family's
+        # mapping down with it on start (ADR-026).
+        with self.assertLogs("itop_ai_assistant.config", level="WARNING") as logs:
+            mappings = MappingsConfig(
+                families={"faq": MappingConfig(declared={"vendor_id": DeclaredField(kind=FieldKind.ID)})}
+            )
+
+        self.assertIn("vendor_id", "".join(logs.output))
+        self.assertIsNotNone(mappings.schemas()["faq"].spec("vendor_id"))
+
     def test_a_family_nothing_declares_is_inert_rather_than_fatal(self):
         # Refusing would take the whole section down with it on start
         # (ADR-026), and the entry configures nothing either way.

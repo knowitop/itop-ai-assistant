@@ -278,7 +278,24 @@ class TestSetupSections(SetupApiTestCase):
         self.assertEqual("Error code the article is about", by_name["error_code"]["description"])
         self.assertTrue(by_name["customer_org_ids"]["multi"])
         self.assertEqual("title", by_name["title"]["default"])
+        self.assertEqual("id", by_name["customer_org_ids"]["kind"])
+        self.assertEqual(["organization"], by_name["customer_org_ids"]["roles"])
         self.assertIn("caller_name", {field["name"] for field in body["tickets"]})
+
+    def test_the_form_learns_what_a_declaration_may_say_from_the_vocabulary(self):
+        # What is valid comes from here, so the form that builds a declaration
+        # keeps no copy of FieldKind, Role or the rules joining them (ADR-025).
+        body = self.client.get("/api/setup/mappings/vocabulary").json()
+
+        declarable = {kind["name"] for kind in body["kinds"] if kind["declarable"]}
+        self.assertEqual({"text", "id", "enum"}, declarable)
+        roles = {role["name"]: role for role in body["roles"]}
+        self.assertEqual("id", roles["organization"]["requires_kind"])
+        self.assertFalse(roles["organization"]["singular"])
+        self.assertTrue(roles["lifecycle_state"]["singular"])
+        # A timestamp is not declarable, so no declaration can carry this role
+        # — the form works that out from the kind rather than a second list.
+        self.assertEqual("datetime", roles["modified_at"]["requires_kind"])
 
     def test_section_schema_unknown_section_is_404(self):
         self.assertEqual(self.client.get("/api/setup/nope/schema").status_code, 404)

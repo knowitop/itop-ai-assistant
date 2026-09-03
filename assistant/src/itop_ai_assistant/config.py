@@ -24,6 +24,14 @@ _PACKAGE_DIR = Path(__file__).parent  # itop_ai_assistant/ — ships config.yaml
 TConfig = TypeVar("TConfig", bound=BaseModel)
 
 
+#: What a declaration may say a field is. `datetime` and `log` are missing on
+#: purpose: both are read by a mechanism that has to be wired to the field (the
+#: sweep cursor, a chunk fragment), and a second one of either is not something
+#: a declaration can hook up. Published by the setup API so the form offers
+#: exactly these (ADR-025).
+DECLARABLE_KINDS = frozenset({FieldKind.TEXT, FieldKind.ID, FieldKind.ENUM})
+
+
 class DeclaredField(BaseModel):
     """A semantic field an administrator added to a family.
 
@@ -46,8 +54,9 @@ class DeclaredField(BaseModel):
     @field_validator("kind")
     @classmethod
     def readable_by_a_declaration(cls, kind: FieldKind) -> FieldKind:
-        if kind in (FieldKind.DATETIME, FieldKind.LOG):
-            raise ValueError(f"a declared field cannot be a {kind.value!r} — only text, id or enum")
+        if kind not in DECLARABLE_KINDS:
+            allowed = ", ".join(sorted(DECLARABLE_KINDS))
+            raise ValueError(f"a declared field cannot be a {kind.value!r} — only {allowed}")
         return kind
 
 
@@ -128,7 +137,11 @@ class MappingsConfig(BaseModel):
 
         A family nothing declares is kept and warned about rather than
         refused: it configures nothing, and rejecting it would take the whole
-        section down with it on start ([[ADR-026]]).
+        section down with it on start ([[ADR-026]]). A declared field naming
+        no attribute is the same case one level down — an unfinished
+        declaration reads nothing (`repositories/object_repo.py::attributes`)
+        rather than failing, and refusing it would take every family's mapping
+        with it.
         """
         for family, cfg in self.families.items():
             schema = SCHEMAS.get(family)
@@ -140,10 +153,19 @@ class MappingsConfig(BaseModel):
                 raise ValueError(
                     f"mappings.{family}.declared: {taken} — the {family!r} family already has fields by those names"
                 )
+            # A field the code declares falls back on its own `source`; one
+            # declared here has none, so an empty entry in `fields` leaves it
+            # absent from every object read.
+            inert = sorted(name for name in cfg.declared if not cfg.fields.get(name))
+            if inert:
+                logger.warning(
+                    f"mappings.{family}.declared: {inert} name no iTop attribute in "
+                    f"mappings.{family}.fields — they read nothing"
+                )
             extended = schema.extended(cfg.declared_specs())
-            extended.resolve(cfg.fields, by=f"mappings.{family}.fields")
+            extended.check_mapping(cfg.fields, by=f"mappings.{family}.fields")
             for obj_class, overrides in cfg.class_overrides.items():
-                extended.resolve(overrides, by=f"mappings.{family}.class_overrides[{obj_class!r}]")
+                extended.check_mapping(overrides, by=f"mappings.{family}.class_overrides[{obj_class!r}]")
         return self
 
 

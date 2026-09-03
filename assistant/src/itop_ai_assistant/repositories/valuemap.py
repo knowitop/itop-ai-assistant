@@ -27,9 +27,9 @@ import logging
 from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from itop_ai_assistant.domain.schema import LINKSET_SEPARATOR as _LINKSET
 
-_LINKSET = ":"
+logger = logging.getLogger(__name__)
 
 
 def read_lists(

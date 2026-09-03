@@ -26,7 +26,7 @@ until a deployment maps it.
 """
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -106,6 +106,28 @@ _SINGULAR_ROLES = frozenset({Role.MODIFIED_AT, Role.CREATED_AT, Role.LIFECYCLE_S
 #: Kinds for which "several values" means nothing: a case log is already a
 #: sequence, and a link set of timestamps is not something iTop expresses.
 _SINGLE_VALUED_KINDS = frozenset({FieldKind.DATETIME, FieldKind.LOG})
+
+#: What separates the two halves of a list-valued field's mapping —
+#: `customers_list:customer_id`, an n-n link set and the attribute of a link
+#: that carries the id. Read in `repositories/valuemap.py`; declared here
+#: because whether a mapping may take that form is a fact about the field.
+LINKSET_SEPARATOR = ":"
+
+
+def kind_for(role: Role) -> FieldKind:
+    """The kind a field must have to carry `role`."""
+    return _ROLE_KIND[role]
+
+
+def is_singular(role: Role) -> bool:
+    """Whether a family may have at most one field carrying `role`.
+
+    Both this and `kind_for` exist so that a form building a declaration can
+    tell what is valid without keeping its own copy of the rules
+    ([[ADR-025-ui-hints-travel-in-the-schema]]) — the tables stay private, the
+    questions they answer do not.
+    """
+    return role in _SINGULAR_ROLES
 
 
 @dataclass(frozen=True)
@@ -227,6 +249,26 @@ class Schema:
                 continue
             extra.append(spec)
         return self if not extra else Schema(name=self.name, fields=(*self.fields, *extra))
+
+    def check_mapping(self, mapped: Mapping[str, str | None], *, by: str) -> None:
+        """`mapped` — a deployment's attribute code per field — checked to be
+        something this family can actually read.
+
+        Two ways it can be wrong, and iTop reports neither until the first
+        read of the class: a name no field of the family answers to, and the
+        `<link set>:<id attribute>` form on a field that holds one value.
+        Nothing splits the second one — the halves are told apart by the
+        field's own `multi`, not by the colon — so it reaches `output_fields`
+        whole and iTop refuses the read of every object of that class.
+        """
+        self.resolve(mapped, by=by)
+        for name, code in mapped.items():
+            spec = self._by_name[name]
+            if code and LINKSET_SEPARATOR in code and not spec.multi:
+                raise ValueError(
+                    f"{by}: {name!r} holds one value, so {code!r} is not a mapping it can read — "
+                    f"the '<link set>{LINKSET_SEPARATOR}<id attribute>' form needs a list-valued field"
+                )
 
     def resolve(self, names: Iterable[str], *, by: str) -> tuple[str, ...]:
         """`names`, checked to be fields of this family.

@@ -63,6 +63,18 @@ class TestSchema(unittest.TestCase):
         self.assertEqual(frozenset({"customer_org_ids"}), FAQ_SCHEMA.multi_names())
         self.assertEqual(frozenset(), TICKET_SCHEMA.multi_names())
 
+    def test_a_link_set_mapping_needs_a_field_that_holds_several_values(self):
+        # Nothing splits the two halves on the colon — the field's own `multi`
+        # is what tells them apart — so on a single-valued field the whole
+        # string reaches `output_fields` and iTop refuses the read.
+        FAQ_SCHEMA.check_mapping({"customer_org_ids": "customers_list:customer_id"}, by="a deployment")
+
+        with self.assertRaises(ValueError) as raised:
+            FAQ_SCHEMA.check_mapping({"org_id": "customers_list:customer_id"}, by="a deployment")
+
+        self.assertIn("a deployment", str(raised.exception))
+        self.assertIn("org_id", str(raised.exception))
+
     def test_resolve_names_who_asked_for_an_unknown_field(self):
         with self.assertRaises(ValueError) as raised:
             TICKET_SCHEMA.resolve(("title", "no_such_field"), by="a caller")

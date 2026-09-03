@@ -20,6 +20,7 @@ from pydantic import BaseModel, ValidationError
 from redis.exceptions import RedisError
 
 from itop_ai_assistant.config import (
+    DECLARABLE_KINDS,
     EmbeddingsConfig,
     ItopConfig,
     LlmConfig,
@@ -33,6 +34,7 @@ from itop_ai_assistant.content_sources.registry import declared_org_fields
 from itop_ai_assistant.core.api_deps import get_config_store, get_install
 from itop_ai_assistant.core.deps import AppDeps, create_llm
 from itop_ai_assistant.core.llm_providers import PROVIDERS, get_provider
+from itop_ai_assistant.domain.schema import FieldKind, Role, is_singular, kind_for
 from itop_ai_assistant.itop.connection import create_itop_client
 from itop_ai_assistant.itop.provisioning import provision_itop
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
@@ -220,12 +222,36 @@ async def get_mapping_fields(config_store: Annotated[ConfigStore, Depends(get_co
                 "name": spec.name,
                 "description": spec.description,
                 "default": spec.source,
+                "kind": spec.kind.value,
                 "multi": spec.multi,
+                "roles": sorted(role.value for role in spec.roles),
                 "declared": spec.from_config,
             }
             for spec in schema.fields
         ]
         for name, schema in mappings.schemas().items()
+    }
+
+
+@router.get("/mappings/vocabulary")
+async def get_mapping_vocabulary() -> dict:
+    """What a field an administrator declares may be: the kinds, the roles, and
+    the rules tying the two together.
+
+    The form that builds a declaration must not keep its own copy of those
+    rules, or the two drift the moment a role is added (ADR-025) — so what is
+    *valid* comes from here, and only the words shown next to each identifier
+    are the SPA's. A role whose kind is not declarable (a timestamp) is
+    published all the same: it is a fact about the family's own fields, and the
+    form derives from `requires_kind` that no declaration can carry it.
+
+    Declared before `/{section}`, which would otherwise swallow the path.
+    """
+    return {
+        "kinds": [{"name": kind.value, "declarable": kind in DECLARABLE_KINDS} for kind in FieldKind],
+        "roles": [
+            {"name": role.value, "requires_kind": kind_for(role).value, "singular": is_singular(role)} for role in Role
+        ],
     }
 
 
