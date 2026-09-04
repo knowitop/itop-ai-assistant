@@ -12,6 +12,16 @@ from datetime import datetime
 from enum import Enum, auto
 
 
+def format_obj_key(obj_class: str, obj_id: int) -> str:
+    """`Class::Id` — iTop's own convention (`domain/identity.py`'s
+    `ObjectIdentity.__str__`, and the key iTop's REST/JSON API itself uses,
+    e.g. `"UserRequest::123"`). `ChunkMetadata.obj_key` and `search()`'s
+    `exclude` filter (`adapters/qdrant_store.py`) both format the same pair
+    through this function rather than inlining it twice.
+    """
+    return f"{obj_class}::{obj_id}"
+
+
 @dataclass(frozen=True)
 class ChunkMetadata:
     """Everything a chunk's payload carries — no vector.
@@ -62,7 +72,7 @@ class ChunkMetadata:
         allocates it in the root table, so all `Ticket` subclasses share one
         numbering, while `KnowledgeBaseArticle` and friends have their own.
         """
-        return f"{self.obj_class}:{self.obj_id}"
+        return format_obj_key(self.obj_class, self.obj_id)
 
     @property
     def meta_hash(self) -> str:
