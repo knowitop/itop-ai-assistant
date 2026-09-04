@@ -94,7 +94,11 @@ _ID_NAMESPACE = uuid.UUID("6f0f5f8e-6a1d-5c2b-9a3e-0c1d2e3f4a5b")
 # `fields.*` key waits for a real filtering scenario (ADR-005). A source opts
 # its own generic keys (e.g. `status`, `org_id`) into indexing by declaring
 # them in `VectorSource.indexed_filter_keys`, passed here as `filter_keys`.
-_KEYWORD_FIELDS = ("obj_class", "chunk_kind", "visibility", "obj_key")
+# `acl_org_ids` is a system key like the rest and not a `fields.*` one — the
+# "no value means unrestricted" rule of the org pre-filter is its alone
+# (ADR-003, ADR-033), and a KEYWORD index over an array is built per element,
+# so a point listing several organizations matches on any of them.
+_KEYWORD_FIELDS = ("obj_class", "chunk_kind", "visibility", "obj_key", "acl_org_ids")
 
 
 class QdrantNotConfigured(RuntimeError):
@@ -567,6 +571,7 @@ class QdrantChunkStore(ChunkStore):
         visibilities: list[str],
         chunk_kinds: list[str] | None = None,
         filters: dict[str, list[str]] | None = None,
+        org_ids: list[str] | None = None,
         exclude: tuple[str, int] | None = None,
         created: DateRange | None = None,
         updated: DateRange | None = None,
@@ -614,6 +619,24 @@ class QdrantChunkStore(ChunkStore):
                     f'search filter {key!r} got an empty value list — omit the key for "unrestricted", not []'
                 )
             must.append(models.FieldCondition(key=f"fields.{key}", match=models.MatchAny(any=values)))
+        if org_ids is not None:
+            if not org_ids:
+                raise ValueError('search org_ids got an empty list — omit the argument for "no pre-filter", not []')
+            # `MatchAny` over an array payload is intersection: the point
+            # passes if any of its organizations is one of these. `IsEmpty`
+            # is the other half of ADR-033 — an object that named none is
+            # passed through to `confirm_visible`, which is the only party
+            # that can answer for it. It matches both an empty array and an
+            # absent key, so points written before this key existed keep
+            # working, as do the scalar values they hold under it.
+            must.append(
+                models.Filter(
+                    should=[
+                        models.FieldCondition(key="acl_org_ids", match=models.MatchAny(any=org_ids)),
+                        models.IsEmptyCondition(is_empty=models.PayloadField(key="acl_org_ids")),
+                    ]
+                )
+            )
         if created is not None:
             must.append(_date_condition("created_at", created))
         if updated is not None:
@@ -787,6 +810,12 @@ def _payload(chunk: ChunkMetadata) -> dict:
     # the same name (D6, TASK-008). Not indexed automatically — a source opts
     # specific keys in via `indexed_filter_keys` (see `_KEYWORD_FIELDS`, ADR-005).
     payload["fields"] = chunk.filters or {}
+    # Written even when empty, unlike `updated_at`: `IsEmpty` reads an empty
+    # array and an absent key the same way, so the pre-filter behaves
+    # identically either way — an explicit `[]` is what tells "this source
+    # claimed no ACL" apart from "this point predates the key" when a dump is
+    # being read by a person.
+    payload["acl_org_ids"] = list(chunk.acl_org_ids)
     return payload
 
 

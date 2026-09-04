@@ -17,6 +17,7 @@ from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.core.tracing import NullRunTracer
+from itop_ai_assistant.domain.families import SCHEMAS
 from itop_ai_assistant.itop.write_policy import WritePolicy
 from itop_ai_assistant.itop_client import Itop
 from itop_ai_assistant.main import app
@@ -80,8 +81,8 @@ def _make_deps(redis, **settings_overrides) -> AppDeps:
     itop = MagicMock()
     vector_store = QdrantChunkStore(None)
 
-    def vector_sources(cfg):
-        return build_vector_sources(itop, cfg)
+    async def vector_sources(cfg):
+        return build_vector_sources(itop, cfg, SCHEMAS)
 
     counters = DailyCounters(redis)
     install = InstallIdentity(redis)
@@ -244,39 +245,109 @@ class TestSetupSections(SetupApiTestCase):
         response = self.client.delete("/api/setup/vector?fields=nope")
         self.assertEqual(response.status_code, 422)
 
-    def test_ticket_mapping_is_editable(self):
+    def test_every_family_is_mapped_in_one_section(self):
         response = self.client.patch(
-            "/api/setup/ticket_mapping", json={"class_overrides": {"Incident": {"title": None}}}
+            "/api/setup/mappings",
+            json={
+                "families": {
+                    "tickets": {"class_overrides": {"Incident": {"title": None}}},
+                    "faq": {"fields": {"error_code": None}},
+                }
+            },
         )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["values"]["class_overrides"], {"Incident": {"title": None}})
+        self.assertEqual(200, response.status_code)
+        families = self.client.get("/api/setup/mappings").json()["values"]["families"]
+        self.assertEqual({"Incident": {"title": None}}, families["tickets"]["class_overrides"])
+        self.assertIsNone(families["faq"]["fields"]["error_code"])
 
-    def test_section_schema_describes_the_mapping_fields(self):
-        # The mapping form is built from this: no list of semantic fields lives in the SPA.
-        body = self.client.get("/api/setup/faq_mapping/schema").json()
+    def test_a_family_is_saved_without_carrying_the_others_along(self):
+        # The form edits one family and sends that one: `families` is a single
+        # field of a single section, so a form sending all of them would write
+        # what nobody edited — and overwrite a family another open form owns.
+        self.client.patch("/api/setup/mappings/families/faq", json={"fields": {"error_code": None}})
 
-        fields = body["$defs"]["FaqFieldMap"]["properties"]
-        self.assertIn("error_code", fields)
-        self.assertIn("FaqFieldMap", body["properties"]["fields"]["$ref"])
+        response = self.client.patch(
+            "/api/setup/mappings/families/tickets", json={"class_overrides": {"Incident": {"title": None}}}
+        )
+
+        self.assertEqual(200, response.status_code)
+        families = self.client.get("/api/setup/mappings").json()["values"]["families"]
+        self.assertIsNone(families["faq"]["fields"]["error_code"])
+        self.assertEqual({"Incident": {"title": None}}, families["tickets"]["class_overrides"])
+
+    def test_a_family_is_reset_without_resetting_the_others(self):
+        self.client.patch("/api/setup/mappings/families/faq", json={"fields": {"error_code": None}})
+        self.client.patch("/api/setup/mappings/families/tickets", json={"fields": {"title": "custom_title"}})
+
+        response = self.client.delete("/api/setup/mappings/families/tickets")
+
+        self.assertEqual(204, response.status_code)
+        families = self.client.get("/api/setup/mappings").json()["values"]["families"]
+        self.assertNotIn("title", families["tickets"]["fields"])
+        # Stock Incident has no request_type — the default entry is back, not
+        # an empty one, and faq is untouched by a reset it did not ask for.
+        self.assertEqual({"Incident": {"request_type": None}}, families["tickets"]["class_overrides"])
+        self.assertIsNone(families["faq"]["fields"]["error_code"])
+
+    def test_a_family_nothing_declares_is_404(self):
+        self.assertEqual(404, self.client.patch("/api/setup/mappings/families/nope", json={}).status_code)
+        self.assertEqual(404, self.client.delete("/api/setup/mappings/families/nope").status_code)
+
+    def test_a_name_that_is_no_field_of_the_family_is_refused(self):
+        response = self.client.patch(
+            "/api/setup/mappings", json={"families": {"faq": {"fields": {"no_such_field": "x"}}}}
+        )
+
+        self.assertEqual(422, response.status_code)
+
+    def test_the_mapping_form_gets_its_rows_from_the_declarations(self):
+        # No list of semantic fields lives in the SPA (ADR-025); the section's
+        # own JSON Schema describes a dictionary, so the rows come from here.
+        body = self.client.get("/api/setup/mappings/fields").json()
+
+        by_name = {field["name"]: field for field in body["faq"]}
+        self.assertIn("error_code", by_name)
+        self.assertEqual("Error code the article is about", by_name["error_code"]["description"])
+        self.assertEqual("title", by_name["title"]["default"])
+        self.assertEqual("id", by_name["org_id"]["kind"])
+        self.assertEqual(["organization"], by_name["org_id"]["roles"])
+        self.assertFalse(by_name["org_id"]["multi"])
+        self.assertFalse(by_name["org_id"]["declared"])
+        self.assertIn("caller_name", {field["name"] for field in body["tickets"]})
+
+    def test_a_field_the_administrator_added_gets_a_row_like_any_other(self):
+        self.client.patch(
+            "/api/setup/mappings/families/faq",
+            json={
+                "fields": {"customer_orgs": "customers_list:customer_id"},
+                "declared": {"customer_orgs": {"kind": "id", "multi": True, "roles": ["organization"]}},
+            },
+        )
+
+        by_name = {field["name"]: field for field in self.client.get("/api/setup/mappings/fields").json()["faq"]}
+
+        self.assertTrue(by_name["customer_orgs"]["declared"])
+        self.assertTrue(by_name["customer_orgs"]["multi"])
+        self.assertIsNone(by_name["customer_orgs"]["default"])
+
+    def test_the_form_learns_what_a_declaration_may_say_from_the_vocabulary(self):
+        # What is valid comes from here, so the form that builds a declaration
+        # keeps no copy of FieldKind, Role or the rules joining them (ADR-025).
+        body = self.client.get("/api/setup/mappings/vocabulary").json()
+
+        declarable = {kind["name"] for kind in body["kinds"] if kind["declarable"]}
+        self.assertEqual({"text", "id", "enum"}, declarable)
+        roles = {role["name"]: role for role in body["roles"]}
+        self.assertEqual("id", roles["organization"]["requires_kind"])
+        self.assertFalse(roles["organization"]["singular"])
+        self.assertTrue(roles["lifecycle_state"]["singular"])
+        # A timestamp is not declarable, so no declaration can carry this role
+        # — the form works that out from the kind rather than a second list.
+        self.assertEqual("datetime", roles["modified_at"]["requires_kind"])
 
     def test_section_schema_unknown_section_is_404(self):
         self.assertEqual(self.client.get("/api/setup/nope/schema").status_code, 404)
-
-    def test_faq_mapping_unmaps_an_attribute_the_datamodel_lacks(self):
-        # The form sends `fields` whole, which is what a section-level merge
-        # requires: a body of one key would reset the rest to model defaults.
-        response = self.client.patch(
-            "/api/setup/faq_mapping",
-            json={"fields": {"title": "name", "error_code": None, "key_words": "key_words"}},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        values = self.client.get("/api/setup/faq_mapping").json()["values"]
-        self.assertIsNone(values["fields"]["error_code"])
-        self.assertEqual(values["fields"]["title"], "name")
-        # Omitted from the body, so back to the model default rather than kept
-        self.assertEqual(values["fields"]["summary"], "summary")
 
     def test_embeddings_section_masks_api_key(self):
         self.client.patch("/api/setup/embeddings", json={"base_url": "http://emb/v1", "api_key": "sk-emb"})
@@ -320,6 +391,36 @@ class TestSetupSections(SetupApiTestCase):
         self.assertEqual(saved["chunks"]["body"], {"fields": ["description"], "enabled": True})
         # No secrets in this section
         self.assertEqual(response.json()["secrets"], {})
+
+    def test_acl_org_fields_the_source_does_not_declare_are_rejected(self):
+        # A name nothing resolves would not fail the sweep: the object's ACL
+        # comes out empty, an empty ACL is passed by the pre-filter, and the
+        # class silently stops being pre-filtered. The save is where it can
+        # still be named.
+        families = {"tickets": {"classes": {"UserRequest": {"acl_org_fields": ["orgid"]}}}}
+
+        response = self.client.patch("/api/setup/vector", json={"families": families})
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("org_id", response.json()["detail"])
+
+    def test_acl_org_fields_the_source_declares_are_accepted(self):
+        families = {"faq": {"classes": {"FAQ": {"acl_org_fields": ["org_id"]}}}}
+
+        response = self.client.patch("/api/setup/vector", json={"families": families})
+
+        self.assertEqual(response.status_code, 200)
+        saved = response.json()["values"]["families"]["faq"]["classes"]["FAQ"]
+        self.assertEqual(["org_id"], saved["acl_org_fields"])
+
+    def test_a_family_no_source_is_registered_for_is_not_checked(self):
+        # The same tolerance the sweep gives it: nothing indexes the family,
+        # so nothing reads its ACL either.
+        families = {"kb_articles": {"classes": {"KB": {"acl_org_fields": ["whatever"]}}}}
+
+        response = self.client.patch("/api/setup/vector", json={"families": families})
+
+        self.assertEqual(response.status_code, 200)
 
     def test_vector_families_list_rejected(self):
         # families is a dict keyed by family name, not a plain list — must 422

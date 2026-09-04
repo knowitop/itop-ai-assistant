@@ -1,9 +1,10 @@
 """Semantic ticket model, decoupled from iTop attribute names.
 
-Raw iTop attributes are translated into this model by
-`repositories/ticket.py::TicketRepository` according to the `ticket_mapping`
-config section — customer datamodel customizations are handled there, never in
-processing code.
+Built over an `ObjectView` by `repositories/ticket.py::to_ticket`: what the
+fields are and how they read is `domain/tickets_schema.py`, where the values
+come from is the `mappings` config section, and neither is decided here.
+This class exists because `intake` reads these names as identifiers and wants
+mypy to check them — a family no module reads by name needs no such class.
 """
 
 from datetime import datetime
@@ -11,11 +12,9 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from itop_ai_assistant.domain.identity import ObjectIdentifiable, ObjectIdentity
+from itop_ai_assistant.domain.object_view import LogEntry
 
-
-class LogEntry(BaseModel):
-    user_login: str
-    message: str
+__all__ = ["LogEntry", "Ticket"]
 
 
 class Ticket(BaseModel, ObjectIdentifiable):

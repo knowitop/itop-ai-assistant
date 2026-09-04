@@ -10,6 +10,7 @@ import { BuildInfo, fetchHealth, fetchSetupStatus, fetchVersion, Health, REPO_UR
 const NAV = [
   { to: '/setup', key: 'nav.setup' },
   { to: '/connections', key: 'nav.connections' },
+  { to: '/mapping', key: 'nav.mapping' },
   { to: '/modules', key: 'nav.modules' },
   { to: '/prompts', key: 'nav.prompts' },
   { to: '/runs', key: 'nav.runs' },

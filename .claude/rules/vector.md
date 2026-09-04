@@ -54,8 +54,9 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   their last consumer outside `vector/` and it no longer needs them by name.
   `test_package_layers.py::TestOnlyTheContractIsImportedFromOutside` checks
   the (now single) allowlist. `build_vector_sources` itself is called from
-  inside `assembly.py`, imported directly from `content_sources.registry` —
-  `core/deps.py` does not import `content_sources.registry` at all any more.
+  inside `assembly.py::build()`, imported there rather than at module level
+  (see the cycle below) — `core/deps.py` does not import
+  `content_sources.registry` at all any more.
 - **Its own config section, not `config.py`'s** (TASK-036, rule 6.3).
   `VectorConfig`/`FamilyConfig`/`VectorClassConfig`/`ChunkFragmentConfig` live
   in `vector/config.py`. Only `VectorConfig`/`FamilyConfig` are re-exported by
@@ -152,27 +153,47 @@ Mechanics (sweep, cursors, the renewed lock, reconciliation, fingerprints):
   are swept. `get_reconcile` stays, as what `/status` displays.
 - **Neither `SimilarSearch` nor `VectorIndexer` imports
   `content_sources.registry` any more (TASK-034)** — `assembly.py::build()` is
-  the only caller of `build_vector_sources()` left in the process (TASK-037;
+  the only caller of `build_vector_sources()` left in the process, and imports
+  it *inside* `build()`: `content_sources/` declares its families against this
+  facade, so a module-level import here is a cycle at import time and nothing
+  by the first call. That one deferral is what lets every module in
+  `content_sources/` import the facade plainly (TASK-037/TASK-077;
   `core/deps.py` was the caller before, from TASK-035 to TASK-037, and does
   not import `content_sources.registry` at all any more). Both take a
   `VectorConfig -> Sequence[...]` builder instead: `SimilarSearch`'s
   constructor parameter `build_sources`, `VectorIndexer`'s via its
-  `vector_sources` constructor parameter, called as `vector_sources(cfg)`
+  `vector_sources` constructor parameter, called as `await vector_sources(cfg)`
   (a plain parameter, not a protocol member, since TASK-039).
-  The builder is called fresh on every `find()`/`sweep_once()`, never
-  memoized, which is what keeps a family added or removed from the saved
-  config live without a restart (TASK-021) — a list collected once at start
-  would have broken that guarantee silently. `vector/router.py`'s `/status`
+  The builder is **async** and is called fresh on every
+  `find()`/`sweep_once()`, never memoized: it re-reads the `vector` section —
+  which keeps a family added or removed from the saved config live without a
+  restart (TASK-021), where a list collected once at start would have broken
+  that guarantee silently — and the `mappings` one, which is what says what
+  fields a family has in this deployment (TASK-077, ADR-034). `vector/router.py`'s `/status`
   and `/sources` get the same list through a `Depends` provider that reads
   `request.app.state.vector.vector_sources`, the same way it reaches every
   other member of the assembled subsystem
   (`test_package_layers.py::TestSourcesAreInjectedNotBuilt`).
 - **The R4 org pre-filter is the caller's, deliberately.** Layer 1
-  (`AccessRepository.allowed_org_ids()` → `filters["org_id"]`) shapes the walk
-  before it starts, is over-permissive by design (ADR-003) and means knowing
-  what an organization is; only `vector/router.py`'s debug `/search` builds it
-  today. Forgetting it costs recall, not confidentiality — that guarantee is
-  layer 2's, and layer 2 is the one inside the contract.
+  (`AccessRepository.allowed_org_ids()` → `SearchQuery.org_ids`) shapes the
+  walk before it starts, is over-permissive by design (ADR-003) and means
+  knowing what an organization is; only `vector/router.py`'s debug `/search`
+  builds it today. Forgetting it costs recall, not confidentiality — that
+  guarantee is layer 2's, and layer 2 is the one inside the contract.
+  **It is a named parameter, not a key in `filters`** (ADR-033, TASK-076):
+  an object may be reachable through several organizations (an n-n link set
+  on a KB article, the working organization of a ticket), so the condition is
+  an intersection — `should=[MatchAny(any=org_ids), IsEmpty(key="acl_org_ids")]`
+  over the root payload key `acl_org_ids` — and an object that named **no**
+  organization passes it. That empty-means-unrestricted rule belongs to this
+  key alone (an object with no `service_id` is not "any service"), which is
+  exactly why it cannot live in the generic bag. Which semantic fields grant
+  access is configuration: the source declares candidates
+  (`VectorSource.org_fields`, as `fields`/`fragments` in ADR-018), the class
+  config picks from them (`VectorClassConfig.acl_org_fields`), the content
+  source unions them into `VectorRecord.acl_org_ids`, and the indexer
+  normalizes the order — a name the source does not declare is a 422 when the
+  section is saved, and generic `filters` values may be a list too.
 - The whole vector unit test suite (`test/unit/test_qdrant_*.py` and friends)
   is collected by default — it runs against Qdrant's `:memory:` mode, no
   Docker needed.

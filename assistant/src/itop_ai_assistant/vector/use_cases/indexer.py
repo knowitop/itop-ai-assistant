@@ -45,7 +45,7 @@ snapshot on every tick, so enabling the feature at runtime needs no restart.
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -76,6 +76,11 @@ _RECONCILE_BATCH = 200
 # `warnings` is per-object, so a pass over a large class can produce one entry
 # per record; `errors` is per class and per family and bounds itself.
 _MAX_WARNINGS = 20
+# Above this share of indexed objects declaring no organization, a class that
+# configured `acl_org_fields` is warned about. An empty ACL is passed by the
+# pre-filter (ADR-003 layer 1, TASK-076), so a mis-mapped attribute switches
+# the pre-filter off instead of hiding objects — silently, without this.
+_ACL_EMPTY_WARN_SHARE = 0.9
 
 
 @dataclass
@@ -88,6 +93,11 @@ class SweepReport:
     chunks_embedded: int = 0
     chunks_metadata_updated: int = 0
     chunks_deleted: int = 0
+    # Per class, how many indexed objects declared no access organization —
+    # the observability the pre-filter's "empty means unrestricted" rule is
+    # paid for with. A class with no `acl_org_fields` counts here too: that
+    # is what its number is supposed to be.
+    acl_empty: dict[str, int] = field(default_factory=dict)
     errors: list[str] = field(default_factory=list)
     # Not errors: the pass did what it should and the object is the problem.
     # Only `errors` decides `status` and gates reconciliation, so a skipped
@@ -137,7 +147,7 @@ SWEEP_TASK = "vector-sweep"
 def register_vector_sweep(
     tasks: PeriodicTasks,
     config_store: ConfigStore,
-    vector_sources: Callable[[VectorConfig], Sequence[VectorSource[Any]]],
+    vector_sources: Callable[[VectorConfig], Awaitable[Sequence[VectorSource[Any]]]],
     vector_store: ChunkStore,
     vector_sync: VectorSyncState,
     vector_journal: IndexJournal,
@@ -188,7 +198,7 @@ class VectorIndexer:
     def __init__(
         self,
         config_store: ConfigStore,
-        vector_sources: Callable[[VectorConfig], Sequence[VectorSource[Any]]],
+        vector_sources: Callable[[VectorConfig], Awaitable[Sequence[VectorSource[Any]]]],
         vector_store: ChunkStore,
         vector_sync: VectorSyncState,
         vector_journal: IndexJournal,
@@ -344,7 +354,7 @@ class VectorIndexer:
                 # Drops the pending-reindex flag along with the cursors — an
                 # attempt that fails earlier leaves the request standing
                 await self._vector_sync.reset_cursors()
-            sources = self._sources if self._sources is not None else self._vector_sources(cfg)
+            sources = self._sources if self._sources is not None else await self._vector_sources(cfg)
             # A source may be prepared once here and again by reconcile below,
             # in the same pass — `prepared` keeps that to one call per source.
             prepared: set[int] = set()
@@ -519,6 +529,8 @@ class VectorIndexer:
             # and switch a sparse version on as if it were complete.
             since = None
         max_seen = cursor
+        acl_seen = 0
+        acl_empty = 0
         page = 1
         while True:
             records = await source.find_modified_since(obj_class, since, page=page, page_size=cfg.sweep_page_size)
@@ -529,6 +541,20 @@ class VectorIndexer:
                 report.objects_seen += 1
                 if record.updated_at and (max_seen is None or record.updated_at > max_seen):
                     max_seen = record.updated_at
+                if class_cfg.index_values and record.index_value is None:
+                    # The config says which values keep an object in the index
+                    # and the deployment maps no field to compare against, so
+                    # every object of the class reads as irrelevant and the
+                    # class's whole index would go. Refused before the first
+                    # delete: the pass cannot tell a class that genuinely
+                    # emptied from a mapping that went missing, and only one of
+                    # those is recoverable without re-embedding.
+                    raise ValueError(
+                        f"vector.families.{family}.classes.{obj_class}.index_values is "
+                        f"{class_cfg.index_values}, but this deployment maps no field carrying the "
+                        f"lifecycle state of {obj_class} — map it in the `mappings` section, or clear "
+                        f"index_values to index every object of the class. Nothing was deleted."
+                    )
                 if left_indexable_scope(record.index_value, class_cfg.index_values):
                     # Left the indexable scope (e.g. reopened) — drop its chunks
                     report.chunks_deleted += await store.delete_object(family, obj_class, record.obj_id)
@@ -559,10 +585,30 @@ class VectorIndexer:
                     )
                     continue
                 stored = await store.get_chunk_digests(family, obj_class, record.obj_id)
+                if not chunks and stored:
+                    # An object that is in the index and produced no text at
+                    # all this pass. Left alone rather than emptied, for the
+                    # reason an oversized one is: what the index holds is
+                    # worth more than its freshness, and "produced nothing" is
+                    # a mapping or a chunking plan that stopped resolving far
+                    # more often than it is an article somebody blanked. An
+                    # object that really is gone is deleted by reconciliation,
+                    # which asks iTop instead of guessing.
+                    logger.error(
+                        f"vector sweep: {obj_class}::{record.obj_id} produced no chunks while {len(stored)} "
+                        f"are indexed — keeping them. Check the family's mapping and the fragments "
+                        f"configured for {obj_class}: both read empty for this object"
+                    )
+                    report.objects_skipped += 1
+                    report.warnings.append(f"{obj_class}::{record.obj_id}: no chunks produced, index kept")
+                    continue
                 # Object-level once, chunk-level per chunk — `stored` is read
                 # first because the creation date may have to be inherited
                 # from it (`_creation_date`).
                 object_meta = _object_metadata(obj_class, record, stored, started_at)
+                acl_seen += 1
+                if not object_meta.acl_org_ids:
+                    acl_empty += 1
                 # A chunk lands in exactly one bucket: content changed wins over
                 # metadata-only, since upsert_chunks rewrites the whole payload
                 # anyway (including a fresh meta_hash).
@@ -618,6 +664,20 @@ class VectorIndexer:
                 break
             page += 1
             await asyncio.sleep(cfg.sweep_throttle_seconds)
+
+        if acl_empty:
+            report.acl_empty[obj_class] = report.acl_empty.get(obj_class, 0) + acl_empty
+        if class_cfg.acl_org_fields and acl_seen and acl_empty / acl_seen >= _ACL_EMPTY_WARN_SHARE:
+            # A warning, not an error: the objects are indexed and searchable,
+            # and what a searcher may see is still decided under their own
+            # token. What is lost is the pre-filter — candidates spent on
+            # objects it should have cut.
+            note = (
+                f"{obj_class}: {acl_empty} of {acl_seen} objects carry no organization in "
+                f"{class_cfg.acl_org_fields} — the org pre-filter for this class is effectively off"
+            )
+            logger.warning(f"vector sweep: {note}")
+            report.warnings.append(note)
 
         if max_seen is not None and max_seen != cursor and meta.is_active:
             await self._vector_sync.set_cursor(obj_class, max_seen)
@@ -747,7 +807,8 @@ class _ObjectMetadata:
 
     obj_class: str
     obj_id: int
-    filters: dict[str, str]
+    filters: dict[str, str | list[str]]
+    acl_org_ids: tuple[str, ...]
     created_at: datetime
     updated_at: datetime | None
 
@@ -761,6 +822,7 @@ class _ObjectMetadata:
             content_hash=chunk.content_hash,
             created_at=self.created_at,
             filters=self.filters,
+            acl_org_ids=self.acl_org_ids,
             # No fallback, unlike `created_at`: a source without a
             # modification date opts out of the `updated` window, which is the
             # honest answer — there is nothing to freeze, since the field is
@@ -769,20 +831,34 @@ class _ObjectMetadata:
         )
 
 
+def _sorted_unique(values: Iterable[str]) -> tuple[str, ...]:
+    return tuple(sorted(set(values)))
+
+
 def _object_metadata(
     obj_class: str,
     record: VectorRecord[Any],
     stored: dict[tuple[str, int], ChunkDigest],
     started_at: datetime,
 ) -> _ObjectMetadata:
-    filters = dict(record.filters or {})
-    filters["status"] = record.index_value
-    if record.org_id is not None:
-        filters["org_id"] = record.org_id
+    filters: dict[str, str | list[str]] = {
+        key: list(_sorted_unique(value)) if isinstance(value, list) else value
+        for key, value in (record.filters or {}).items()
+    }
+    if record.index_value is not None:
+        # Absent, not empty, where the deployment maps no lifecycle state: a
+        # payload key that is there says the object holds that value, and "no
+        # such field here" is not a value (`ports/source.py::VectorRecord`).
+        filters["status"] = record.index_value
     return _ObjectMetadata(
         obj_class=obj_class,
         obj_id=record.obj_id,
         filters=filters,
+        # Normalized here, not in each source: iTop returns the links of an
+        # n-n relation in no particular order, and an order that moves
+        # between passes would change `meta_hash` and rewrite every payload
+        # for nothing.
+        acl_org_ids=_sorted_unique(record.acl_org_ids),
         created_at=creation_date(
             record.created_at, record.updated_at, (d.created_at for d in stored.values()), started_at
         ),

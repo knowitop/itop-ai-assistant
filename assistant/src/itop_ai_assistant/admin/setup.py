@@ -1,6 +1,6 @@
 """Setup API: runtime connection configuration — backend for the setup wizard.
 
-Connection sections (itop, llm, security, ticket_mapping, faq_mapping) are stored through
+Connection sections (itop, llm, security, mappings) are stored through
 the same ConfigStore as module config (Redis overrides > env defaults), but
 served by dedicated endpoints because secrets need special treatment:
 
@@ -20,19 +20,21 @@ from pydantic import BaseModel, ValidationError
 from redis.exceptions import RedisError
 
 from itop_ai_assistant.config import (
+    DECLARABLE_KINDS,
     EmbeddingsConfig,
-    FaqMappingConfig,
     ItopConfig,
     LlmConfig,
+    MappingsConfig,
     PlatformConfig,
     SecurityConfig,
     TelemetryConfig,
-    TicketMappingConfig,
     missing_setup,
 )
+from itop_ai_assistant.content_sources.registry import declared_org_fields
 from itop_ai_assistant.core.api_deps import get_config_store, get_install
 from itop_ai_assistant.core.deps import AppDeps, create_llm
 from itop_ai_assistant.core.llm_providers import PROVIDERS, get_provider
+from itop_ai_assistant.domain.schema import FieldKind, Role, is_singular, kind_for
 from itop_ai_assistant.itop.connection import create_itop_client
 from itop_ai_assistant.itop.provisioning import provision_itop
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
@@ -54,8 +56,9 @@ SETUP_SECTIONS: dict[str, type[BaseModel]] = {
     "platform": PlatformConfig,
     # Anonymous usage telemetry — one switch, no secrets (REQ-009 R5)
     "telemetry": TelemetryConfig,
-    "ticket_mapping": TicketMappingConfig,
-    "faq_mapping": FaqMappingConfig,
+    # How every object family maps onto the customer's datamodel — one
+    # section, because a family is a declaration and not a class (ADR-034).
+    "mappings": MappingsConfig,
     # Vector store (optional infrastructure — not part of missing_setup)
     "embeddings": EmbeddingsConfig,
     "vector": VectorConfig,
@@ -98,6 +101,43 @@ async def _merged_with_current(
     """
     current = await config_store.get(section, model)
     return {**current.model_dump(), **body}
+
+
+async def _check_names_the_code_owns(config_store: ConfigStore, section: str, values: dict[str, Any]) -> None:
+    """Cross-checks a config model cannot make on its own.
+
+    A section validates its own shape; whether a name in it is a field of the
+    family is another matter, and for `acl_org_fields` it has to be answered
+    here — against the schemas *this deployment* has, so a field an
+    administrator declared grants access exactly like a built-in one. A name no source declares would not fail anything at sweep time —
+    it resolves to no organization, the object's ACL comes out empty, and an
+    empty ACL is *passed* by the pre-filter (ADR-033). The class would simply
+    stop being pre-filtered, and nothing but the sweep's empty-ACL warning
+    would say so.
+
+    A family no source is registered for is skipped rather than refused, the
+    same tolerance the sweep gives it: nothing indexes it, so nothing reads
+    its ACL either.
+    """
+    if section != "vector":
+        return
+    cfg = VectorConfig.model_validate(values)
+    mappings = await config_store.get("mappings", MappingsConfig)
+    declared = declared_org_fields(mappings.schemas())
+    for family, family_cfg in cfg.families.items():
+        known = declared.get(family)
+        if known is None:
+            continue
+        for obj_class, class_cfg in family_cfg.classes.items():
+            unknown = [name for name in class_cfg.acl_org_fields if name not in known]
+            if unknown:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"vector.families.{family}.classes.{obj_class}.acl_org_fields: "
+                        f"{sorted(unknown)} — the {family!r} family has {sorted(known)}"
+                    ),
+                )
 
 
 async def _install_id_or_none(install: InstallIdentity) -> str | None:
@@ -162,6 +202,119 @@ async def llm_providers() -> dict:
     return {"providers": [asdict(provider) for provider in PROVIDERS.values()]}
 
 
+@router.get("/mappings/fields")
+async def get_mapping_fields(config_store: Annotated[ConfigStore, Depends(get_config_store)]) -> dict[str, list[dict]]:
+    """Per family, the semantic fields the mapping form has a row for.
+
+    A vocabulary endpoint rather than the section's JSON Schema: the section
+    holds a dictionary now, so its schema describes the shape and not the
+    fields, and the fields are what the form renders. Descriptions travel with
+    them (ADR-025) — the form carries no list of its own, and a field added to
+    a declaration appears without a UI change.
+
+    The families as this deployment has them, so a field an administrator
+    declared gets a row like any other, marked as theirs.
+    """
+    mappings = await config_store.get("mappings", MappingsConfig)
+    return {
+        name: [
+            {
+                "name": spec.name,
+                "description": spec.description,
+                "default": spec.source,
+                "kind": spec.kind.value,
+                "multi": spec.multi,
+                "roles": sorted(role.value for role in spec.roles),
+                "declared": spec.from_config,
+            }
+            for spec in schema.fields
+        ]
+        for name, schema in mappings.schemas().items()
+    }
+
+
+@router.get("/mappings/vocabulary")
+async def get_mapping_vocabulary() -> dict:
+    """What a field an administrator declares may be: the kinds, the roles, and
+    the rules tying the two together.
+
+    The form that builds a declaration must not keep its own copy of those
+    rules, or the two drift the moment a role is added (ADR-025) — so what is
+    *valid* comes from here, and only the words shown next to each identifier
+    are the SPA's. A role whose kind is not declarable (a timestamp) is
+    published all the same: it is a fact about the family's own fields, and the
+    form derives from `requires_kind` that no declaration can carry it.
+
+    Declared before `/{section}`, which would otherwise swallow the path.
+    """
+    return {
+        "kinds": [{"name": kind.value, "declarable": kind in DECLARABLE_KINDS} for kind in FieldKind],
+        "roles": [
+            {"name": role.value, "requires_kind": kind_for(role).value, "singular": is_singular(role)} for role in Role
+        ],
+    }
+
+
+def _family_or_404(mappings: MappingsConfig, family: str) -> None:
+    """A family is a declaration, so one the path names and nothing declares is
+    a 404 — not a section entry that would sit there configuring nothing."""
+    known = mappings.schemas()
+    if family not in known:
+        raise HTTPException(status_code=404, detail=f"Unknown object family: {family}. Known: {sorted(known)}")
+
+
+@router.patch("/mappings/families/{family}")
+async def update_family_mapping(
+    family: str,
+    body: dict[str, Any],
+    config_store: Annotated[ConfigStore, Depends(get_config_store)],
+) -> dict:
+    """One family's mapping — merged into the section here, not in the browser.
+
+    `families` is a single field of a single section and PATCH merges a body
+    over the current config at the top level, so a body naming one family
+    would take every other back to its defaults. A form sending them all to
+    keep them writes what nobody edited: two mapping forms open on two
+    families would each save the other as it stood when the page loaded.
+    Here the rest come from the config as it stands now.
+    """
+    mappings = await config_store.get("mappings", MappingsConfig)
+    _family_or_404(mappings, family)
+    families = mappings.model_dump()["families"]
+    families[family] = body
+    try:
+        cfg = await config_store.set("mappings", {"families": families}, MappingsConfig)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    logger.info(f"Mapping of family {family!r} updated via admin API")
+    return _masked(cfg)
+
+
+@router.delete("/mappings/families/{family}", status_code=204)
+async def reset_family_mapping(
+    family: str,
+    config_store: Annotated[ConfigStore, Depends(get_config_store)],
+) -> None:
+    """One family back to what the code and env/yaml say, the others untouched.
+
+    A route rather than `DELETE /mappings?fields=families`: that resets whole
+    fields, and `families` is one field over every family — the granularity
+    an administrator resets at is inside it.
+    """
+    mappings = await config_store.get("mappings", MappingsConfig)
+    _family_or_404(mappings, family)
+    families = mappings.model_dump()["families"]
+    default = config_store.defaults("mappings", MappingsConfig).families.get(family)
+    # No default entry means the declaration alone, which is what an absent
+    # key says — the two are not the same thing to store.
+    if default is None:
+        families.pop(family, None)
+    else:
+        families[family] = default.model_dump()
+    await config_store.set("mappings", {"families": families}, MappingsConfig)
+    logger.info(f"Mapping of family {family!r} reset to env defaults via admin API")
+
+
 @router.get("/{section}/schema")
 async def get_section_schema(section: str) -> dict:
     """The section's JSON Schema — the mapping form is built from it.
@@ -217,6 +370,7 @@ async def update_section(
     was_incomplete = bool(await _setup_missing(config_store)) if gates_setup else False
     values = await _merged_with_current(config_store, section, model, body)
     try:
+        await _check_names_the_code_owns(config_store, section, values)
         cfg = await config_store.set(section, values, model)
     except ValidationError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
@@ -250,6 +404,7 @@ async def reset_section(
         unknown = [f for f in fields if f not in model.model_fields]
         if unknown:
             raise HTTPException(status_code=422, detail=f"Unknown fields for section {section!r}: {unknown}")
+
     await config_store.reset(section, fields)
     logger.info(f"Setup section {section!r} reset to env defaults via admin API (fields={fields or 'all'})")
 

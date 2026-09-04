@@ -33,6 +33,7 @@ from unittest.mock import MagicMock
 import itop_ai_assistant
 from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.core.principal import Principal
+from itop_ai_assistant.domain.families import SCHEMAS
 from itop_ai_assistant.vector import VectorConfig
 from itop_ai_assistant.vector.use_cases.search import SimilarSearch
 
@@ -242,7 +243,7 @@ class TestRightsCannotBeForgotten(unittest.TestCase):
         self.assertIs(principal.default, inspect.Parameter.empty)
 
     def test_every_source_confirms_under_a_principal_with_no_default(self) -> None:
-        for source in build_vector_sources(MagicMock(), VectorConfig()):
+        for source in build_vector_sources(MagicMock(), VectorConfig(), SCHEMAS):
             with self.subTest(source=source.name):
                 params = list(inspect.signature(source.confirm_visible).parameters.values())
                 self.assertEqual("principal", params[0].name)

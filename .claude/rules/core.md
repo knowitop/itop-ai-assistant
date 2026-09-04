@@ -81,8 +81,8 @@ service persona" into a single property was the wrong shape (`TASK-038`,
 
 ## A class owns one config section
 
-`ItopConnection` owns `itop`; `ItopRepositories` owns `ticket_mapping` /
-`faq_mapping` and is the only place repositories are listed. Do not move a
+`ItopConnection` owns `itop`; `ItopRepositories` owns `mappings` and is the
+only place repositories are listed. Do not move a
 section to whoever finds it convenient: while one fingerprint covered all three,
 a mapping edit rebuilt the client and closed the pool (TASK-027). A new
 repository is one line in `ItopRepositories._build`, not a second list.

@@ -25,6 +25,8 @@ TConfig = TypeVar("TConfig", bound=BaseModel)
 class ConfigStore(Protocol):
     async def get(self, module: str, model: type[TConfig]) -> TConfig: ...
 
+    def defaults(self, module: str, model: type[TConfig]) -> TConfig: ...
+
     async def set(self, module: str, values: dict, model: type[TConfig]) -> TConfig: ...
 
     async def reset(self, module: str, fields: Sequence[str] | None = None) -> None: ...
@@ -34,7 +36,7 @@ class RedisConfigStore(ConfigStore):
     """Serves module config with Redis overrides on top of settings defaults.
 
     A settings attribute of the same name wins first — that's the
-    infrastructure sections (`itop`, `llm`, `ticket_mapping`, ...), which
+    infrastructure sections (`itop`, `llm`, `mappings`, ...), which
     `Settings` declares directly. Everything else falls back to
     `Settings.module_defaults(module, model)`, which validates
     `settings.module_config[module]` against the model the caller passes in —
@@ -48,14 +50,21 @@ class RedisConfigStore(ConfigStore):
         self._redis = redis
         self._settings = settings
 
-    def _defaults(self, module: str, model: type[TConfig]) -> TConfig:
+    def defaults(self, module: str, model: type[TConfig]) -> TConfig:
+        """The section with no stored overrides at all — env/yaml and the code.
+
+        Public because a reset narrower than a whole field has to rebuild the
+        value it puts back: `reset` drops keys of the stored JSON, and a
+        section holding one dictionary over several owners (`mappings`) has
+        the owners inside that dictionary, not beside it.
+        """
         attr = getattr(self._settings, module, None)
         if isinstance(attr, BaseModel):
             return attr
         return self._settings.module_defaults(module, model)
 
     async def get(self, module: str, model: type[TConfig]) -> TConfig:
-        defaults = self._defaults(module, model)
+        defaults = self.defaults(module, model)
         try:
             raw = await self._redis.get(CONFIG_PREFIX + module)
         except RedisError as e:
@@ -77,7 +86,7 @@ class RedisConfigStore(ConfigStore):
         Raises pydantic.ValidationError on invalid values — the admin API
         surfaces it to the client before anything is written.
         """
-        defaults = self._defaults(module, model)
+        defaults = self.defaults(module, model)
         validated = model(**{**defaults.model_dump(), **values})
         await self._redis.set(CONFIG_PREFIX + module, validated.model_dump_json())
         return validated

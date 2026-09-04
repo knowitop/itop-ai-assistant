@@ -40,7 +40,13 @@ class ChunkMetadata:
     # of its own — see `ports/store.py`'s module docstring and
     # `vector/use_cases/indexer.py`.
     created_at: datetime
-    filters: dict[str, str] | None = None
+    filters: dict[str, str | list[str]] | None = None
+    # Organizations that may see the object (ADR-003 layer 1). Empty means
+    # the source claims no restriction, and the pre-filter lets the object
+    # through — written to the payload as an explicit empty list, so a point
+    # that claims nothing is distinguishable from one indexed before the key
+    # existed.
+    acl_org_ids: tuple[str, ...] = ()
     # Last modification of the source object — the range filter behind "solved
     # within the last year". None when the source has no such date: such an
     # object is then invisible to every `updated` window, which is the honest
@@ -62,6 +68,7 @@ class ChunkMetadata:
     def meta_hash(self) -> str:
         canonical = json.dumps(
             {
+                "acl_org_ids": list(self.acl_org_ids),
                 "created_at": self.created_at.isoformat(),
                 "filters": self.filters,
                 "updated_at": self.updated_at.isoformat() if self.updated_at else None,
@@ -110,11 +117,18 @@ class DateRange:
             )
 
 
-def left_indexable_scope(index_value: str, index_values: list[str]) -> bool:
+def left_indexable_scope(index_value: str | None, index_values: list[str]) -> bool:
     """True when the object's current relevance value falls outside the
     configured indexable set. An empty `index_values` means "index
-    everything" — there is no scope to leave."""
-    return bool(index_values) and index_value not in index_values
+    everything" — there is no scope to leave.
+
+    An unknown value (`None`, see `ports/source.py::VectorRecord`) leaves
+    nothing: the object may or may not belong in the index, and the only
+    honest answer to "may or may not" is to keep what is already there. The
+    caller refuses such a class outright; this is the same answer said where
+    the rule lives.
+    """
+    return bool(index_values) and index_value is not None and index_value not in index_values
 
 
 class ChunkSyncState(Enum):

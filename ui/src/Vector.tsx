@@ -96,6 +96,10 @@ interface SourceInfo {
   name: string;
   classes: string[];
   fields: string[];
+  // Semantic fields that may name an organization giving access to an object
+  // — what a class's acl_org_fields picks from. A name outside this list is
+  // refused by the save (422), so the picker offers exactly these.
+  org_fields: string[];
   fragments: FragmentSpec[];
 }
 
@@ -109,6 +113,10 @@ interface ChunkCfg {
 interface ClassCfg {
   name: string;
   indexValues: string[];
+  // Which semantic fields give access to an object of this class. Empty means
+  // the class declares no restriction and every object of it passes the
+  // organization pre-filter.
+  aclOrgFields: string[];
   chunks: Record<string, ChunkCfg>;
 }
 
@@ -144,6 +152,18 @@ function classProblems(cfg: ClassCfg, source: SourceInfo | null): ClassProblems 
     unknownKinds: Object.keys(cfg.chunks).filter((kind) => !known.has(kind)),
     unknownFields: [...unknownFields],
   };
+}
+
+// The access settings of every class as one comparable value. A changed ACL
+// only reaches already-indexed objects on a full pass, so the form has to
+// notice the change to say so — nothing else in the save does.
+function aclFingerprint(families: FamilyCfg[]): string {
+  const entries: string[] = [];
+  for (const f of families)
+    for (const c of f.classes)
+      if (c.aclOrgFields.length)
+        entries.push(`${f.name}:${c.name}=${[...c.aclOrgFields].sort().join(',')}`);
+  return entries.sort().join(';');
 }
 
 // i18next reads ':' as a namespace separator, and fragment kinds contain one.
@@ -629,6 +649,9 @@ function ClassesSettingsForm() {
   const [sources, setSources] = useState<SourceInfo[]>([]);
   // One pending "new class name" input per family section.
   const [newClassByFamily, setNewClassByFamily] = useState<Record<string, string>>({});
+  // What the saved config says about access per class, as loaded — the
+  // comparison behind the "this needs a full pass" warning below.
+  const [savedAcl, setSavedAcl] = useState('');
 
   const load = async () => {
     const [data, vocab] = await Promise.all([
@@ -641,7 +664,10 @@ function ClassesSettingsForm() {
         string,
         {
           enabled?: boolean;
-          classes?: Record<string, { index_values?: string[]; chunks?: Record<string, ChunkCfg> }>;
+          classes?: Record<
+            string,
+            { index_values?: string[]; acl_org_fields?: string[]; chunks?: Record<string, ChunkCfg> }
+          >;
           sweep_interval_seconds?: number;
           log_entries_per_chunk?: number;
         }
@@ -652,24 +678,25 @@ function ClassesSettingsForm() {
     // registered (a source removed from the code) still shows, flagged by
     // FamilyCard as unknown, so its data is never silently dropped on save.
     const names = [...new Set([...vocab.sources.map((s) => s.name), ...Object.keys(saved)])];
-    setFamilies(
-      names.map((name) => {
-        const f = saved[name] ?? {};
-        return {
-          name,
-          // Absent means the model's default (on), not "switched off" — a
-          // family saved before this setting existed keeps indexing.
-          enabled: f.enabled ?? true,
-          sweepIntervalSeconds: f.sweep_interval_seconds ?? '',
-          logEntriesPerChunk: f.log_entries_per_chunk ?? '',
-          classes: Object.entries(f.classes ?? {}).map(([cname, ccfg]) => ({
-            name: cname,
-            indexValues: ccfg.index_values ?? [],
-            chunks: ccfg.chunks ?? {},
-          })),
-        };
-      }),
-    );
+    const built: FamilyCfg[] = names.map((name) => {
+      const f = saved[name] ?? {};
+      return {
+        name,
+        // Absent means the model's default (on), not "switched off" — a
+        // family saved before this setting existed keeps indexing.
+        enabled: f.enabled ?? true,
+        sweepIntervalSeconds: f.sweep_interval_seconds ?? '',
+        logEntriesPerChunk: f.log_entries_per_chunk ?? '',
+        classes: Object.entries(f.classes ?? {}).map(([cname, ccfg]) => ({
+          name: cname,
+          indexValues: ccfg.index_values ?? [],
+          aclOrgFields: ccfg.acl_org_fields ?? [],
+          chunks: ccfg.chunks ?? {},
+        })),
+      };
+    });
+    setFamilies(built);
+    setSavedAcl(aclFingerprint(built));
     setLoaded(true);
   };
 
@@ -693,7 +720,9 @@ function ClassesSettingsForm() {
     const name = (newClassByFamily[familyName] ?? '').trim();
     if (!name) return;
     updateFamilyClasses(familyName, (classes) =>
-      classes.some((c) => c.name === name) ? classes : [...classes, { name, indexValues: [], chunks: {} }],
+      classes.some((c) => c.name === name)
+        ? classes
+        : [...classes, { name, indexValues: [], aclOrgFields: [], chunks: {} }],
     );
     setNewClassByFamily((prev) => ({ ...prev, [familyName]: '' }));
   };
@@ -717,12 +746,19 @@ function ClassesSettingsForm() {
   const blocked = problemsByFamily.some((probs) =>
     probs.some((p) => p.unknownKinds.length > 0 || p.unknownFields.length > 0),
   );
+  const aclChanged = aclFingerprint(families) !== savedAcl;
 
   const save = async () => {
+    if (aclChanged && !window.confirm(t('vector.acl_changed_confirm'))) return;
     const familiesPayload: Record<string, unknown> = {};
     for (const f of families) {
       const classes: Record<string, unknown> = {};
-      for (const c of f.classes) classes[c.name] = { index_values: c.indexValues, chunks: c.chunks };
+      for (const c of f.classes)
+        classes[c.name] = {
+          index_values: c.indexValues,
+          acl_org_fields: c.aclOrgFields,
+          chunks: c.chunks,
+        };
       // Always sent, unlike the two overrides below: a boolean has no
       // "leave the stored value alone" state to express by omitting it.
       const entry: Record<string, unknown> = { enabled: f.enabled, classes };
@@ -737,8 +773,12 @@ function ClassesSettingsForm() {
       // families is always sent in full — an empty dict is a meaningful value
       // under PATCH-merge (removes every family).
       await apiSend<SectionData>('PATCH', '/setup/vector', { families: familiesPayload });
+      const backfill = aclChanged && window.confirm(t('vector.acl_backfill_offer'));
       await load();
-      setSuccess(t('common.saved'));
+      // After the reload, so the form is showing what was actually saved
+      // before a backfill is requested against it.
+      if (backfill) await apiSend('POST', '/vector/reindex');
+      setSuccess(backfill ? t('vector.reindex_scheduled') : t('common.saved'));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -770,6 +810,11 @@ function ClassesSettingsForm() {
       <Text c="dimmed" size="sm">
         {t('vector.families_explainer')}
       </Text>
+      {aclChanged && (
+        <Alert color="orange" title={t('vector.acl_changed_title')}>
+          {t('vector.acl_changed_warning')}
+        </Alert>
+      )}
       {families.map((f, fi) => (
         <FamilyCard
           key={f.name}
@@ -781,6 +826,7 @@ function ClassesSettingsForm() {
           onAddClass={() => addClass(f.name)}
           onFieldChange={(patch) => updateFamilyField(f.name, patch)}
           onIndexValues={(i, values) => updateClass(f.name, i, { indexValues: values })}
+          onAclOrgFields={(i, values) => updateClass(f.name, i, { aclOrgFields: values })}
           onChunk={(i, kind, entry) => setChunk(f.name, i, kind, entry)}
           onRemoveClass={(i) => removeClass(f.name, i)}
         />
@@ -806,6 +852,7 @@ function FamilyCard({
   onAddClass,
   onFieldChange,
   onIndexValues,
+  onAclOrgFields,
   onChunk,
   onRemoveClass,
 }: {
@@ -817,6 +864,7 @@ function FamilyCard({
   onAddClass: () => void;
   onFieldChange: (patch: Partial<Omit<FamilyCfg, 'name' | 'classes'>>) => void;
   onIndexValues: (classIndex: number, values: string[]) => void;
+  onAclOrgFields: (classIndex: number, values: string[]) => void;
   onChunk: (classIndex: number, kind: string, entry: ChunkCfg | null) => void;
   onRemoveClass: (classIndex: number) => void;
 }) {
@@ -854,6 +902,7 @@ function FamilyCard({
             source={source}
             problems={problems[i]}
             onIndexValues={(values) => onIndexValues(i, values)}
+            onAclOrgFields={(values) => onAclOrgFields(i, values)}
             onChunk={(kind, entry) => onChunk(i, kind, entry)}
             onRemove={() => onRemoveClass(i)}
           />
@@ -879,6 +928,7 @@ function ClassCard({
   source,
   problems,
   onIndexValues,
+  onAclOrgFields,
   onChunk,
   onRemove,
 }: {
@@ -886,6 +936,7 @@ function ClassCard({
   source: SourceInfo | null;
   problems: ClassProblems;
   onIndexValues: (values: string[]) => void;
+  onAclOrgFields: (values: string[]) => void;
   onChunk: (kind: string, entry: ChunkCfg | null) => void;
   onRemove: () => void;
 }) {
@@ -909,6 +960,24 @@ function ClassCard({
           value={cfg.indexValues}
           onChange={onIndexValues}
         />
+        {source && (
+          <MultiSelect
+            label={t('vector.field_acl_org_fields')}
+            description={t('vector.field_acl_org_fields_desc')}
+            // A name the source no longer declares stays visible instead of
+            // vanishing from the picker, the same as a fragment's fields —
+            // the save refuses it (422), which is where it gets explained.
+            data={[...new Set([...source.org_fields, ...cfg.aclOrgFields])].map((field) => ({
+              value: field,
+              label: t(labelKey('field', field), { defaultValue: field }),
+            }))}
+            value={cfg.aclOrgFields}
+            onChange={onAclOrgFields}
+            placeholder={cfg.aclOrgFields.length ? undefined : t('vector.acl_unrestricted')}
+            clearable
+            searchable
+          />
+        )}
         {source &&
           source.fragments.map((fragment) => (
             <FragmentRow

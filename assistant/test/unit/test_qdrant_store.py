@@ -31,6 +31,7 @@ def _meta(
     org_id: str | None = "1",
     visibility="public",
     extra_filters: dict[str, str] | None = {"service_id": "5"},
+    acl_org_ids: tuple[str, ...] = (),
     updated_at: datetime | None = _NOW,
     created_at: datetime = _NOW,
 ) -> ChunkMetadata:
@@ -43,6 +44,7 @@ def _meta(
         content_hash=digest,
         created_at=created_at,
         filters={**(extra_filters or {}), "status": status, **({"org_id": org_id} if org_id else {})},
+        acl_org_ids=acl_org_ids,
         updated_at=updated_at,
     )
 
@@ -58,6 +60,7 @@ def _chunk(
     status="resolved",
     org_id: str | None = "1",
     visibility="public",
+    acl_org_ids: tuple[str, ...] = (),
     updated_at: datetime | None = _NOW,
     created_at: datetime = _NOW,
 ) -> ChunkRecord:
@@ -71,6 +74,7 @@ def _chunk(
             status=status,
             org_id=org_id,
             visibility=visibility,
+            acl_org_ids=acl_org_ids,
             updated_at=updated_at,
             created_at=created_at,
         ),
@@ -274,6 +278,21 @@ class TestVersioning(QdrantStoreCase):
         self.assertIn("fields.status", field_names)
         self.assertIn("fields.org_id", field_names)
 
+    async def test_the_acl_key_is_indexed_like_any_system_key(self):
+        # A system key, not a `fields.*` one: every family gets the index,
+        # whether or not the deployment configured any acl_org_fields.
+        with patch.object(
+            self.store.client, "create_payload_index", wraps=self.store.client.create_payload_index
+        ) as spy:
+            await self.store.ensure_version(_FAMILY, "test-model", 4)
+
+        keyword_fields = {
+            call.kwargs["field_name"]
+            for call in spy.await_args_list
+            if call.kwargs["field_schema"] == models.PayloadSchemaType.KEYWORD
+        }
+        self.assertIn("acl_org_ids", keyword_fields)
+
     async def test_both_dates_are_indexed_as_datetime(self):
         # Same spy trick as above, and for the same reason: `:memory:` Qdrant
         # reports no payload schema back. A range filter would still work
@@ -415,6 +434,21 @@ class TestUpsert(QdrantStoreCase):
         self.assertNotIn("service_id", records[0].payload)
         self.assertNotIn("status", records[0].payload)
         self.assertNotIn("org_id", records[0].payload)
+
+    async def test_the_acl_is_a_root_key_and_is_written_even_when_empty(self):
+        # Root, not under `fields`: the "no value means unrestricted" rule is
+        # this key's alone. Explicit `[]` so a dump distinguishes "claimed
+        # nothing" from "indexed before the key existed".
+        await self.store.upsert_chunks(
+            [_chunk(1, acl_org_ids=("3", "7")), _chunk(2)], family=_FAMILY, model="test-model", dim=4
+        )
+
+        records, _ = await self.store.client.scroll(
+            collection_name=self.store.collection_name(_FAMILY, 1), limit=10, with_payload=True
+        )
+        by_id = {record.payload["obj_id"]: record.payload for record in records}
+        self.assertEqual(["3", "7"], by_id[1]["acl_org_ids"])
+        self.assertEqual([], by_id[2]["acl_org_ids"])
 
 
 class TestDeletion(QdrantStoreCase):
@@ -875,6 +909,63 @@ class TestSearch(QdrantStoreCase):
         hits = await self.store.search([1.0, 0.0, 0.0, 0.0], chunk_kinds=None, **_ALL)
 
         self.assertEqual({hit.obj_id for hit in hits}, {1, 2})
+
+
+class TestOrgPrefilter(QdrantStoreCase):
+    """ADR-003 layer 1 / ADR-033: intersect the object's organizations with
+    the asker's, and pass an object that named none."""
+
+    async def _seed(self) -> None:
+        await self.store.upsert_chunks(
+            [
+                _chunk(1, acl_org_ids=("3", "7")),  # shares one organization
+                _chunk(2, acl_org_ids=("9",)),  # somebody else's
+                _chunk(3),  # claims nothing
+            ],
+            family=_FAMILY,
+            model="test-model",
+            dim=4,
+        )
+
+    async def test_an_object_passes_on_any_shared_organization(self):
+        await self._seed()
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], org_ids=["3", "5"], **_ALL)
+
+        self.assertEqual({1, 3}, {hit.obj_id for hit in hits})
+
+    async def test_an_object_of_another_organization_is_cut(self):
+        await self._seed()
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], org_ids=["9"], **_ALL)
+
+        self.assertEqual({2, 3}, {hit.obj_id for hit in hits})
+
+    async def test_no_prefilter_returns_everything(self):
+        await self._seed()
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], **_ALL)
+
+        self.assertEqual({1, 2, 3}, {hit.obj_id for hit in hits})
+
+    async def test_a_scalar_value_from_an_older_payload_still_matches(self):
+        # A point written before the key held a list: Qdrant matches a scalar
+        # and an array under one condition, so no rebuild is needed to keep
+        # such a point findable.
+        await self.store.upsert_chunks([_chunk(1)], family=_FAMILY, model="test-model", dim=4)
+        await self.store.client.set_payload(
+            collection_name=self.store.collection_name(_FAMILY, 1),
+            payload={"acl_org_ids": "3"},
+            points=models.Filter(must=[models.FieldCondition(key="obj_id", match=models.MatchValue(value=1))]),
+        )
+
+        hits = await self.store.search([1.0, 0.0, 0.0, 0.0], org_ids=["3"], **_ALL)
+
+        self.assertEqual([1], [hit.obj_id for hit in hits])
+
+    async def test_an_empty_list_is_a_caller_error(self):
+        with self.assertRaises(ValueError):
+            await self.store.search([1.0, 0.0, 0.0, 0.0], org_ids=[], **_ALL)
 
 
 class TestMetadataUpdate(QdrantStoreCase):

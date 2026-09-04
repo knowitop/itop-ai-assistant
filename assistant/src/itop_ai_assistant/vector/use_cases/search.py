@@ -42,7 +42,7 @@ ADR-021 for why that is not the same as knowing a consumer's domain.
 """
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Protocol
 
 from itop_ai_assistant.config import EmbeddingsConfig
@@ -130,7 +130,7 @@ class SimilarSearch:
         self,
         store: ChunkStore,
         config: ConfigStore,
-        build_sources: Callable[[VectorConfig], Sequence[CandidateSource]],
+        build_sources: Callable[[VectorConfig], Awaitable[Sequence[CandidateSource]]],
         counters: DailyCounters,
         *,
         sources: Sequence[CandidateSource] | None = None,
@@ -153,13 +153,13 @@ class SimilarSearch:
             return "Embeddings endpoint is not configured"
         return None
 
-    def _sources_by_name(self, vector_cfg: VectorConfig) -> dict[str, CandidateSource]:
+    async def _sources_by_name(self, vector_cfg: VectorConfig) -> dict[str, CandidateSource]:
         """The registered sources, keyed by family. Built fresh on every call
         — a family added to or removed from the saved config has to be live
         without a restart, which a list collected once would break."""
         return {
             source.name: source
-            for source in (self._sources if self._sources is not None else self._build_sources(vector_cfg))
+            for source in (self._sources if self._sources is not None else await self._build_sources(vector_cfg))
         }
 
     async def _family_unavailable(
@@ -235,7 +235,7 @@ class SimilarSearch:
         # a config entry but nothing registered for it is what `find()` answers
         # `UnknownFamily` to, and a gate that skipped the lookup would let the
         # consumer offer a tool whose only outcome is that exception.
-        if family not in self._sources_by_name(vector_cfg):
+        if family not in await self._sources_by_name(vector_cfg):
             return False
         try:
             return await self._family_unavailable(vector_cfg, embeddings_cfg, family) is None
@@ -278,7 +278,7 @@ class SimilarSearch:
         unavailable = self._unavailable(vector_cfg, embeddings_cfg)
         if unavailable is not None:
             raise SearchUnavailable(unavailable)
-        sources = self._sources_by_name(vector_cfg)
+        sources = await self._sources_by_name(vector_cfg)
         source = sources.get(query.family)
         if source is None:
             raise UnknownFamily(query.family, list(sources))
@@ -300,6 +300,7 @@ class SimilarSearch:
                 classes=query.classes,
                 chunk_kinds=query.chunk_kinds,
                 filters=query.filters,
+                org_ids=query.org_ids,
                 visibilities=list(query.visibilities),
                 exclude=query.exclude,
                 created=query.created,

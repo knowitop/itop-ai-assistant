@@ -40,13 +40,20 @@ class VectorClassConfig(BaseModel):
     Every indexed class must expose a last-modification datetime and a
     "relevance" attribute — the VectorSource contract (`vector/ports/source.py`).
     Which attributes those are is the source's concern (tickets map them via
-    `ticket_mapping`); this config holds only the relevance *values*.
+    the `mappings` section); this config holds only the relevance *values*.
     """
 
     # Values of the class's relevance attribute that keep an object in the
     # index (similar-tickets searches want resolved knowledge, not open
     # noise); [] = index every object of the class
     index_values: list[str] = []
+    # Semantic fields of the class's source whose values, taken together, say
+    # which organizations may see the object — the R4 pre-filter of ADR-003
+    # (`acl_org_ids` in the payload). Names come from the source's own
+    # `org_fields` declaration, not from iTop: what an unknown name means is
+    # decided when the config is saved (422), not on the pass. Empty = the
+    # class declares no ACL, and every object of it passes the pre-filter.
+    acl_org_fields: list[str] = []
     # Chunking settings keyed by fragment kind. The keys are not free-form:
     # they must be fragments the class's source declares, and a key it does
     # not know is ignored with a warning at sweep time.
@@ -54,7 +61,7 @@ class VectorClassConfig(BaseModel):
 
 
 _TICKET_CHUNKS = {
-    "profile": ChunkFragmentConfig(fields=["title", "service", "subcategory"]),
+    "profile": ChunkFragmentConfig(fields=["title", "service_name", "subcategory_name"]),
     "body": ChunkFragmentConfig(fields=["description"]),
     "solution": ChunkFragmentConfig(fields=["solution"]),
     # The two log fragments are opt-in and deliberately absent: indexing
@@ -110,7 +117,9 @@ class VectorConfig(BaseModel):
     families: dict[str, FamilyConfig] = {
         "tickets": FamilyConfig(
             classes={
-                "UserRequest": VectorClassConfig(index_values=["resolved", "closed"], chunks=_TICKET_CHUNKS),
+                "UserRequest": VectorClassConfig(
+                    index_values=["resolved", "closed"], acl_org_fields=["org_id"], chunks=_TICKET_CHUNKS
+                ),
             }
         ),
         "faq": FamilyConfig(

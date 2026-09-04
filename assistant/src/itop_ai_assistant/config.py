@@ -1,3 +1,4 @@
+import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, ClassVar, TypeVar
@@ -11,99 +12,161 @@ from pydantic_settings import (
 )
 
 from itop_ai_assistant.core.llm_providers import DEFAULT_PROVIDER, PROVIDERS, get_provider
+from itop_ai_assistant.domain.families import SCHEMAS
+from itop_ai_assistant.domain.faq_schema import FAQ_SCHEMA
+from itop_ai_assistant.domain.schema import FieldKind, FieldSpec, Role, Schema
+from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
+
+logger = logging.getLogger(__name__)
 
 _PACKAGE_DIR = Path(__file__).parent  # itop_ai_assistant/ — ships config.yaml
 
 TConfig = TypeVar("TConfig", bound=BaseModel)
 
 
-class TicketFieldMap(BaseModel):
-    """Semantic ticket field → iTop attribute code. None = attribute absent."""
-
-    ref: str | None = "ref"
-    title: str | None = "title"
-    description: str | None = "description"
-    status: str | None = "status"
-    service_id: str | None = "service_id"
-    subcategory_id: str | None = "servicesubcategory_id"
-    service_name: str | None = Field("service_id_friendlyname", description="Display name of the service, not its id")
-    subcategory_name: str | None = Field(
-        "servicesubcategory_id_friendlyname", description="Display name of the subcategory, not its id"
-    )
-    caller_name: str | None = Field("caller_id_friendlyname", description="Display name of the caller")
-    org_id: str | None = "org_id"
-    request_type: str | None = Field("request_type", description="Service request or incident; absent on some classes")
-    public_log: str | None = Field("public_log", description="Conversation with the caller")
-    private_log: str | None = Field("private_log", description="Notes between engineers")
-    solution: str | None = "solution"
-    last_update: str | None = "last_update"
-    start_date: str | None = "start_date"
+#: What a declaration may say a field is. `datetime` and `log` are missing on
+#: purpose: both are read by a mechanism that has to be wired to the field (the
+#: sweep cursor, a chunk fragment), and a second one of either is not something
+#: a declaration can hook up. Published by the setup API so the form offers
+#: exactly these (ADR-025).
+DECLARABLE_KINDS = frozenset({FieldKind.TEXT, FieldKind.ID, FieldKind.ENUM})
 
 
-class TicketMappingConfig(BaseModel):
-    """How ticket semantics map onto the customer's iTop datamodel."""
+class DeclaredField(BaseModel):
+    """A semantic field an administrator added to a family.
 
-    fields: TicketFieldMap = TicketFieldMap()
-    # Per-class field overrides, e.g. a class without some attribute (None)
-    # or with a renamed one. Merged over `fields` for that class.
-    class_overrides: dict[str, dict[str, str | None]] = {
-        "Incident": {"request_type": None},  # Incident has no request_type in stock iTop
-    }
+    The same thing a `FieldSpec` in code is (ADR-034), minus the attribute
+    code: that lives in `fields` beside every other field's, so there is one
+    table of attribute codes and not two. What such a field is *for* is its
+    roles — an organization that grants access, a piece of what the object is
+    about — and a field with none is carried into the index and nothing else.
 
-    def for_class(self, obj_class: str) -> dict[str, str | None]:
-        resolved = self.fields.model_dump()
-        resolved.update(self.class_overrides.get(obj_class, {}))
-        return resolved
-
-    @model_validator(mode="after")
-    def check_override_fields(self) -> "TicketMappingConfig":
-        known = set(TicketFieldMap.model_fields)
-        for obj_class, overrides in self.class_overrides.items():
-            unknown = overrides.keys() - known
-            if unknown:
-                raise ValueError(
-                    f"ticket_mapping.class_overrides[{obj_class!r}]: unknown fields {sorted(unknown)}, "
-                    f"known: {sorted(known)}"
-                )
-        return self
-
-
-class FaqFieldMap(BaseModel):
-    """Semantic FAQ field → iTop attribute code. None = attribute absent."""
-
-    title: str | None = "title"
-    summary: str | None = Field("summary", description="Short abstract of the article, if the class has one")
-    category_name: str | None = Field("category_name", description="Display name of the FAQ category")
-    error_code: str | None = Field("error_code", description="Error code the article is about")
-    key_words: str | None = Field("key_words", description="Search keywords of the article")
-    description: str | None = "description"  # HTML
-    # FAQ has no lifecycle status in stock iTop — unlike tickets, unmapped by
-    # default; index_values is therefore [] for FAQ (see VectorConfig.classes),
-    # not a list of status values to filter by. Set this if a deployment adds
-    # one (a custom attribute or an extension that does carry a status).
-    status: str | None = None
-    # No org-scoped ACL for FAQ in stock iTop either — unmapped by default,
-    # same reasoning as `status` above. `VectorRecord.org_id`/the `org_id`
-    # pre-filter (ADR-003, R4) simply stay unset for every article until a
-    # deployment maps a real attribute here.
-    org_id: str | None = None
-    # Stock iTop's FAQ class carries no date attribute at all — neither this
-    # nor `start_date` maps to anything by default. `FaqRepository` degrades
-    # to a full scan on every sweep pass when this is unmapped (cheap thanks
-    # to the hash-guard); set it if a deployment's FAQ does track one.
-    last_update: str | None = None
-    start_date: str | None = None
-
-
-class FaqMappingConfig(BaseModel):
-    """How FAQ semantics map onto the customer's iTop datamodel.
-
-    A single class, unlike `TicketMappingConfig` — no `class_overrides`: that
-    mechanism exists for point differences between several classes sharing
-    one mapping, and there is only one class here.
+    No `datetime` and no `log`: both are read by a mechanism that has to be
+    wired to them (the sweep cursor, a chunk fragment), and a second one of
+    either is not something a declaration can hook up.
     """
 
-    fields: FaqFieldMap = FaqFieldMap()
+    kind: FieldKind
+    multi: bool = False
+    roles: list[Role] = []
+    description: str = ""
+
+    @field_validator("kind")
+    @classmethod
+    def readable_by_a_declaration(cls, kind: FieldKind) -> FieldKind:
+        if kind not in DECLARABLE_KINDS:
+            allowed = ", ".join(sorted(DECLARABLE_KINDS))
+            raise ValueError(f"a declared field cannot be a {kind.value!r} — only {allowed}")
+        return kind
+
+
+class MappingConfig(BaseModel):
+    """How one family's semantics map onto the customer's iTop datamodel.
+
+    Only what this deployment changed. The baseline is the family's own
+    declaration (`domain/schema.py::Schema.sources`), so a field added to a
+    schema needs no edit here, and a saved mapping does not go stale by being
+    a copy of the code it was copied from.
+
+    `class_overrides` are point differences between classes sharing one
+    mapping — a class without some attribute (`None`) or with a renamed one,
+    merged over `fields` for that class. Only families with several classes
+    ever need them.
+    """
+
+    fields: dict[str, str | None] = {}
+    class_overrides: dict[str, dict[str, str | None]] = {}
+    #: Fields this deployment added to the family, by name. Their attribute
+    #: codes are in `fields` like everyone else's.
+    declared: dict[str, DeclaredField] = {}
+
+    def declared_specs(self) -> tuple[FieldSpec, ...]:
+        """What this deployment added, as the same declaration the code
+        writes. `source` is None because a declared field has no default —
+        where its value comes from is entirely `fields`."""
+        return tuple(
+            FieldSpec(
+                name=name,
+                kind=field.kind,
+                source=None,
+                multi=field.multi,
+                roles=frozenset(field.roles),
+                description=field.description,
+                from_config=True,
+            )
+            for name, field in self.declared.items()
+        )
+
+
+class MappingsConfig(BaseModel):
+    """The datamodel mapping of every family — runtime-editable section
+    "mappings".
+
+    One section rather than one per family: a family is a declaration now
+    (ADR-034), and a section per family would be the one place a new family
+    still cost a pydantic class, a `SETUP_SECTIONS` entry and a UI form.
+    """
+
+    families: dict[str, MappingConfig] = {
+        # Stock iTop's Incident has no request_type. A default rather than a
+        # fact of the schema: a deployment whose Incident does carry one says
+        # so by overriding this entry, and nothing in the code has to change.
+        TICKET_SCHEMA.name: MappingConfig(class_overrides={"Incident": {"request_type": None}}),
+        FAQ_SCHEMA.name: MappingConfig(),
+    }
+
+    def for_family(self, family: str) -> MappingConfig:
+        """What this deployment says about one family — an empty mapping when
+        it says nothing, which means "the declaration as written"."""
+        return self.families.get(family, MappingConfig())
+
+    def schemas(self) -> dict[str, Schema]:
+        """Every family as this deployment has it: what the code declares plus
+        what the administrator added.
+
+        The one place the two are merged. Everything that reads a field —
+        the repository, the vector source, the admin forms — asks here, so a
+        declared field is a field in exactly the sense a built-in one is.
+        """
+        return {name: schema.extended(self.for_family(name).declared_specs()) for name, schema in SCHEMAS.items()}
+
+    @model_validator(mode="after")
+    def check_field_names(self) -> "MappingsConfig":
+        """Cross-check a section cannot make on its own: whether a name in it
+        is a field of the family it configures.
+
+        A family nothing declares is kept and warned about rather than
+        refused: it configures nothing, and rejecting it would take the whole
+        section down with it on start ([[ADR-026]]). A declared field naming
+        no attribute is the same case one level down — an unfinished
+        declaration reads nothing (`repositories/object_repo.py::attributes`)
+        rather than failing, and refusing it would take every family's mapping
+        with it.
+        """
+        for family, cfg in self.families.items():
+            schema = SCHEMAS.get(family)
+            if schema is None:
+                logger.warning(f"mappings: family {family!r} is not declared anywhere — the section does nothing")
+                continue
+            taken = sorted(name for name in cfg.declared if schema.spec(name) is not None)
+            if taken:
+                raise ValueError(
+                    f"mappings.{family}.declared: {taken} — the {family!r} family already has fields by those names"
+                )
+            # A field the code declares falls back on its own `source`; one
+            # declared here has none, so an empty entry in `fields` leaves it
+            # absent from every object read.
+            inert = sorted(name for name in cfg.declared if not cfg.fields.get(name))
+            if inert:
+                logger.warning(
+                    f"mappings.{family}.declared: {inert} name no iTop attribute in "
+                    f"mappings.{family}.fields — they read nothing"
+                )
+            extended = schema.extended(cfg.declared_specs())
+            extended.check_mapping(cfg.fields, by=f"mappings.{family}.fields")
+            for obj_class, overrides in cfg.class_overrides.items():
+                extended.check_mapping(overrides, by=f"mappings.{family}.class_overrides[{obj_class!r}]")
+        return self
 
 
 class RuntimeSectionConfig(BaseModel):
@@ -415,9 +478,8 @@ class Settings(BaseSettings):
     tracing_endpoint: str = "http://localhost:6006/v1/traces"
     tracing_project_name: str = "itop-ai-assistant"
 
-    # iTop datamodel mapping
-    ticket_mapping: TicketMappingConfig = TicketMappingConfig()
-    faq_mapping: FaqMappingConfig = FaqMappingConfig()
+    # iTop datamodel mapping, one entry per object family
+    mappings: MappingsConfig = MappingsConfig()
 
     # Business modules — config.py does not know their field names, only
     # this raw bucket. A module resolves its own section via

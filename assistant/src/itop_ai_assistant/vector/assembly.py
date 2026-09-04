@@ -26,14 +26,13 @@ because each is genuinely something only the caller can supply:
   concrete class this subsystem otherwise has no reason to know about.
 """
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from redis.asyncio import Redis
 
-from itop_ai_assistant.config import Settings
-from itop_ai_assistant.content_sources.registry import build_vector_sources
+from itop_ai_assistant.config import MappingsConfig, Settings
 from itop_ai_assistant.repositories.sets import ItopRepositories
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.state.counters import DailyCounters
@@ -66,7 +65,7 @@ class VectorSubsystem:
     vector_store: ChunkStore
     vector_sync: VectorSyncState
     vector_journal: IndexJournal
-    vector_sources: Callable[[VectorConfig], Sequence[VectorSource[Any]]]
+    vector_sources: Callable[[VectorConfig], Awaitable[Sequence[VectorSource[Any]]]]
     vector_search: SimilarSearch
 
     async def aclose(self) -> None:
@@ -86,12 +85,23 @@ def build(
     """Assemble the subsystem once, at startup — the composition root's one
     call into `vector/`, mirroring `build_registry(settings)` for modules.
     """
+    # Imported here rather than at module level: `content_sources/` declares
+    # its families against this package's facade, and the facade imports this
+    # module — at import time that is a cycle, by the first call it is not.
+    # The deferral lives here, at the one point where the dependency actually
+    # runs backwards, instead of in every module `content_sources/` has.
+    from itop_ai_assistant.content_sources.registry import build_vector_sources
+
     vector_store = QdrantChunkStore(settings.qdrant_url)
 
     # Re-read `cfg.families` fresh on every call, not collected once here: a
-    # static list would break the live config reload (TASK-021).
-    def vector_sources(cfg: VectorConfig) -> list[VectorSource[Any]]:
-        return build_vector_sources(itop, cfg)
+    # static list would break the live config reload (TASK-021). The mapping
+    # section is read here too, and for the same reason: it is what says which
+    # fields a family has in this deployment, and a field an administrator
+    # adds must reach the sweep and the editor without a restart.
+    async def vector_sources(cfg: VectorConfig) -> list[VectorSource[Any]]:
+        mappings = await config_store.get("mappings", MappingsConfig)
+        return build_vector_sources(itop, cfg, mappings.schemas())
 
     return VectorSubsystem(
         config_store=config_store,

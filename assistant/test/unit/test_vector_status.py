@@ -14,6 +14,7 @@ from itop_ai_assistant.content_sources.registry import build_vector_sources
 from itop_ai_assistant.core.deps import AppDeps
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.core.tracing import NullRunTracer
+from itop_ai_assistant.domain.families import SCHEMAS
 from itop_ai_assistant.itop.write_policy import WritePolicy
 from itop_ai_assistant.main import app
 from itop_ai_assistant.settings.config_store import RedisConfigStore
@@ -104,8 +105,8 @@ def _make_deps(redis, store_url: str | None = None, **settings_overrides) -> App
     itop = MagicMock()
     vector_store = QdrantChunkStore(store_url)
 
-    def vector_sources(cfg):
-        return build_vector_sources(itop, cfg)
+    async def vector_sources(cfg):
+        return build_vector_sources(itop, cfg, SCHEMAS)
 
     counters = DailyCounters(redis)
     install = InstallIdentity(redis)
@@ -176,6 +177,9 @@ class TestVectorSources(VectorStatusTestCase):
         by_kind = {f["kind"]: f for f in source["fragments"]}
         self.assertEqual(by_kind["body"], {"kind": "body", "visibility": "public", "optional": False})
         self.assertEqual(by_kind["log:private"], {"kind": "log:private", "visibility": "internal", "optional": True})
+        # What a class's `acl_org_fields` may name — the choice the editor
+        # offers, and what the config save validates against.
+        self.assertEqual(["org_id"], source["org_fields"])
 
     def test_declares_the_faq_source_vocabulary(self):
         body = self.client.get("/api/vector/sources").json()
@@ -189,6 +193,7 @@ class TestVectorSources(VectorStatusTestCase):
         by_kind = {f["kind"]: f for f in source["fragments"]}
         self.assertEqual(by_kind["body"], {"kind": "body", "visibility": "public", "optional": False})
         self.assertEqual(by_kind["profile"], {"kind": "profile", "visibility": "public", "optional": False})
+        self.assertEqual(["org_id"], source["org_fields"])
 
     def test_classes_follow_the_saved_config(self):
         self.client.patch(
@@ -718,7 +723,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
         self.assertEqual([p.kind for p in source.confirmed_for], ["service"])
         deps.itop.for_principal.assert_not_awaited()
 
-    def test_allowed_org_ids_fill_the_org_filter_by_default(self):
+    def test_allowed_org_ids_become_the_org_prefilter(self):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
@@ -736,9 +741,9 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
                 json={"family": "tickets", "text": "printer", "principal_token": "engineer-token"},
             )
 
-        self.assertEqual(store_search.await_args.kwargs["filters"], {"org_id": ["3", "9"]})
+        self.assertEqual(store_search.await_args.kwargs["org_ids"], ["3", "9"])
 
-    def test_an_explicit_org_filter_is_not_overridden(self):
+    def test_the_body_cannot_stand_in_for_the_org_prefilter(self):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
@@ -761,9 +766,13 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
                 },
             )
 
+        # `org_id` in the body is an ordinary business filter now — it narrows
+        # the walk further and cannot widen the pre-filter, which comes from
+        # the principal's own iTop record and from nowhere else.
         self.assertEqual(store_search.await_args.kwargs["filters"], {"org_id": ["7"]})
+        self.assertEqual(store_search.await_args.kwargs["org_ids"], ["3"])
 
-    def test_unrestricted_principal_adds_no_org_filter(self):
+    def test_unrestricted_principal_adds_no_org_prefilter(self):
         deps = _make_deps(
             self.redis, store_url=":memory:", embeddings_base_url="http://emb/v1", embeddings_model="bge-m3"
         )
@@ -781,7 +790,7 @@ class TestSearchAsPrincipal(VectorStatusTestCase):
                 json={"family": "tickets", "text": "printer", "principal_token": "engineer-token"},
             )
 
-        self.assertIsNone(store_search.await_args.kwargs["filters"])
+        self.assertIsNone(store_search.await_args.kwargs["org_ids"])
         self.assertIsNone(response.json()["allowed_org_ids"])
 
     def test_any_registered_family_supports_principal_token(self):

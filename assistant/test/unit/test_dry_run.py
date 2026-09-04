@@ -28,11 +28,10 @@ from itop_ai_assistant.agents.intake.run import IntakeRun
 from itop_ai_assistant.agents.intake.state import TicketState
 from itop_ai_assistant.config import (
     EmbeddingsConfig,
-    FaqMappingConfig,
     ItopConfig,
     LlmConfig,
+    MappingsConfig,
     PlatformConfig,
-    TicketMappingConfig,
 )
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import Ticket
@@ -75,8 +74,7 @@ class FakeConfigStore:
     def __init__(self, dry_run: bool):
         self.sections: dict = {
             "itop": ItopConfig(url=_ITOP_URL, token="tok"),
-            "ticket_mapping": TicketMappingConfig(),
-            "faq_mapping": FaqMappingConfig(),
+            "mappings": MappingsConfig(),
             "platform": PlatformConfig(dry_run=dry_run),
             MODULE: IntakeConfig(),
             "llm": LlmConfig(base_url="http://llm/v1", model="m"),

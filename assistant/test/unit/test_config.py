@@ -5,14 +5,17 @@ from unittest.mock import patch
 from pydantic import BaseModel, ValidationError
 
 from itop_ai_assistant.config import (
+    DeclaredField,
     EmbeddingsConfig,
     ItopConfig,
     LlmConfig,
+    MappingConfig,
+    MappingsConfig,
     Settings,
-    TicketMappingConfig,
     get_settings,
     missing_setup,
 )
+from itop_ai_assistant.domain.schema import FieldKind, Role
 
 _REQUIRED = {
     "LLM_BASE_URL": "http://localhost/v1",
@@ -267,31 +270,88 @@ class TestLlmSection(unittest.TestCase):
         self.assertFalse(LlmConfig(provider="openai", supports_forced_tool_choice=False).endpoint_forces_tool_choice)
 
 
-class TestTicketMapping(unittest.TestCase):
-    def test_default_mapping(self):
-        mapping = TicketMappingConfig()
-        resolved = mapping.for_class("UserRequest")
-        self.assertEqual(resolved["subcategory_id"], "servicesubcategory_id")
-        self.assertEqual(resolved["service_name"], "service_id_friendlyname")
-        self.assertEqual(resolved["subcategory_name"], "servicesubcategory_id_friendlyname")
-        self.assertEqual(resolved["caller_name"], "caller_id_friendlyname")
-        self.assertEqual(resolved["request_type"], "request_type")
+class TestMappings(unittest.TestCase):
+    """The section holds what a deployment changed; resolving it against the
+    family declaration is the repository's job (`test_object_repository.py`)."""
 
-    def test_incident_override_drops_request_type(self):
-        mapping = TicketMappingConfig()
-        resolved = mapping.for_class("Incident")
-        self.assertIsNone(resolved["request_type"])
-        self.assertEqual(resolved["title"], "title")
+    def test_a_stock_deployment_overrides_nothing_but_the_incident_class(self):
+        mappings = MappingsConfig()
 
-    def test_partial_fields_override_keeps_defaults(self):
-        mapping = TicketMappingConfig(fields={"title": "custom_title"})
-        resolved = mapping.for_class("UserRequest")
-        self.assertEqual(resolved["title"], "custom_title")
-        self.assertEqual(resolved["description"], "description")
+        self.assertEqual({}, mappings.for_family("tickets").fields)
+        self.assertEqual({"Incident": {"request_type": None}}, mappings.for_family("tickets").class_overrides)
 
-    def test_unknown_override_field_raises(self):
+    def test_a_family_the_section_says_nothing_about_maps_as_declared(self):
+        self.assertEqual({}, MappingsConfig(families={}).for_family("faq").fields)
+
+    def test_a_name_that_is_not_a_field_of_the_family_is_refused(self):
         with self.assertRaises(ValidationError):
-            TicketMappingConfig(class_overrides={"Incident": {"no_such_field": None}})
+            MappingsConfig(families={"tickets": MappingConfig(fields={"no_such_field": "x"})})
+        with self.assertRaises(ValidationError):
+            MappingsConfig(families={"tickets": MappingConfig(class_overrides={"Incident": {"nope": None}})})
+
+    def test_a_declared_field_becomes_a_field_of_the_family(self):
+        mappings = MappingsConfig(
+            families={
+                "faq": MappingConfig(
+                    fields={"vendor_id": "vendor_id"},
+                    declared={"vendor_id": DeclaredField(kind=FieldKind.ID, roles=[Role.ORGANIZATION])},
+                )
+            }
+        )
+
+        schema = mappings.schemas()["faq"]
+
+        self.assertTrue(schema.spec("vendor_id").from_config)
+        self.assertIn("vendor_id", schema.names(Role.ORGANIZATION))
+        # The declaration says what the field is; where its value comes from
+        # is `fields`, the same table as every other field's.
+        self.assertIsNone(schema.spec("vendor_id").source)
+
+    def test_a_declared_name_cannot_shadow_one_the_family_already_has(self):
+        with self.assertRaises(ValidationError) as raised:
+            MappingsConfig(families={"faq": MappingConfig(declared={"title": DeclaredField(kind=FieldKind.TEXT)})})
+
+        self.assertIn("already has fields by those names", str(raised.exception))
+
+    def test_a_declaration_cannot_ask_for_a_mechanism_it_cannot_wire_up(self):
+        # A second modification date or a second case log needs a reader, and
+        # a declaration has no way to hook one up.
+        with self.assertRaises(ValidationError):
+            MappingsConfig(
+                families={"faq": MappingConfig(declared={"seen_at": DeclaredField(kind=FieldKind.DATETIME)})}
+            )
+
+    def test_a_declared_field_is_mapped_like_any_other(self):
+        mappings = MappingsConfig(
+            families={
+                "faq": MappingConfig(
+                    fields={"vendor_id": "vendor_ext_id"},
+                    declared={"vendor_id": DeclaredField(kind=FieldKind.ID)},
+                )
+            }
+        )
+
+        self.assertEqual("vendor_ext_id", mappings.for_family("faq").fields["vendor_id"])
+
+    def test_a_declared_field_naming_no_attribute_is_inert_rather_than_fatal(self):
+        # It has no `source` to fall back on, so it reads nothing — an
+        # unfinished declaration, and refusing it would take every family's
+        # mapping down with it on start (ADR-026).
+        with self.assertLogs("itop_ai_assistant.config", level="WARNING") as logs:
+            mappings = MappingsConfig(
+                families={"faq": MappingConfig(declared={"vendor_id": DeclaredField(kind=FieldKind.ID)})}
+            )
+
+        self.assertIn("vendor_id", "".join(logs.output))
+        self.assertIsNotNone(mappings.schemas()["faq"].spec("vendor_id"))
+
+    def test_a_family_nothing_declares_is_inert_rather_than_fatal(self):
+        # Refusing would take the whole section down with it on start
+        # (ADR-026), and the entry configures nothing either way.
+        with self.assertLogs("itop_ai_assistant.config", level="WARNING"):
+            mappings = MappingsConfig(families={"kb_articles": MappingConfig()})
+
+        self.assertIn("kb_articles", mappings.families)
 
 
 class TestGetSettings(unittest.TestCase):

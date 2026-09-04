@@ -14,7 +14,7 @@ datetime (`VectorRecord.updated_at` — drives the sweep cursor) and (b) a
 "relevance" attribute whose current value (`VectorRecord.index_value`) tells
 whether the object belongs in the index. Which attributes those are is the
 source's own mapping concern (for tickets: semantic `status`/`updated_at`
-via `ticket_mapping`); the per-class value lists live in
+via the `mappings` section); the per-class value lists live in
 `vector.families[<family>].classes[<class>].index_values`.
 
 A source also declares its own chunking vocabulary — `fields` and
@@ -40,10 +40,10 @@ from typing import Generic, Protocol, TypeVar
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.vector.chunker import Chunk
 
-# The source's own payload type (e.g. `Ticket`, `FaqArticle`) — carried through
-# `VectorRecord`/`VectorSource` so each source's `chunk()` gets it back typed,
-# with the indexer itself (which only ever sees `VectorSource[Any]`) none the
-# wiser.
+# The source's own payload type — `ObjectView` for both of today's families —
+# carried through `VectorRecord`/`VectorSource` so each source's `chunk()` gets
+# it back typed, with the indexer itself (which only ever sees
+# `VectorSource[Any]`) none the wiser.
 T = TypeVar("T")
 
 
@@ -97,28 +97,38 @@ class VectorRecord(Generic[T]):
 
     `payload` is opaque to the indexer (which only ever handles
     `VectorRecord[Any]`) — whatever the source's own `chunk()` needs to build
-    the object's chunks (e.g. the domain `Ticket`), typed back for it via `T`.
+    the object's chunks (an `ObjectView` today), typed back for it via `T`.
     """
 
     obj_id: int
     # Current value of the class's relevance attribute (status for tickets) —
     # compared against `vector.families[<family>].classes[<class>].index_values`
-    # by the indexer
-    index_value: str
+    # by the indexer. `None` where the source cannot read it at all (the
+    # family declares no such field, or the deployment does not map it): an
+    # unknown value is not an empty one, and a class configured with
+    # `index_values` it cannot be compared against is refused rather than
+    # swept, which is what keeps a lost mapping from reading as "every object
+    # of this class left the index".
+    index_value: str | None
     updated_at: datetime | None
     created_at: datetime | None
     payload: T
-    org_id: str | None = None
-    # Source-defined pre-filter keys stored as-is in the chunk rows' `filters`
-    # column (e.g. {"service_id": "5"} for tickets) — short scalar values
-    # only, see vector/models.py.
-    filters: dict[str, str] | None = None
+    # Which organizations may see this object, as the source's own
+    # `acl_org_fields` resolve for it (ADR-003 layer 1). Empty means the
+    # source claims no restriction — the pre-filter then lets the object
+    # through and `confirm_visible` decides alone, because an index that was
+    # told nothing cannot honestly narrow anything.
+    acl_org_ids: Sequence[str] = ()
+    # Source-defined pre-filter keys stored as-is under the chunk payload's
+    # `fields` key (e.g. {"service_id": "5"} for tickets) — short values, one
+    # or a list of them, never a nested structure.
+    filters: dict[str, str | list[str]] | None = None
 
 
 class VectorSource(Protocol[T]):
     """One pluggable content source the vector indexer can sweep.
 
-    Generic over its own payload type `T` (e.g. `Ticket`, `FaqArticle`) so a
+    Generic over its own payload type `T` (`ObjectView` today) so a
     concrete source's `chunk()` gets `record.payload` back typed, with no
     cast — the indexer itself stores sources as `VectorSource[Any]`, since it
     never touches `payload`.
@@ -132,6 +142,12 @@ class VectorSource(Protocol[T]):
     # Semantic field names an administrator may compose required fragments
     # from — the source's own vocabulary, not iTop attribute names.
     fields: Sequence[str] = ()
+    # Semantic fields that can carry an organization giving access to the
+    # object — the candidates `VectorClassConfig.acl_org_fields` picks from,
+    # declared here for the same reason `fields`/`fragments` are (ADR-018):
+    # the admin UI has to offer a choice, and a name outside this list is a
+    # config error the save can name.
+    org_fields: Sequence[str] = ()
     # Every fragment this source can produce. Served to the admin UI by
     # GET /api/vector/sources.
     fragments: Sequence[FragmentSpec] = ()

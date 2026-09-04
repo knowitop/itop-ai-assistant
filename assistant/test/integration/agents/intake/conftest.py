@@ -30,8 +30,10 @@ from itop_ai_assistant.agents.intake.state import IntakeState
 from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.core.principal import Principal
 from itop_ai_assistant.domain.ticket import Ticket
+from itop_ai_assistant.domain.tickets_schema import TICKET_SCHEMA
 from itop_ai_assistant.itop_client import Itop
 from itop_ai_assistant.repositories.catalog import CatalogRepository
+from itop_ai_assistant.repositories.object_repo import ObjectRepository
 from itop_ai_assistant.repositories.ticket import TicketRepository
 from itop_ai_assistant.settings.prompt_store import read_prompt_dir
 from itop_ai_assistant.state.counters import DailyCounters
@@ -117,7 +119,12 @@ def make_ctx(
         principal=Principal.service(),
         ticket=ticket,
         ticket_repo=TicketRepository(
-            itop, settings.ticket_mapping, DailyCounters(fakeredis.aioredis.FakeRedis(decode_responses=True))
+            ObjectRepository(
+                itop,
+                TICKET_SCHEMA,
+                settings.mappings.for_family(TICKET_SCHEMA.name),
+                DailyCounters(fakeredis.aioredis.FakeRedis(decode_responses=True)),
+            )
         ),
         catalog_repo=CatalogRepository(itop),
         state_manager=IntakeState(state_manager),

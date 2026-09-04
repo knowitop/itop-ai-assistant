@@ -66,17 +66,19 @@ def _flat(calls: list[list]) -> list:
 def _record(
     obj_id: int,
     *,
-    index_value: str = "resolved",
+    index_value: str | None = "resolved",
     description: str = "Broken.",
     updated_at: datetime = _NOW,
     created_at: datetime | None = _NOW - timedelta(days=1),
     payload: dict | None = None,
+    acl_org_ids: tuple[str, ...] = (),
 ) -> VectorRecord:
     return VectorRecord(
         obj_id=obj_id,
         index_value=index_value,
         updated_at=updated_at,
         created_at=created_at,
+        acl_org_ids=acl_org_ids,
         payload=payload if payload is not None else {"body": description},
     )
 
@@ -532,6 +534,29 @@ class TestSweep(IndexerTestCase):
         self.assertEqual(report.chunks_deleted, 3)
         self.assertEqual(store.upsert_calls, [])
 
+    async def test_a_relevance_value_nothing_can_read_refuses_the_class(self):
+        # `index_values` configured and no field to compare against: every
+        # object of the class reads the same way, and reading that as "left
+        # the index" is the class's whole index gone in one pass.
+        store = FakeChunkStore()
+        store.digests[(_FAMILY, "UserRequest", 1)] = {("body", 0): ChunkDigest(content_hash="h", meta_hash=None)}
+        report = await self._run(_deps_mock(store=store), FakeTicketSource([_record(1, index_value=None)]))
+
+        self.assertEqual(report.status, "error")
+        self.assertIn("index_values", report.errors[0])
+        self.assertEqual(store.delete_object_calls, [])
+        self.assertEqual(store.delete_chunks_calls, [])
+
+    async def test_an_object_that_produced_no_chunks_keeps_what_is_indexed(self):
+        store = FakeChunkStore()
+        store.digests[(_FAMILY, "UserRequest", 1)] = {("body", 0): ChunkDigest(content_hash="h", meta_hash=None)}
+        report = await self._run(_deps_mock(store=store), FakeTicketSource([_record(1, payload={})]))
+
+        self.assertEqual(report.status, "ok")
+        self.assertEqual(report.objects_skipped, 1)
+        self.assertEqual(store.delete_chunks_calls, [])
+        self.assertEqual(store.delete_object_calls, [])
+
     async def test_empty_index_values_indexes_everything(self):
         cfg = _VECTOR_CFG.model_copy(deep=True)
         cfg.families["tickets"].classes["UserRequest"].index_values = []
@@ -804,6 +829,69 @@ class TestMetadataFreshness(IndexerTestCase):
         self.assertEqual(store2.upsert_calls, [])
         self.assertEqual(store2.update_metadata_calls, [])
         self.assertEqual(store2.delete_chunks_calls, [])
+
+
+class TestAclOrgIds(IndexerTestCase):
+    """The organizations a pre-filter compares against reach the payload —
+    normalized here, once, rather than in each source (TASK-076)."""
+
+    def _cfg_with_acl(self) -> VectorConfig:
+        cfg = _VECTOR_CFG.model_copy(deep=True)
+        cfg.families["tickets"].classes["UserRequest"].acl_org_fields = ["org_id"]
+        return cfg
+
+    async def test_the_acl_reaches_the_chunk_sorted_and_unique(self):
+        store = FakeChunkStore()
+        await self._run(_deps_mock(store=store), FakeTicketSource([_record(1, acl_org_ids=("7", "3", "7"))]))
+
+        self.assertEqual(("3", "7"), _flat(store.upsert_calls)[0].meta.acl_org_ids)
+
+    async def test_reordered_organizations_are_not_a_change(self):
+        # iTop returns the links of an n-n relation in no particular order —
+        # without normalization every pass would rewrite every payload.
+        store = FakeChunkStore()
+        await self._run(_deps_mock(store=store), FakeTicketSource([_record(1, acl_org_ids=("3", "7"))]))
+
+        store2 = FakeChunkStore()
+        store2.digests[(_FAMILY, "UserRequest", 1)] = dict(store.digests[(_FAMILY, "UserRequest", 1)])
+        report = await self._run(_deps_mock(store=store2), FakeTicketSource([_record(1, acl_org_ids=("7", "3"))]))
+
+        self.assertEqual(0, report.chunks_metadata_updated)
+        self.assertEqual(0, report.chunks_embedded)
+
+    async def test_an_added_organization_is_a_metadata_change(self):
+        store = FakeChunkStore()
+        await self._run(_deps_mock(store=store), FakeTicketSource([_record(1, acl_org_ids=("3",))]))
+
+        store2 = FakeChunkStore()
+        store2.digests[(_FAMILY, "UserRequest", 1)] = dict(store.digests[(_FAMILY, "UserRequest", 1)])
+        report = await self._run(_deps_mock(store=store2), FakeTicketSource([_record(1, acl_org_ids=("3", "7"))]))
+
+        self.assertEqual(1, report.chunks_metadata_updated)
+        self.assertEqual(0, report.chunks_embedded)
+
+    async def test_objects_without_an_acl_are_counted_per_class(self):
+        records = [_record(1), _record(2, acl_org_ids=("3",)), _record(3)]
+
+        report = await self._run(_deps_mock(), FakeTicketSource(records))
+
+        self.assertEqual({"UserRequest": 2}, report.acl_empty)
+
+    async def test_a_class_whose_acl_is_almost_always_empty_is_warned_about(self):
+        # The threshold effect of TASK-076: a mis-mapped attribute switches the
+        # pre-filter off instead of hiding objects, so nothing else would say so.
+        records = [_record(1), _record(2), _record(3)]
+
+        with self.assertLogs("itop_ai_assistant.vector.use_cases.indexer", level="WARNING"):
+            report = await self._run(_deps_mock(vector_cfg=self._cfg_with_acl()), FakeTicketSource(records))
+
+        self.assertTrue(any("pre-filter" in warning for warning in report.warnings))
+        self.assertEqual("ok", report.status)  # a warning, not an error
+
+    async def test_a_class_that_declares_no_acl_fields_is_not_warned_about(self):
+        report = await self._run(_deps_mock(), FakeTicketSource([_record(1), _record(2)]))
+
+        self.assertEqual([], report.warnings)
 
 
 class TestCreationDate(IndexerTestCase):
