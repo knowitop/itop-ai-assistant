@@ -36,7 +36,7 @@ class IntakeConfig(BaseModel):
     top to bottom as "turn this on, then tune it". A switched-off action is not
     asked to be skipped: its tool is never handed to the model (ADR-012), so it
     cannot happen at all. Switching the module off entirely is
-    `enabled: false`, not clearing the four action switches.
+    `enabled: false`, not clearing the action switches one by one.
     """
 
     # The module as a whole: whether it runs, on what, and its per-ticket
@@ -396,7 +396,7 @@ class IntakeConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_action_toggles(self) -> "IntakeConfig":
-        """Reject the two action combinations that cannot mean anything.
+        """Reject the action combinations that cannot mean anything.
 
         Separate from `_check_similar_budget`/`_check_faq_budget`: different
         rules about different fields, and one validator for all would answer
