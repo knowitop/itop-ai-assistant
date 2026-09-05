@@ -42,8 +42,11 @@ class IntakeContext:
     # by comparing `ticket.service_id` with `intake` itself.
     classification: Classification
     ai_name: str
-    # `similar` holds the subsystem's door (TASK-033), not a search assembled
-    # for this run — None on a deployment without vectors, and the tool that
-    # needs it is then not in the run's tool set at all (`tools_for`), so no
-    # tool reads it expecting a value.
+    # `similar`/`faq` hold the subsystem's door (TASK-033), not a search
+    # assembled for this run — None on a deployment without vectors, or with
+    # that particular family switched off, and the tool that needs it is then
+    # not in the run's tool set at all (`tools_for`), so no tool reads it
+    # expecting a value. Both point at the same door when both are on — the
+    # family is a parameter of the query, not of the door itself.
     similar: SimilarSearch | None = None
+    faq: SimilarSearch | None = None

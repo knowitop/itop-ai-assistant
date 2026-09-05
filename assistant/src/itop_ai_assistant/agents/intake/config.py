@@ -23,6 +23,16 @@ _CLASSIFY_SUBCATEGORY_OQL = (
 )
 
 
+def _check_budget(top: int, candidates: int, top_name: str, candidates_name: str) -> None:
+    """Shared rule behind `_check_similar_budget`/`_check_faq_budget`: `top` out of `candidates`, never more."""
+    if top > candidates:
+        raise ValueError(
+            f"{top_name} ({top}) exceeds {candidates_name} ({candidates}): "
+            "candidates are only ever dropped when the requester's iTop no longer confirms them, "
+            "so asking for more results than candidates cannot return them"
+        )
+
+
 class IntakeConfig(BaseModel):
     """The ticket-processing module: classify, ask, hand off.
 
@@ -36,7 +46,7 @@ class IntakeConfig(BaseModel):
     top to bottom as "turn this on, then tune it". A switched-off action is not
     asked to be skipped: its tool is never handed to the model (ADR-012), so it
     cannot happen at all. Switching the module off entirely is
-    `enabled: false`, not clearing the four action switches.
+    `enabled: false`, not clearing the action switches one by one.
     """
 
     # The module as a whole: whether it runs, on what, and its per-ticket
@@ -249,6 +259,74 @@ class IntakeConfig(BaseModel):
         json_schema_extra=ui(group="Similar solved tickets", advanced=True),
     )
 
+    # Relevant FAQ articles, quoted inside the handoff note — the same
+    # arrangement as similar solved tickets, over a separate family with its
+    # own settings: the two indexes carry their own active embeddings model
+    # and score on their own scale, so nothing here is shared with `similar_*`.
+    faq_enabled: bool = Field(
+        default=True,
+        title="Enabled",
+        description=(
+            "Let the module quote relevant FAQ articles in that note. Needs the handoff note, the vector "
+            "index and an embeddings endpoint; without them the module simply does not search."
+        ),
+        json_schema_extra=ui(group="Relevant FAQ articles", toggle=True),
+    )
+    faq_family: str = Field(
+        default="faq",
+        title="Index family",
+        description="Which family of indexed content is searched.",
+        json_schema_extra=ui(group="Relevant FAQ articles", advanced=True),
+    )
+    # Unlike `resolved_statuses`, empty by default: stock iTop's `FAQ` class
+    # has no lifecycle status at all (`domain/faq_schema.py`), so there is
+    # nothing to filter by out of the box. A deployment that maps `status`
+    # names the ones worth quoting here — drafts and obsolete articles, say.
+    faq_statuses: list[str] = Field(
+        default=[],
+        title="Statuses eligible to be quoted",
+        description=(
+            "Only articles in these statuses may be quoted. Empty means unrestricted — stock iTop's FAQ "
+            "carries no status at all, so this only does something once your deployment maps one."
+        ),
+        json_schema_extra=ui(group="Relevant FAQ articles"),
+    )
+    faq_candidates: int = Field(
+        default=15,
+        gt=0,
+        title="Candidates read from the index",
+        description=(
+            "Larger than the number quoted on purpose: candidates the requester's iTop no longer shows "
+            "are dropped afterwards."
+        ),
+        json_schema_extra=ui(group="Relevant FAQ articles", advanced=True),
+    )
+    faq_top: int = Field(
+        default=5,
+        gt=0,
+        title="References in one note",
+        description="At most this many FAQ articles are quoted. Cannot exceed the number of candidates.",
+        json_schema_extra=ui(group="Relevant FAQ articles"),
+    )
+    faq_min_score: float = Field(
+        default=0.6,
+        ge=-1.0,
+        le=1.0,
+        title="Minimum similarity",
+        description=(
+            "A candidate scoring below this is dropped whatever its rank. The default is a starting guess, "
+            "not a value calibrated against this deployment's embeddings model."
+        ),
+        json_schema_extra=ui(group="Relevant FAQ articles", advanced=True),
+    )
+    faq_chunk_kinds: list[str] = Field(
+        default=["profile", "body"],
+        min_length=1,
+        title="Match against",
+        description="Which parts of an FAQ article the new ticket's title and description are compared to.",
+        json_schema_extra=ui(group="Relevant FAQ articles", advanced=True),
+    )
+
     @field_validator("unclassified_service_ids", mode="before")
     @classmethod
     def _check_service_ids(cls, value: object) -> object:
@@ -291,12 +369,13 @@ class IntakeConfig(BaseModel):
         rejected at save time (422 from the admin API) instead of failing a
         run over a real ticket hours later.
         """
-        if self.similar_top > self.similar_candidates:
-            raise ValueError(
-                f"similar_top ({self.similar_top}) exceeds similar_candidates ({self.similar_candidates}): "
-                "candidates are only ever dropped when the requester's iTop no longer confirms them, "
-                "so asking for more results than candidates cannot return them"
-            )
+        _check_budget(self.similar_top, self.similar_candidates, "similar_top", "similar_candidates")
+        return self
+
+    @model_validator(mode="after")
+    def _check_faq_budget(self) -> "IntakeConfig":
+        """`faq_top` out of `faq_candidates`, never more — same rule as `_check_similar_budget`."""
+        _check_budget(self.faq_top, self.faq_candidates, "faq_top", "faq_candidates")
         return self
 
     @model_validator(mode="after")
@@ -317,17 +396,22 @@ class IntakeConfig(BaseModel):
 
     @model_validator(mode="after")
     def _check_action_toggles(self) -> "IntakeConfig":
-        """Reject the two action combinations that cannot mean anything.
+        """Reject the action combinations that cannot mean anything.
 
-        Separate from `_check_similar_budget`: different rules about different
-        fields, and one validator for both would answer two unrelated mistakes
-        with one message.
+        Separate from `_check_similar_budget`/`_check_faq_budget`: different
+        rules about different fields, and one validator for all would answer
+        unrelated mistakes with one message.
         """
-        if self.similar_enabled and not self.handoff_note_enabled:
-            raise ValueError(
-                "similar_enabled requires handoff_note_enabled: references to similar solved tickets "
-                "exist only inside the handoff note, so searching for them without a note enriches nothing"
-            )
+
+        def require_note(enabled: bool, flag: str, noun: str) -> None:
+            if enabled and not self.handoff_note_enabled:
+                raise ValueError(
+                    f"{flag} requires handoff_note_enabled: references to {noun} "
+                    "exist only inside the handoff note, so searching for them without a note enriches nothing"
+                )
+
+        require_note(self.similar_enabled, "similar_enabled", "similar solved tickets")
+        require_note(self.faq_enabled, "faq_enabled", "relevant FAQ articles")
         if not (self.classify_enabled or self.clarify_enabled or self.handoff_note_enabled):
             raise ValueError(
                 "at least one of classify_enabled, clarify_enabled, handoff_note_enabled must stay on: "

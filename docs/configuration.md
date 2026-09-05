@@ -147,9 +147,17 @@ Set in the [Admin UI → Modules](admin-ui.md#modules) or via `PUT /api/config/i
 | `similar_top` | `5` | Max references in one handoff note — must not exceed `similar_candidates`, since candidates are only ever dropped by that visibility check, never added |
 | `similar_min_score` | `0.6` | Minimum Qdrant cosine score a candidate must reach to be quoted, regardless of rank; a conservative starting value, not calibrated to any specific embeddings model — tune it per deployment |
 | `similar_chunk_kinds` | `["profile", "body"]` | Which chunk kinds the query (title + description) is matched against; `solution` is left out by default — a match there means "the solution reads like the problem", usually noise |
+| **Relevant FAQ articles** | | |
+| `faq_enabled` | `true` | Let the module quote relevant FAQ articles in that note — requires `handoff_note_enabled` |
+| `faq_family` | `faq` | Which indexed family is searched — an FAQ index kept under a different name, for instance |
+| `faq_statuses` | `[]` | Article statuses eligible to be quoted; empty means unrestricted — stock iTop's FAQ carries no status at all, so this only does something once your deployment maps one |
+| `faq_candidates` | `15` | Candidates read from the index before iTop is asked which of them the run may see |
+| `faq_top` | `5` | Max references in one handoff note — must not exceed `faq_candidates`, since candidates are only ever dropped by that visibility check, never added |
+| `faq_min_score` | `0.6` | Minimum Qdrant cosine score a candidate must reach to be quoted, regardless of rank; a conservative starting value, not calibrated to any specific embeddings model — tune it per deployment |
+| `faq_chunk_kinds` | `["profile", "body"]` | Which chunk kinds of an FAQ article the query (title + description) is matched against |
 
 > [!NOTE]
-> The `similar_*` thresholds only do something when `similar_enabled` is on **and** the [vector index](#vector-index) is switched on with an embeddings endpoint configured. Without any of that, the agent is not given the search tool at all and the handoff note carries no references.
+> The `similar_*`/`faq_*` thresholds only do something when the matching `*_enabled` switch is on **and** the [vector index](#vector-index) is switched on for that family, with an embeddings endpoint configured. Without any of that, the agent is not given the corresponding search tool at all and the handoff note carries no references from it — the two searches are independent: a deployment can index and quote one family without the other.
 
 ### Services that mean "not classified"
 
@@ -172,21 +180,22 @@ Run journal: the `classification` step of every run records what the ticket arri
 
 ### Which actions the module performs
 
-The four `*_enabled` settings above switch intake's four actions independently. A switched-off action is not "asked to be skipped": the corresponding tool is never handed to the model, so it cannot happen — and neither can the model waste a call trying. Changes apply from the next ticket, no restart needed.
+The five `*_enabled` settings above switch intake's five actions independently. A switched-off action is not "asked to be skipped": the corresponding tool is never handed to the model, so it cannot happen — and neither can the model waste a call trying. Changes apply from the next ticket, no restart needed.
 
 Deployments differ in what they have already automated and what they are willing to let an AI do, so the useful combinations are:
 
 | Mode | Settings | What the ticket gets |
 |------|----------|----------------------|
-| Everything (default) | all four on | Classification, at most one question at a time, an internal note with references |
+| Everything (default) | all five on | Classification, at most one question at a time, an internal note with references to similar tickets and relevant FAQ articles |
 | Classification and note | `clarify_enabled: false` | The requester is never written to; fields are set and the engineer gets a summary of what is there |
-| Classification only | `clarify_enabled: false`, `handoff_note_enabled: false`, `similar_enabled: false` | Pure routing: service and subcategory are set, both logs stay empty |
+| Classification only | `clarify_enabled: false`, `handoff_note_enabled: false`, `similar_enabled: false`, `faq_enabled: false` | Pure routing: service and subcategory are set, both logs stay empty |
 | Clarification and note | `classify_enabled: false` | iTop's own rules classify the ticket; the module only completes it and summarizes |
-| Note only | `classify_enabled: false`, `clarify_enabled: false` | A summary and similar-case references, nothing else touched |
+| Note only | `classify_enabled: false`, `clarify_enabled: false` | A summary and reference lists, nothing else touched |
 
-Two combinations are rejected when you save them (422 from the admin API):
+Three combinations are rejected when you save them (422 from the admin API):
 
 - `similar_enabled` without `handoff_note_enabled` — the references exist only inside the note, so there would be nothing to put them in;
+- `faq_enabled` without `handoff_note_enabled` — same reason, over the FAQ family;
 - all of `classify_enabled`, `clarify_enabled` and `handoff_note_enabled` off — switching the module off entirely is `enabled: false`, which also stops it from being called at all.
 
 With `handoff_note_enabled: false` the private log of the ticket stays empty whatever happens, `handoff_fallback_note` included: the run marks the ticket as processed and writes nothing. The run journal still records everything.
@@ -245,7 +254,7 @@ The intake agent has no way to deliver plain text — the requester only sees wh
 
 ## Vector index
 
-Optional infrastructure: a semantic index of iTop objects in Qdrant. One thing reads it today: intake, for the references to similar solved tickets it puts in the handoff note (the `similar_*` settings [above](#intake-module-settings)). The rest of what is indexed waits for features still to come — KB matching, pattern analysis. Leave `QDRANT_URL` unset and the whole subsystem stays off: the assistant runs Redis-only exactly as before, and the handoff note simply carries no references.
+Optional infrastructure: a semantic index of iTop objects in Qdrant. One thing reads it today: intake, for the references it puts in the handoff note — similar solved tickets and relevant FAQ articles (the `similar_*`/`faq_*` settings [above](#intake-module-settings)). What else could be built on it waits for features still to come — pattern analysis. Leave `QDRANT_URL` unset and the whole subsystem stays off: the assistant runs Redis-only exactly as before, and the handoff note simply carries no references.
 
 Two independent **families** are indexed into their own collections today: **tickets** (`UserRequest`, `Incident` — the "similar past tickets" scenario) and **FAQ** (the "relevant knowledge base article" scenario, class `FAQ`). Each family gets its own Qdrant collection and its own HNSW graph — the two scenarios are never searched together in one call. A class belongs to a family through config (`vector.families.<family>.classes.<class>`), not through code, so a deployment can add a custom class to an existing family without a code change; a family may also set its own `sweep_interval_seconds`/`log_entries_per_chunk`, overriding the system-wide defaults below. A family's own interval paces the scheduled sweep only: **Index now**, **Reindex** and the CLI walk every family whatever it says, and so does a family owed a rebuild after the embeddings model changed — searches over that one are refused until its replacement is filled, so a slow cadence there would be pacing an outage rather than a staleness window. **A family can also be switched off on its own** (`vector.families.<family>.enabled`, on by default) — an installation that wants relevant KB articles but not an archive of past tickets indexes FAQ and switches tickets off, instead of choosing between both and neither. A switched-off family is skipped by the sweep and by reconciliation, and a search over it is refused rather than answered from a collection nothing refreshes any more — intake simply stops quoting similar tickets, the same as when the index is off entirely. Its collection is **kept**: switching the family back on resumes the increment where it stopped instead of rebuilding it, and dropping the collection is a separate manual operation. Stock iTop's `FAQ` class has neither a lifecycle status nor a date attribute, so by default every article is indexed and every sweep pass re-reads the whole class (cheap: unchanged articles are neither re-embedded nor rewritten, only re-read) — map `status`/`last_update` for the `faq` family if your deployment's `FAQ` does carry either, or slow that family's own sweep interval down instead.
 

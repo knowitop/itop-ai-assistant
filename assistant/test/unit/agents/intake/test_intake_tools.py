@@ -36,7 +36,9 @@ def _subcategories() -> list[ServiceSubcategory]:
 
 
 def _scope(**overrides: bool) -> IntakeScope:
-    return IntakeScope(**{"classify": True, "clarify": True, "handoff_note": True, "similar": True, **overrides})
+    return IntakeScope(
+        **{"classify": True, "clarify": True, "handoff_note": True, "similar": True, "faq": True, **overrides}
+    )
 
 
 def _classification(*unclassified_services: str) -> Classification:
@@ -105,7 +107,7 @@ class TestToolSchemas(unittest.TestCase):
         # Enforced, not requested: on every webhook the agent otherwise
         # re-reads the subcategory list and re-sets the same values — and
         # once proposed a different subcategory over a correct one
-        offered = _offered(_ticket(service_id="10", subcategory_id="101"), _scope(similar=False))
+        offered = _offered(_ticket(service_id="10", subcategory_id="101"), _scope(similar=False, faq=False))
 
         self.assertEqual(offered, ["post_public_question", "finish_handoff"])
 
@@ -119,6 +121,7 @@ class TestToolSchemas(unittest.TestCase):
                 "post_public_question",
                 "finish_handoff",
                 "find_similar_resolved_tickets",
+                "find_relevant_faq_articles",
             ],
         )
 
@@ -136,12 +139,12 @@ class TestToolSchemas(unittest.TestCase):
         # so an empty subcategory is not a reason to hand the tools over
         self.assertEqual(
             _offered(_ticket(), _scope(classify=False)),
-            ["post_public_question", "finish_handoff", "find_similar_resolved_tickets"],
+            ["post_public_question", "finish_handoff", "find_similar_resolved_tickets", "find_relevant_faq_articles"],
         )
 
     def test_without_the_handoff_note_the_silent_finish_stands_in(self):
         # A run with no way to end burns max_iterations on every ticket
-        offered = _offered(_ticket(), _scope(handoff_note=False, similar=False))
+        offered = _offered(_ticket(), _scope(handoff_note=False, similar=False, faq=False))
 
         self.assertNotIn("finish_handoff", offered)
         self.assertEqual(offered[-1], "finish_processing")
@@ -151,7 +154,7 @@ class TestToolSchemas(unittest.TestCase):
 
     def test_classification_only_leaves_one_way_out(self):
         self.assertEqual(
-            _offered(_ticket(), _scope(clarify=False, handoff_note=False, similar=False)),
+            _offered(_ticket(), _scope(clarify=False, handoff_note=False, similar=False, faq=False)),
             ["get_service_catalog", "get_subcategories", "set_classification", "finish_processing"],
         )
 
@@ -166,6 +169,7 @@ class TestToolSchemas(unittest.TestCase):
                 "finish_handoff",
                 "finish_processing",
                 "find_similar_resolved_tickets",
+                "find_relevant_faq_articles",
             ],
         )
 
@@ -175,14 +179,25 @@ class TestToolSchemas(unittest.TestCase):
         for ticket in (_ticket(), _ticket(service_id="10", subcategory_id="101")):
             self.assertNotIn("find_similar_resolved_tickets", _offered(ticket, _scope(similar=False)))
 
+    def test_without_a_vector_store_the_faq_tool_is_absent(self):
+        for ticket in (_ticket(), _ticket(service_id="10", subcategory_id="101")):
+            self.assertNotIn("find_relevant_faq_articles", _offered(ticket, _scope(faq=False)))
+
     def test_the_search_tool_is_offered_in_both_sets(self):
         # A run ends in a note whether or not it had to classify first
         for ticket in (_ticket(), _ticket(service_id="10", subcategory_id="101")):
-            self.assertEqual(_offered(ticket)[-1], "find_similar_resolved_tickets")
+            self.assertEqual(_offered(ticket, _scope(faq=False))[-1], "find_similar_resolved_tickets")
+
+    def test_the_faq_tool_is_offered_in_both_sets(self):
+        for ticket in (_ticket(), _ticket(service_id="10", subcategory_id="101")):
+            self.assertEqual(_offered(ticket)[-1], "find_relevant_faq_articles")
 
     def test_the_search_tool_is_not_terminal(self):
         # It informs the note; the session still ends with a question or a handoff
         self.assertNotIn("find_similar_resolved_tickets", TERMINAL_TOOLS)
+
+    def test_the_faq_tool_is_not_terminal(self):
+        self.assertNotIn("find_relevant_faq_articles", TERMINAL_TOOLS)
 
     def test_the_silent_finish_is_terminal(self):
         self.assertIn("finish_processing", TERMINAL_TOOLS)
@@ -596,6 +611,133 @@ class TestFindSimilarResolvedTickets(unittest.IsolatedAsyncioTestCase):
         )
 
         _result, note = await tools.find_similar_resolved_tickets.coroutine(runtime=runtime)
+
+        self.assertIn("requested=15", note)
+        self.assertIn("found=5", note)
+        self.assertIn("kept=2", note)
+        self.assertIn("dropped_by_resolve=3", note)
+        self.assertIn("scores=[0.912, 0.834]", note)
+
+
+class TestFindRelevantFaqArticles(unittest.IsolatedAsyncioTestCase):
+    def _runtime(self, hits: list[ObjectHit], *, stats: FindStats | None = None, **kwargs) -> MagicMock:
+        runtime = _make_runtime(**kwargs)
+        runtime.context.faq.find = AsyncMock(
+            return_value=SearchResult(
+                hits=hits, stats=stats or FindStats(requested=15, found=len(hits), dropped_by_resolve=0)
+            )
+        )
+        return runtime
+
+    async def test_references_come_back_as_copyable_tokens(self):
+        runtime = self._runtime([ObjectHit("FAQ", 12, 0.9), ObjectHit("FAQ", 7, 0.8), ObjectHit("FAQ", 3, 0.7)])
+
+        result, _note = await tools.find_relevant_faq_articles.coroutine(runtime=runtime)
+
+        self.assertIn("[[FAQ:12]]\n[[FAQ:7]]\n[[FAQ:3]]", result)
+
+    async def test_the_query_is_the_ticket_itself(self):
+        # The model does not phrase the search: the tool takes no arguments
+        runtime = self._runtime([], ticket=_ticket(title="Printer is dead", description="<p>Cannot print</p>"))
+
+        await tools.find_relevant_faq_articles.coroutine(runtime=runtime)
+
+        text = runtime.context.faq.find.await_args.args[0].text
+        self.assertIn("Printer is dead", text)
+        self.assertIn("Cannot print", text)
+        self.assertNotIn("<p>", text)
+
+    async def test_the_search_is_scoped_by_faq_settings(self):
+        runtime = self._runtime([])
+        runtime.context.intake = IntakeConfig(
+            faq_statuses=["validated"],
+            faq_candidates=11,
+            faq_top=3,
+            faq_min_score=0.6,
+            faq_chunk_kinds=["profile"],
+        )
+
+        await tools.find_relevant_faq_articles.coroutine(runtime=runtime)
+
+        query = runtime.context.faq.find.await_args.args[0]
+        # The tool does not scope by class at all — the family is the scope
+        self.assertIsNone(query.classes)
+        self.assertEqual(query.filters, {"status": ["validated"]})
+        self.assertIsNone(query.exclude)
+        self.assertEqual(query.candidates, 11)
+        self.assertEqual(query.top, 3)
+        self.assertEqual(query.min_score, 0.6)
+        self.assertEqual(query.chunk_kinds, ["profile"])
+        # Explicit, not the query's default — a safeguard against TASK-013
+        # silently widening intake's search into internal chunks
+        self.assertEqual(list(query.visibilities), ["public"])
+        # No analogue of `similar_max_age_days` — see `faq.py`'s docstring
+        self.assertIsNone(query.updated)
+
+    async def test_no_status_filter_by_default(self):
+        # Stock iTop's FAQ carries no status at all (`domain/faq_schema.py`)
+        runtime = self._runtime([])
+
+        await tools.find_relevant_faq_articles.coroutine(runtime=runtime)
+
+        self.assertIsNone(runtime.context.faq.find.await_args.args[0].filters)
+
+    async def test_the_search_runs_as_whoever_the_run_acts_as(self):
+        # TASK-032: the tool names the principal and nothing else about
+        # rights — it cannot ask for somebody else's articles by accident,
+        # because there is no other identity in its reach.
+        engineer = Principal.delegated("tok", login="ivanov", name="Ivan Ivanov")
+        runtime = self._runtime([])
+        runtime.context.principal = engineer
+
+        await tools.find_relevant_faq_articles.coroutine(runtime=runtime)
+
+        self.assertIs(runtime.context.faq.find.await_args.args[1], engineer)
+
+    async def test_finding_nothing_is_an_answer_not_a_refusal(self):
+        runtime = self._runtime([])
+
+        result, _note = await tools.find_relevant_faq_articles.coroutine(runtime=runtime)
+
+        self.assertIn("No relevant FAQ articles", result)
+        self.assertNotIn("[[", result)
+
+    async def test_a_repeat_call_is_refused_with_the_previous_answer(self):
+        runtime = self._runtime([ObjectHit("FAQ", 12, 0.9)])
+        runtime.state = {
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[{"id": "earlier", "name": "find_relevant_faq_articles", "args": {}}],
+                ),
+                ToolMessage(content="[[FAQ:12]]", tool_call_id="earlier"),
+            ]
+        }
+
+        with self.assertRaises(ToolRejection) as ctx:
+            await tools.find_relevant_faq_articles.coroutine(runtime=runtime)
+
+        self.assertIn("[[FAQ:12]]", str(ctx.exception))
+        runtime.context.faq.find.assert_not_awaited()
+
+    async def test_the_journal_note_reports_counts_and_scores_even_when_empty(self):
+        runtime = self._runtime([], stats=FindStats(requested=15, found=4, dropped_by_resolve=1))
+
+        _result, note = await tools.find_relevant_faq_articles.coroutine(runtime=runtime)
+
+        self.assertIn("requested=15", note)
+        self.assertIn("found=4", note)
+        self.assertIn("kept=0", note)
+        self.assertIn("dropped_by_resolve=1", note)
+        self.assertIn("scores=[]", note)
+
+    async def test_the_journal_note_reports_scores_of_kept_hits(self):
+        runtime = self._runtime(
+            [ObjectHit("FAQ", 12, 0.912), ObjectHit("FAQ", 7, 0.834)],
+            stats=FindStats(requested=15, found=5, dropped_by_resolve=3),
+        )
+
+        _result, note = await tools.find_relevant_faq_articles.coroutine(runtime=runtime)
 
         self.assertIn("requested=15", note)
         self.assertIn("found=5", note)

@@ -129,14 +129,15 @@ def make_ctx(
         catalog_repo=CatalogRepository(itop),
         state_manager=IntakeState(state_manager),
         intake=intake,
-        # No vector store in these tests, so `similar` is off regardless of
-        # the switch — the same reduction `compose.assemble` makes
+        # No vector store in these tests, so `similar`/`faq` are off regardless
+        # of the switches — the same reduction `compose.assemble` makes
         scope=scope
         or IntakeScope(
             classify=intake.classify_enabled,
             clarify=intake.clarify_enabled,
             handoff_note=intake.handoff_note_enabled,
             similar=False,
+            faq=False,
         ),
         classification=Classification(unclassified_services=frozenset(intake.unclassified_service_ids)),
         # Matches _AI_PERSON_FIELDS, i.e. what IdentityRepository would return

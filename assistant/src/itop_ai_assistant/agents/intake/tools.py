@@ -20,6 +20,7 @@ from langchain_core.tools import BaseTool, tool
 
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.util.text import bind_oql, html_to_markdown
+from itop_ai_assistant.vector import SearchQuery, SimilarSearch
 
 from . import catalog
 from .context import IntakeContext
@@ -33,6 +34,7 @@ from .domain import (
     finish_tool,
     needs_classification,
 )
+from .faq import faq_query
 from .prompt import format_options
 from .similar import similar_query
 
@@ -186,6 +188,49 @@ async def set_classification(service_id: int, subcategory_id: int, runtime: Inta
     ), change
 
 
+async def _find_references(
+    runtime: IntakeToolRuntime,
+    *,
+    door: SimilarSearch,
+    query: SearchQuery,
+    tool_name: str,
+    label: str,
+    nothing_found: str,
+    found_intro: str,
+) -> tuple[str, str]:
+    """Shared body of `find_similar_resolved_tickets`/`find_relevant_faq_articles`.
+
+    Both look up references to quote in the handoff note over a family of the
+    vector index; only the door searched, the query and the wording the model
+    sees differ, and those stay with the tool that builds them.
+    """
+    ctx = runtime.context
+    ticket = ctx.ticket
+    _reject_if_repeated(runtime, tool_name, {})
+
+    result = await door.find(
+        query,
+        # Whoever the run acts as — the tool has nothing to say about it, which
+        # is the point: it cannot ask for somebody else's objects by accident.
+        ctx.principal,
+    )
+    hits, stats = result.hits, result.stats
+    # Not sent to the model — an artifact, picked up by AgentRun._journal_update
+    # for the run journal (TASK-014). "requested vs found" is the closest cheap
+    # proxy for "cut by the score threshold" available without a second query.
+    note = (
+        f"requested={stats.requested} found={stats.found} kept={len(hits)} "
+        f"dropped_by_resolve={stats.dropped_by_resolve} scores={[round(hit.score, 3) for hit in hits]}"
+    )
+    logger.info(f"{ticket.identity}: {label} found: {len(hits)} ({note})")
+    if not hits:
+        # Not a rejection: "nothing found" is an answer, and a rejection
+        # would send the model looking for another way to ask.
+        return nothing_found, note
+    references = "\n".join(f"[[{hit.obj_class}:{hit.obj_id}]]" for hit in hits)
+    return f"{found_intro} Copy these references into your note exactly as written:\n" + references, note
+
+
 @tool(response_format="content_and_artifact")
 async def find_similar_resolved_tickets(runtime: IntakeToolRuntime) -> tuple[str, str]:
     """Find tickets similar to this one that have already been solved.
@@ -203,37 +248,48 @@ async def find_similar_resolved_tickets(runtime: IntakeToolRuntime) -> tuple[str
     ticket = ctx.ticket
     # Guaranteed by `tools_for`, which withholds this tool otherwise
     assert ctx.similar is not None
-    _reject_if_repeated(runtime, "find_similar_resolved_tickets", {})
-
-    result = await ctx.similar.find(
-        similar_query(
+    return await _find_references(
+        runtime,
+        door=ctx.similar,
+        query=similar_query(
             ctx.intake,
             text=f"{ticket.title}\n\n{html_to_markdown(ticket.description)}",
             exclude=(ticket.obj_class, int(ticket.id)),
             now=datetime.now(UTC),
         ),
-        # Whoever the run acts as — the tool has nothing to say about it, which
-        # is the point: it cannot ask for somebody else's tickets by accident.
-        ctx.principal,
+        tool_name="find_similar_resolved_tickets",
+        label="similar resolved tickets",
+        nothing_found="No similar solved tickets were found. Write the handoff note without references.",
+        found_intro="Solved tickets similar to this one, most similar first.",
     )
-    hits, stats = result.hits, result.stats
-    # Not sent to the model — an artifact, picked up by AgentRun._journal_update
-    # for the run journal (TASK-014). "requested vs found" is the closest cheap
-    # proxy for "cut by the score threshold" available without a second query.
-    note = (
-        f"requested={stats.requested} found={stats.found} kept={len(hits)} "
-        f"dropped_by_resolve={stats.dropped_by_resolve} scores={[round(hit.score, 3) for hit in hits]}"
+
+
+@tool(response_format="content_and_artifact")
+async def find_relevant_faq_articles(runtime: IntakeToolRuntime) -> tuple[str, str]:
+    """Find FAQ articles relevant to this ticket.
+
+    Call this once, before finish_handoff, and put every reference it returns
+    into your note — an engineer who sees a documented answer starts from
+    there instead of from scratch. It takes no arguments: the search runs on
+    this ticket's own title and description.
+
+    What comes back is a list of references in the form [[Class:Id]]. Copy them
+    into the note character for character. Never write a reference of your own:
+    these are the only ones that exist, and anything else points at nothing.
+    """
+    ctx = runtime.context
+    ticket = ctx.ticket
+    # Guaranteed by `tools_for`, which withholds this tool otherwise
+    assert ctx.faq is not None
+    return await _find_references(
+        runtime,
+        door=ctx.faq,
+        query=faq_query(ctx.intake, text=f"{ticket.title}\n\n{html_to_markdown(ticket.description)}"),
+        tool_name="find_relevant_faq_articles",
+        label="relevant FAQ articles",
+        nothing_found="No relevant FAQ articles were found. Write the handoff note without references.",
+        found_intro="FAQ articles relevant to this ticket, most relevant first.",
     )
-    logger.info(f"{ticket.identity}: similar resolved tickets found: {len(hits)} ({note})")
-    if not hits:
-        # Not a rejection: "nothing similar" is an answer, and a rejection
-        # would send the model looking for another way to ask.
-        return "No similar solved tickets were found. Write the handoff note without references.", note
-    references = "\n".join(f"[[{hit.obj_class}:{hit.obj_id}]]" for hit in hits)
-    return (
-        "Solved tickets similar to this one, most similar first. "
-        "Copy these references into your note exactly as written:\n" + references
-    ), note
 
 
 @tool
@@ -349,6 +405,7 @@ TOOLS: list[BaseTool] = [
     finish_handoff,
     finish_processing,
     find_similar_resolved_tickets,
+    find_relevant_faq_articles,
 ]
 
 
@@ -376,7 +433,9 @@ def tools_for(ticket: Ticket, scope: IntakeScope, classification: Classification
     if scope.clarify:
         tools.append(post_public_question)
     tools.append(finish_handoff if scope.handoff_note else finish_processing)
-    # Last on purpose: it informs the note, it does not end the session
+    # Last on purpose: they inform the note, they do not end the session
     if scope.similar:
         tools.append(find_similar_resolved_tickets)
+    if scope.faq:
+        tools.append(find_relevant_faq_articles)
     return tools

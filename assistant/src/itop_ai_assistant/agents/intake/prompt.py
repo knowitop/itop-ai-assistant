@@ -112,6 +112,8 @@ def format_session_scope(scope: IntakeScope, ticket: Ticket, classification: Cla
         actions.append("- Ask the requester one clarifying question, and end the session with it.")
     if scope.similar:
         actions.append("- Look up solved tickets similar to this one, to quote in the note.")
+    if scope.faq:
+        actions.append("- Look up FAQ articles relevant to this ticket, to quote in the note.")
     if scope.handoff_note:
         actions.append("- Write the handoff note for the engineer.")
     else:
@@ -141,6 +143,8 @@ def build_system_prompt(scope: IntakeScope, prompts: IntakePrompts) -> str:
         fragments.append(prompts.system_handoff_note)
     if scope.similar:
         fragments.append(prompts.system_similar)
+    if scope.faq:
+        fragments.append(prompts.system_faq)
     # Trimmed rather than joined as-is: an override arrives from a textarea in
     # the admin UI and need not end with a newline.
     return "\n\n".join(fragment.strip() for fragment in fragments)
