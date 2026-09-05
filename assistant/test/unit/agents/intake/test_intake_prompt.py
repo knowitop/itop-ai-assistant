@@ -40,7 +40,9 @@ def _classification(*unclassified_services: str) -> Classification:
 
 
 def _scope(**overrides: bool) -> IntakeScope:
-    return IntakeScope(**{"classify": True, "clarify": True, "handoff_note": True, "similar": True, **overrides})
+    return IntakeScope(
+        **{"classify": True, "clarify": True, "handoff_note": True, "similar": True, "faq": True, **overrides}
+    )
 
 
 class TestFormatOptions(unittest.TestCase):
@@ -150,6 +152,7 @@ class TestSessionScope(unittest.TestCase):
         self.assertIn("Classify the ticket", text)
         self.assertIn("clarifying question", text)
         self.assertIn("similar", text)
+        self.assertIn("FAQ", text)
         self.assertIn("handoff note", text)
         self.assertIn("post_public_question or finish_handoff", text)
 
@@ -167,12 +170,13 @@ class TestSessionScope(unittest.TestCase):
 
     def test_switched_off_actions_are_not_listed(self):
         text = format_session_scope(
-            _scope(clarify=False, handoff_note=False, similar=False), _ticket(), _classification()
+            _scope(clarify=False, handoff_note=False, similar=False, faq=False), _ticket(), _classification()
         )
 
         self.assertIn("Classify the ticket", text)
         self.assertNotIn("clarifying question", text)
         self.assertNotIn("handoff note", text)
+        self.assertNotIn("FAQ", text)
         self.assertIn("no internal notes", text)
         self.assertIn("exactly one call to finish_processing", text)
 
@@ -188,11 +192,12 @@ class TestSystemPrompt(unittest.TestCase):
             "## How to write to the requester",
             "## The handoff note",
             "## Similar solved tickets",
+            "## Relevant FAQ articles",
         ):
             self.assertIn(heading, text)
 
     def test_a_switched_off_action_takes_its_instructions_with_it(self):
-        text = build_system_prompt(_scope(classify=False, clarify=False, similar=False), _PROMPTS)
+        text = build_system_prompt(_scope(classify=False, clarify=False, similar=False, faq=False), _PROMPTS)
 
         self.assertIn("## Your role", text)
         self.assertIn("## The handoff note", text)
@@ -200,13 +205,14 @@ class TestSystemPrompt(unittest.TestCase):
         self.assertNotIn("## When to ask the requester", text)
         self.assertNotIn("## How to write to the requester", text)
         self.assertNotIn("## Similar solved tickets", text)
+        self.assertNotIn("## Relevant FAQ articles", text)
 
     def test_fragments_are_separated_by_a_blank_line(self):
         # Overrides come from a textarea and need not end with a newline; two
         # sections glued together would read as one
         prompts = _PROMPTS.model_copy(update={"system": "## Base", "system_classify": "## Classification"})
 
-        text = build_system_prompt(_scope(clarify=False, handoff_note=False, similar=False), prompts)
+        text = build_system_prompt(_scope(clarify=False, handoff_note=False, similar=False, faq=False), prompts)
 
         self.assertEqual(text, "## Base\n\n## Classification")
 

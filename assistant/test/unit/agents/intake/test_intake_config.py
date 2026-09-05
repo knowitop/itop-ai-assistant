@@ -27,6 +27,20 @@ class TestIntakeConfig(unittest.TestCase):
     def test_expecting_nothing_to_be_dropped_is_allowed(self):
         self.assertEqual(IntakeConfig(similar_candidates=5, similar_top=5).similar_top, 5)
 
+    def test_faq_chunk_kinds_default(self):
+        self.assertEqual(IntakeConfig().faq_chunk_kinds, ["profile", "body"])
+
+    def test_faq_chunk_kinds_rejects_empty_list(self):
+        with self.assertRaises(ValidationError):
+            IntakeConfig(faq_chunk_kinds=[])
+
+    def test_asking_for_more_faq_results_than_candidates_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            IntakeConfig(faq_candidates=5, faq_top=10)
+
+    def test_expecting_nothing_to_be_dropped_is_allowed_for_faq(self):
+        self.assertEqual(IntakeConfig(faq_candidates=5, faq_top=5).faq_top, 5)
+
 
 class TestUnclassifiedServices(unittest.TestCase):
     """A name typed here would save cleanly and never match anything."""
@@ -92,8 +106,8 @@ class TestActionToggles(unittest.TestCase):
         cfg = IntakeConfig()
 
         self.assertEqual(
-            (cfg.classify_enabled, cfg.clarify_enabled, cfg.handoff_note_enabled, cfg.similar_enabled),
-            (True, True, True, True),
+            (cfg.classify_enabled, cfg.clarify_enabled, cfg.handoff_note_enabled, cfg.similar_enabled, cfg.faq_enabled),
+            (True, True, True, True, True),
         )
 
     def test_similar_tickets_without_a_handoff_note_is_rejected(self):
@@ -104,8 +118,16 @@ class TestActionToggles(unittest.TestCase):
 
         self.assertIn("handoff_note_enabled", str(ctx.exception))
 
+    def test_faq_articles_without_a_handoff_note_is_rejected(self):
+        # `similar_enabled` off in isolation so the message checked is
+        # `faq_enabled`'s own, not `similar_enabled`'s raising first
+        with self.assertRaises(ValidationError) as ctx:
+            IntakeConfig(handoff_note_enabled=False, similar_enabled=False)
+
+        self.assertIn("faq_enabled", str(ctx.exception))
+
     def test_similar_may_be_switched_off_together_with_the_note(self):
-        cfg = IntakeConfig(handoff_note_enabled=False, similar_enabled=False)
+        cfg = IntakeConfig(handoff_note_enabled=False, similar_enabled=False, faq_enabled=False)
 
         self.assertFalse(cfg.handoff_note_enabled)
 
@@ -116,12 +138,13 @@ class TestActionToggles(unittest.TestCase):
                 clarify_enabled=False,
                 handoff_note_enabled=False,
                 similar_enabled=False,
+                faq_enabled=False,
             )
 
         self.assertIn("intake.enabled", str(ctx.exception))
 
     def test_one_action_left_on_is_enough(self):
-        cfg = IntakeConfig(clarify_enabled=False, handoff_note_enabled=False, similar_enabled=False)
+        cfg = IntakeConfig(clarify_enabled=False, handoff_note_enabled=False, similar_enabled=False, faq_enabled=False)
 
         self.assertTrue(cfg.classify_enabled)
 

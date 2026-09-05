@@ -80,7 +80,7 @@ class TestReducedScope:
             service_id=None,
             subcategory_id=None,
         )
-        scope = IntakeScope(classify=False, clarify=False, handoff_note=True, similar=False)
+        scope = IntakeScope(classify=False, clarify=False, handoff_note=True, similar=False, faq=False)
         ctx, transport = make_ctx(state_manager, ticket, _SUBCATEGORY_WITH_REQUIREMENTS, scope=scope)
 
         await _run(ctx)

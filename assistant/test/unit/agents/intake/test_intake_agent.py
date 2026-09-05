@@ -503,14 +503,14 @@ class TestSwitchedOffActions(IntakeAgentTestCase):
 
     def setUp(self):
         super().setUp()
-        self.intake_cfg = IntakeConfig(handoff_note_enabled=False, similar_enabled=False)
+        self.intake_cfg = IntakeConfig(handoff_note_enabled=False, similar_enabled=False, faq_enabled=False)
 
     async def test_the_journal_opens_with_the_scope_of_the_run(self):
         # Otherwise "the agent did nothing" is indistinguishable from a breakage
         await self.run_agent([ai([call("finish_processing", {}, "f1")])])
 
         steps = self.journal_steps()
-        self.assertEqual(steps[0], ("scope", "classify=on clarify=on handoff_note=off similar=off"))
+        self.assertEqual(steps[0], ("scope", "classify=on clarify=on handoff_note=off similar=off faq=off"))
         self.assertEqual(steps[1], ("classification", "service=none subcategory=none"))
 
     async def test_the_silent_finish_replaces_the_handoff_and_ends_the_run(self):

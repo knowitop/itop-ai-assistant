@@ -25,7 +25,9 @@ def _classification(*unclassified_services: str) -> Classification:
 
 
 def _scope(**overrides: bool) -> IntakeScope:
-    return IntakeScope(**{"classify": True, "clarify": True, "handoff_note": True, "similar": True, **overrides})
+    return IntakeScope(
+        **{"classify": True, "clarify": True, "handoff_note": True, "similar": True, "faq": True, **overrides}
+    )
 
 
 class TestCheckQuestionBudget(unittest.TestCase):
@@ -181,9 +183,9 @@ class TestClosingTools(unittest.TestCase):
 
 class TestFormatScope(unittest.TestCase):
     def test_every_action_is_named_in_a_fixed_order(self):
-        text = format_scope(_scope(clarify=False, similar=False))
+        text = format_scope(_scope(clarify=False, similar=False, faq=False))
 
-        self.assertEqual(text, "classify=on clarify=off handoff_note=on similar=off")
+        self.assertEqual(text, "classify=on clarify=off handoff_note=on similar=off faq=off")
 
 
 class TestNonBlankText(unittest.TestCase):

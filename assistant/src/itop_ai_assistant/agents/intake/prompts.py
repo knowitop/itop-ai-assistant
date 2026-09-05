@@ -32,6 +32,7 @@ PROMPT_VARIABLES: dict[str, set[str]] = {
     "system_clarify": set(),
     "system_handoff_note": set(),
     "system_similar": set(),
+    "system_faq": set(),
     "catalog_human": {"services"},
     "ticket_human": {"caller_name", "title", "description", "conversation", "service_context", "session_scope"},
 }
@@ -43,6 +44,7 @@ class IntakePrompts(BaseModel):
     system_clarify: str
     system_handoff_note: str
     system_similar: str
+    system_faq: str
     catalog_human: str
     ticket_human: str
 
