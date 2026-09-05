@@ -23,6 +23,16 @@ _CLASSIFY_SUBCATEGORY_OQL = (
 )
 
 
+def _check_budget(top: int, candidates: int, top_name: str, candidates_name: str) -> None:
+    """Shared rule behind `_check_similar_budget`/`_check_faq_budget`: `top` out of `candidates`, never more."""
+    if top > candidates:
+        raise ValueError(
+            f"{top_name} ({top}) exceeds {candidates_name} ({candidates}): "
+            "candidates are only ever dropped when the requester's iTop no longer confirms them, "
+            "so asking for more results than candidates cannot return them"
+        )
+
+
 class IntakeConfig(BaseModel):
     """The ticket-processing module: classify, ask, hand off.
 
@@ -359,23 +369,13 @@ class IntakeConfig(BaseModel):
         rejected at save time (422 from the admin API) instead of failing a
         run over a real ticket hours later.
         """
-        if self.similar_top > self.similar_candidates:
-            raise ValueError(
-                f"similar_top ({self.similar_top}) exceeds similar_candidates ({self.similar_candidates}): "
-                "candidates are only ever dropped when the requester's iTop no longer confirms them, "
-                "so asking for more results than candidates cannot return them"
-            )
+        _check_budget(self.similar_top, self.similar_candidates, "similar_top", "similar_candidates")
         return self
 
     @model_validator(mode="after")
     def _check_faq_budget(self) -> "IntakeConfig":
         """`faq_top` out of `faq_candidates`, never more — same rule as `_check_similar_budget`."""
-        if self.faq_top > self.faq_candidates:
-            raise ValueError(
-                f"faq_top ({self.faq_top}) exceeds faq_candidates ({self.faq_candidates}): "
-                "candidates are only ever dropped when the requester's iTop no longer confirms them, "
-                "so asking for more results than candidates cannot return them"
-            )
+        _check_budget(self.faq_top, self.faq_candidates, "faq_top", "faq_candidates")
         return self
 
     @model_validator(mode="after")
@@ -402,16 +402,16 @@ class IntakeConfig(BaseModel):
         rules about different fields, and one validator for all would answer
         unrelated mistakes with one message.
         """
-        if self.similar_enabled and not self.handoff_note_enabled:
-            raise ValueError(
-                "similar_enabled requires handoff_note_enabled: references to similar solved tickets "
-                "exist only inside the handoff note, so searching for them without a note enriches nothing"
-            )
-        if self.faq_enabled and not self.handoff_note_enabled:
-            raise ValueError(
-                "faq_enabled requires handoff_note_enabled: references to relevant FAQ articles "
-                "exist only inside the handoff note, so searching for them without a note enriches nothing"
-            )
+
+        def require_note(enabled: bool, flag: str, noun: str) -> None:
+            if enabled and not self.handoff_note_enabled:
+                raise ValueError(
+                    f"{flag} requires handoff_note_enabled: references to {noun} "
+                    "exist only inside the handoff note, so searching for them without a note enriches nothing"
+                )
+
+        require_note(self.similar_enabled, "similar_enabled", "similar solved tickets")
+        require_note(self.faq_enabled, "faq_enabled", "relevant FAQ articles")
         if not (self.classify_enabled or self.clarify_enabled or self.handoff_note_enabled):
             raise ValueError(
                 "at least one of classify_enabled, clarify_enabled, handoff_note_enabled must stay on: "
