@@ -682,6 +682,25 @@ class TestFindRelevantFaqArticles(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(runtime.context.faq.find.await_args.args[0].filters)
 
+    async def test_the_search_is_scoped_to_the_ticket_organization(self):
+        # The requester's organization, not the run principal's: an article
+        # published to another customer is not an answer to this ticket,
+        # however well it reads (ADR-033).
+        runtime = self._runtime([], ticket=_ticket(org_id="42"))
+
+        await tools.find_relevant_faq_articles.coroutine(runtime=runtime)
+
+        self.assertEqual(runtime.context.faq.find.await_args.args[0].org_ids, ["42"])
+
+    async def test_a_ticket_without_an_organization_is_searched_unfiltered(self):
+        # Degenerate — `org_id` is mandatory on an iTop ticket — and the
+        # pre-filter cannot express "the unrestricted articles only"
+        runtime = self._runtime([], ticket=_ticket(org_id=None))
+
+        await tools.find_relevant_faq_articles.coroutine(runtime=runtime)
+
+        self.assertIsNone(runtime.context.faq.find.await_args.args[0].org_ids)
+
     async def test_the_search_runs_as_whoever_the_run_acts_as(self):
         # TASK-032: the tool names the principal and nothing else about
         # rights — it cannot ask for somebody else's articles by accident,

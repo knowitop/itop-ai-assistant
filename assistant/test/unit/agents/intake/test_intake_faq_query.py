@@ -11,8 +11,8 @@ from itop_ai_assistant.agents.intake.config import IntakeConfig
 from itop_ai_assistant.agents.intake.faq import faq_query
 
 
-def _query(cfg: IntakeConfig | None = None):
-    return faq_query(cfg or IntakeConfig(), text="Printer is dead\n\nCannot print")
+def _query(cfg: IntakeConfig | None = None, org_ids: list[str] | None = None):
+    return faq_query(cfg or IntakeConfig(), text="Printer is dead\n\nCannot print", org_ids=org_ids)
 
 
 class TestFaqQuery(unittest.TestCase):
@@ -46,6 +46,16 @@ class TestFaqQuery(unittest.TestCase):
         # and an article going stale is not the same notion as a solved
         # ticket going stale
         self.assertIsNone(_query().updated)
+
+    def test_the_ticket_organization_scopes_the_search(self):
+        # ADR-033: an article naming organizations passes only for one of
+        # them, an article naming none passes for everybody
+        self.assertEqual(_query(org_ids=["3"]).org_ids, ["3"])
+
+    def test_a_ticket_without_an_organization_is_not_pre_filtered(self):
+        # An empty list is always a mistake in a `SearchQuery`; "unrestricted"
+        # is expressed by omitting the restriction
+        self.assertIsNone(_query().org_ids)
 
     def test_no_class_scope_of_its_own(self):
         self.assertIsNone(_query().classes)

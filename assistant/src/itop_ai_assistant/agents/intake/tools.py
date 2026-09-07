@@ -281,10 +281,23 @@ async def find_relevant_faq_articles(runtime: IntakeToolRuntime) -> tuple[str, s
     ticket = ctx.ticket
     # Guaranteed by `tools_for`, which withholds this tool otherwise
     assert ctx.faq is not None
+    if not ticket.org_id:
+        # Degenerate: `org_id` is mandatory on an iTop ticket. Searching the
+        # whole corpus is the honest fallback — "the unrestricted articles
+        # only" is not something the pre-filter can express (ADR-033).
+        logger.warning(f"{ticket.identity}: no org_id, FAQ articles are searched without the organization pre-filter")
     return await _find_references(
         runtime,
         door=ctx.faq,
-        query=faq_query(ctx.intake, text=f"{ticket.title}\n\n{html_to_markdown(ticket.description)}"),
+        query=faq_query(
+            ctx.intake,
+            text=f"{ticket.title}\n\n{html_to_markdown(ticket.description)}",
+            # The requester's organization, not the run principal's: what
+            # `confirm_visible` checks afterwards is whether the run may read
+            # the article, which is a different question from whether the
+            # article is published to this ticket's customer.
+            org_ids=[ticket.org_id] if ticket.org_id else None,
+        ),
         tool_name="find_relevant_faq_articles",
         label="relevant FAQ articles",
         nothing_found="No relevant FAQ articles were found. Write the handoff note without references.",
