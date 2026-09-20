@@ -32,7 +32,7 @@ Files you place here shadow the packaged defaults. Files you do not place keep t
 
 ## Prompt files
 
-The intake module runs as one agent session, so its prompts are not per-LLM-call pairs but the three messages that open the session. The first of them is assembled from five files — a base plus one fragment per [action you switched on](configuration.md#intake-module-settings), so that a switched-off action does not leave its instructions in the model's context:
+The intake module runs as one agent session, so its prompts are not per-LLM-call pairs but the three messages that open the session. The first of them is assembled from six files — a base plus one fragment per [action you switched on](configuration.md#intake-module-settings), so that a switched-off action does not leave its instructions in the model's context:
 
 | File | Role in the session | Sent when |
 |------|--------------------|-----------|
@@ -40,7 +40,8 @@ The intake module runs as one agent session, so its prompts are not per-LLM-call
 | `system_classify.md` | How to pick a service and a subcategory | `intake.classify_enabled` |
 | `system_clarify.md` | When to ask the requester, and how to write to them | `intake.clarify_enabled` |
 | `system_handoff_note.md` | How to write the note for the engineer | `intake.handoff_note_enabled` |
-| `system_similar.md` | How to quote similar solved tickets in that note | `intake.similar_enabled`, and only where vector search is configured |
+| `system_similar.md` | How to quote similar solved tickets in that note | `intake.similar_enabled`, and only where vector search is configured for that family |
+| `system_faq.md` | How to quote relevant FAQ articles in that note | `intake.faq_enabled`, and only where vector search is configured for that family |
 | `catalog_human.md` | The service catalog available to the requester's organization | Only for an unclassified ticket — a ticket that already has a service and a subcategory cannot be reclassified, so the list is omitted |
 | `ticket_human.md` | This ticket: title, description, current classification, conversation so far | Always |
 

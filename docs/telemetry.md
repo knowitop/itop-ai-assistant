@@ -53,7 +53,7 @@ Redis is not a field either: the document is assembled out of Redis, so the fiel
 | `llm_model` | The model name, if it has the shape of a model name, else `other` |
 | `settings` | Every `bool` and `int` any module's settings section declares |
 
-`settings` is a rule, not a list. Every configurable section is scanned, and each field whose declared type is `bool` or `int` travels under `<section>_<field>` — today that is `intake_enabled`, `intake_max_questions`, `intake_max_iterations`, `intake_classify_enabled`, `intake_max_classify_questions`, `intake_clarify_enabled`, `intake_handoff_note_enabled`, `intake_similar_enabled`, `intake_similar_max_age_days`, `intake_similar_candidates`, `intake_similar_top`, `vector_enabled`, `vector_sweep_interval_seconds`, `vector_sweep_page_size`, `vector_reconcile_interval_days`, `vector_max_chunk_tokens`, `vector_max_chunks_per_object`, `vector_log_entries_per_chunk`.
+`settings` is a rule, not a list. Every configurable section is scanned, and each field whose declared type is `bool` or `int` travels under `<section>_<field>` — today that is `intake_enabled`, `intake_max_questions`, `intake_max_iterations`, `intake_classify_enabled`, `intake_max_classify_questions`, `intake_clarify_enabled`, `intake_handoff_note_enabled`, `intake_similar_enabled`, `intake_similar_max_age_days`, `intake_similar_candidates`, `intake_similar_top`, `intake_faq_enabled`, `intake_faq_candidates`, `intake_faq_top`, `vector_enabled`, `vector_sweep_interval_seconds`, `vector_sweep_page_size`, `vector_reconcile_interval_days`, `vector_max_chunk_tokens`, `vector_max_chunks_per_object`, `vector_log_entries_per_chunk`.
 
 A module's OQL, its class list, its note templates cannot appear here at all: they are neither a `bool` nor an `int`.
 

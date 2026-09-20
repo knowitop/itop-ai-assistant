@@ -6,6 +6,7 @@ Everything `IntakeRun.body` (`run.py`) needs before it can construct
 (TASK-026).
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 
@@ -46,17 +47,22 @@ async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps,
     prompts = build_intake_prompts((await deps.prompt_store.get(MODULE)).effective)
     # The administrator's switch, the deployment's ability to search and
     # whether the family it would search is indexed at all are one condition,
-    # not three: `similar is not None` stays the single source of all of them.
-    # The family name comes from intake's own config (rule 6.5) — the
-    # subsystem is the one that knows whether it is indexed.
-    similar = (
-        deps.vector_search if cfg.similar_enabled and await deps.vector_search.available(cfg.similar_family) else None
+    # not three: `similar is not None`/`faq is not None` stay the single
+    # source of all of them, checked per family. The family names come from
+    # intake's own config (rule 6.5) — the subsystem is the one that knows
+    # whether each is indexed. The two checks are independent, so they run
+    # together rather than one after the other.
+    similar_available, faq_available = await asyncio.gather(
+        deps.vector_search.available(cfg.similar_family), deps.vector_search.available(cfg.faq_family)
     )
+    similar = deps.vector_search if cfg.similar_enabled and similar_available else None
+    faq = deps.vector_search if cfg.faq_enabled and faq_available else None
     scope = IntakeScope(
         classify=cfg.classify_enabled,
         clarify=cfg.clarify_enabled,
         handoff_note=cfg.handoff_note_enabled,
         similar=similar is not None,
+        faq=faq is not None,
     )
     classification = Classification(unclassified_services=frozenset(cfg.unclassified_service_ids))
     context = IntakeContext(
@@ -71,6 +77,7 @@ async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps,
         classification=classification,
         ai_name=ai_name,
         similar=similar,
+        faq=faq,
     )
     agent = build_intake_agent(
         deps.create_llm(llm_cfg, cfg.model),

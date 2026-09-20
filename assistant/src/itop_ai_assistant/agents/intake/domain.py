@@ -15,21 +15,22 @@ from .state import TicketState
 
 @dataclass(frozen=True)
 class IntakeScope:
-    """Which of intake's four actions this run may perform.
+    """Which of intake's five actions this run may perform.
 
     An administrator's answer, read once per run: the tool set, the prompt and
     the journal all take it from here instead of each reading `IntakeConfig`
     on its own and drifting apart. Built in `compose.py` — this module knows
     nothing about configuration.
 
-    `similar` already folds in whether the deployment can search at all, the
-    other three are the plain switches.
+    `similar` and `faq` already fold in whether the deployment can search at
+    all (each over its own family), the other three are the plain switches.
     """
 
     classify: bool
     clarify: bool
     handoff_note: bool
     similar: bool
+    faq: bool
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,7 @@ def format_scope(scope: IntakeScope) -> str:
         "clarify": scope.clarify,
         "handoff_note": scope.handoff_note,
         "similar": scope.similar,
+        "faq": scope.faq,
     }
     return " ".join(f"{name}={'on' if enabled else 'off'}" for name, enabled in flags.items())
 
