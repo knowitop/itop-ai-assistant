@@ -513,6 +513,26 @@ class TestSwitchedOffActions(IntakeAgentTestCase):
         self.assertEqual(steps[0], ("scope", "classify=on clarify=on handoff_note=off similar=off faq=off"))
         self.assertEqual(steps[1], ("classification", "service=none subcategory=none"))
 
+    async def test_classification_switched_off_reads_no_catalog(self):
+        self.intake_cfg = self.intake_cfg.model_copy(update={"classify_enabled": False})
+
+        await self.run_agent([ai([call("finish_processing", {}, "f1")])])
+
+        self.repos.catalog_repo.find_services.assert_not_called()
+
+    async def test_an_empty_catalog_switches_classification_off(self):
+        # An organization without a customer contract: the model is not handed
+        # tools that can only be refused, and the journal says classify=off
+        self.repos.catalog_repo.find_services = AsyncMock(return_value=[])
+
+        model = await self.run_agent([ai([call("finish_processing", {}, "f1")])])
+
+        self.assertEqual(
+            self.journal_steps()[0], ("scope", "classify=off clarify=on handoff_note=off similar=off faq=off")
+        )
+        self.assertNotIn("set_classification", model.bound_tools[0])
+        self.repos.catalog_repo.find_services.assert_awaited_once()
+
     async def test_the_silent_finish_replaces_the_handoff_and_ends_the_run(self):
         model = await self.run_agent(
             [

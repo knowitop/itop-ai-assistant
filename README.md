@@ -136,6 +136,8 @@ docker compose up -d
 
 The compose stack starts iTop, Redis, Qdrant and the assistant together. If you already have an iTop, Redis or Qdrant instance, comment out those services in `docker-compose.yml`.
 
+The bundled iTop starts empty: open `http://localhost:8000` and run its installation wizard first. Database server `localhost`, login `admin`, password `MYSQL_PASS` from `docker-compose.yml` (`123456`). Two choices in that wizard matter to the assistant: **ITIL Compliant Tickets Management** gives it both `UserRequest` and `Incident` (the default, Simple Ticket Management, only `UserRequest`), and **Known Errors Management and FAQ** is what the FAQ references in the handoff note read from. With the demo data, only *Sales Department* and *Customer* have a customer contract — tickets from other organizations have no service catalog to be classified against (see [Setup](docs/setup.md#2-configure-the-service-catalog)).
+
 A deployment that brings its own compose file can pull the image directly, from [Docker Hub](https://hub.docker.com/r/knowitop/itop-ai-assistant) or from [GHCR](https://github.com/knowitop/itop-ai-assistant/pkgs/container/itop-ai-assistant):
 
 ```bash

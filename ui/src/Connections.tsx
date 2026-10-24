@@ -49,6 +49,17 @@ export async function loadLlmProviders(): Promise<LlmProvider[]> {
   return data.providers;
 }
 
+// The backend URL field is prefilled from the browser, but iTop calls it from
+// its own server: there, localhost is iTop itself (in the bundled compose
+// stack, the iTop container).
+export function pointsAtLocalhost(url: string): boolean {
+  try {
+    return ['localhost', '127.0.0.1', '[::1]'].includes(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
 async function resetSection(section: string, confirmMsg: string): Promise<boolean> {
   if (!window.confirm(confirmMsg)) return false;
   await apiSend('DELETE', `/setup/${section}`);
@@ -334,7 +345,17 @@ function ItopWebhooksForm() {
       </Text>
       <TextInput
         label={t('common.field_backend_url')}
-        description={t('common.field_backend_url_desc')}
+        description={
+          // A hint, not an error: the field starts out on the browser's
+          // address, and localhost is right where iTop runs on this same host
+          pointsAtLocalhost(backendUrl) ? (
+            <Text span inherit c="orange">
+              {t('common.backend_url_localhost_warning')}
+            </Text>
+          ) : (
+            t('common.field_backend_url_desc')
+          )
+        }
         value={backendUrl}
         onChange={(e) => setBackendUrl(e.currentTarget.value)}
       />

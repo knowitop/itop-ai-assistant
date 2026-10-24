@@ -17,13 +17,15 @@ from .state import TicketState
 class IntakeScope:
     """Which of intake's five actions this run may perform.
 
-    An administrator's answer, read once per run: the tool set, the prompt and
+    Mostly an administrator's answer, read once per run: the tool set, the prompt and
     the journal all take it from here instead of each reading `IntakeConfig`
     on its own and drifting apart. Built in `compose.py` — this module knows
     nothing about configuration.
 
     `similar` and `faq` already fold in whether the deployment can search at
-    all (each over its own family), the other three are the plain switches.
+    all (each over its own family), `classify` whether the requester's
+    organization is offered any service; `clarify` and `handoff_note` are the
+    plain switches.
     """
 
     classify: bool

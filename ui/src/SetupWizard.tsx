@@ -23,7 +23,7 @@ import { Trans, useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 
 import { apiGet, apiSend, fetchSetupStatus, REPO_URL, SetupStatus, setToken, TELEMETRY_DOC_URL } from './api';
-import { loadLlmProviders, LlmProvider } from './Connections';
+import { loadLlmProviders, LlmProvider, pointsAtLocalhost } from './Connections';
 import { TelemetrySwitch } from './System';
 
 // GET /api/setup/{section} shape (same as in Connections): non-secret values
@@ -645,7 +645,17 @@ function WebhooksStep({ onBack, onDone }: { onBack: () => void; onDone: () => vo
       </Text>
       <TextInput
         label={t('common.field_backend_url')}
-        description={t('common.field_backend_url_desc')}
+        description={
+          // A hint, not an error: the field starts out on the browser's
+          // address, and localhost is right where iTop runs on this same host
+          pointsAtLocalhost(backendUrl) ? (
+            <Text span inherit c="orange">
+              {t('common.backend_url_localhost_warning')}
+            </Text>
+          ) : (
+            t('common.field_backend_url_desc')
+          )
+        }
         value={backendUrl}
         onChange={(e) => setBackendUrl(e.currentTarget.value)}
       />

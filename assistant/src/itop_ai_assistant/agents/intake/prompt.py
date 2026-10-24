@@ -15,6 +15,7 @@ previous turn". XML also keeps the channel and the author, which the message
 roles cannot express.
 """
 
+import asyncio
 from xml.sax.saxutils import escape, quoteattr
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
@@ -25,7 +26,6 @@ from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.repositories.catalog import CatalogRepository
 from itop_ai_assistant.util.text import html_to_markdown
 
-from . import catalog
 from .context import IntakeContext
 from .domain import Classification, IntakeScope, closing_tools, needs_classification
 from .prompts import IntakePrompts
@@ -63,6 +63,10 @@ def build_conversation_xml(entries: list[LogEntry], ai_name: str, caller_name: s
     return "\n".join(lines)
 
 
+async def _nothing() -> None:
+    return None
+
+
 async def build_service_context(ticket: Ticket, repo: CatalogRepository, classification: Classification) -> str:
     """Describe the classification the ticket already carries.
 
@@ -76,18 +80,18 @@ async def build_service_context(ticket: Ticket, repo: CatalogRepository, classif
     parts = []
     service_id = classification.service_of(ticket)
     subcategory_id = classification.subcategory_of(ticket)
-    if service_id is not None:
-        service = await repo.get_service(service_id)
-        if service:
-            parts.append(f"Service: {service.name}")
-            if service.description:
-                parts.append(f"Service description:\n{service.description}")
-    if subcategory_id is not None:
-        subcategory = await repo.get_subcategory(subcategory_id)
-        if subcategory:
-            parts.append(f"Subcategory: {subcategory.name}")
-            if subcategory.description:
-                parts.append(f"Subcategory description:\n{subcategory.description}")
+    service, subcategory = await asyncio.gather(
+        repo.get_service(service_id) if service_id is not None else _nothing(),
+        repo.get_subcategory(subcategory_id) if subcategory_id is not None else _nothing(),
+    )
+    if service:
+        parts.append(f"Service: {service.name}")
+        if service.description:
+            parts.append(f"Service description:\n{service.description}")
+    if subcategory:
+        parts.append(f"Subcategory: {subcategory.name}")
+        if subcategory.description:
+            parts.append(f"Subcategory description:\n{subcategory.description}")
 
     if not parts:
         return "Not classified yet — neither service nor subcategory is set."
@@ -130,9 +134,11 @@ def build_system_prompt(scope: IntakeScope, prompts: IntakePrompts) -> str:
     per run, and this leaves the text to match.
 
     Takes the scope and not the whole context on purpose — `system.md` is the
-    cached prefix, and the scope is fixed for a deployment while the ticket is
-    not. Selecting a fragment by what the ticket still needs would split the
-    prefix into two families of runs for the sake of one caveat.
+    cached prefix, and the scope changes with the deployment (and, for
+    `classify`, with the requester's organization) while the state of the
+    ticket changes every round. Selecting a fragment by what the ticket still
+    needs would split the prefix into two families of runs for the sake of
+    one caveat.
     """
     fragments = [prompts.system]
     if scope.classify:
@@ -150,18 +156,20 @@ def build_system_prompt(scope: IntakeScope, prompts: IntakePrompts) -> str:
     return "\n\n".join(fragment.strip() for fragment in fragments)
 
 
-async def build_initial_messages(ctx: IntakeContext, prompts: IntakePrompts) -> list[BaseMessage]:
+def build_initial_messages(
+    ctx: IntakeContext, prompts: IntakePrompts, services: list[Service] | None, service_context: str
+) -> list[BaseMessage]:
+    """`services` is the catalog offered to this ticket, None where the run
+    does not classify it; `service_context` is `build_service_context`'s.
+    Both are read by the caller, alongside each other."""
     ticket = ctx.ticket
-    service_context = await build_service_context(ticket, ctx.catalog_repo, ctx.classification)
 
     messages: list[BaseMessage] = [SystemMessage(content=build_system_prompt(ctx.scope, prompts))]
 
-    # No catalog where classification cannot happen — an already classified
-    # ticket, or a deployment that does not classify at all (`tools_for`
-    # withholds the tools either way). The list would otherwise ride along in
-    # the message history, paid for on every model call of the run.
-    if needs_classification(ctx.scope, ticket, ctx.classification):
-        services = await catalog.offered_services(ctx)
+    # No catalog where classification cannot happen (`tools_for` withholds the
+    # tools then too): the list would otherwise ride along in the message
+    # history, paid for on every model call of the run.
+    if services is not None:
         catalog_text = PromptTemplate.from_template(prompts.catalog_human).format(services=format_options(services))
         messages.append(HumanMessage(content=catalog_text))
 

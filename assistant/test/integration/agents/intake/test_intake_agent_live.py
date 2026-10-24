@@ -14,8 +14,9 @@ Run: uv run pytest test/integration/ -v
 """
 
 from itop_ai_assistant.agents.intake.agent import build_intake_agent
-from itop_ai_assistant.agents.intake.domain import IntakeScope
-from itop_ai_assistant.agents.intake.prompt import build_initial_messages
+from itop_ai_assistant.agents.intake.catalog import offered_services
+from itop_ai_assistant.agents.intake.domain import IntakeScope, needs_classification
+from itop_ai_assistant.agents.intake.prompt import build_initial_messages, build_service_context
 from itop_ai_assistant.agents.intake.tools import tools_for
 from itop_ai_assistant.config import get_settings
 from itop_ai_assistant.core.deps import create_llm
@@ -31,7 +32,9 @@ async def _run(ctx):
         tools_for(ctx.ticket, ctx.scope, ctx.classification),
         force_tool_choice=llm_cfg.endpoint_forces_tool_choice,
     )
-    messages = await build_initial_messages(ctx, _PROMPTS)
+    services = await offered_services(ctx) if needs_classification(ctx.scope, ctx.ticket, ctx.classification) else None
+    service_context = await build_service_context(ctx.ticket, ctx.catalog_repo, ctx.classification)
+    messages = build_initial_messages(ctx, _PROMPTS, services, service_context)
     return await agent.ainvoke({"messages": messages}, context=ctx)
 
 
