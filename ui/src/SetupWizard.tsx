@@ -23,7 +23,7 @@ import { Trans, useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 
 import { apiGet, apiSend, fetchSetupStatus, REPO_URL, SetupStatus, setToken, TELEMETRY_DOC_URL } from './api';
-import { loadLlmProviders, LlmProvider } from './Connections';
+import { loadLlmProviders, LlmProvider, pointsAtLocalhost } from './Connections';
 import { TelemetrySwitch } from './System';
 
 // GET /api/setup/{section} shape (same as in Connections): non-secret values
@@ -648,6 +648,7 @@ function WebhooksStep({ onBack, onDone }: { onBack: () => void; onDone: () => vo
         description={t('common.field_backend_url_desc')}
         value={backendUrl}
         onChange={(e) => setBackendUrl(e.currentTarget.value)}
+        error={pointsAtLocalhost(backendUrl) ? t('common.backend_url_localhost_warning') : undefined}
       />
       <SegmentedControl
         value={auth}

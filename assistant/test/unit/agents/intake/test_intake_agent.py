@@ -512,6 +512,17 @@ class TestSwitchedOffActions(IntakeAgentTestCase):
         steps = self.journal_steps()
         self.assertEqual(steps[0], ("scope", "classify=on clarify=on handoff_note=off similar=off faq=off"))
         self.assertEqual(steps[1], ("classification", "service=none subcategory=none"))
+        self.assertNotIn("catalog", [node for node, _ in steps])
+
+    async def test_an_empty_catalog_is_journalled_as_such(self):
+        # Otherwise an organization without a customer contract reads as an
+        # agent that never classifies
+        self.repos.catalog_repo.find_services = AsyncMock(return_value=[])
+
+        await self.run_agent([ai([call("finish_processing", {}, "f1")])])
+
+        self.assertEqual(self.journal_steps()[2][0], "catalog")
+        self.repos.catalog_repo.find_services.assert_awaited_once()
 
     async def test_the_silent_finish_replaces_the_handoff_and_ends_the_run(self):
         model = await self.run_agent(

@@ -14,15 +14,17 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.state import CompiledStateGraph
 
 from itop_ai_assistant.config import LlmConfig
+from itop_ai_assistant.domain.catalog import Service
 from itop_ai_assistant.domain.ticket import Ticket
 from itop_ai_assistant.pipelines.context import RunContext
 from itop_ai_assistant.pipelines.ports import RunDeps
 from itop_ai_assistant.repositories.sets import RepositorySet
 
+from . import catalog
 from .agent import build_intake_agent
 from .config import IntakeConfig
 from .context import IntakeContext
-from .domain import Classification, IntakeScope
+from .domain import Classification, IntakeScope, needs_classification
 from .prompt import build_initial_messages
 from .prompts import MODULE, build_intake_prompts
 from .state import IntakeState
@@ -39,6 +41,8 @@ class ComposedRun:
     context: IntakeContext
     messages: list[BaseMessage]
     think_tags: tuple[str, ...]
+    # The catalog offered to this ticket, None where the run does not classify.
+    offered_services: list[Service] | None
 
 
 async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps, repos: RepositorySet) -> ComposedRun:
@@ -87,10 +91,12 @@ async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps,
         # endpoint accepts being forced
         force_tool_choice=llm_cfg.endpoint_forces_tool_choice,
     )
-    messages = await build_initial_messages(context, prompts)
+    services = await catalog.offered_services(context) if needs_classification(scope, ticket, classification) else None
+    messages = await build_initial_messages(context, prompts, services)
     return ComposedRun(
         agent=agent,
         context=context,
         messages=messages,
         think_tags=tuple(llm_cfg.think_tags),
+        offered_services=services,
     )

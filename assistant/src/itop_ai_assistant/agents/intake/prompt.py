@@ -150,7 +150,11 @@ def build_system_prompt(scope: IntakeScope, prompts: IntakePrompts) -> str:
     return "\n\n".join(fragment.strip() for fragment in fragments)
 
 
-async def build_initial_messages(ctx: IntakeContext, prompts: IntakePrompts) -> list[BaseMessage]:
+async def build_initial_messages(
+    ctx: IntakeContext, prompts: IntakePrompts, services: list[Service] | None = None
+) -> list[BaseMessage]:
+    """`services` is the catalog the caller already read for this run; read
+    here when not given."""
     ticket = ctx.ticket
     service_context = await build_service_context(ticket, ctx.catalog_repo, ctx.classification)
 
@@ -161,7 +165,8 @@ async def build_initial_messages(ctx: IntakeContext, prompts: IntakePrompts) -> 
     # withholds the tools either way). The list would otherwise ride along in
     # the message history, paid for on every model call of the run.
     if needs_classification(ctx.scope, ticket, ctx.classification):
-        services = await catalog.offered_services(ctx)
+        if services is None:
+            services = await catalog.offered_services(ctx)
         catalog_text = PromptTemplate.from_template(prompts.catalog_human).format(services=format_options(services))
         messages.append(HumanMessage(content=catalog_text))
 

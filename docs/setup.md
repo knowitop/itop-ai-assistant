@@ -35,7 +35,7 @@ Click **Test connection** to verify before saving. The test returns the login na
 
 ### Step 3 — iTop webhooks
 
-This step creates the triggers and webhooks in iTop automatically, using one-time admin credentials (entered here, never stored). The assistant creates:
+This step creates the triggers and webhooks in iTop automatically, using one-time admin credentials (entered here, never stored). The account goes through the REST API, so besides **Administrator** it needs the **REST Services User** profile — which the administrator created by the iTop installation does not have. Add the profile, or use another account that has both. The assistant creates:
 
 | Object | Purpose |
 |--------|---------|
@@ -47,7 +47,7 @@ This step creates the triggers and webhooks in iTop automatically, using one-tim
 Classes missing from your datamodel are skipped rather than failing the step, and objects that already exist (matched by name) are left untouched — re-running is safe. You can skip this step and create the iTop objects manually (see below).
 
 > [!IMPORTANT]
-> The **Backend URL** field (auto-filled from the browser) must be the address at which the iTop server can reach the assistant — not necessarily `localhost`. In Docker Compose, that is `http://assistant:8000`.
+> The **Backend URL** field (auto-filled from the browser) must be the address at which the iTop server can reach the assistant. On the iTop server, `localhost` is iTop itself — the field warns when it points there. In Docker Compose, that is `http://assistant:8000`.
 
 ### Step 4 — LLM connection
 
@@ -98,7 +98,9 @@ All comments posted by the assistant will appear under this account name, making
 
 ![Auth: application token](images/application_token.png)
 
-### 2. Configure service subcategories
+### 2. Configure the service catalog
+
+The assistant classifies a ticket only into the services offered to the requester's organization — by default, the services of that organization's **customer contracts** (the query is *Service catalogue query* in the module settings). An organization without a contract has an empty catalog: its tickets cannot be classified, and the run goes on to ask or hand off without a category. The run journal records this as a `catalog` step, and the assistant logs a warning.
 
 The assistant uses the **description** field of each service subcategory as its completeness criteria — it checks whether the ticket contains everything listed there before deciding to ask a question or hand the ticket to an engineer.
 
