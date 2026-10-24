@@ -47,6 +47,7 @@ from datetime import UTC, datetime
 
 from qdrant_client import AsyncQdrantClient, models
 
+from itop_ai_assistant.vector.domain import format_obj_key
 from itop_ai_assistant.vector.ports.store import (
     ChunkDigest,
     ChunkMetadata,
@@ -644,7 +645,7 @@ class QdrantChunkStore(ChunkStore):
         must_not: list[models.Condition] = []
         if exclude is not None:
             must_not.append(
-                models.FieldCondition(key="obj_key", match=models.MatchValue(value=f"{exclude[0]}:{exclude[1]}"))
+                models.FieldCondition(key="obj_key", match=models.MatchValue(value=format_obj_key(*exclude)))
             )
         response = await self.client.query_points_groups(
             collection_name=self.collection_name(family, meta.version),

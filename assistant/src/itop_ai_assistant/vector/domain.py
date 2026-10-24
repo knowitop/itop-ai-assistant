@@ -12,14 +12,28 @@ from datetime import datetime
 from enum import Enum, auto
 
 
+def format_obj_key(obj_class: str, obj_id: int) -> str:
+    """`Class::Id` — iTop's own convention (`domain/identity.py`'s
+    `ObjectIdentity.__str__`, and the key iTop's REST/JSON API itself uses,
+    e.g. `"UserRequest::123"`). `ChunkMetadata.obj_key` and `search()`'s
+    `exclude` filter (`adapters/qdrant_store.py`) both format the same pair
+    through this function rather than inlining it twice.
+    """
+    return f"{obj_class}::{obj_id}"
+
+
 @dataclass(frozen=True)
 class ChunkMetadata:
     """Everything a chunk's payload carries — no vector.
 
     `meta_hash` is a canonical digest of the filterable fields only
     (identifiers are the comparison key, not part of what they identify;
-    `content_hash` is the other hash and has its own role). Sorted keys and
-    `ensure_ascii=False` keep the digest stable across processes.
+    `content_hash` is the other hash and has its own role). `obj_key` is
+    derived from the identifiers yet still fed in: search groups and excludes
+    by it, and a release that changes its format would otherwise leave
+    unchanged chunks of one object under the old key — one object, two
+    groups. Sorted keys and `ensure_ascii=False` keep the digest stable
+    across processes.
     """
 
     obj_class: str
@@ -62,7 +76,7 @@ class ChunkMetadata:
         allocates it in the root table, so all `Ticket` subclasses share one
         numbering, while `KnowledgeBaseArticle` and friends have their own.
         """
-        return f"{self.obj_class}:{self.obj_id}"
+        return format_obj_key(self.obj_class, self.obj_id)
 
     @property
     def meta_hash(self) -> str:
@@ -71,6 +85,7 @@ class ChunkMetadata:
                 "acl_org_ids": list(self.acl_org_ids),
                 "created_at": self.created_at.isoformat(),
                 "filters": self.filters,
+                "obj_key": self.obj_key,
                 "updated_at": self.updated_at.isoformat() if self.updated_at else None,
                 "visibility": self.visibility,
             },
