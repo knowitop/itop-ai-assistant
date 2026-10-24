@@ -74,9 +74,11 @@ async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps,
     # Nothing to classify into is the same condition as classification
     # switched off, folded in like `similar`/`faq`: the tools, the prompt and
     # the journal's `classify=off` all follow from it. Why it is off is a
-    # deployment problem, so it goes to the log, not to the model.
+    # deployment problem, so it goes to the log, not to the model — at info:
+    # an organization without a contract is ordinary (most of the demo data)
+    # and would otherwise repeat a warning on every run of every ticket.
     if services == []:
-        logger.warning(
+        logger.info(
             f"[{run.processing_id}] {ticket.identity}: no services offered to the requester's organization, "
             "classification is off for this run — check the organization's customer contracts, "
             "the service catalogue query and the services declared not classified"

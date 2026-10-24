@@ -17,7 +17,7 @@ from .state import TicketState
 class IntakeScope:
     """Which of intake's five actions this run may perform.
 
-    An administrator's answer, read once per run: the tool set, the prompt and
+    Mostly an administrator's answer, read once per run: the tool set, the prompt and
     the journal all take it from here instead of each reading `IntakeConfig`
     on its own and drifting apart. Built in `compose.py` — this module knows
     nothing about configuration.

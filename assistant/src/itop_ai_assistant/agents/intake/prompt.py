@@ -134,9 +134,11 @@ def build_system_prompt(scope: IntakeScope, prompts: IntakePrompts) -> str:
     per run, and this leaves the text to match.
 
     Takes the scope and not the whole context on purpose — `system.md` is the
-    cached prefix, and the scope is fixed for a deployment while the ticket is
-    not. Selecting a fragment by what the ticket still needs would split the
-    prefix into two families of runs for the sake of one caveat.
+    cached prefix, and the scope changes with the deployment (and, for
+    `classify`, with the requester's organization) while the state of the
+    ticket changes every round. Selecting a fragment by what the ticket still
+    needs would split the prefix into two families of runs for the sake of
+    one caveat.
     """
     fragments = [prompts.system]
     if scope.classify:
