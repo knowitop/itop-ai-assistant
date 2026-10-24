@@ -28,8 +28,12 @@ class ChunkMetadata:
 
     `meta_hash` is a canonical digest of the filterable fields only
     (identifiers are the comparison key, not part of what they identify;
-    `content_hash` is the other hash and has its own role). Sorted keys and
-    `ensure_ascii=False` keep the digest stable across processes.
+    `content_hash` is the other hash and has its own role). `obj_key` is
+    derived from the identifiers yet still fed in: search groups and excludes
+    by it, and a release that changes its format would otherwise leave
+    unchanged chunks of one object under the old key — one object, two
+    groups. Sorted keys and `ensure_ascii=False` keep the digest stable
+    across processes.
     """
 
     obj_class: str
@@ -81,6 +85,7 @@ class ChunkMetadata:
                 "acl_org_ids": list(self.acl_org_ids),
                 "created_at": self.created_at.isoformat(),
                 "filters": self.filters,
+                "obj_key": self.obj_key,
                 "updated_at": self.updated_at.isoformat() if self.updated_at else None,
                 "visibility": self.visibility,
             },
