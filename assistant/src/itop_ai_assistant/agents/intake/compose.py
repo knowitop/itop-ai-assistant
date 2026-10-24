@@ -25,7 +25,7 @@ from .agent import build_intake_agent
 from .config import IntakeConfig
 from .context import IntakeContext
 from .domain import Classification, IntakeScope, needs_classification
-from .prompt import build_initial_messages
+from .prompt import build_initial_messages, build_service_context
 from .prompts import MODULE, build_intake_prompts
 from .state import IntakeState
 from .tools import tools_for
@@ -67,21 +67,22 @@ async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps,
         faq=faq is not None,
     )
     classification = Classification(unclassified_services=frozenset(cfg.unclassified_service_ids))
-    services: list[Service] | None = None
-    if needs_classification(scope, ticket, classification):
-        services = await catalog.read_offered_services(repos.catalog_repo, cfg, ticket, classification)
-        # Nothing to classify into is the same condition as classification
-        # switched off, folded in like `similar`/`faq`: the tools, the prompt
-        # and the journal's `classify=off` all follow from it. Why it is off
-        # is a deployment problem, so it goes to the log, not to the model.
-        if not services:
-            logger.warning(
-                f"[{run.processing_id}] {ticket.identity}: no services offered to the requester's organization, "
-                "classification is off for this run — check the organization's customer contracts, "
-                "the service catalogue query and the services declared not classified"
-            )
-            scope = replace(scope, classify=False)
-            services = None
+    services, service_context = await asyncio.gather(
+        _offered_services(repos, cfg, ticket, scope, classification),
+        build_service_context(ticket, repos.catalog_repo, classification),
+    )
+    # Nothing to classify into is the same condition as classification
+    # switched off, folded in like `similar`/`faq`: the tools, the prompt and
+    # the journal's `classify=off` all follow from it. Why it is off is a
+    # deployment problem, so it goes to the log, not to the model.
+    if services == []:
+        logger.warning(
+            f"[{run.processing_id}] {ticket.identity}: no services offered to the requester's organization, "
+            "classification is off for this run — check the organization's customer contracts, "
+            "the service catalogue query and the services declared not classified"
+        )
+        scope = replace(scope, classify=False)
+        services = None
     context = IntakeContext(
         processing_id=run.processing_id,
         principal=run.principal,
@@ -104,10 +105,20 @@ async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps,
         # endpoint accepts being forced
         force_tool_choice=llm_cfg.endpoint_forces_tool_choice,
     )
-    messages = await build_initial_messages(context, prompts, services)
+    messages = build_initial_messages(context, prompts, services, service_context)
     return ComposedRun(
         agent=agent,
         context=context,
         messages=messages,
         think_tags=tuple(llm_cfg.think_tags),
     )
+
+
+async def _offered_services(
+    repos: RepositorySet, cfg: IntakeConfig, ticket: Ticket, scope: IntakeScope, classification: Classification
+) -> list[Service] | None:
+    """The catalog for the prompt, None where the run would not classify —
+    so a classified ticket costs no catalog read."""
+    if not needs_classification(scope, ticket, classification):
+        return None
+    return await catalog.read_offered_services(repos.catalog_repo, cfg, ticket, classification)

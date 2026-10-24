@@ -15,6 +15,7 @@ previous turn". XML also keeps the channel and the author, which the message
 roles cannot express.
 """
 
+import asyncio
 from xml.sax.saxutils import escape, quoteattr
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
@@ -62,6 +63,10 @@ def build_conversation_xml(entries: list[LogEntry], ai_name: str, caller_name: s
     return "\n".join(lines)
 
 
+async def _nothing() -> None:
+    return None
+
+
 async def build_service_context(ticket: Ticket, repo: CatalogRepository, classification: Classification) -> str:
     """Describe the classification the ticket already carries.
 
@@ -75,18 +80,18 @@ async def build_service_context(ticket: Ticket, repo: CatalogRepository, classif
     parts = []
     service_id = classification.service_of(ticket)
     subcategory_id = classification.subcategory_of(ticket)
-    if service_id is not None:
-        service = await repo.get_service(service_id)
-        if service:
-            parts.append(f"Service: {service.name}")
-            if service.description:
-                parts.append(f"Service description:\n{service.description}")
-    if subcategory_id is not None:
-        subcategory = await repo.get_subcategory(subcategory_id)
-        if subcategory:
-            parts.append(f"Subcategory: {subcategory.name}")
-            if subcategory.description:
-                parts.append(f"Subcategory description:\n{subcategory.description}")
+    service, subcategory = await asyncio.gather(
+        repo.get_service(service_id) if service_id is not None else _nothing(),
+        repo.get_subcategory(subcategory_id) if subcategory_id is not None else _nothing(),
+    )
+    if service:
+        parts.append(f"Service: {service.name}")
+        if service.description:
+            parts.append(f"Service description:\n{service.description}")
+    if subcategory:
+        parts.append(f"Subcategory: {subcategory.name}")
+        if subcategory.description:
+            parts.append(f"Subcategory description:\n{subcategory.description}")
 
     if not parts:
         return "Not classified yet — neither service nor subcategory is set."
@@ -149,13 +154,13 @@ def build_system_prompt(scope: IntakeScope, prompts: IntakePrompts) -> str:
     return "\n\n".join(fragment.strip() for fragment in fragments)
 
 
-async def build_initial_messages(
-    ctx: IntakeContext, prompts: IntakePrompts, services: list[Service] | None
+def build_initial_messages(
+    ctx: IntakeContext, prompts: IntakePrompts, services: list[Service] | None, service_context: str
 ) -> list[BaseMessage]:
     """`services` is the catalog offered to this ticket, None where the run
-    does not classify it."""
+    does not classify it; `service_context` is `build_service_context`'s.
+    Both are read by the caller, alongside each other."""
     ticket = ctx.ticket
-    service_context = await build_service_context(ticket, ctx.catalog_repo, ctx.classification)
 
     messages: list[BaseMessage] = [SystemMessage(content=build_system_prompt(ctx.scope, prompts))]
 

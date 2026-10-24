@@ -246,7 +246,9 @@ class TestInitialMessages(unittest.IsolatedAsyncioTestCase):
     async def test_order_and_content(self):
         ticket = _ticket(public_log=[LogEntry(user_login="John Doe", message="hello")])
 
-        messages = await build_initial_messages(self._context(ticket), _PROMPTS, [Service(id="10", name="Printing")])
+        messages = build_initial_messages(
+            self._context(ticket), _PROMPTS, [Service(id="10", name="Printing")], "Not classified yet"
+        )
 
         self.assertEqual([m.type for m in messages], ["system", "human", "human"])
         self.assertIn("intake assistant", messages[0].text)
@@ -265,10 +267,9 @@ class TestInitialMessages(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_run_that_does_not_classify_gets_no_catalog(self):
         # A sizeable block of tokens in every model call of the run
-        messages = await build_initial_messages(self._context(_ticket(), _scope(classify=False)), _PROMPTS, None)
+        messages = build_initial_messages(self._context(_ticket(), _scope(classify=False)), _PROMPTS, None, "")
 
         self.assertEqual([m.type for m in messages], ["system", "human"])
-        self.catalog.find_services.assert_not_called()
         self.assertNotIn("Classify the ticket", messages[1].text)
 
     async def test_a_classified_ticket_still_gets_the_classification_section(self):
@@ -276,7 +277,7 @@ class TestInitialMessages(unittest.IsolatedAsyncioTestCase):
         # scope, never the state of one ticket
         ticket = _ticket(service_id="10", subcategory_id="101")
 
-        messages = await build_initial_messages(self._context(ticket), _PROMPTS, None)
+        messages = build_initial_messages(self._context(ticket), _PROMPTS, None, "")
 
         self.assertIn("## Classification", messages[0].text)
 
