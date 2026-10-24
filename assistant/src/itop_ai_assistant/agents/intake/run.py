@@ -61,16 +61,6 @@ class IntakeRun(TicketRun):
             "classification",
             domain.format_incoming_classification(ticket, composed.context.classification),
         )
-        # An empty catalog is a deployment problem, not the agent's decision:
-        # without this the run goes on unclassified and only a tool result
-        # deep in the journal says why
-        if composed.offered_services == []:
-            detail = (
-                "no services offered to the requester's organization — the ticket cannot be classified; "
-                "check the organization's customer contracts or the service catalogue query"
-            )
-            logger.warning(f"[{self.processing_id}] {ticket.identity}: {detail}")
-            await self.step("catalog", detail)
         await IntakeAgentRun(
             composed.agent,
             composed.context,

@@ -8,7 +8,7 @@ Everything `IntakeRun.body` (`run.py`) needs before it can construct
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph.state import CompiledStateGraph
@@ -41,8 +41,6 @@ class ComposedRun:
     context: IntakeContext
     messages: list[BaseMessage]
     think_tags: tuple[str, ...]
-    # The catalog offered to this ticket, None where the run does not classify.
-    offered_services: list[Service] | None
 
 
 async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps, repos: RepositorySet) -> ComposedRun:
@@ -69,6 +67,21 @@ async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps,
         faq=faq is not None,
     )
     classification = Classification(unclassified_services=frozenset(cfg.unclassified_service_ids))
+    services: list[Service] | None = None
+    if needs_classification(scope, ticket, classification):
+        services = await catalog.read_offered_services(repos.catalog_repo, cfg, ticket, classification)
+        # Nothing to classify into is the same condition as classification
+        # switched off, folded in like `similar`/`faq`: the tools, the prompt
+        # and the journal's `classify=off` all follow from it. Why it is off
+        # is a deployment problem, so it goes to the log, not to the model.
+        if not services:
+            logger.warning(
+                f"[{run.processing_id}] {ticket.identity}: no services offered to the requester's organization, "
+                "classification is off for this run — check the organization's customer contracts, "
+                "the service catalogue query and the services declared not classified"
+            )
+            scope = replace(scope, classify=False)
+            services = None
     context = IntakeContext(
         processing_id=run.processing_id,
         principal=run.principal,
@@ -91,12 +104,10 @@ async def assemble(ticket: Ticket, ai_name: str, run: RunContext, deps: RunDeps,
         # endpoint accepts being forced
         force_tool_choice=llm_cfg.endpoint_forces_tool_choice,
     )
-    services = await catalog.offered_services(context) if needs_classification(scope, ticket, classification) else None
     messages = await build_initial_messages(context, prompts, services)
     return ComposedRun(
         agent=agent,
         context=context,
         messages=messages,
         think_tags=tuple(llm_cfg.think_tags),
-        offered_services=services,
     )

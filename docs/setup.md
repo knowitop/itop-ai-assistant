@@ -100,7 +100,7 @@ All comments posted by the assistant will appear under this account name, making
 
 ### 2. Configure the service catalog
 
-The assistant classifies a ticket only into the services offered to the requester's organization — by default, the services of that organization's **customer contracts** (the query is *Service catalogue query* in the module settings). An organization without a contract has an empty catalog: its tickets cannot be classified, and the run goes on to ask or hand off without a category. The run journal records this as a `catalog` step, and the assistant logs a warning.
+The assistant classifies a ticket only into the services offered to the requester's organization — by default, the services of that organization's **customer contracts** (the query is *Service catalogue query* in the module settings). An organization without a contract has an empty catalog: its tickets are processed with classification off — the run journal shows `classify=off`, the same as a deployment that does not classify, and the assistant logs a warning naming the cause.
 
 The assistant uses the **description** field of each service subcategory as its completeness criteria — it checks whether the ticket contains everything listed there before deciding to ask a question or hand the ticket to an engineer.
 

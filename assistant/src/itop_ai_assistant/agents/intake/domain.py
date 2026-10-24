@@ -23,7 +23,9 @@ class IntakeScope:
     nothing about configuration.
 
     `similar` and `faq` already fold in whether the deployment can search at
-    all (each over its own family), the other three are the plain switches.
+    all (each over its own family), `classify` whether the requester's
+    organization is offered any service; `clarify` and `handoff_note` are the
+    plain switches.
     """
 
     classify: bool

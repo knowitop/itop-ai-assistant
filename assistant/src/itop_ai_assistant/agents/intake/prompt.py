@@ -25,7 +25,6 @@ from itop_ai_assistant.domain.ticket import LogEntry, Ticket
 from itop_ai_assistant.repositories.catalog import CatalogRepository
 from itop_ai_assistant.util.text import html_to_markdown
 
-from . import catalog
 from .context import IntakeContext
 from .domain import Classification, IntakeScope, closing_tools, needs_classification
 from .prompts import IntakePrompts
@@ -151,22 +150,19 @@ def build_system_prompt(scope: IntakeScope, prompts: IntakePrompts) -> str:
 
 
 async def build_initial_messages(
-    ctx: IntakeContext, prompts: IntakePrompts, services: list[Service] | None = None
+    ctx: IntakeContext, prompts: IntakePrompts, services: list[Service] | None
 ) -> list[BaseMessage]:
-    """`services` is the catalog the caller already read for this run; read
-    here when not given."""
+    """`services` is the catalog offered to this ticket, None where the run
+    does not classify it."""
     ticket = ctx.ticket
     service_context = await build_service_context(ticket, ctx.catalog_repo, ctx.classification)
 
     messages: list[BaseMessage] = [SystemMessage(content=build_system_prompt(ctx.scope, prompts))]
 
-    # No catalog where classification cannot happen — an already classified
-    # ticket, or a deployment that does not classify at all (`tools_for`
-    # withholds the tools either way). The list would otherwise ride along in
-    # the message history, paid for on every model call of the run.
-    if needs_classification(ctx.scope, ticket, ctx.classification):
-        if services is None:
-            services = await catalog.offered_services(ctx)
+    # No catalog where classification cannot happen (`tools_for` withholds the
+    # tools then too): the list would otherwise ride along in the message
+    # history, paid for on every model call of the run.
+    if services is not None:
         catalog_text = PromptTemplate.from_template(prompts.catalog_human).format(services=format_options(services))
         messages.append(HumanMessage(content=catalog_text))
 
