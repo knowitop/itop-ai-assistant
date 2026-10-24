@@ -345,10 +345,19 @@ function ItopWebhooksForm() {
       </Text>
       <TextInput
         label={t('common.field_backend_url')}
-        description={t('common.field_backend_url_desc')}
+        description={
+          // A hint, not an error: the field starts out on the browser's
+          // address, and localhost is right where iTop runs on this same host
+          pointsAtLocalhost(backendUrl) ? (
+            <Text span inherit c="orange">
+              {t('common.backend_url_localhost_warning')}
+            </Text>
+          ) : (
+            t('common.field_backend_url_desc')
+          )
+        }
         value={backendUrl}
         onChange={(e) => setBackendUrl(e.currentTarget.value)}
-        error={pointsAtLocalhost(backendUrl) ? t('common.backend_url_localhost_warning') : undefined}
       />
       <SegmentedControl
         value={auth}
