@@ -96,8 +96,6 @@ The account needs the following profiles:
 
 All comments posted by the assistant will appear under this account name, making AI actions visible and auditable in the ticket log. Use this account's token for `ITOP_TOKEN` (or `ITOP_USER` / `ITOP_PWD`) in your `.env`.
 
-![Auth: application token](images/application_token.png)
-
 ### 2. Configure the service catalog
 
 The assistant classifies a ticket only into the services offered to the requester's organization — by default, the services of that organization's **customer contracts** (the query is *Service catalogue query* in the module settings). An organization without a contract has an empty catalog: its tickets are processed with classification off — the run journal shows `classify=off`, the same as a deployment that does not classify, and the assistant logs the cause.
@@ -136,16 +134,11 @@ Create two triggers in iTop (**Configuration → Notifications → Triggers**):
 > [!IMPORTANT]
 > `<AI Person>` is the id of the Person linked to the AI service account. The filter keeps the assistant's own questions from waking it up again; every other writer still does, including a front end that passes requesters' replies to iTop over REST/JSON. Without the filter nothing loops — the assistant recognizes its own comment and stops — but every question it asks costs an extra webhook and a skipped run in the journal.
 
-![Trigger: ticket created](images/trigger_request_created.png)
-![Trigger: user commented](images/trigger_request_commented.png)
-
 ### 4. Create webhooks
 
-In iTop, go to **Configuration → Notifications → Remote Application Connections** and create a connection for the assistant. The URL is the assistant as reachable **from the iTop server** — in the bundled compose stack, `http://assistant:8000`. If you set a `WEBHOOK_TOKEN`, configure the connection to send it in the `X-Auth-Token` header.
+In iTop, go to **Configuration → Notifications → Remote Application Connections** and create a connection for the assistant. The URL is the assistant as reachable **from the iTop server** — in the bundled compose stack, `http://assistant:8000`.
 
-![Connection: the assistant's endpoint](images/remote_app_connection.png)
-
-For each trigger, create a **Webhook action** that sends a `POST` to the assistant:
+For each trigger, create a **Webhook action** on that connection that sends a `POST` to the assistant, with the headers `Content-type: application/json` and, if you set a `WEBHOOK_TOKEN`, `X-Auth-Token: <WEBHOOK_TOKEN>`:
 
 **Webhook 1 — ticket created** (`POST http://assistant:8000/webhook`):
 ```json
@@ -156,9 +149,6 @@ For each trigger, create a **Webhook action** that sends a `POST` to the assista
 ```json
 {"id": "$this->id$", "class": "$this->finalclass$", "event": "user_commented"}
 ```
-
-![Webhook: ticket created](images/webhook_request_created.png)
-![Webhook: user commented](images/webhook_request_commented.png)
 
 Repeat both for every class the assistant handles (`Incident` by default, alongside `UserRequest`) — or use a single creation trigger on `Ticket` with the filter `SELECT Ticket WHERE finalclass IN ('UserRequest', 'Incident')`, which is what the wizard does.
 
