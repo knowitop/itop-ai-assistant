@@ -859,6 +859,25 @@ class TestProvisionItop(SetupApiTestCase):
         self.assertIn("refused", body["error"])
         client.aclose.assert_awaited_once()
 
+    def test_the_ai_account_is_read_with_the_saved_connection(self):
+        self.client.patch("/api/setup/security", json={"webhook_token": "wh"})
+        self.client.patch("/api/setup/itop", json={"url": "http://itop/rest.php", "token": "ai-tok"})
+        client = MagicMock()
+        client.schema.return_value.find_one = AsyncMock(return_value={"id": "54"})
+        client.aclose = AsyncMock()
+
+        with (
+            patch("itop_ai_assistant.admin.setup.create_itop_client", return_value=client) as factory,
+            patch("itop_ai_assistant.admin.setup.provision_itop", AsyncMock(return_value=[])) as provision,
+        ):
+            body = self.client.post(
+                "/api/setup/provision-itop", json={"backend_url": "http://assistant:8000", "token": "admin-tok"}
+            ).json()
+
+        self.assertTrue(body["ok"])
+        self.assertEqual([call.args[0].token for call in factory.call_args_list], ["ai-tok", "admin-tok"])
+        self.assertEqual(provision.await_args.args[3], 54)
+
     def test_requires_the_ai_service_account(self):
         """The update triggers leave out the AI account's own writes, so
         provisioning before the iTop connection is set up has nothing to
