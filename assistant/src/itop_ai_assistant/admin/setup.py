@@ -38,6 +38,7 @@ from itop_ai_assistant.domain.schema import FieldKind, Role, is_singular, kind_f
 from itop_ai_assistant.itop.connection import create_itop_client
 from itop_ai_assistant.itop.provisioning import provision_itop
 from itop_ai_assistant.pipelines.scheduler import PeriodicTasks
+from itop_ai_assistant.repositories.identity import IdentityRepository
 from itop_ai_assistant.settings.config_store import ConfigStore
 from itop_ai_assistant.state.install import InstallIdentity
 from itop_ai_assistant.telemetry.sender import SEND_TASK
@@ -446,6 +447,18 @@ async def test_itop(
     return {"ok": True, "ai_person": person.get("friendlyname")}
 
 
+async def _ai_contact_id(cfg: ItopConfig) -> int:
+    """The Person behind the saved AI service account, read with its own
+    credentials: the admin running the provisioning is somebody else."""
+    if not cfg.url or not cfg.has_auth:
+        raise ValueError("the iTop connection is not set up yet")
+    client = create_itop_client(cfg)
+    try:
+        return await asyncio.wait_for(IdentityRepository(client).current_person_id(), timeout=_TEST_TIMEOUT)
+    finally:
+        await client.aclose()
+
+
 @router.post("/provision-itop")
 async def provision_itop_endpoint(
     body: dict[str, Any], config_store: Annotated[ConfigStore, Depends(get_config_store)]
@@ -455,7 +468,8 @@ async def provision_itop_endpoint(
     Requires one-time admin credentials in the body (`user`+`pwd` or `token`)
     — they are used for these requests only and are never stored. `url`
     defaults to the saved itop section; the webhook token comes from the
-    saved security section.
+    saved security section, and the AI service account the triggers leave
+    out from the saved itop section's own credentials.
     """
     security = await config_store.get("security", SecurityConfig)
     if not security.webhook_token:
@@ -478,11 +492,18 @@ async def provision_itop_endpoint(
         raise HTTPException(status_code=422, detail=str(e)) from e
     if not cfg.has_auth:
         return {"ok": False, "error": "No admin credentials: provide user+pwd or token"}
+    try:
+        ai_contact_id = await _ai_contact_id(stored)
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": f"Cannot resolve the AI service account (iTop connection): {type(e).__name__}: {e}",
+        }
 
     client = create_itop_client(cfg)
     try:
         report = await asyncio.wait_for(
-            provision_itop(client, backend_url, security.webhook_token), timeout=_PROVISION_TIMEOUT
+            provision_itop(client, backend_url, security.webhook_token, ai_contact_id), timeout=_PROVISION_TIMEOUT
         )
     except Exception as e:
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}

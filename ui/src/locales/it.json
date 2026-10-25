@@ -117,7 +117,7 @@
     "llm_model_desc": "Nome del modello come esposto dall'endpoint",
     "llm_api_key_desc": "Richiesta dai provider cloud; i server locali la ignorano",
     "final_complete": "Configurazione completata — /webhook è attivo.",
-    "final_complete_detail": "Se hai eseguito il passaggio dei webhook iTop, iTop sta già chiamando <code>{{origin}}/webhook</code>. Se lo hai saltato, configura trigger e webhook manualmente (vedi README) o dalla schermata Connessioni — il token webhook va nell'intestazione <code>X-Auth-Token</code> e il contesto del trigger deve escludere <code>REST/JSON</code>.",
+    "final_complete_detail": "Se hai eseguito il passaggio dei webhook iTop, iTop sta già chiamando <code>{{origin}}/webhook</code>. Se lo hai saltato, configura trigger e webhook manualmente (vedi README) o dalla schermata Connessioni — il token webhook va nell'intestazione <code>X-Auth-Token</code> e i trigger di aggiornamento escludono con un filtro i commenti dell'account di servizio IA stesso.",
     "final_missing": "Ancora mancante:",
     "btn_open_runs": "Apri esecuzioni",
     "btn_open_connections": "Apri connessioni"

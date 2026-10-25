@@ -48,10 +48,12 @@ whatever is available and hand off.
 skip without calling iTop at all.
 
 **Never react to our own comments.** Two lines of defence against webhook loops:
-iTop trigger contexts exclude `REST/JSON` (documented in README), and
+the update triggers filter out the AI service account's own writes
+(`:current_contact_id != <its Person>`, see `itop/provisioning.py`), and
 `IntakeRun.stop_reason` stops if the last public log entry was posted by the AI
 service account — so a misconfigured trigger degrades to a no-op instead of an
-infinite question loop.
+infinite question loop. Trigger contexts are not the defence: a front end that
+reaches iTop over `REST/JSON` must still wake the assistant.
 
 ## Repository map
 

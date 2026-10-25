@@ -117,7 +117,7 @@
     "llm_model_desc": "Názov modelu tak, ako ho poskytuje endpoint",
     "llm_api_key_desc": "Vyžadovaný cloudovými poskytovateľmi; lokálne servery ho ignorujú",
     "final_complete": "Nastavenie dokončené — /webhook je aktívny.",
-    "final_complete_detail": "Ak ste vykonali krok webhookov iTop, iTop už volá <code>{{origin}}/webhook</code>. Ak ste ho preskočili, nakonfigurujte triggery a webhooky ručne (pozri README) alebo z obrazovky Pripojenia — webhook token patrí do hlavičky <code>X-Auth-Token</code> a kontext triggera musí vylučovať <code>REST/JSON</code>.",
+    "final_complete_detail": "Ak ste vykonali krok webhookov iTop, iTop už volá <code>{{origin}}/webhook</code>. Ak ste ho preskočili, nakonfigurujte triggery a webhooky ručne (pozri README) alebo z obrazovky Pripojenia — webhook token patrí do hlavičky <code>X-Auth-Token</code> a triggery na aktualizáciu filtrom vynechávajú vlastné komentáre servisného účtu AI.",
     "final_missing": "Stále chýba:",
     "btn_open_runs": "Otvoriť spustenia",
     "btn_open_connections": "Otvoriť pripojenia"

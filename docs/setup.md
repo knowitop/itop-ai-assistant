@@ -121,19 +121,20 @@ Create two triggers in iTop (**Configuration → Notifications → Triggers**):
 |--------------|------------------------------|
 | Type         | Trigger (on object creation) |
 | Target class | `UserRequest`                |
-| Context      | `cron`, `Console`, `Portal`  |
+| Context      | empty (every context)        |
 
 **Trigger 2 — user commented:**
 
-| Field         | Value                       |
-|---------------|-----------------------------|
-| Type          | Trigger (on object update)  |
-| Target class  | `UserRequest`               |
-| Context       | `cron`, `Console`, `Portal` |
-| Target fields | `public_log`                |
+| Field         | Value                                                         |
+|---------------|---------------------------------------------------------------|
+| Type          | Trigger (on object update)                                    |
+| Target class  | `UserRequest`                                                 |
+| Context       | empty (every context)                                         |
+| Filter        | `SELECT UserRequest WHERE :current_contact_id != <AI Person>` |
+| Target fields | `public_log`                                                  |
 
 > [!IMPORTANT]
-> Set **Context** to `cron`, `Console`, and `Portal` only — **do not include `REST/JSON`**. This prevents the trigger from firing when the assistant itself posts a comment via the API, which would cause an infinite loop.
+> `<AI Person>` is the id of the Person linked to the AI service account. The filter keeps the assistant's own questions from waking it up again; every other writer still does, including a front end that passes requesters' replies to iTop over REST/JSON. Without the filter nothing loops — the assistant recognizes its own comment and stops — but every question it asks costs an extra webhook and a skipped run in the journal.
 
 ![Trigger: ticket created](images/trigger_request_created.png)
 ![Trigger: user commented](images/trigger_request_commented.png)
@@ -171,12 +172,14 @@ The same iTop objects can be created via the CLI — useful for scripted deploym
 # from a local checkout
 cd assistant && uv run itop-ai-provision \
   --itop-url http://localhost:8000/webservices/rest.php --user admin \
-  --backend-url http://assistant:8000 --webhook-token <WEBHOOK_TOKEN>
+  --backend-url http://assistant:8000 --webhook-token <WEBHOOK_TOKEN> \
+  --ai-contact-id <AI Person>
 
 # or inside the Docker stack
 docker compose exec assistant itop-ai-provision \
   --itop-url http://itop/webservices/rest.php --user admin \
-  --backend-url http://assistant:8000 --webhook-token <WEBHOOK_TOKEN>
+  --backend-url http://assistant:8000 --webhook-token <WEBHOOK_TOKEN> \
+  --ai-contact-id <AI Person>
 ```
 
-`--backend-url` is the assistant URL **as reachable from the iTop server** (in the bundled compose stack, that is `http://assistant:8000`).
+`--backend-url` is the assistant URL **as reachable from the iTop server** (in the bundled compose stack, that is `http://assistant:8000`). `--ai-contact-id` is the id of the Person linked to the AI service account, the one the update triggers leave out; the wizard reads it from the saved iTop connection itself.

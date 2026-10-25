@@ -13,7 +13,8 @@ Also runnable as a CLI (works without the assistant backend):
 
     PYTHONPATH=src uv run python -m itop_provisioning \\
         --itop-url http://itop/webservices/rest.php --user admin \\
-        --backend-url http://assistant:8000 --webhook-token <token>
+        --backend-url http://assistant:8000 --webhook-token <token> \\
+        --ai-contact-id <id of the AI service account's Person>
 """
 
 import argparse
@@ -34,13 +35,21 @@ CREATED_TRIGGER_DESC = "UserRequest/Incident created (iTop AI Assistant)"
 CREATED_WEBHOOK_NAME = "UserRequest/Incident created (iTop AI Assistant)"
 UPDATED_WEBHOOK_NAME = "UserRequest/Incident public log updated (iTop AI Assistant)"
 
-# Excludes REST/JSON so the assistant's own comments never re-trigger the
-# webhook — the second line of defense next to the guard node.
-UPDATE_TRIGGER_CONTEXT = "CRON, GUI:Console, GUI:Portal"
-
 
 def _update_trigger_desc(obj_class: str) -> str:
     return f"{obj_class} public log updated (iTop AI Assistant)"
+
+
+def _update_trigger_filter(obj_class: str, ai_contact_id: int) -> str:
+    # The assistant's own comments must not wake it, but every other writer
+    # must, whatever context it writes from: a front end in front of iTop
+    # often reaches it over REST/JSON, the same context the assistant uses.
+    # iTop evaluates the filter in the writer's session, so the trigger
+    # leaves out the AI account's Person and nothing else; with nobody
+    # logged in (cron) the placeholder is empty and the trigger fires. A
+    # filter gone stale — the service account replaced — degrades to the
+    # guard's "last public entry is ours" check, not to a loop.
+    return f"SELECT {obj_class} WHERE :current_contact_id != {ai_contact_id}"
 
 
 def _webhook_headers(webhook_token: str) -> str:
@@ -51,8 +60,13 @@ def _webhook_payload(event: str) -> str:
     return json.dumps({"id": "$this->id$", "class": "$this->finalclass$", "event": event})
 
 
-async def provision_itop(client: Itop, backend_url: str, webhook_token: str) -> list[dict[str, Any]]:
+async def provision_itop(
+    client: Itop, backend_url: str, webhook_token: str, ai_contact_id: int
+) -> list[dict[str, Any]]:
     """Create the trigger/webhook objects in iTop; return a per-object report.
+
+    `ai_contact_id` is the Person behind the AI service account, whose own
+    public log entries the update triggers leave out.
 
     Report items: {class, name, status: "created"|"exists"|"skipped", id}.
     The order matters — each object references the previous ones by name.
@@ -142,8 +156,8 @@ async def provision_itop(client: Itop, backend_url: str, webhook_token: str) -> 
             _update_trigger_desc(obj_class),
             {
                 "description": _update_trigger_desc(obj_class),
-                "context": UPDATE_TRIGGER_CONTEXT,
                 "target_class": obj_class,
+                "filter": _update_trigger_filter(obj_class, ai_contact_id),
                 "target_attcodes": "public_log",
                 "subscription_policy": "force_all_channels",
             },
@@ -184,7 +198,7 @@ async def _run_cli(args: argparse.Namespace) -> list[dict[str, Any]]:
     )
     client = create_itop_client(cfg)
     try:
-        return await provision_itop(client, args.backend_url, args.webhook_token)
+        return await provision_itop(client, args.backend_url, args.webhook_token, args.ai_contact_id)
     finally:
         await client.aclose()
 
@@ -200,6 +214,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--token", help="iTop token auth — alternative to --user/--pwd")
     parser.add_argument("--backend-url", required=True, help="assistant URL as reachable from iTop")
     parser.add_argument("--webhook-token", required=True, help="shared secret expected by POST /webhook")
+    parser.add_argument(
+        "--ai-contact-id",
+        required=True,
+        type=int,
+        help="id of the Person linked to the AI service account; its own comments do not trigger the webhook",
+    )
     args = parser.parse_args(argv)
 
     if args.user and not args.pwd:

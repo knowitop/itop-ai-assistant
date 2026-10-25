@@ -117,7 +117,7 @@
     "llm_model_desc": "Nazwa modelu w takiej postaci, w jakiej jest udostępniana przez punkt końcowy",
     "llm_api_key_desc": "Wymagany przez dostawców chmurowych; serwery lokalne go ignorują",
     "final_complete": "Konfiguracja zakończona — /webhook jest aktywny.",
-    "final_complete_detail": "Jeśli wykonano krok webhooków iTop, iTop już wywołuje <code>{{origin}}/webhook</code>. Jeśli go pominięto, skonfiguruj wyzwalacze i webhooki ręcznie (patrz README) lub z ekranu Połączenia — token webhooka wpisz w nagłówku <code>X-Auth-Token</code>, a kontekst wyzwalacza musi wykluczać <code>REST/JSON</code>.",
+    "final_complete_detail": "Jeśli wykonano krok webhooków iTop, iTop już wywołuje <code>{{origin}}/webhook</code>. Jeśli go pominięto, skonfiguruj wyzwalacze i webhooki ręcznie (patrz README) lub z ekranu Połączenia — token webhooka wpisz w nagłówku <code>X-Auth-Token</code>, a wyzwalacze aktualizacji filtrem pomijają własne komentarze konta usługowego AI.",
     "final_missing": "Nadal brakuje:",
     "btn_open_runs": "Otwórz uruchomienia",
     "btn_open_connections": "Otwórz połączenia"

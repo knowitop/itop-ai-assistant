@@ -13,11 +13,10 @@ the last public comment (`.claude/rules/core.md`).
 from itop_ai_assistant.itop_client import Itop
 
 _CLASS = "Person"
-_PROJECTION = ["friendlyname"]
 
 
 class IdentityRepository:
-    """Reads the display name of the Person linked to the current account."""
+    """Reads the Person linked to the current account."""
 
     def __init__(self, itop: Itop):
         self._itop = itop
@@ -29,7 +28,15 @@ class IdentityRepository:
         misconfiguration — the setup wizard probes for it — so it raises here
         rather than handing the loop guard a name that matches nobody.
         """
-        person = await self._itop.schema(_CLASS).find_one({"id": ("=", ":current_contact_id")}, projection=_PROJECTION)
+        return str((await self._current_person(["friendlyname"]))["friendlyname"])
+
+    async def current_person_id(self) -> int:
+        """Id of the account's Person: what the update triggers compare
+        `:current_contact_id` against to leave this account's writes out."""
+        return int((await self._current_person(["id"]))["id"])
+
+    async def _current_person(self, projection: list[str]) -> dict:
+        person = await self._itop.schema(_CLASS).find_one({"id": ("=", ":current_contact_id")}, projection=projection)
         if person is None:
             raise ValueError("No Person is linked to the iTop service account")
-        return str(person["friendlyname"])
+        return person

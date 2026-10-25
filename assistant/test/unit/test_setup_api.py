@@ -791,6 +791,7 @@ class TestProvisionItop(SetupApiTestCase):
         client.aclose = AsyncMock()
 
         with (
+            patch("itop_ai_assistant.admin.setup._ai_contact_id", AsyncMock(return_value=54)) as ai_contact,
             patch("itop_ai_assistant.admin.setup.create_itop_client", return_value=client) as factory,
             patch("itop_ai_assistant.admin.setup.provision_itop", AsyncMock(return_value=report)) as provision,
         ):
@@ -801,7 +802,9 @@ class TestProvisionItop(SetupApiTestCase):
 
         self.assertTrue(body["ok"])
         self.assertEqual(body["report"], report)
-        provision.assert_awaited_once_with(client, "http://assistant:8000", "wh")
+        provision.assert_awaited_once_with(client, "http://assistant:8000", "wh", 54)
+        # The AI account is resolved with the saved connection, not the admin's
+        self.assertIsNone(ai_contact.call_args.args[0].user)
         # Admin credentials go into the one-off client (url from the stored
         # section) and never reach the config store.
         self.assertEqual(factory.call_args.args[0].user, "admin")
@@ -825,7 +828,10 @@ class TestProvisionItop(SetupApiTestCase):
         transport = _ProvisioningTransport()
         client = Itop(url="http://itop/rest.php", version="1.3", auth_user="admin", transport=transport)
 
-        with patch("itop_ai_assistant.admin.setup.create_itop_client", return_value=client):
+        with (
+            patch("itop_ai_assistant.admin.setup._ai_contact_id", AsyncMock(return_value=54)),
+            patch("itop_ai_assistant.admin.setup.create_itop_client", return_value=client),
+        ):
             body = self.client.post(
                 "/api/setup/provision-itop",
                 json={"backend_url": "http://assistant:8000", "user": "admin", "pwd": "admin-pw"},
@@ -841,6 +847,7 @@ class TestProvisionItop(SetupApiTestCase):
         client.aclose = AsyncMock()
 
         with (
+            patch("itop_ai_assistant.admin.setup._ai_contact_id", AsyncMock(return_value=54)),
             patch("itop_ai_assistant.admin.setup.create_itop_client", return_value=client),
             patch("itop_ai_assistant.admin.setup.provision_itop", AsyncMock(side_effect=ConnectionError("refused"))),
         ):
@@ -851,6 +858,21 @@ class TestProvisionItop(SetupApiTestCase):
         self.assertFalse(body["ok"])
         self.assertIn("refused", body["error"])
         client.aclose.assert_awaited_once()
+
+    def test_requires_the_ai_service_account(self):
+        """The update triggers leave out the AI account's own writes, so
+        provisioning before the iTop connection is set up has nothing to
+        leave out and must not create them."""
+        self.client.patch("/api/setup/security", json={"webhook_token": "wh"})
+
+        with patch("itop_ai_assistant.admin.setup.provision_itop", AsyncMock()) as provision:
+            body = self.client.post(
+                "/api/setup/provision-itop", json={"backend_url": "http://assistant:8000", "token": "tok"}
+            ).json()
+
+        self.assertFalse(body["ok"])
+        self.assertIn("AI service account", body["error"])
+        provision.assert_not_awaited()
 
 
 if __name__ == "__main__":

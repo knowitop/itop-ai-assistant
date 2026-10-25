@@ -186,9 +186,10 @@ def stop_reason(ticket: Ticket, state: TicketState, *, active_statuses: list[str
         return "already processed (ai_done)"
     if ticket.status not in active_statuses:
         return f"status={ticket.status} not in {active_statuses}"
-    # Loop protection, second line of defense after iTop trigger contexts:
-    # if our own question is the last public entry, wait for the user instead
-    # of reacting to our own comment or a duplicate webhook.
+    # Loop protection, second line of defense after the update triggers'
+    # filter on the AI account: if our own question is the last public entry,
+    # wait for the user instead of reacting to our own comment or a duplicate
+    # webhook.
     if ticket.public_log and ticket.public_log[-1].user_login == ai_name:
         return "last public entry is ours, waiting for the requester"
     return None
