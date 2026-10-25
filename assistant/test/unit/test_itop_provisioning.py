@@ -11,6 +11,7 @@ from itop_ai_assistant.itop_client.exceptions import ItopError
 
 BACKEND_URL = "http://assistant:8000"
 WEBHOOK_TOKEN = "wh-tok"
+AI_CONTACT_ID = 54
 
 
 class FakeSchema:
@@ -65,7 +66,7 @@ class TestProvisionFreshSystem(unittest.IsolatedAsyncioTestCase):
     async def test_creates_all_objects_in_order(self):
         itop = FakeItop()
 
-        report = await provision_itop(itop, BACKEND_URL, WEBHOOK_TOKEN)
+        report = await provision_itop(itop, BACKEND_URL, WEBHOOK_TOKEN, AI_CONTACT_ID)
 
         self.assertEqual([r["status"] for r in report], ["created"] * 7)
         self.assertEqual(
@@ -86,7 +87,7 @@ class TestProvisionFreshSystem(unittest.IsolatedAsyncioTestCase):
     async def test_created_object_fields(self):
         itop = FakeItop()
 
-        await provision_itop(itop, BACKEND_URL, WEBHOOK_TOKEN)
+        await provision_itop(itop, BACKEND_URL, WEBHOOK_TOKEN, AI_CONTACT_ID)
 
         by_class = {}
         for create in itop.creates:
@@ -103,8 +104,12 @@ class TestProvisionFreshSystem(unittest.IsolatedAsyncioTestCase):
         update_triggers = by_class["TriggerOnObjectUpdate"]
         self.assertEqual([t["target_class"] for t in update_triggers], ["UserRequest", "Incident"])
         for trigger in update_triggers:
-            # REST/JSON excluded from the context — loop protection
-            self.assertEqual(trigger["context"], "CRON, GUI:Console, GUI:Portal")
+            # Every context fires, REST/JSON included; only the AI's own
+            # writes are left out — loop protection
+            self.assertNotIn("context", trigger)
+            self.assertEqual(
+                trigger["filter"], f"SELECT {trigger['target_class']} WHERE :current_contact_id != {AI_CONTACT_ID}"
+            )
             self.assertEqual(trigger["target_attcodes"], "public_log")
 
         created_hook, updated_hook = by_class["ActionWebhook"]
@@ -122,7 +127,7 @@ class TestProvisionIdempotency(unittest.IsolatedAsyncioTestCase):
     async def test_existing_objects_are_not_recreated(self):
         itop = FakeItop(existing=dict(ALL_EXISTING))
 
-        report = await provision_itop(itop, BACKEND_URL, WEBHOOK_TOKEN)
+        report = await provision_itop(itop, BACKEND_URL, WEBHOOK_TOKEN, AI_CONTACT_ID)
 
         self.assertEqual(itop.creates, [])
         self.assertEqual([r["status"] for r in report], ["exists"] * 7)
@@ -133,7 +138,7 @@ class TestProvisionMissingClass(unittest.IsolatedAsyncioTestCase):
     async def test_missing_incident_class_is_skipped(self):
         itop = FakeItop(missing_classes={"Incident"})
 
-        report = await provision_itop(itop, BACKEND_URL, WEBHOOK_TOKEN)
+        report = await provision_itop(itop, BACKEND_URL, WEBHOOK_TOKEN, AI_CONTACT_ID)
 
         skipped = [r for r in report if r["status"] == "skipped"]
         self.assertEqual(len(skipped), 1)
@@ -154,7 +159,7 @@ class TestProvisionMissingClass(unittest.IsolatedAsyncioTestCase):
     async def test_both_classes_missing_skips_update_webhook(self):
         itop = FakeItop(missing_classes={"UserRequest", "Incident"})
 
-        report = await provision_itop(itop, BACKEND_URL, WEBHOOK_TOKEN)
+        report = await provision_itop(itop, BACKEND_URL, WEBHOOK_TOKEN, AI_CONTACT_ID)
 
         self.assertEqual(len([r for r in report if r["status"] == "skipped"]), 2)
         classes = [c["class"] for c in itop.creates]
@@ -172,7 +177,7 @@ class TestProvisionErrors(unittest.IsolatedAsyncioTestCase):
         itop.request = failing_request
 
         with self.assertRaises(ItopError):
-            await provision_itop(itop, BACKEND_URL, WEBHOOK_TOKEN)
+            await provision_itop(itop, BACKEND_URL, WEBHOOK_TOKEN, AI_CONTACT_ID)
 
 
 if __name__ == "__main__":

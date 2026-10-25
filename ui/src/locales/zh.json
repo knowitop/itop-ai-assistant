@@ -117,7 +117,7 @@
     "llm_model_desc": "端点公开的模型名称",
     "llm_api_key_desc": "云端提供方必填；本地服务器会忽略",
     "final_complete": "设置完成 — /webhook 已激活。",
-    "final_complete_detail": "如果您已完成 iTop Webhooks 步骤，iTop 已开始调用 <code>{{origin}}/webhook</code>。如果跳过了，请手动配置触发器和 Webhook（见 README）或从「连接」页面配置 — Webhook 令牌填入 <code>X-Auth-Token</code> 请求头，触发器上下文须排除 <code>REST/JSON</code>。",
+    "final_complete_detail": "如果您已完成 iTop Webhooks 步骤，iTop 已开始调用 <code>{{origin}}/webhook</code>。如果跳过了，请手动配置触发器和 Webhook（见 README）或从「连接」页面配置 — Webhook 令牌填入 <code>X-Auth-Token</code> 请求头，更新触发器通过过滤条件排除 AI 服务账号自己的评论。",
     "final_missing": "仍然缺少：",
     "btn_open_runs": "查看运行记录",
     "btn_open_connections": "查看连接"

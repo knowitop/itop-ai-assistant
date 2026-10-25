@@ -21,6 +21,12 @@ class TestIdentityRepository(unittest.IsolatedAsyncioTestCase):
         itop.schema.assert_called_once_with("Person")
         schema.find_one.assert_awaited_once_with({"id": ("=", ":current_contact_id")}, projection=["friendlyname"])
 
+    async def test_reads_the_id_of_the_same_person(self):
+        itop, schema = self._itop({"id": "54"})
+
+        self.assertEqual(await IdentityRepository(itop).current_person_id(), 54)
+        schema.find_one.assert_awaited_once_with({"id": ("=", ":current_contact_id")}, projection=["id"])
+
     async def test_no_person_linked_is_an_error_not_an_empty_name(self):
         """The setup wizard probes for exactly this state — an unlinked service
         account must fail loudly, not hand the loop guard an empty name."""

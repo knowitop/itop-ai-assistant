@@ -117,7 +117,7 @@
     "llm_model_desc": "Modellname, wie er vom Endpunkt bereitgestellt wird",
     "llm_api_key_desc": "Bei Cloud-Anbietern erforderlich; lokale Server ignorieren ihn",
     "final_complete": "Einrichtung abgeschlossen — /webhook ist aktiv.",
-    "final_complete_detail": "Wenn Sie den iTop-Webhooks-Schritt ausgeführt haben, ruft iTop bereits <code>{{origin}}/webhook</code> auf. Wenn Sie ihn übersprungen haben, konfigurieren Sie die Auslöser und Webhooks manuell (siehe README) oder über den Verbindungsbildschirm — das Webhook-Token gehört in den Header <code>X-Auth-Token</code> und der Auslöser-Kontext muss <code>REST/JSON</code> ausschließen.",
+    "final_complete_detail": "Wenn Sie den iTop-Webhooks-Schritt ausgeführt haben, ruft iTop bereits <code>{{origin}}/webhook</code> auf. Wenn Sie ihn übersprungen haben, konfigurieren Sie die Auslöser und Webhooks manuell (siehe README) oder über den Verbindungsbildschirm — das Webhook-Token gehört in den Header <code>X-Auth-Token</code> und die Aktualisierungs-Auslöser schließen per Filter die eigenen Kommentare des KI-Dienstkontos aus.",
     "final_missing": "Noch fehlend:",
     "btn_open_runs": "Ausführungen öffnen",
     "btn_open_connections": "Verbindungen öffnen"
