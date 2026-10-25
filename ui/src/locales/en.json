@@ -133,7 +133,7 @@
     "webhooks_title": "iTop webhooks",
     "webhooks_desc": "Creates the triggers and webhooks in iTop that call this assistant (uses the saved webhook token). Requires an iTop <b>administrator</b> account that also has the <b>REST Services User</b> profile — the credentials are used once and never stored. Existing objects are left untouched.",
     "security_desc": "Tokens are write-only: the current values are never shown. Use the generate buttons to create a strong random token, then copy it before saving.",
-    "security_webhook_token_desc": "Set the same value in the iTop Remote Application Connection (X-Auth-Token header)",
+    "security_webhook_token_desc": "Set the same value in the X-Auth-Token header of the iTop webhook actions",
     "security_admin_token_desc": "Bearer token for this UI and the /api endpoints; saved to this browser automatically",
     "clear_admin_token_confirm": "Clear the admin token? The admin API becomes open to anyone who can reach it.",
     "clear_webhook_token_confirm": "Clear the webhook token? /webhook will accept unauthenticated requests.",
