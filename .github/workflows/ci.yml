@@ -21,8 +21,54 @@ permissions:
   contents: read
 
 jobs:
+  # A pull request that touches only documentation skips the code jobs below.
+  # They are required checks on main, so the workflow itself cannot be skipped
+  # with `paths-ignore` — the checks would never report and the PR would wait
+  # for them forever. A job skipped by its `if` counts as passed instead. Only
+  # a definite "no code" skips: if this job fails, its output is empty and the
+  # code jobs run, rather than a broken filter letting code through unchecked.
+  # Prompts are `.md` files inside the package, which is why the pattern names
+  # the documentation it skips instead of matching every `.md`.
+  changes:
+    name: Detect code changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+
+    steps:
+      - name: Checkout
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Under workflow_call the event is release.yml's push, and a publication
+      # is always gated by the full suite. The diff is taken on its own line so
+      # that a failing `git diff` fails the step — inside an `if` it would read
+      # as an empty diff, i.e. "no code". `--no-renames` lists both sides of a
+      # move, so code moved into docs/ still counts as code removed.
+      - name: Diff against the base
+        id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(git diff --name-only --no-renames "$BASE...$HEAD")
+          if printf '%s\n' "$files" \
+              | grep -qvE '^(docs/|\.claude/|[^/]+\.md$|assistant/(CLAUDE|README)\.md$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   python:
     name: Lint, type-check, test
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -84,8 +130,9 @@ jobs:
   # dependency outside a wheel. arm64 is proven on every merge into main.
   image:
     name: Build Docker image
+    needs: changes
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
 
     steps:
       - name: Checkout
@@ -127,6 +174,8 @@ jobs:
 
   ui:
     name: Build admin UI
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     defaults:
       run:
