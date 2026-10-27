@@ -16,7 +16,7 @@ AI-powered middleware for [Combodo iTop](https://www.itophub.io/) that reduces t
 > — your operating system and version;  
 > — the exact error message or what happens when you try to print.
 
-**Looking for pilot teams** — run it on your live queue in dry run, with help on setup. [Details](https://github.com/knowitop/itop-ai-assistant#getting-help).
+**Looking for pilot teams** — run it on your live queue in dry run, with help on setup. [Details](https://github.com/knowitop/itop-ai-assistant/discussions/30).
 
 ---
 
@@ -109,7 +109,7 @@ Also hosted, with search, at **[itop-ai-assistant.readthedocs.io](https://itop-a
 - **Bugs** — [GitHub Issues](https://github.com/knowitop/itop-ai-assistant/issues). Include the assistant's version and what the run journal shows for the ticket.
 - **На русском** — [the project thread on community.itop-itsm.ru](https://community.itop-itsm.ru/t/itop-ai-assistant-ii-pomoshhnik-dlya-priyoma-zayavok-v-itop/2155).
 
-**Want to try it on your live queue?** I'm looking for a few teams on iTop willing to run the assistant on their real tickets and tell me honestly what works and what doesn't. Start in dry run — nothing is written to iTop until you decide. I'll help with the installation and with the subcategory descriptions the assistant relies on. Say hello in [Discussions](https://github.com/knowitop/itop-ai-assistant/discussions).
+**Want to try it on your live queue?** I'm looking for a few teams on iTop willing to run the assistant on their real tickets and tell me honestly what works and what doesn't. Start in dry run — nothing is written to iTop until you decide. I'll help with the installation and with the subcategory descriptions the assistant relies on. Reply in [the pilot thread](https://github.com/knowitop/itop-ai-assistant/discussions/30).
 
 ---
 
