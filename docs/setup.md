@@ -2,6 +2,31 @@
 
 This page covers everything needed to get the assistant running: the built-in setup wizard and, as an alternative, manual iTop configuration.
 
+## Getting it running
+
+```bash
+git clone https://github.com/knowitop/itop-ai-assistant.git
+cd itop-ai-assistant/docker
+cp .env.dist .env
+docker compose up -d
+```
+
+The compose stack starts iTop, Redis, Qdrant and the assistant together. If you already have an iTop, Redis or Qdrant instance, comment out those services in `docker-compose.yml`.
+
+### The bundled iTop
+
+The bundled iTop starts empty: open `http://localhost:8000` and run its installation wizard first. Database server `localhost`, login `admin`, password `MYSQL_PASS` from `docker-compose.yml` (`123456`). Two choices in that wizard matter to the assistant: **ITIL Compliant Tickets Management** gives it both `UserRequest` and `Incident` (the default, Simple Ticket Management, only `UserRequest`), and **Known Errors Management and FAQ** is what the FAQ references in the handoff note read from. With the demo data, only *Sales Department* and *Customer* have a customer contract — tickets from other organizations have no service catalog to be classified against (see [Configure the service catalog](#2-configure-the-service-catalog)).
+
+### Images
+
+A deployment that brings its own compose file can pull the image directly, from [Docker Hub](https://hub.docker.com/r/knowitop/itop-ai-assistant) or from [GHCR](https://github.com/knowitop/itop-ai-assistant/pkgs/container/itop-ai-assistant):
+
+```bash
+docker pull knowitop/itop-ai-assistant      # or: ghcr.io/knowitop/itop-ai-assistant
+```
+
+Version tags follow releases — the full version, its `major.minor`, its `major`, and `latest`; `edge` follows `main`. Both registries carry `linux/amd64` and `linux/arm64`.
+
 ## Setup wizard
 
 The wizard opens automatically at `http://localhost:8001/ui` when the assistant is not yet configured. A welcome screen comes first; after it, four steps, each testing its connection before moving on.
