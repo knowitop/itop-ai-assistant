@@ -16,7 +16,7 @@ AI-powered middleware for [Combodo iTop](https://www.itophub.io/) that reduces t
 > — your operating system and version;  
 > — the exact error message or what happens when you try to print.
 
-**Looking for pilot teams** — run it on your live queue in dry run, with help on setup. [Details](#getting-help).
+**Looking for pilot teams** — run it on your live queue in dry run, with help on setup. [Details](https://github.com/knowitop/itop-ai-assistant#getting-help).
 
 ---
 
@@ -76,6 +76,8 @@ docker compose up -d
 ```
 
 The stack starts iTop, Redis, Qdrant and the assistant together. The bundled iTop starts empty — run its installation wizard first; [Setup](docs/setup.md#the-bundled-itop) says which choices matter to the assistant. Bringing your own iTop, or your own compose file: [Getting it running](docs/setup.md#getting-it-running).
+
+The image is `knowitop/itop-ai-assistant` on Docker Hub and `ghcr.io/knowitop/itop-ai-assistant` on GHCR, for `linux/amd64` and `linux/arm64`. Tags: the full version, `major.minor`, `major` and `latest`; `edge` follows `main`.
 
 | Service   | URL                          |
 |-----------|------------------------------|
