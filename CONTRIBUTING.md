@@ -4,6 +4,37 @@
 (`ui/`) and a compose stack (`docker/`). Start from `README.md` for what the
 system does and from `docs/setup.md` for getting it running.
 
+## Local development
+
+Requires [uv](https://docs.astral.sh/uv/).
+
+```bash
+cd assistant
+uv sync
+cp ../docker/.env.dist .env   # fill in LLM and iTop settings
+uv run uvicorn itop_ai_assistant.main:app --host 0.0.0.0 --port 8001 --reload
+```
+
+**Tests:**
+
+```bash
+uv run pytest                    # unit tests (mocked LLM, iTop and Redis), with coverage
+uv run pytest test/integration   # the agent against a real LLM (needs .env.test)
+```
+
+Only the unit tests run by default; the integration suite is opt-in because it needs a reachable model endpoint.
+
+**Admin UI** (requires Node.js; the dev server proxies `/api` to the backend on `:8001`):
+
+```bash
+cd ui
+npm ci
+npm run dev     # hot-reload dev server
+npm run build   # production build, straight into the Python package
+```
+
+Architecture details and development conventions are in [CLAUDE.md](CLAUDE.md).
+
 ## Branch names
 
 ```

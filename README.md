@@ -8,6 +8,16 @@
 
 AI-powered middleware for [Combodo iTop](https://www.itophub.io/) that reduces ticket back-and-forth and helps engineers start working faster.
 
+> **Title:** printer broken  
+> **Description:** Not printing.
+>
+> **AI Assistant:** Thank you for reaching out! To help us resolve this quickly, could you please provide:  
+> — the manufacturer and model of the printer;  
+> — your operating system and version;  
+> — the exact error message or what happens when you try to print.
+
+**Looking for pilot teams** — run it on your live queue in dry run, with help on setup. [Details](https://github.com/knowitop/itop-ai-assistant#getting-help).
+
 ---
 
 ## The problem
@@ -20,86 +30,18 @@ Engineers waste time on tickets that arrive without enough information: vague de
 
 > **The engineer sees the ticket only when it's ready to work on.**
 
-When a new ticket arrives, the assistant intercepts it via webhook — there is no extension to install into iTop. Processing runs as a **single AI agent** that decides what the ticket needs and acts through a fixed set of tools:
+When a new ticket arrives, iTop sends a webhook — there is no extension to install into iTop. A **single AI agent** decides what the ticket needs and acts through a fixed set of tools:
 
-- **Classify** — if the ticket has no service or subcategory, the agent reads the service catalog from iTop and writes the best match back to the ticket. The classification tools validate every id against the catalog, so the agent cannot invent a category.
-- **Ask** — if the ticket is too vague to classify or to work on, the agent posts exactly **one** focused clarifying question in the public log and stops. The user replies through the portal as usual, which triggers a new webhook and a fresh round. By default three questions per ticket at most, of which at most two may be spent on working out its category, then the ticket moves on with whatever is available.
-- **Hand off** — once the picture is clear, the agent writes a structured internal note for the engineer and marks the ticket done.
-- **Quote what already worked** — where a vector index is configured, the note carries references to similar solved tickets. Only what iTop still shows the run gets quoted, and internal correspondence never does.
+- **Classify** — picks the service and subcategory from the requester's catalog; an id that is not in the catalog is rejected.
+- **Ask** — posts exactly **one** clarifying question in the public log and waits for the reply. Three questions per ticket at most by default.
+- **Hand off** — writes a short internal note for the engineer and steps aside.
+- **Quote what already worked** — with a vector index configured, the note links similar solved tickets.
 
-The subcategory's own **description** in iTop is what the agent treats as the completeness criteria — so the questions it asks are specific to the service context, not generic prompts.
+The subcategory's own **description** in iTop is what the agent treats as the completeness criteria — so it asks for what that service actually needs, not "please describe the problem in more detail".
 
-Each of the four actions has its own switch: a deployment that only wants routing, or only wants the engineer's summary, turns off the rest. A switched-off action is not asked to be skipped — its tool is never handed to the model, so it cannot happen at all ([which actions the module performs](docs/configuration.md#which-actions-the-module-performs)).
+The limits — one question per run, the question ceiling, stopping once an engineer takes the ticket — are plain code, not instructions in a prompt: a model that misbehaves gets its call rejected rather than the ticket damaged. All actions run under a dedicated iTop service account, so every comment is attributed and auditable.
 
-The agent decides the order; the tools enforce the rules. The round limits, the "one question per run" rule and the "stop once an engineer takes the ticket" guard are plain code, not instructions in a prompt — a model that misbehaves gets its call rejected rather than the ticket damaged.
-
-All AI actions are performed under a dedicated iTop service account, so every comment is clearly attributed and auditable.
-
-### Examples
-
-**Scenario 1 — incomplete ticket**
-
-A user opens a ticket in the service portal:
-> **Title:** printer broken  
-> **Description:** Not printing.
-
-The service subcategory is *Hardware*, which requires: device model, OS and exact error. The description provides none of this. The assistant posts in the public log within seconds:
-
-> **AI Assistant**
->
-> Thank you for reaching out! To help us resolve this quickly, could you please provide:  
-> — the manufacturer and model of the printer (e.g. HP LaserJet 400 M401dn);  
-> — your operating system and version;  
-> — the exact error message or what happens when you try to print.
-
-**Scenario 2 — complete ticket**
-
-Another user submits:
-> **Title:** HP LaserJet 400 M401dn not printing after Windows 11 update  
-> **Description:** My HP LaserJet 400 M401dn stopped printing after a Windows 11 update yesterday evening. Error: "Driver unavailable". Already restarted both printer and PC.
-
-All required fields are present. No question is asked. Instead, the engineer immediately sees an internal note:
-
-> **AI Assistant** (internal note)
->
-> **Issue:** HP LaserJet 400 M401dn stopped printing after a Windows 11 update. Error: "Driver unavailable".  
-> **Already tried:** Restarted printer and PC.  
-> **Suggested next step:** Reinstall or update the printer driver from HP's website; check if Windows Update pushed an incompatible driver version.
-
-### The flow
-
-```
-Ticket created           User commented
-       │                        │
-       └───────────┬────────────┘
-                   │
-                   ▼
-┌─ guard (plain code) ──────────────────────────────┐
-│  Already processed?      ──yes──▶  stop           │
-│  Engineer assigned?      ──yes──▶  stop           │
-│  Last comment was ours?  ──yes──▶  stop           │
-└─────────────────────────┬─────────────────────────┘
-                          │ no
-                          ▼
-┌─ agent session ───────────────────────────────────┐
-│  In the prompt: the ticket, the conversation,     │
-│  plus the service catalog while the ticket is     │
-│  still unclassified.                              │
-│                                                   │
-│  The agent picks a tool, the tool enforces:       │
-│                                                   │
-│   classify    service + subcategory checked       │
-│               against the catalog, then the       │
-│               session continues                   │
-│   ask         one question in the public log,     │
-│               session ends                        │
-│   hand off    internal note for the engineer,     │
-│               session ends                        │
-└─────────────────────────┬─────────────────────────┘
-                          ▼
-Ticket marked processed, or left waiting for a reply
-that arrives as the next webhook
-```
+Both scenarios end to end, and the flow as a diagram: [How it works](docs/index.md#how-it-works).
 
 ---
 
@@ -117,11 +59,10 @@ that arrives as the next webhook
 
 ## Requirements
 
-- **iTop 3.x** with REST API enabled — no extension to install, only a service account, a trigger and a webhook, which the wizard can create for you
-- **Redis** (included in the Docker Compose stack)
-- **An LLM that calls tools reliably** — OpenAI, Google Gemini, Ollama, or any OpenAI-compatible endpoint (LM Studio, vLLM, LiteLLM Proxy, DeepSeek, Azure); see [supported providers](docs/configuration.md#supported-llm-providers)
-- **Qdrant and an embeddings endpoint** — optional; they power the similar-solved-tickets references in the handoff note and the semantic index upcoming features build on. Qdrant is in the compose stack; leave `QDRANT_URL` unset and the assistant runs Redis-only, with those references simply absent. See [vector index](docs/configuration.md#vector-index)
-- **Docker and Docker Compose** for the quick start; [uv](https://docs.astral.sh/uv/) for local development
+- **iTop 3.x** with REST API enabled — no extension to install, only a service account, triggers and webhooks, which the wizard can create for you
+- **An LLM that calls tools reliably** — see [supported providers](docs/configuration.md#supported-llm-providers)
+- **Redis**; optionally **Qdrant** and an embeddings endpoint for the similar-tickets references ([vector index](docs/configuration.md#vector-index)) — both are in the compose stack
+- **Docker and Docker Compose**
 
 ---
 
@@ -134,19 +75,9 @@ cp .env.dist .env
 docker compose up -d
 ```
 
-The compose stack starts iTop, Redis, Qdrant and the assistant together. If you already have an iTop, Redis or Qdrant instance, comment out those services in `docker-compose.yml`.
+The stack starts iTop, Redis, Qdrant and the assistant together. The bundled iTop starts empty — run its installation wizard first; [Setup](docs/setup.md#the-bundled-itop) says which choices matter to the assistant. Bringing your own iTop, or your own compose file: [Getting it running](docs/setup.md#getting-it-running).
 
-The bundled iTop starts empty: open `http://localhost:8000` and run its installation wizard first. Database server `localhost`, login `admin`, password `MYSQL_PASS` from `docker-compose.yml` (`123456`). Two choices in that wizard matter to the assistant: **ITIL Compliant Tickets Management** gives it both `UserRequest` and `Incident` (the default, Simple Ticket Management, only `UserRequest`), and **Known Errors Management and FAQ** is what the FAQ references in the handoff note read from. With the demo data, only *Sales Department* and *Customer* have a customer contract — tickets from other organizations have no service catalog to be classified against (see [Setup](docs/setup.md#2-configure-the-service-catalog)).
-
-A deployment that brings its own compose file can pull the image directly, from [Docker Hub](https://hub.docker.com/r/knowitop/itop-ai-assistant) or from [GHCR](https://github.com/knowitop/itop-ai-assistant/pkgs/container/itop-ai-assistant):
-
-```bash
-docker pull knowitop/itop-ai-assistant      # or: ghcr.io/knowitop/itop-ai-assistant
-```
-
-Version tags follow releases — the full version, its `major.minor`, its `major`, and `latest`; `edge` follows `main`. Both registries carry `linux/amd64` and `linux/arm64`.
-
-Once running:
+The image is `knowitop/itop-ai-assistant` on Docker Hub and `ghcr.io/knowitop/itop-ai-assistant` on GHCR, for `linux/amd64` and `linux/arm64`. Tags: the full version, `major.minor`, `major` and `latest`; `edge` follows `main`.
 
 | Service   | URL                          |
 |-----------|------------------------------|
@@ -164,7 +95,7 @@ Open `http://localhost:8001/ui` — the **Setup Wizard** starts automatically an
 
 Also hosted, with search, at **[itop-ai-assistant.readthedocs.io](https://itop-ai-assistant.readthedocs.io/)**.
 
-- [**Setup**](docs/setup.md) — setup wizard walkthrough, manual iTop configuration, and how to try the assistant on your own data first
+- [**Setup**](docs/setup.md) — getting the stack running, the setup wizard, manual iTop configuration, and how to try the assistant on your own data first
 - [**Admin UI**](docs/admin-ui.md) — Connections, Modules, Prompts, Runs and Vector index screens
 - [**Configuration**](docs/configuration.md) — environment variables, module settings, dry run, LLM tracing, supported LLM providers and the vector index
 - [**Customizing prompts**](docs/prompts.md) — editing LLM prompts via UI or files
@@ -172,50 +103,25 @@ Also hosted, with search, at **[itop-ai-assistant.readthedocs.io](https://itop-a
 
 ---
 
-## Roadmap
+## Getting help
 
-The current release covers the first-contact intake loop — intercepting new tickets, asking clarifying questions and preparing them for the engineer. Planned next phases:
+- **Questions and ideas** — [GitHub Discussions](https://github.com/knowitop/itop-ai-assistant/discussions): setup, choosing a model, why the assistant asked what it asked.
+- **Bugs** — [GitHub Issues](https://github.com/knowitop/itop-ai-assistant/issues). Include the assistant's version and what the run journal shows for the ticket.
+- **На русском** — [the project thread on community.itop-itsm.ru](https://community.itop-itsm.ru/t/itop-ai-assistant-ii-pomoshhnik-dlya-priyoma-zayavok-v-itop/2155).
 
-- **Pattern analysis** — background jobs that surface recurring issues and trends across tickets.
-- **Knowledge base maintenance** — automatically flag outdated KB articles and suggest updates based on resolved tickets.
-- **Change Management review** — AI-assisted risk and impact assessment for RFCs.
-- **Engineer console** — an AI panel inside the iTop ticket page: explicit slash commands for summaries, similar past tickets and draft replies, plus free-text questions answered by a read-only agent that cannot change the ticket.
-- **User memory** — persistent context per user across tickets: no repeated questions about device or department, automatic adaptation to technical vs. non-technical communication style and pattern detection across a user's ticket history.
-
-Feedback and ideas are welcome in [GitHub Issues](https://github.com/knowitop/itop-ai-assistant/issues).
+**Want to try it on your live queue?** I'm looking for a few teams on iTop willing to run the assistant on their real tickets and tell me honestly what works and what doesn't. Start in dry run — nothing is written to iTop until you decide. I'll help with the installation and with the subcategory descriptions the assistant relies on. Say hello in [Discussions](https://github.com/knowitop/itop-ai-assistant/discussions).
 
 ---
 
-## Local development
+## Roadmap
 
-Requires [uv](https://docs.astral.sh/uv/).
+Today the assistant covers intake. Next is an **engineer console** inside the iTop ticket page — summaries, similar past tickets and draft replies on request. Further out: pattern analysis across tickets, knowledge base maintenance and Change Management review. Right now, though, the priority is getting intake right on live queues rather than adding modules.
 
-```bash
-cd assistant
-uv sync
-cp ../docker/.env.dist .env   # fill in LLM and iTop settings
-uv run uvicorn itop_ai_assistant.main:app --host 0.0.0.0 --port 8001 --reload
-```
+---
 
-**Tests:**
+## Contributing
 
-```bash
-uv run pytest                    # unit tests (mocked LLM, iTop and Redis), with coverage
-uv run pytest test/integration   # the agent against a real LLM (needs .env.test)
-```
-
-Only the unit tests run by default; the integration suite is opt-in because it needs a reachable model endpoint.
-
-**Admin UI** (requires Node.js; the dev server proxies `/api` to the backend on `:8001`):
-
-```bash
-cd ui
-npm ci
-npm run dev     # hot-reload dev server
-npm run build   # production build, straight into the Python package
-```
-
-Architecture details and development conventions are in [CLAUDE.md](CLAUDE.md).
+Local development, tests and conventions: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
